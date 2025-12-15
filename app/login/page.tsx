@@ -1,0 +1,301 @@
+"use client"
+
+import type React from "react"
+
+import { useState, Suspense, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useAuth } from "@/lib/auth-context"
+import { seedDummyData } from "@/lib/dummy-data"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { SolarLogo } from "@/components/solar-logo"
+import { Eye, EyeOff, Copy, Check, Sparkles } from "lucide-react"
+import { loginCredentials } from "@/lib/dummy-data"
+
+function LoginForm() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const { login, isAuthenticated, role } = useAuth()
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+  const [otpSent, setOtpSent] = useState(false)
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    // Ensure dummy data is seeded
+    seedDummyData()
+    
+    // Redirect if already logged in
+    if (isAuthenticated) {
+      if (role === "visitor") {
+        router.push("/visitor/dashboard")
+      } else if (role === "admin") {
+        router.push("/dashboard/admin")
+      } else {
+        router.push("/dashboard")
+      }
+    }
+  }, [isAuthenticated, role, router])
+
+  const [credentials, setCredentials] = useState({
+    username: "",
+    password: "",
+    mobile: "",
+    otp: "",
+  })
+
+  const registered = searchParams.get("registered") === "true"
+
+  const handleCopyCredentials = (index: number) => {
+    const cred = loginCredentials[index]
+    setCredentials((prev) => ({
+      ...prev,
+      username: cred.username,
+      password: cred.password,
+    }))
+    setCopiedIndex(index)
+    setTimeout(() => setCopiedIndex(null), 2000)
+  }
+
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!credentials.username || !credentials.password) {
+      setError("Please enter username and password")
+      return
+    }
+
+    setIsLoading(true)
+    setError("")
+
+    try {
+      // Ensure data is seeded before login
+      seedDummyData()
+      
+      const success = await login(credentials.username, credentials.password)
+      if (success) {
+        // Get role from localStorage (set by login function)
+        const userRole = localStorage.getItem("userRole")
+        
+        // Small delay to ensure state is updated
+        setTimeout(() => {
+          if (userRole === "visitor") {
+            router.push("/visitor/dashboard")
+          } else if (userRole === "admin") {
+            router.push("/dashboard/admin")
+          } else {
+            router.push("/dashboard")
+          }
+        }, 100)
+      } else {
+        setError("Invalid username or password")
+      }
+    } catch {
+      setError("Login failed. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleSendOtp = () => {
+    if (!/^\d{10}$/.test(credentials.mobile)) {
+      setError("Please enter a valid 10-digit mobile number")
+      return
+    }
+    setOtpSent(true)
+    setError("")
+  }
+
+  const handleOtpLogin = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!credentials.mobile || !credentials.otp) {
+      setError("Please enter mobile number and OTP")
+      return
+    }
+    if (credentials.otp.length === 6) {
+      setError("OTP login - In demo mode, please use password login")
+    } else {
+      setError("Please enter a valid 6-digit OTP")
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Header */}
+      <header className="border-b border-border bg-card">
+        <div className="container mx-auto px-4 py-4">
+          <button onClick={() => router.push("/")} className="flex items-center">
+            <SolarLogo size="md" />
+          </button>
+        </div>
+      </header>
+
+      <main className="flex-1 flex items-center justify-center p-4">
+        <div className="w-full max-w-md space-y-4">
+          {registered && (
+            <div className="p-4 bg-green-50 border border-green-200 rounded-xl text-green-700 text-sm text-center flex items-center justify-center gap-2">
+              <Check className="w-4 h-4" />
+              Registration successful! Please login with your credentials.
+            </div>
+          )}
+
+          {/* Demo Credentials Card */}
+          <Card className="border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium text-primary flex items-center gap-2">
+                <Sparkles className="w-4 h-4" />
+                Demo Credentials
+              </CardTitle>
+              <CardDescription className="text-xs">Click to auto-fill login form</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {loginCredentials.map((cred, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleCopyCredentials(index)}
+                  className="w-full flex items-center justify-between p-3 rounded-lg bg-card hover:bg-muted border border-border transition-colors text-left"
+                >
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-foreground">{cred.name}</p>
+                    <p className="text-xs text-muted-foreground font-mono">
+                      {cred.username} / {cred.password}
+                    </p>
+                  </div>
+                  {copiedIndex === index ? (
+                    <Check className="w-4 h-4 text-primary" />
+                  ) : (
+                    <Copy className="w-4 h-4 text-muted-foreground" />
+                  )}
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card className="shadow-lg border-border/50">
+            <CardHeader className="text-center pb-4">
+              <CardTitle className="text-2xl">Welcome Back</CardTitle>
+              <CardDescription>Login as Dealer, Admin, or Visitor</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Tabs defaultValue="password">
+                <TabsList className="grid w-full grid-cols-2 mb-6">
+                  <TabsTrigger value="password">Password</TabsTrigger>
+                  <TabsTrigger value="otp">OTP</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="password">
+                  <form onSubmit={handlePasswordLogin} className="space-y-4">
+                    {error && (
+                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+                        {error}
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="username">Username</Label>
+                      <Input
+                        id="username"
+                        value={credentials.username}
+                        onChange={(e) => setCredentials((prev) => ({ ...prev, username: e.target.value }))}
+                        placeholder="Enter your username"
+                        className="h-11"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="password">Password</Label>
+                      <div className="relative">
+                        <Input
+                          id="password"
+                          type={showPassword ? "text" : "password"}
+                          value={credentials.password}
+                          onChange={(e) => setCredentials((prev) => ({ ...prev, password: e.target.value }))}
+                          placeholder="Enter your password"
+                          className="h-11 pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full h-11 shadow-lg shadow-primary/25" disabled={isLoading}>
+                      {isLoading ? "Logging in..." : "Login"}
+                    </Button>
+                  </form>
+                </TabsContent>
+
+                <TabsContent value="otp">
+                  <form onSubmit={handleOtpLogin} className="space-y-4">
+                    {error && (
+                      <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+                        {error}
+                      </div>
+                    )}
+                    <div className="space-y-2">
+                      <Label htmlFor="mobile">Mobile Number</Label>
+                      <Input
+                        id="mobile"
+                        type="tel"
+                        value={credentials.mobile}
+                        onChange={(e) => setCredentials((prev) => ({ ...prev, mobile: e.target.value }))}
+                        placeholder="Enter 10-digit mobile number"
+                        maxLength={10}
+                        className="h-11"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="otp">OTP</Label>
+                      <div className="flex gap-2">
+                        <Input
+                          id="otp"
+                          value={credentials.otp}
+                          onChange={(e) => setCredentials((prev) => ({ ...prev, otp: e.target.value }))}
+                          placeholder="Enter 6-digit OTP"
+                          maxLength={6}
+                          disabled={!otpSent}
+                          className="h-11"
+                        />
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleSendOtp}
+                          disabled={otpSent}
+                          className="h-11 bg-transparent"
+                        >
+                          {otpSent ? "Sent" : "Send OTP"}
+                        </Button>
+                      </div>
+                    </div>
+                    <Button type="submit" className="w-full h-11" disabled={isLoading || !otpSent}>
+                      {isLoading ? "Logging in..." : "Login with OTP"}
+                    </Button>
+                  </form>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          <p className="text-center text-sm text-muted-foreground">
+            Don&apos;t have an account?{" "}
+            <button onClick={() => router.push("/register")} className="text-primary font-medium hover:underline">
+              Register here
+            </button>
+          </p>
+        </div>
+      </main>
+    </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>}>
+      <LoginForm />
+    </Suspense>
+  )
+}
