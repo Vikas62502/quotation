@@ -143,14 +143,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   return (
     <Card className="border-0 shadow-xl">
       <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-t-lg">
-        <CardTitle className="flex items-center gap-2">
+        <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
           <Sun className="w-5 h-5 text-primary" />
           Product Selection
         </CardTitle>
-        <CardDescription>Configure the solar system components for this quotation</CardDescription>
+        <CardDescription className="text-sm">Configure the solar system components for this quotation</CardDescription>
       </CardHeader>
-      <CardContent className="pt-6">
-        <form onSubmit={handleSubmit} className="space-y-6">
+      <CardContent className="pt-4 sm:pt-6">
+        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
           {error && (
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
               {error}
@@ -1298,12 +1298,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           )}
 
           {/* Navigation Buttons */}
-          <div className="flex justify-between pt-6 border-t border-border">
-            <Button type="button" variant="outline" onClick={onBack}>
+          <div className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 pt-4 sm:pt-6 border-t border-border">
+            <Button type="button" variant="outline" onClick={onBack} className="w-full sm:w-auto h-11">
               <ArrowLeft className="w-4 h-4 mr-2" />
               Back
             </Button>
-            <Button type="submit">
+            <Button type="submit" className="w-full sm:w-auto h-11">
               Continue to Confirmation
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>

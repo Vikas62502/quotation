@@ -200,18 +200,18 @@ export default function AdminPanelPage() {
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-foreground">Admin Panel</h1>
-          <p className="text-muted-foreground mt-2">View and manage all system data</p>
+      <main className="container mx-auto px-4 py-4 sm:py-8">
+        <div className="mb-6 sm:mb-8">
+          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Admin Panel</h1>
+          <p className="text-sm sm:text-base text-muted-foreground mt-1 sm:mt-2">View and manage all system data</p>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="quotations">All Quotations</TabsTrigger>
-            <TabsTrigger value="dealers">Dealers</TabsTrigger>
-            <TabsTrigger value="customers">Customers</TabsTrigger>
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4">
+            <TabsTrigger value="overview" className="text-xs sm:text-sm">Overview</TabsTrigger>
+            <TabsTrigger value="quotations" className="text-xs sm:text-sm">Quotations</TabsTrigger>
+            <TabsTrigger value="dealers" className="text-xs sm:text-sm">Dealers</TabsTrigger>
+            <TabsTrigger value="customers" className="text-xs sm:text-sm">Customers</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -338,127 +338,217 @@ export default function AdminPanelPage() {
                     <p>No quotations found</p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-border">
-                          <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
-                            Quotation ID
-                          </th>
-                          <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Customer</th>
-                          <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground hidden md:table-cell">
-                            Agent/Dealer
-                          </th>
-                          <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground hidden lg:table-cell">
-                            System Type
-                          </th>
-                          <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
-                          <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
-                          <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground hidden sm:table-cell">
-                            Date
-                          </th>
-                          <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedQuotations.map((quotation) => (
-                          <tr
-                            key={quotation.id}
-                            className={`border-b border-border last:border-0 transition-colors ${getStatusColor(quotation.status)}`}
-                          >
-                            <td className="py-3 px-2">
-                              <span className="text-sm font-mono">{quotation.id}</span>
-                            </td>
-                            <td className="py-3 px-2">
-                              <div>
-                                <p className="text-sm font-medium">
-                                  {quotation.customer.firstName} {quotation.customer.lastName}
-                                </p>
-                                <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
-                                <p className="text-xs text-muted-foreground">{quotation.customer.email}</p>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 hidden md:table-cell">
-                              <div className="flex items-center gap-2">
-                                <Building className="w-4 h-4 text-muted-foreground" />
-                                <div>
-                                  <span className="text-sm font-medium">{getDealerName(quotation.dealerId)}</span>
-                                  <p className="text-xs text-muted-foreground">ID: {quotation.dealerId}</p>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 hidden lg:table-cell">
-                              <Badge variant="outline" className="text-xs uppercase">
-                                {quotation.products.systemType}
-                              </Badge>
-                            </td>
-                            <td className="py-3 px-2 text-right">
-                              <div>
-                                <p className="text-sm font-medium">₹{quotation.finalAmount.toLocaleString()}</p>
-                                {quotation.discount > 0 && (
-                                  <p className="text-xs text-muted-foreground">{quotation.discount}% off</p>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-3 px-2">
-                              <div className="space-y-2">
-                                <Select
-                                  value={quotation.status || "pending"}
-                                  onValueChange={(value) => updateQuotationStatus(quotation.id, value as QuotationStatus)}
-                                >
-                                  <SelectTrigger className="w-32 h-8 text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="approved">Approved</SelectItem>
-                                    <SelectItem value="rejected">Rejected</SelectItem>
-                                    <SelectItem value="completed">Completed</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                                <Badge
-                                  className={`text-xs w-full justify-center ${getStatusBadgeColor(quotation.status)}`}
-                                  variant="default"
-                                >
-                                  {(quotation.status || "pending").charAt(0).toUpperCase() +
-                                    (quotation.status || "pending").slice(1)}
-                                </Badge>
-                              </div>
-                            </td>
-                            <td className="py-3 px-2 text-right text-sm text-muted-foreground hidden sm:table-cell">
-                              {new Date(quotation.createdAt).toLocaleDateString()}
-                            </td>
-                            <td className="py-3 px-2 text-right">
-                              <div className="flex items-center justify-end gap-1">
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => {
-                                    setEditingQuotation(quotation)
-                                    setEditDialogOpen(true)
-                                  }}
-                                  title="Edit Quotation"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => {
-                                    setSelectedQuotation(quotation)
-                                    setDialogOpen(true)
-                                  }}
-                                  title="View Details"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </Button>
-                              </div>
-                            </td>
+                  <>
+                    {/* Mobile Card View */}
+                    <div className="block md:hidden space-y-3">
+                      {sortedQuotations.map((quotation) => (
+                        <div
+                          key={quotation.id}
+                          className={`p-4 rounded-lg border-2 ${getStatusColor(quotation.status)}`}
+                        >
+                          <div className="flex justify-between items-start mb-3">
+                            <div className="flex-1">
+                              <p className="text-xs font-mono text-muted-foreground mb-1">{quotation.id}</p>
+                              <p className="font-semibold text-sm">
+                                {quotation.customer.firstName} {quotation.customer.lastName}
+                              </p>
+                              <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
+                            </div>
+                            <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>
+                              {(quotation.status || "pending").charAt(0).toUpperCase() +
+                                (quotation.status || "pending").slice(1)}
+                            </Badge>
+                          </div>
+                          
+                          <div className="space-y-2 mb-3">
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Agent:</span>
+                              <span className="font-medium">{getDealerName(quotation.dealerId)}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Amount:</span>
+                              <span className="font-semibold">₹{quotation.finalAmount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">System:</span>
+                              <Badge variant="outline" className="text-xs">{quotation.products.systemType}</Badge>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span className="text-muted-foreground">Date:</span>
+                              <span className="text-xs">{new Date(quotation.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <Select
+                              value={quotation.status || "pending"}
+                              onValueChange={(value) => updateQuotationStatus(quotation.id, value as QuotationStatus)}
+                            >
+                              <SelectTrigger className="w-full h-9 text-xs">
+                                <SelectValue placeholder="Change Status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pending">Pending</SelectItem>
+                                <SelectItem value="approved">Approved</SelectItem>
+                                <SelectItem value="rejected">Rejected</SelectItem>
+                                <SelectItem value="completed">Completed</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            
+                            <div className="flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEditingQuotation(quotation)
+                                  setEditDialogOpen(true)
+                                }}
+                                className="flex-1"
+                              >
+                                <Edit className="w-3 h-3 mr-1" />
+                                Edit
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedQuotation(quotation)
+                                  setDialogOpen(true)
+                                }}
+                                className="flex-1"
+                              >
+                                <Eye className="w-3 h-3 mr-1" />
+                                View
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Desktop Table View */}
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
+                              Quotation ID
+                            </th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Customer</th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
+                              Agent/Dealer
+                            </th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground hidden lg:table-cell">
+                              System Type
+                            </th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">
+                              Date
+                            </th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody>
+                          {sortedQuotations.map((quotation) => (
+                            <tr
+                              key={quotation.id}
+                              className={`border-b border-border last:border-0 transition-colors ${getStatusColor(quotation.status)}`}
+                            >
+                              <td className="py-3 px-2">
+                                <span className="text-sm font-mono">{quotation.id}</span>
+                              </td>
+                              <td className="py-3 px-2">
+                                <div>
+                                  <p className="text-sm font-medium">
+                                    {quotation.customer.firstName} {quotation.customer.lastName}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
+                                  <p className="text-xs text-muted-foreground">{quotation.customer.email}</p>
+                                </div>
+                              </td>
+                              <td className="py-3 px-2">
+                                <div className="flex items-center gap-2">
+                                  <Building className="w-4 h-4 text-muted-foreground" />
+                                  <div>
+                                    <span className="text-sm font-medium">{getDealerName(quotation.dealerId)}</span>
+                                    <p className="text-xs text-muted-foreground">ID: {quotation.dealerId}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-3 px-2 hidden lg:table-cell">
+                                <Badge variant="outline" className="text-xs uppercase">
+                                  {quotation.products.systemType}
+                                </Badge>
+                              </td>
+                              <td className="py-3 px-2 text-right">
+                                <div>
+                                  <p className="text-sm font-medium">₹{quotation.finalAmount.toLocaleString()}</p>
+                                  {quotation.discount > 0 && (
+                                    <p className="text-xs text-muted-foreground">{quotation.discount}% off</p>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-3 px-2">
+                                <div className="space-y-2">
+                                  <Select
+                                    value={quotation.status || "pending"}
+                                    onValueChange={(value) => updateQuotationStatus(quotation.id, value as QuotationStatus)}
+                                  >
+                                    <SelectTrigger className="w-32 h-8 text-xs">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="pending">Pending</SelectItem>
+                                      <SelectItem value="approved">Approved</SelectItem>
+                                      <SelectItem value="rejected">Rejected</SelectItem>
+                                      <SelectItem value="completed">Completed</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <Badge
+                                    className={`text-xs w-full justify-center ${getStatusBadgeColor(quotation.status)}`}
+                                    variant="default"
+                                  >
+                                    {(quotation.status || "pending").charAt(0).toUpperCase() +
+                                      (quotation.status || "pending").slice(1)}
+                                  </Badge>
+                                </div>
+                              </td>
+                              <td className="py-3 px-2 text-right text-sm text-muted-foreground">
+                                {new Date(quotation.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="py-3 px-2 text-right">
+                                <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      setEditingQuotation(quotation)
+                                      setEditDialogOpen(true)
+                                    }}
+                                    title="Edit Quotation"
+                                  >
+                                    <Edit className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      setSelectedQuotation(quotation)
+                                      setDialogOpen(true)
+                                    }}
+                                    title="View Details"
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>

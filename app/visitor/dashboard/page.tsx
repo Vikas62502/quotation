@@ -266,26 +266,26 @@ export default function VisitorDashboardPage() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-xl font-bold">Visitor Dashboard</h1>
-              <p className="text-sm text-muted-foreground">
+        <div className="container mx-auto px-4 py-3 sm:py-4">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-lg sm:text-xl font-bold truncate">Visitor Dashboard</h1>
+              <p className="text-xs sm:text-sm text-muted-foreground truncate">
                 Welcome, {visitor.firstName} {visitor.lastName}
               </p>
             </div>
-            <Button variant="outline" onClick={handleLogout}>
-              <LogOut className="w-4 h-4 mr-2" />
-              Logout
+            <Button variant="outline" size="sm" onClick={handleLogout} className="flex-shrink-0">
+              <LogOut className="w-4 h-4 sm:mr-2" />
+              <span className="hidden sm:inline">Logout</span>
             </Button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-6">
-          <h2 className="text-2xl font-bold mb-2">My Assigned Visits</h2>
-          <p className="text-muted-foreground">View all visits assigned to you</p>
+      <main className="container mx-auto px-4 py-4 sm:py-8">
+        <div className="mb-4 sm:mb-6">
+          <h2 className="text-xl sm:text-2xl font-bold mb-1 sm:mb-2">My Assigned Visits</h2>
+          <p className="text-sm sm:text-base text-muted-foreground">View all visits assigned to you</p>
         </div>
 
         {/* Search and Filter */}

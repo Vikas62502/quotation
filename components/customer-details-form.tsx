@@ -81,11 +81,11 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Customer Details</CardTitle>
-        <CardDescription>Enter the customer information for the quotation</CardDescription>
+        <CardTitle className="text-lg sm:text-xl">Customer Details</CardTitle>
+        <CardDescription className="text-sm">Enter the customer information for the quotation</CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
           {error && (
             <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
               {error}
@@ -137,8 +137,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
             </div>
           </div>
 
-          <div className="border-t border-border pt-6">
-            <h3 className="text-sm font-medium mb-4">Address Details</h3>
+          <div className="border-t border-border pt-4 sm:pt-6">
+            <h3 className="text-sm font-medium mb-3 sm:mb-4">Address Details</h3>
             <div className="space-y-4">
               <div>
                 <Label htmlFor="street">Street Address *</Label>
@@ -189,7 +189,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
           </div>
 
           <div className="flex justify-end">
-            <Button type="submit">
+            <Button type="submit" className="w-full sm:w-auto h-11">
               Continue to Product Selection
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>

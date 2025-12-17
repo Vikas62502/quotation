@@ -1172,10 +1172,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
         {/* Summary Card */}
         <Card className="shadow-lg border-border/50">
           <CardHeader>
-            <CardTitle className="text-xl">Quotation Summary</CardTitle>
-            <CardDescription>Review and confirm the quotation details</CardDescription>
+            <CardTitle className="text-lg sm:text-xl">Quotation Summary</CardTitle>
+            <CardDescription className="text-sm">Review and confirm the quotation details</CardDescription>
           </CardHeader>
-          <CardContent className="space-y-6">
+          <CardContent className="space-y-4 sm:space-y-6">
             {/* Customer Info */}
             <div>
               <div className="flex items-center justify-between mb-3">
@@ -1195,13 +1195,13 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                   </Button>
                 )}
               </div>
-              <div className="bg-muted/50 rounded-xl p-4 border border-border">
-                <p className="font-semibold text-foreground">
+              <div className="bg-muted/50 rounded-xl p-3 sm:p-4 border border-border">
+                <p className="font-semibold text-sm sm:text-base text-foreground">
                   {customer.firstName} {customer.lastName}
                 </p>
-                <p className="text-sm text-muted-foreground">{customer.mobile}</p>
-                <p className="text-sm text-muted-foreground">{customer.email}</p>
-                <p className="text-sm text-muted-foreground mt-2">
+                <p className="text-xs sm:text-sm text-muted-foreground">{customer.mobile}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground">{customer.email}</p>
+                <p className="text-xs sm:text-sm text-muted-foreground mt-2">
                   {customer.address.street}, {customer.address.city}, {customer.address.state} -{" "}
                   {customer.address.pincode}
                 </p>

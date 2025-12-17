@@ -1285,24 +1285,24 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
       {/* Dialog for viewing quotation details */}
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle>Quotation Details - {quotation.id}</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="text-lg sm:text-xl">Quotation Details - {quotation.id}</DialogTitle>
+            <DialogDescription className="text-sm">
               View quotation details and download PDF
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          <div className="space-y-3 sm:space-y-4">
             {/* Customer Info */}
             <Card className="border-primary/20">
-              <CardHeader className="bg-primary/5">
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <User className="w-5 h-5 text-primary" />
+              <CardHeader className="bg-primary/5 p-3 sm:p-6">
+                <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                  <User className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
                   Customer Information
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3 pt-4">
+              <CardContent className="space-y-2 sm:space-y-3 pt-3 sm:pt-4 p-3 sm:p-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="flex items-start gap-3">
                     <User className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
@@ -1532,11 +1532,20 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             </Card>
           </div>
 
-          <div className="flex justify-end gap-2 mt-4">
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isGeneratingPDF}>
+          <div className="flex flex-col sm:flex-row justify-end gap-2 mt-4">
+            <Button 
+              variant="outline" 
+              onClick={() => onOpenChange(false)} 
+              disabled={isGeneratingPDF}
+              className="w-full sm:w-auto order-2 sm:order-1"
+            >
               Close
             </Button>
-            <Button onClick={generatePDF} disabled={isGeneratingPDF}>
+            <Button 
+              onClick={generatePDF} 
+              disabled={isGeneratingPDF}
+              className="w-full sm:w-auto order-1 sm:order-2"
+            >
               <Download className="w-4 h-4 mr-2" />
               {isGeneratingPDF ? "Generating PDF..." : "Download PDF"}
             </Button>
