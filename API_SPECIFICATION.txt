@@ -1,0 +1,1642 @@
+================================================================================
+                     REST API SPECIFICATION
+              Solar Quotation Management System
+================================================================================
+
+Version: 1.0
+Base URL: http://localhost:3050/api
+Production URL: https://api.chairbord.com/v1
+Date: December 17, 2025
+Last Updated: December 23, 2025
+
+================================================================================
+                        TABLE OF CONTENTS
+================================================================================
+
+1. AUTHENTICATION & AUTHORIZATION
+2. DEALERS API
+3. CUSTOMERS API
+4. QUOTATIONS API
+5. VISITS API
+6. VISITORS API
+7. ADMIN API
+8. SYSTEM CONFIG API
+9. ERROR CODES
+10. RATE LIMITING
+11. WEBHOOKS
+
+================================================================================
+                  1. AUTHENTICATION & AUTHORIZATION
+================================================================================
+
+A. LOGIN
+------------------------------------------------------------------------
+POST /auth/login
+Content-Type: application/json
+
+Request Body:
+{
+  "username": "dealer123",
+  "password": "password123"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "refresh_token_here",
+    "user": {
+      "id": "dealer_123",
+      "username": "dealer123",
+      "firstName": "John",
+      "lastName": "Doe",
+      "email": "john@example.com",
+      "role": "dealer"
+    },
+    "expiresIn": 3600
+  }
+}
+
+Response (401 Unauthorized):
+{
+  "success": false,
+  "error": {
+    "code": "AUTH_001",
+    "message": "Invalid username or password"
+  }
+}
+
+
+B. REFRESH TOKEN
+------------------------------------------------------------------------
+POST /auth/refresh
+Authorization: Bearer {refreshToken}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "token": "new_access_token",
+    "expiresIn": 3600
+  }
+}
+
+
+C. LOGOUT
+------------------------------------------------------------------------
+POST /auth/logout
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Logged out successfully"
+}
+
+
+D. CHANGE PASSWORD
+------------------------------------------------------------------------
+PUT /auth/change-password
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "currentPassword": "old_password",
+  "newPassword": "new_password"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Password changed successfully"
+}
+
+
+================================================================================
+                           2. DEALERS API
+================================================================================
+
+A. REGISTER DEALER (PUBLIC)
+------------------------------------------------------------------------
+POST /dealers/register
+Content-Type: application/json
+
+Request Body:
+{
+  "username": "dealer123",
+  "password": "securePassword123",
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.doe@example.com",
+  "mobile": "9876543210",
+  "gender": "Male",
+  "dateOfBirth": "1985-06-15",
+  "fatherName": "Robert Doe",
+  "fatherContact": "9876543211",
+  "governmentIdType": "Aadhaar Card",
+  "governmentIdNumber": "1234-5678-9012",
+  "governmentIdImage": "base64_encoded_image_or_url",
+  "address": {
+    "street": "123, Solar Complex, MG Road",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "pincode": "380001"
+  }
+}
+
+Validation Rules:
+- username: required, unique, min 3 characters, alphanumeric and underscore only
+- password: required, min 8 characters, must contain at least one letter and one number
+- email: required, valid email format, unique
+- mobile: required, 10 digits, Indian format, unique
+- firstName: required, min 2 characters
+- lastName: required, min 2 characters
+- gender: required, one of: "Male", "Female", "Other"
+- dateOfBirth: required, valid date, must be 18+ years old
+- fatherName: required
+- fatherContact: required, 10 digits, Indian format
+- governmentIdType: required, one of: "Aadhaar Card", "PAN Card", "Voter ID", "Driving License", "Passport"
+- governmentIdNumber: required, format validation based on ID type
+- governmentIdImage: optional, base64 encoded image or URL
+- address: required
+  - street: required
+  - city: required
+  - state: required, must be valid Indian state
+  - pincode: required, 6 digits
+
+Response (201 Created):
+{
+  "success": true,
+  "message": "Dealer registered successfully. Please verify your email to activate your account.",
+  "data": {
+    "id": "dealer_123",
+    "username": "dealer123",
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.doe@example.com",
+    "mobile": "9876543210",
+    "role": "dealer",
+    "isActive": false,
+    "emailVerified": false,
+    "createdAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+NOTES:
+- New dealers are registered with isActive = false by default
+- Email verification is required before account activation
+- Admin must approve/activate new dealer registrations
+- Password will be hashed before storage
+- Government ID image is optional but recommended
+- Role is automatically set to "dealer" (admin role cannot be assigned via registration)
+
+Response (400 Bad Request):
+{
+  "success": false,
+  "error": {
+    "code": "VAL_001",
+    "message": "Validation error",
+    "details": [
+      {
+        "field": "email",
+        "message": "Email already exists"
+      },
+      {
+        "field": "username",
+        "message": "Username already exists"
+      }
+    ]
+  }
+}
+
+Response (400 Bad Request) - Invalid Data:
+{
+  "success": false,
+  "error": {
+    "code": "VAL_002",
+    "message": "Required field missing",
+    "details": [
+      {
+        "field": "password",
+        "message": "Password is required"
+      }
+    ]
+  }
+}
+
+
+B. GET DEALER PROFILE
+------------------------------------------------------------------------
+GET /dealers/me
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "dealer_123",
+    "username": "dealer123",
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john@example.com",
+    "mobile": "9876543210",
+    "company": "Solar Solutions",
+    "role": "dealer",
+    "createdAt": "2025-01-15T10:30:00Z"
+  }
+}
+
+
+C. UPDATE DEALER PROFILE
+------------------------------------------------------------------------
+PUT /dealers/me
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.new@example.com",
+  "mobile": "9876543210",
+  "company": "Solar Solutions Pvt Ltd"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "dealer_123",
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.new@example.com",
+    "mobile": "9876543210",
+    "company": "Solar Solutions Pvt Ltd",
+    "updatedAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+D. GET DEALER STATISTICS
+------------------------------------------------------------------------
+GET /dealers/me/statistics
+Authorization: Bearer {token}
+Query Parameters:
+  - startDate (optional): ISO date
+  - endDate (optional): ISO date
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "totalQuotations": 45,
+    "totalCustomers": 38,
+    "totalRevenue": 4500000,
+    "thisMonth": {
+      "quotations": 12,
+      "revenue": 1200000
+    },
+    "statusBreakdown": {
+      "pending": 15,
+      "approved": 20,
+      "rejected": 5,
+      "completed": 5
+    }
+  }
+}
+
+
+================================================================================
+                          3. CUSTOMERS API
+================================================================================
+
+A. CREATE CUSTOMER
+------------------------------------------------------------------------
+POST /customers
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "firstName": "Amit",
+  "lastName": "Sharma",
+  "mobile": "9876543210",
+  "email": "amit@example.com",
+  "address": {
+    "street": "123 MG Road",
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "pincode": "302012"
+  }
+}
+
+Response (201 Created):
+{
+  "success": true,
+  "data": {
+    "id": "cust_789",
+    "firstName": "Amit",
+    "lastName": "Sharma",
+    "mobile": "9876543210",
+    "email": "amit@example.com",
+    "address": {
+      "street": "123 MG Road",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "pincode": "302012"
+    },
+    "dealerId": "dealer_123",
+    "createdAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+B. GET CUSTOMERS
+------------------------------------------------------------------------
+GET /customers
+Authorization: Bearer {token}
+Query Parameters:
+  - page (default: 1)
+  - limit (default: 20, max: 100)
+  - search (optional): search by name, mobile, email
+  - sortBy (default: createdAt)
+  - sortOrder (default: desc)
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "customers": [
+      {
+        "id": "cust_789",
+        "firstName": "Amit",
+        "lastName": "Sharma",
+        "mobile": "9876543210",
+        "email": "amit@example.com",
+        "address": {
+          "street": "123 MG Road",
+          "city": "Jaipur",
+          "state": "Rajasthan",
+          "pincode": "302012"
+        },
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 38,
+      "totalPages": 2
+    }
+  }
+}
+
+NOTES:
+- All customers now return complete address object with street, city, state, and pincode
+- Address structure is consistent with GET /customers/{id} and PUT /customers/{id} endpoints
+- This enables dealers to view and edit complete customer address information
+
+
+C. GET CUSTOMER BY ID
+------------------------------------------------------------------------
+GET /customers/{customerId}
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "cust_789",
+    "firstName": "Amit",
+    "lastName": "Sharma",
+    "mobile": "9876543210",
+    "email": "amit@example.com",
+    "address": {
+      "street": "123 MG Road",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "pincode": "302012"
+    },
+    "dealerId": "dealer_123",
+    "quotations": [
+      {
+        "id": "QT-ABC123",
+        "systemType": "on-grid",
+        "finalAmount": 250000,
+        "status": "pending",
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "createdAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+D. UPDATE CUSTOMER
+------------------------------------------------------------------------
+PUT /customers/{customerId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "firstName": "Amit",
+  "lastName": "Sharma",
+  "mobile": "9876543210",
+  "email": "amit@example.com",
+  "address": {
+    "street": "123 MG Road",
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "pincode": "302012"
+  }
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "cust_789",
+    "firstName": "Amit",
+    "lastName": "Sharma",
+    "mobile": "9876543210",
+    "email": "amit@example.com",
+    "address": {
+      "street": "123 MG Road",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "pincode": "302012"
+    },
+    "dealerId": "dealer_123",
+    "createdAt": "2025-12-17T14:30:00Z",
+    "updatedAt": "2025-12-17T15:30:00Z"
+  }
+}
+
+NOTES:
+- All address fields (street, city, state, pincode) must be provided
+- Address fields are validated:
+  - street: Required, non-empty string
+  - city: Required, non-empty string
+  - state: Required, must be a valid Indian state
+  - pincode: Required, exactly 6 digits
+- Only dealers who own the customer (dealerId matches) can update
+- Returns the complete updated customer object with all address fields
+
+
+================================================================================
+                         4. QUOTATIONS API
+================================================================================
+
+A. CREATE QUOTATION
+------------------------------------------------------------------------
+POST /quotations
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "customerId": "cust_789",
+  "customer": {
+    "firstName": "Amit",
+    "lastName": "Sharma",
+    "mobile": "9876543210",
+    "email": "amit@example.com",
+    "address": {
+      "street": "123 MG Road",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "pincode": "302012"
+    }
+  },
+  "products": {
+    "systemType": "on-grid",
+    "panelBrand": "Adani",
+    "panelSize": "540W",
+    "panelQuantity": 10,
+    "inverterType": "String Inverter",
+    "inverterBrand": "Growatt",
+    "inverterSize": "5kW",
+    "structureType": "Tin Shed",
+    "structureSize": "5kW",
+    "meterBrand": "HPL",
+    "acCableBrand": "Polycab",
+    "acCableSize": "4mm",
+    "dcCableBrand": "Polycab",
+    "dcCableSize": "6mm",
+    "acdb": "4 Way",
+    "dcdb": "2 String",
+    "centralSubsidy": 30000,
+    "stateSubsidy": 10000
+  },
+  "discount": 5
+}
+
+Response (201 Created):
+{
+  "success": true,
+  "data": {
+    "id": "QT-ABC123",
+    "dealerId": "dealer_123",
+    "customerId": "cust_789",
+    "systemType": "on-grid",
+    "status": "pending",
+    "discount": 5,
+    "pricing": {
+      "panelPrice": 250000,
+      "inverterPrice": 35000,
+      "structurePrice": 40000,
+      "meterPrice": 5000,
+      "cablePrice": 6000,
+      "acdbDcdbPrice": 5000,
+      "subtotal": 341000,
+      "centralSubsidy": 30000,
+      "stateSubsidy": 10000,
+      "totalAmount": 301000,
+      "discountAmount": 15050,
+      "finalAmount": 285950
+    },
+    "createdAt": "2025-12-17T14:30:00Z",
+    "validUntil": "2025-12-22T14:30:00Z"
+  }
+}
+
+
+B. GET QUOTATIONS
+------------------------------------------------------------------------
+GET /quotations
+Authorization: Bearer {token}
+Query Parameters:
+  - page (default: 1)
+  - limit (default: 20, max: 100)
+  - status (optional): pending, approved, rejected, completed
+  - search (optional): search by ID, customer name, mobile
+  - startDate (optional): ISO date
+  - endDate (optional): ISO date
+  - sortBy (default: createdAt)
+  - sortOrder (default: desc)
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "quotations": [
+      {
+        "id": "QT-ABC123",
+        "customer": {
+          "firstName": "Amit",
+          "lastName": "Sharma",
+          "mobile": "9876543210"
+        },
+        "systemType": "on-grid",
+        "finalAmount": 285950,
+        "status": "pending",
+        "createdAt": "2025-12-17T14:30:00Z",
+        "validUntil": "2025-12-22T14:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 45,
+      "totalPages": 3
+    }
+  }
+}
+
+
+C. GET QUOTATION BY ID
+------------------------------------------------------------------------
+GET /quotations/{quotationId}
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "QT-ABC123",
+    "dealerId": "dealer_123",
+    "customer": {
+      "id": "cust_789",
+      "firstName": "Amit",
+      "lastName": "Sharma",
+      "mobile": "9876543210",
+      "email": "amit@example.com",
+      "address": {
+        "street": "123 MG Road",
+        "city": "Jaipur",
+        "state": "Rajasthan",
+        "pincode": "302012"
+      }
+    },
+    "products": {
+      "systemType": "on-grid",
+      "panelBrand": "Adani",
+      "panelSize": "540W",
+      "panelQuantity": 10,
+      "inverterType": "String Inverter",
+      "inverterBrand": "Growatt",
+      "inverterSize": "5kW",
+      /* ... all product details ... */
+    },
+    "pricing": {
+      "panelPrice": 250000,
+      "inverterPrice": 35000,
+      /* ... all pricing details ... */
+      "finalAmount": 285950
+    },
+    "status": "pending",
+    "discount": 5,
+    "createdAt": "2025-12-17T14:30:00Z",
+    "validUntil": "2025-12-22T14:30:00Z"
+  }
+}
+
+
+D. UPDATE QUOTATION DISCOUNT
+------------------------------------------------------------------------
+PATCH /quotations/{quotationId}/discount
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "discount": 10
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "QT-ABC123",
+    "discount": 10,
+    "finalAmount": 270900,
+    "updatedAt": "2025-12-17T15:00:00Z"
+  }
+}
+
+
+E. DOWNLOAD QUOTATION PDF
+------------------------------------------------------------------------
+GET /quotations/{quotationId}/pdf
+Authorization: Bearer {token}
+
+Response (200 OK):
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="Quotation_QT-ABC123.pdf"
+
+[Binary PDF Data]
+
+
+================================================================================
+                           5. VISITS API
+================================================================================
+
+A. CREATE VISIT
+------------------------------------------------------------------------
+POST /visits
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "quotationId": "QT-ABC123",
+  "visitDate": "2025-12-20",
+  "visitTime": "14:00",
+  "location": "123 MG Road, Jaipur, Rajasthan - 302012",
+  "locationLink": "https://maps.google.com/?q=26.9124,75.7873",
+  "notes": "Customer prefers afternoon visit",
+  "visitors": [
+    {
+      "visitorId": "visitor_001"
+    },
+    {
+      "visitorId": "visitor_002"
+    }
+  ]
+}
+
+Response (201 Created):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "quotationId": "QT-ABC123",
+    "dealerId": "dealer_123",
+    "visitDate": "2025-12-20",
+    "visitTime": "14:00",
+    "location": "123 MG Road, Jaipur, Rajasthan - 302012",
+    "locationLink": "https://maps.google.com/?q=26.9124,75.7873",
+    "notes": "Customer prefers afternoon visit",
+    "status": "pending",
+    "visitors": [
+      {
+        "visitorId": "visitor_001",
+        "visitorName": "Rajesh Kumar"
+      },
+      {
+        "visitorId": "visitor_002",
+        "visitorName": "Suresh Patel"
+      }
+    ],
+    "createdAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+B. GET VISITS FOR QUOTATION
+------------------------------------------------------------------------
+GET /quotations/{quotationId}/visits
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "visits": [
+      {
+        "id": "visit_456",
+        "visitDate": "2025-12-20",
+        "visitTime": "14:00",
+        "location": "123 MG Road, Jaipur, Rajasthan - 302012",
+        "locationLink": "https://maps.google.com/?q=26.9124,75.7873",
+        "status": "pending",
+        "visitors": [
+          {
+            "visitorId": "visitor_001",
+            "visitorName": "Rajesh Kumar"
+          }
+        ],
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ]
+  }
+}
+
+
+C. APPROVE VISIT (VISITOR)
+------------------------------------------------------------------------
+PATCH /visits/{visitId}/approve
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "status": "approved",
+    "updatedAt": "2025-12-20T15:30:00Z"
+  }
+}
+
+
+D. COMPLETE VISIT (VISITOR)
+------------------------------------------------------------------------
+PATCH /visits/{visitId}/complete
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "length": 500.50,
+  "width": 300.25,
+  "height": 250.75,
+  "images": [
+    "data:image/jpeg;base64,/9j/4AAQSkZJRg...",
+    "data:image/jpeg;base64,/9j/4AAQSkZJRg..."
+  ],
+  "notes": "Site is ready for installation. All measurements taken."
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "status": "completed",
+    "length": 500.50,
+    "width": 300.25,
+    "height": 250.75,
+    "images": ["url1", "url2"],
+    "notes": "Site is ready for installation. All measurements taken.",
+    "updatedAt": "2025-12-20T15:30:00Z"
+  }
+}
+
+
+E. MARK VISIT AS INCOMPLETE (VISITOR)
+------------------------------------------------------------------------
+PATCH /visits/{visitId}/incomplete
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "reason": "Site requires additional preparation work before installation can proceed"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "status": "incomplete",
+    "rejectionReason": "Site requires additional preparation work before installation can proceed",
+    "updatedAt": "2025-12-20T15:30:00Z"
+  }
+}
+
+
+F. RESCHEDULE VISIT (VISITOR)
+------------------------------------------------------------------------
+PATCH /visits/{visitId}/reschedule
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "reason": "Customer requested to reschedule due to personal commitments"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "status": "rescheduled",
+    "rejectionReason": "Customer requested to reschedule due to personal commitments",
+    "updatedAt": "2025-12-20T15:30:00Z"
+  }
+}
+
+
+G. REJECT VISIT (VISITOR)
+------------------------------------------------------------------------
+PATCH /visits/{visitId}/reject
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "rejectionReason": "Customer not available at scheduled time"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visit_456",
+    "status": "rejected",
+    "rejectionReason": "Customer not available at scheduled time",
+    "updatedAt": "2025-12-20T15:30:00Z"
+  }
+}
+
+
+H. DELETE VISIT
+------------------------------------------------------------------------
+DELETE /visits/{visitId}
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Visit deleted successfully"
+}
+
+
+================================================================================
+                          6. VISITORS API
+================================================================================
+
+A. GET ASSIGNED VISITS (VISITOR)
+------------------------------------------------------------------------
+GET /visitors/me/visits
+Authorization: Bearer {token}
+Query Parameters:
+  - status (optional): pending, approved, completed, incomplete, rejected, rescheduled
+  - startDate (optional): ISO date
+  - endDate (optional): ISO date
+  - search (optional): search by customer name, quotation ID, location
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "visits": [
+      {
+        "id": "visit_456",
+        "quotation": {
+          "id": "QT-ABC123",
+          "systemType": "on-grid",
+          "finalAmount": 285950,
+          "createdAt": "2025-12-17T14:30:00Z"
+        },
+        "customer": {
+          "firstName": "Amit",
+          "lastName": "Sharma",
+          "mobile": "9876543210",
+          "email": "amit@example.com",
+          "address": {
+            "street": "123 MG Road",
+            "city": "Jaipur",
+            "state": "Rajasthan",
+            "pincode": "302012"
+          }
+        },
+        "dealer": {
+          "firstName": "John",
+          "lastName": "Doe"
+        },
+        "visitDate": "2025-12-20",
+        "visitTime": "14:00",
+        "location": "123 MG Road, Jaipur, Rajasthan - 302012",
+        "locationLink": "https://maps.google.com/?q=26.9124,75.7873",
+        "notes": "Customer prefers afternoon visit",
+        "status": "pending",
+        "length": null,
+        "width": null,
+        "height": null,
+        "images": null,
+        "otherVisitors": [
+          {
+            "visitorId": "visitor_002",
+            "visitorName": "Suresh Patel"
+          }
+        ],
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "count": 5
+  }
+}
+
+
+B. GET VISITOR STATISTICS
+------------------------------------------------------------------------
+GET /visitors/me/statistics
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "totalVisits": 25,
+    "pendingVisits": 5,
+    "approvedVisits": 3,
+    "completedVisits": 15,
+    "incompleteVisits": 2,
+    "rejectedVisits": 2,
+    "rescheduledVisits": 1,
+    "upcomingVisits": [
+      {
+        "id": "visit_456",
+        "visitDate": "2025-12-20",
+        "visitTime": "14:00",
+        "customerName": "Amit Sharma"
+      }
+    ]
+  }
+}
+
+
+================================================================================
+                           7. ADMIN API
+================================================================================
+
+A. GET ALL QUOTATIONS (ADMIN)
+------------------------------------------------------------------------
+GET /admin/quotations
+Authorization: Bearer {token}
+Query Parameters:
+  - page, limit, status, search, startDate, endDate (same as dealer)
+  - dealerId (optional): filter by specific dealer
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "quotations": [
+      {
+        "id": "QT-ABC123",
+        "dealer": {
+          "id": "dealer_123",
+          "firstName": "John",
+          "lastName": "Doe"
+        },
+        "customer": {
+          "firstName": "Amit",
+          "lastName": "Sharma",
+          "mobile": "9876543210"
+        },
+        "systemType": "on-grid",
+        "finalAmount": 285950,
+        "status": "pending",
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "pagination": { /* ... */ }
+  }
+}
+
+
+B. UPDATE QUOTATION STATUS (ADMIN)
+------------------------------------------------------------------------
+PATCH /admin/quotations/{quotationId}/status
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "status": "approved"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "QT-ABC123",
+    "status": "approved",
+    "updatedAt": "2025-12-17T16:00:00Z"
+  }
+}
+
+
+C. GET ALL DEALERS (ADMIN)
+------------------------------------------------------------------------
+GET /admin/dealers
+Authorization: Bearer {token}
+Query Parameters:
+  - page (default: 1)
+  - limit (default: 20)
+  - search (optional): search by name, email, mobile, username
+  - isActive (optional): filter by active status (true/false)
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "dealers": [
+      {
+        "id": "dealer_123",
+        "username": "dealer123",
+        "firstName": "John",
+        "lastName": "Doe",
+        "email": "john@example.com",
+        "mobile": "9876543210",
+        "gender": "Male",
+        "dateOfBirth": "1985-06-15",
+        "fatherName": "Robert Doe",
+        "fatherContact": "9876543211",
+        "governmentIdType": "Aadhaar Card",
+        "governmentIdNumber": "1234-5678-9012",
+        "address": {
+          "street": "123, Solar Complex, MG Road",
+          "city": "Ahmedabad",
+          "state": "Gujarat",
+          "pincode": "380001"
+        },
+        "company": "Solar Solutions",
+        "isActive": true,
+        "emailVerified": false,
+        "quotationCount": 45,
+        "totalRevenue": 4500000,
+        "createdAt": "2025-01-15T10:30:00Z",
+        "updatedAt": "2025-01-20T10:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 50,
+      "totalPages": 3
+    }
+  }
+}
+
+NOTES:
+- Returns all dealer registration information including personal, family, ID proof, and address details
+- isActive = false indicates dealer is pending admin approval
+- emailVerified = false indicates email not yet verified
+- quotationCount and totalRevenue are aggregated statistics
+
+
+D. UPDATE DEALER (ADMIN)
+------------------------------------------------------------------------
+PUT /admin/dealers/{dealerId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "firstName": "John",
+  "lastName": "Doe",
+  "email": "john.new@example.com",
+  "mobile": "9876543210",
+  "gender": "Male",
+  "dateOfBirth": "1985-06-15",
+  "fatherName": "Robert Doe",
+  "fatherContact": "9876543211",
+  "governmentIdType": "Aadhaar Card",
+  "governmentIdNumber": "1234-5678-9012",
+  "address": {
+    "street": "123, Solar Complex, MG Road",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "pincode": "380001"
+  },
+  "isActive": true,
+  "emailVerified": false
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "dealer_123",
+    "username": "dealer123",
+    "firstName": "John",
+    "lastName": "Doe",
+    "email": "john.new@example.com",
+    "mobile": "9876543210",
+    "gender": "Male",
+    "dateOfBirth": "1985-06-15",
+    "fatherName": "Robert Doe",
+    "fatherContact": "9876543211",
+    "governmentIdType": "Aadhaar Card",
+    "governmentIdNumber": "1234-5678-9012",
+    "address": {
+      "street": "123, Solar Complex, MG Road",
+      "city": "Ahmedabad",
+      "state": "Gujarat",
+      "pincode": "380001"
+    },
+    "isActive": true,
+    "emailVerified": false,
+    "updatedAt": "2025-12-17T15:00:00Z"
+  }
+}
+
+NOTES:
+- Admin can update any dealer information
+- Setting isActive = true activates/approves the dealer
+- Setting isActive = false deactivates the dealer
+- Username cannot be changed
+
+
+E. ACTIVATE DEALER (ADMIN)
+------------------------------------------------------------------------
+PATCH /admin/dealers/{dealerId}/activate
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Dealer activated successfully",
+  "data": {
+    "id": "dealer_123",
+    "isActive": true,
+    "updatedAt": "2025-12-17T15:00:00Z"
+  }
+}
+
+Response (404 Not Found):
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Dealer not found"
+  }
+}
+
+NOTES:
+- This endpoint specifically activates a pending dealer (sets isActive = true)
+- Convenience endpoint for dealer approval workflow
+- Alternative to using PUT /admin/dealers/{dealerId} with isActive: true
+
+
+F. GET SYSTEM STATISTICS (ADMIN)
+------------------------------------------------------------------------
+GET /admin/statistics
+Authorization: Bearer {token}
+Query Parameters:
+  - startDate (optional)
+  - endDate (optional)
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "overview": {
+      "totalQuotations": 450,
+      "totalRevenue": 45000000,
+      "totalCustomers": 380,
+      "activeDealers": 25,
+      "totalVisitors": 50,
+      "activeVisitors": 45
+    },
+    "thisMonth": {
+      "quotations": 120,
+      "revenue": 12000000,
+      "newCustomers": 95,
+      "newVisitors": 5
+    },
+    "statusBreakdown": {
+      "pending": 150,
+      "approved": 200,
+      "rejected": 50,
+      "completed": 50
+    },
+    "topDealers": [
+      {
+        "dealerId": "dealer_123",
+        "dealerName": "John Doe",
+        "quotationCount": 45,
+        "revenue": 4500000
+      }
+    ]
+  }
+}
+
+
+E. CREATE VISITOR (ADMIN)
+------------------------------------------------------------------------
+POST /admin/visitors
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "username": "visitor_001",
+  "password": "securePassword123",
+  "firstName": "Rajesh",
+  "lastName": "Kumar",
+  "email": "rajesh.kumar@example.com",
+  "mobile": "9876543210",
+  "employeeId": "EMP001"
+}
+
+Response (201 Created):
+{
+  "success": true,
+  "data": {
+    "id": "visitor_001",
+    "username": "visitor_001",
+    "firstName": "Rajesh",
+    "lastName": "Kumar",
+    "email": "rajesh.kumar@example.com",
+    "mobile": "9876543210",
+    "employeeId": "EMP001",
+    "createdBy": "admin_001",
+    "isActive": true,
+    "createdAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+F. GET ALL VISITORS (ADMIN)
+------------------------------------------------------------------------
+GET /admin/visitors
+Authorization: Bearer {token}
+Query Parameters:
+  - page (default: 1)
+  - limit (default: 20, max: 100)
+  - search (optional): search by name, email, mobile, employeeId
+  - isActive (optional): true/false
+  - sortBy (default: createdAt)
+  - sortOrder (default: desc)
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "visitors": [
+      {
+        "id": "visitor_001",
+        "username": "visitor_001",
+        "firstName": "Rajesh",
+        "lastName": "Kumar",
+        "email": "rajesh.kumar@example.com",
+        "mobile": "9876543210",
+        "employeeId": "EMP001",
+        "createdBy": "admin_001",
+        "isActive": true,
+        "visitCount": 25,
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 20,
+      "total": 50,
+      "totalPages": 3
+    }
+  }
+}
+
+
+G. GET VISITOR BY ID (ADMIN)
+------------------------------------------------------------------------
+GET /admin/visitors/{visitorId}
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visitor_001",
+    "username": "visitor_001",
+    "firstName": "Rajesh",
+    "lastName": "Kumar",
+    "email": "rajesh.kumar@example.com",
+    "mobile": "9876543210",
+    "employeeId": "EMP001",
+    "createdBy": "admin_001",
+    "isActive": true,
+    "visitCount": 25,
+    "completedVisits": 20,
+    "pendingVisits": 3,
+    "rejectedVisits": 2,
+    "createdAt": "2025-12-17T14:30:00Z",
+    "updatedAt": "2025-12-17T14:30:00Z"
+  }
+}
+
+
+H. UPDATE VISITOR (ADMIN)
+------------------------------------------------------------------------
+PUT /admin/visitors/{visitorId}
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "firstName": "Rajesh",
+  "lastName": "Kumar",
+  "email": "rajesh.new@example.com",
+  "mobile": "9876543210",
+  "employeeId": "EMP001",
+  "isActive": true
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "id": "visitor_001",
+    "username": "visitor_001",
+    "firstName": "Rajesh",
+    "lastName": "Kumar",
+    "email": "rajesh.new@example.com",
+    "mobile": "9876543210",
+    "employeeId": "EMP001",
+    "isActive": true,
+    "updatedAt": "2025-12-17T15:00:00Z"
+  }
+}
+
+
+I. UPDATE VISITOR PASSWORD (ADMIN)
+------------------------------------------------------------------------
+PUT /admin/visitors/{visitorId}/password
+Authorization: Bearer {token}
+Content-Type: application/json
+
+Request Body:
+{
+  "newPassword": "newSecurePassword123"
+}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Password updated successfully"
+}
+
+
+J. DELETE/DEACTIVATE VISITOR (ADMIN)
+------------------------------------------------------------------------
+DELETE /admin/visitors/{visitorId}
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "message": "Visitor deactivated successfully"
+}
+
+Note: This sets isActive = false instead of deleting the record
+
+
+================================================================================
+                        8. SYSTEM CONFIG API
+================================================================================
+
+A. GET PRODUCT CATALOG
+------------------------------------------------------------------------
+GET /config/products
+Authorization: Bearer {token}
+Query Parameters:
+  - category (optional): panel, inverter, structure, etc.
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "panels": {
+      "brands": ["Adani", "Tata", "Waaree", "Vikram Solar"],
+      "sizes": ["440W", "540W", "550W", "660W"]
+    },
+    "inverters": {
+      "types": ["String Inverter", "Micro Inverter"],
+      "brands": ["Growatt", "Solis", "Fronius", "Havells"],
+      "sizes": ["3kW", "5kW", "6kW", "10kW"]
+    },
+    "structures": {
+      "types": ["Tin Shed", "RCC", "Flat Roof"],
+      "sizes": ["1kW", "3kW", "5kW", "10kW"]
+    }
+  }
+}
+
+
+B. GET INDIAN STATES
+------------------------------------------------------------------------
+GET /config/states
+Authorization: Bearer {token}
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "states": [
+      "Andhra Pradesh",
+      "Karnataka",
+      "Maharashtra",
+      "Rajasthan",
+      /* ... all Indian states ... */
+    ]
+  }
+}
+
+
+================================================================================
+                          9. ERROR CODES
+================================================================================
+
+┌──────────┬────────────────────────────────────────────────────────┐
+│   CODE   │                     DESCRIPTION                        │
+├──────────┼────────────────────────────────────────────────────────┤
+│ AUTH_001 │ Invalid username or password                          │
+│ AUTH_002 │ Token expired                                          │
+│ AUTH_003 │ Invalid token                                          │
+│ AUTH_004 │ Insufficient permissions                               │
+│ AUTH_005 │ Account suspended                                      │
+├──────────┼────────────────────────────────────────────────────────┤
+│ VAL_001  │ Validation error (with field details)                 │
+│ VAL_002  │ Required field missing                                 │
+│ VAL_003  │ Invalid format                                         │
+├──────────┼────────────────────────────────────────────────────────┤
+│ RES_001  │ Resource not found                                     │
+│ RES_002  │ Resource already exists                                │
+│ RES_003  │ Cannot delete resource (has dependencies)             │
+├──────────┼────────────────────────────────────────────────────────┤
+│ SYS_001  │ Internal server error                                  │
+│ SYS_002  │ Database error                                         │
+│ SYS_003  │ External service error                                 │
+└──────────┴────────────────────────────────────────────────────────┘
+
+Error Response Format:
+{
+  "success": false,
+  "error": {
+    "code": "VAL_001",
+    "message": "Validation error",
+    "details": [
+      {
+        "field": "mobile",
+        "message": "Invalid mobile number format"
+      }
+    ]
+  }
+}
+
+
+================================================================================
+                         10. RATE LIMITING
+================================================================================
+
+Rate Limits:
+- Authentication endpoints: 5 requests per minute
+- Read operations: 100 requests per minute
+- Write operations: 30 requests per minute
+- PDF generation: 10 requests per minute
+
+Rate Limit Headers:
+X-RateLimit-Limit: 100
+X-RateLimit-Remaining: 95
+X-RateLimit-Reset: 1703174400
+
+When rate limit exceeded (429 Too Many Requests):
+{
+  "success": false,
+  "error": {
+    "code": "RATE_001",
+    "message": "Rate limit exceeded",
+    "retryAfter": 60
+  }
+}
+
+
+================================================================================
+                           11. WEBHOOKS
+================================================================================
+
+A. QUOTATION CREATED
+Event: quotation.created
+Payload:
+{
+  "event": "quotation.created",
+  "timestamp": "2025-12-17T14:30:00Z",
+  "data": {
+    "quotationId": "QT-ABC123",
+    "dealerId": "dealer_123",
+    "customerId": "cust_789",
+    "finalAmount": 285950
+  }
+}
+
+
+B. QUOTATION STATUS CHANGED
+Event: quotation.status_changed
+Payload:
+{
+  "event": "quotation.status_changed",
+  "timestamp": "2025-12-17T16:00:00Z",
+  "data": {
+    "quotationId": "QT-ABC123",
+    "oldStatus": "pending",
+    "newStatus": "approved",
+    "changedBy": "admin_001"
+  }
+}
+
+
+C. VISIT COMPLETED
+Event: visit.completed
+Payload:
+{
+  "event": "visit.completed",
+  "timestamp": "2025-12-20T15:30:00Z",
+  "data": {
+    "visitId": "visit_456",
+    "quotationId": "QT-ABC123",
+    "visitorId": "visitor_001",
+    "feedback": "Customer is satisfied"
+  }
+}
+
+
+================================================================================
+                          12. PAGINATION
+================================================================================
+
+Standard Pagination Format:
+{
+  "data": [ /* array of items */ ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 450,
+    "totalPages": 23,
+    "hasNext": true,
+    "hasPrev": false
+  }
+}
+
+
+================================================================================
+                        13. SECURITY HEADERS
+================================================================================
+
+All API responses include:
+- Content-Security-Policy
+- X-Content-Type-Options: nosniff
+- X-Frame-Options: DENY
+- X-XSS-Protection: 1; mode=block
+- Strict-Transport-Security: max-age=31536000
+
+
+================================================================================
+                      END OF API SPECIFICATION
+================================================================================
+
+For support or questions:
+Email: api-support@chairbord.com
+Documentation: https://docs.chairbord.com/api
+
+
+
+

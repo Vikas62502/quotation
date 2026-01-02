@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { type Customer, type ProductSelection, useQuotation } from "@/lib/quotation-context"
 import { Button } from "@/components/ui/button"
@@ -48,30 +48,76 @@ const bankDetails = {
   },
 }
 
-// Price calculation helpers
-const getPanelPrice = (brand: string, size: string): number => {
-  const basePrices: Record<string, number> = {
-    Adani: 25000,
-    Tata: 26000,
-    Waaree: 24000,
-    "Vikram Solar": 24500,
-    RenewSys: 23500,
-  }
-  const sizeMultiplier = Number.parseInt(size) / 440
-  return (basePrices[brand] || 24000) * sizeMultiplier
-}
+import {
+  getDcrPrice,
+  getNonDcrPrice,
+  getBothPrice,
+  determinePhase,
+  calculateSystemSize,
+} from "@/lib/pricing-tables"
 
-const getInverterPrice = (brand: string, size: string): number => {
-  const basePrices: Record<string, number> = {
-    Growatt: 35000,
-    Solis: 32000,
-    Fronius: 45000,
-    Havells: 38000,
-    Polycab: 36000,
-    Delta: 40000,
+// Get system price based on system type
+const getSystemPrice = (products: ProductSelection): number => {
+  if (!products || !products.systemType) {
+    // If we have a stored systemPrice, use it as fallback
+    return products.systemPrice || 0
   }
-  const sizeKw = Number.parseInt(size)
-  return (basePrices[brand] || 35000) * (sizeKw / 3)
+  
+  if (products.systemType === "dcr") {
+    if (!products.panelSize || !products.panelQuantity) {
+      // Fallback to stored systemPrice if available
+      return products.systemPrice || 0
+    }
+    const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+    if (systemSize === "0kW") {
+      return products.systemPrice || 0
+    }
+    const phase = determinePhase(systemSize, products.inverterSize)
+    const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    if (price !== null) return price
+    // Fallback to stored systemPrice if price lookup fails
+    return products.systemPrice || 0
+  } else if (products.systemType === "non-dcr") {
+    if (!products.panelSize || !products.panelQuantity) {
+      return products.systemPrice || 0
+    }
+    const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+    if (systemSize === "0kW") {
+      return products.systemPrice || 0
+    }
+    const phase = determinePhase(systemSize, products.inverterSize)
+    const price = getNonDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    if (price !== null) return price
+    // Fallback to stored systemPrice if price lookup fails
+    return products.systemPrice || 0
+  } else if (products.systemType === "both") {
+    const dcrSize = calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+    const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+    
+    // Only proceed if both sizes are valid (not "0kW")
+    if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+      const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+      const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+      if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+        const totalSystemSize = `${dcrKw + nonDcrKw}kW`
+        const phase = determinePhase(totalSystemSize, products.inverterSize)
+        const price = getBothPrice(
+          totalSystemSize,
+          phase,
+          products.inverterSize,
+          dcrSize,
+          nonDcrSize,
+          products.dcrPanelBrand || products.panelBrand
+        )
+        if (price !== null) return price
+      }
+    }
+    // Fallback to stored systemPrice if price lookup fails
+    return products.systemPrice || 0
+  }
+  
+  // Final fallback: use stored systemPrice if available
+  return products.systemPrice || 0
 }
 
 export function QuotationConfirmation({ customer, products, onBack, onEditCustomer, onEditProducts }: Props) {
@@ -81,30 +127,88 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   const [isGenerating, setIsGenerating] = useState(false)
   const [generated, setGenerated] = useState(false)
   const [quotationId, setQuotationId] = useState("")
-
-  // Calculate prices
-  const panelPrice =
-    products.systemType !== "customize"
-      ? getPanelPrice(products.panelBrand, products.panelSize) * products.panelQuantity
-      : products.customPanels?.reduce(
-          (acc, panel) => acc + getPanelPrice(panel.brand, panel.size) * panel.quantity,
-          0,
-        ) || 0
-
-  const inverterPrice = getInverterPrice(products.inverterBrand, products.inverterSize)
-
-  const structurePrice = products.structureSize ? Number.parseInt(products.structureSize) * 8000 : 0
-  const meterPrice = products.meterBrand ? 5000 : 0
-  const cablePrice = (products.acCableBrand ? 3000 : 0) + (products.dcCableBrand ? 3000 : 0)
-  const acdbDcdbPrice = (products.acdb ? 2500 : 0) + (products.dcdb ? 2500 : 0)
-  const batteryPrice = products.batteryPrice || 0
-
-  const subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
+  
+  // Editable subtotal state (for DCR, NON DCR, BOTH system types)
+  const [editableSubtotal, setEditableSubtotal] = useState<number | null>(null)
+  
+  // Calculate prices first (needed for fallback initialization)
+  // For DCR, NON DCR, and BOTH: Use SET PRICE (complete package price)
+  const systemPrice = getSystemPrice(products)
+  
+  // For DCR, NON DCR, and BOTH: Use set price (complete package)
+  // Set price includes: panels, inverter, structure, meter, cables, ACDB, DCDB
+  // Priority: 1. Editable subtotal (user modified), 2. Stored system price from config selection, 3. Calculated system price
+  const subtotal = editableSubtotal !== null && editableSubtotal > 0
+    ? editableSubtotal 
+    : (products.systemPrice || systemPrice || 0)
+  
+  // Initialize editable subtotal with system price when component mounts or system changes
+  useEffect(() => {
+    if (products.systemType !== "customize") {
+      // Priority: Use stored system price from config selection, otherwise calculate
+      // Always prioritize products.systemPrice first (from config selection)
+      const priceToUse = products.systemPrice && products.systemPrice > 0 
+        ? products.systemPrice 
+        : (systemPrice > 0 ? systemPrice : 0)
+      
+      console.log("Initializing editableSubtotal:", {
+        productsSystemPrice: products.systemPrice,
+        calculatedPrice: systemPrice,
+        priceToUse,
+        currentEditableSubtotal: editableSubtotal,
+        systemType: products.systemType,
+      })
+      
+      if (priceToUse > 0 && Number.isFinite(priceToUse)) {
+        // Always update if we have a valid price (even if editableSubtotal is already set)
+        // This ensures it's always in sync with the system price
+        if (editableSubtotal === null || editableSubtotal !== priceToUse) {
+          console.log("Setting editableSubtotal to:", priceToUse)
+          setEditableSubtotal(priceToUse)
+        }
+      } else {
+        console.warn("Cannot initialize editableSubtotal - priceToUse is invalid:", priceToUse, {
+          productsSystemPrice: products.systemPrice,
+          calculatedSystemPrice: systemPrice,
+        })
+        // If we have products.systemPrice but it's 0 or invalid, still set it to ensure the field is initialized
+        // This will help catch the issue earlier
+        if (products.systemPrice !== undefined && editableSubtotal === null) {
+          console.warn("Setting editableSubtotal to products.systemPrice even though it's invalid:", products.systemPrice)
+          setEditableSubtotal(products.systemPrice)
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products.systemType, products.systemPrice, products.panelSize, products.panelQuantity, products.inverterSize, products.panelBrand, systemPrice])
+  
+  // Additional check: If editableSubtotal is null but we have a valid subtotal, initialize it
+  useEffect(() => {
+    if (products.systemType !== "customize" && editableSubtotal === null && subtotal > 0) {
+      console.log("Fallback initialization of editableSubtotal from subtotal:", subtotal)
+      setEditableSubtotal(subtotal)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subtotal])
+  
+  // Calculate pricing values (matching backend controller logic)
   const totalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
-  const totalProjectCost = subtotal
-  const totalAmount = subtotal - totalSubsidy
-  const discountAmount = totalAmount * (discount / 100)
-  const finalAmount = totalAmount - discountAmount
+  // Subtotal = System Price (set price - complete package price)
+  const totalProjectCost = subtotal // Alias for clarity (Subtotal = System Price)
+  
+  // Calculate amount after subsidy: Subtotal - Total Subsidy
+  const amountAfterSubsidy = subtotal - totalSubsidy
+  
+  // Calculate discount amount: Discount % of Amount After Subsidy
+  const discountAmount = amountAfterSubsidy * (discount / 100)
+  
+  // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
+  // This is what customer pays after all deductions
+  const totalAmount = amountAfterSubsidy - discountAmount
+  
+  // finalAmount = Subtotal - Subsidy (discount is NOT applied to final amount)
+  // This is the final amount before discount
+  const finalAmount = subtotal - totalSubsidy
 
   // Calculate quotation validity (5 days from today)
   const quotationDate = new Date()
@@ -123,12 +227,229 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
     setIsGenerating(true)
 
     try {
-      // Save quotation
-      const quotation = saveQuotation(discount, totalAmount)
-      setQuotationId(quotation.id)
+      // Priority order for subtotal:
+      // 1. editableSubtotal state (most reliable - synced with input) - but only if > 0
+      // 2. Input field value (what user sees)
+      // 3. products.systemPrice (stored from config selection) - HIGHEST PRIORITY if editableSubtotal is 0/null
+      // 4. Calculated systemPrice (fallback)
+      
+      let currentSubtotal = 0
+      
+      // First priority: editableSubtotal state (this is synced with the input field)
+      // BUT: Only use it if it's > 0. If it's 0 or null, we should check other sources first
+      if (editableSubtotal !== null && editableSubtotal > 0 && Number.isFinite(editableSubtotal)) {
+        currentSubtotal = editableSubtotal
+        console.log("Using editableSubtotal state value:", currentSubtotal)
+      } else {
+        // If editableSubtotal is 0 or null, prioritize products.systemPrice (from config selection)
+        // This is the most reliable source as it comes directly from the selected configuration
+        if (products.systemPrice && products.systemPrice > 0 && Number.isFinite(products.systemPrice)) {
+          currentSubtotal = products.systemPrice
+          // Sync state with system price
+          setEditableSubtotal(products.systemPrice)
+          console.log("Using products.systemPrice (editableSubtotal was invalid):", currentSubtotal)
+        } else {
+          // Second priority: Try to read from input field directly
+          const subtotalInput = document.getElementById("subtotal-input") as HTMLInputElement
+          if (subtotalInput && subtotalInput.value) {
+            const rawValue = subtotalInput.value.trim()
+            const inputValue = Number.parseFloat(rawValue)
+            if (inputValue > 0 && Number.isFinite(inputValue)) {
+              currentSubtotal = inputValue
+              // Sync state with input field value
+              setEditableSubtotal(inputValue)
+              console.log("Using input field value and syncing state:", currentSubtotal)
+            }
+          }
+        }
+      }
+      
+      // Third priority: stored system price from config selection (if not already used)
+      if (currentSubtotal <= 0 && products.systemPrice && products.systemPrice > 0 && Number.isFinite(products.systemPrice)) {
+        currentSubtotal = products.systemPrice
+        // Sync state with system price
+        setEditableSubtotal(products.systemPrice)
+        console.log("Using products.systemPrice and syncing state:", currentSubtotal)
+      }
+      
+      // Last resort: calculate from pricing tables
+      if (currentSubtotal <= 0 && systemPrice > 0 && Number.isFinite(systemPrice)) {
+        currentSubtotal = systemPrice
+        // Sync state with calculated price
+        setEditableSubtotal(systemPrice)
+        console.log("Using calculated systemPrice and syncing state:", currentSubtotal)
+      }
+      
+      // Final fallback: use the component-level subtotal calculation
+      if (currentSubtotal <= 0 && subtotal > 0 && Number.isFinite(subtotal)) {
+        currentSubtotal = subtotal
+        // Sync state with component-level subtotal
+        setEditableSubtotal(subtotal)
+        console.log("Using component-level subtotal and syncing state:", currentSubtotal)
+      }
+      
+      // Log all available values for debugging
+      console.log("[QuotationConfirmation] === SUBTOTAL RESOLUTION ===")
+      console.log("[QuotationConfirmation] All available values:", {
+        editableSubtotal,
+        productsSystemPrice: products.systemPrice,
+        productsSystemPriceType: typeof products.systemPrice,
+        calculatedSystemPrice: systemPrice,
+        calculatedSystemPriceType: typeof systemPrice,
+        componentSubtotal: subtotal,
+        componentSubtotalType: typeof subtotal,
+        inputFieldValue: (document.getElementById("subtotal-input") as HTMLInputElement)?.value,
+        resolvedSubtotal: currentSubtotal,
+        resolvedSubtotalType: typeof currentSubtotal,
+        productsData: {
+          systemType: products.systemType,
+          panelBrand: products.panelBrand,
+          panelSize: products.panelSize,
+          panelQuantity: products.panelQuantity,
+          inverterSize: products.inverterSize,
+        }
+      })
+      console.log("[QuotationConfirmation] ============================")
 
-      // Simulate processing delay
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      // CRITICAL: Final validation - subtotal must be > 0
+      // This check MUST prevent sending 0 to backend
+      if (!currentSubtotal || currentSubtotal <= 0 || !Number.isFinite(currentSubtotal)) {
+        console.error("[QuotationConfirmation] === SUBTOTAL VALIDATION FAILED ===")
+        console.error("[QuotationConfirmation] Validation failed:", {
+          currentSubtotal,
+          type: typeof currentSubtotal,
+          isFinite: Number.isFinite(currentSubtotal),
+          isNull: currentSubtotal === null,
+          isUndefined: currentSubtotal === undefined,
+          isZero: currentSubtotal === 0,
+          editableSubtotal,
+          productsSystemPrice: products.systemPrice,
+          calculatedSystemPrice: systemPrice,
+          componentSubtotal: subtotal,
+          inputFieldValue: (document.getElementById("subtotal-input") as HTMLInputElement)?.value,
+          productsData: products,
+        })
+        console.error("[QuotationConfirmation] ==================================")
+        
+        // Provide helpful error message
+        let errorMsg = `Subtotal is required and must be greater than 0.\n\n`
+        errorMsg += `Current value: ${currentSubtotal}\n\n`
+        errorMsg += `Available values:\n`
+        errorMsg += `- Input field: ${(document.getElementById("subtotal-input") as HTMLInputElement)?.value || "empty"}\n`
+        errorMsg += `- Stored system price: ${products.systemPrice || "not set"}\n`
+        errorMsg += `- Calculated price: ${systemPrice || "0"}\n\n`
+        errorMsg += `Please ensure:\n`
+        errorMsg += `1. A system configuration is selected (Browse DCR/NON DCR/BOTH Configurations)\n`
+        errorMsg += `2. The system price is displayed in the Subtotal field\n`
+        errorMsg += `3. If the Subtotal field is empty, enter a valid amount (e.g., 300000)\n\n`
+        errorMsg += `If this error persists, please go back to Product Selection and select a configuration again.`
+        
+        alert(errorMsg)
+        setIsGenerating(false)
+        return
+      }
+      
+      // Ensure currentSubtotal is a valid number (double-check)
+      const finalSubtotal = Number(currentSubtotal)
+      if (!Number.isFinite(finalSubtotal) || finalSubtotal <= 0) {
+        console.error("[QuotationConfirmation] Final subtotal validation failed after conversion:", {
+          original: currentSubtotal,
+          converted: finalSubtotal,
+          isFinite: Number.isFinite(finalSubtotal),
+          isZero: finalSubtotal === 0,
+        })
+        alert(`Invalid subtotal value: ${finalSubtotal}. Cannot proceed. Please enter a valid amount in the Subtotal field.`)
+        setIsGenerating(false)
+        return
+      }
+      
+      // TRIPLE-CHECK: Ensure finalSubtotal is still valid
+      if (finalSubtotal <= 0 || !Number.isFinite(finalSubtotal)) {
+        console.error("[QuotationConfirmation] CRITICAL: finalSubtotal is invalid:", finalSubtotal)
+        alert(`Cannot proceed: Subtotal is invalid (${finalSubtotal}). Please ensure a valid system configuration is selected.`)
+        setIsGenerating(false)
+        return
+      }
+
+      // Recalculate all pricing values with the correct subtotal (matching backend logic)
+      const finalTotalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
+      const finalAmountAfterSubsidy = finalSubtotal - finalTotalSubsidy
+      const finalDiscountAmount = finalAmountAfterSubsidy * (discount / 100)
+      
+      // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
+      const finalTotalAmount = finalAmountAfterSubsidy - finalDiscountAmount
+      
+      // finalAmount = Subtotal - Subsidy (discount is NOT applied to final amount)
+      const finalFinalAmount = finalSubtotal - finalTotalSubsidy
+
+      // Log values before sending - CRITICAL for debugging (matching backend log format)
+      console.log("[QuotationConfirmation] === FINAL VALUES BEING SENT ===")
+      console.log("[QuotationConfirmation] Pricing calculations:", {
+        subtotal: finalSubtotal,
+        centralSubsidy: products.centralSubsidy || 0,
+        stateSubsidy: products.stateSubsidy || 0,
+        totalSubsidy: finalTotalSubsidy,
+        amountAfterSubsidy: finalAmountAfterSubsidy,
+        discount: discount,
+        discountAmount: finalDiscountAmount,
+        totalAmount: finalTotalAmount, // Amount after discount
+        finalAmount: finalFinalAmount, // Subtotal - Subsidy (no discount)
+      })
+      console.log("[QuotationConfirmation] Source values:", {
+        editableSubtotal,
+        inputFieldValue: (document.getElementById("subtotal-input") as HTMLInputElement)?.value,
+        productsSystemPrice: products.systemPrice,
+        calculatedSystemPrice: systemPrice,
+      })
+      console.log("[QuotationConfirmation] ==============================")
+
+      // CRITICAL: Final check right before sending - ensure subtotal is still valid
+      if (!finalSubtotal || finalSubtotal <= 0 || !Number.isFinite(finalSubtotal)) {
+        console.error("CRITICAL: Subtotal is invalid right before API call:", {
+          finalSubtotal,
+          type: typeof finalSubtotal,
+          isFinite: Number.isFinite(finalSubtotal),
+          currentSubtotal,
+          editableSubtotal,
+          productsSystemPrice: products.systemPrice,
+          calculatedSystemPrice: systemPrice,
+          componentSubtotal: subtotal,
+        })
+        alert(`Cannot create quotation: Subtotal is invalid (${finalSubtotal}). Please ensure a valid system configuration is selected and the subtotal field has a value greater than 0.`)
+        setIsGenerating(false)
+        return
+      }
+
+      // CRITICAL: Final check right before API call - ensure subtotal is still valid
+      // This is the last line of defense before sending to backend
+      if (!finalSubtotal || finalSubtotal <= 0 || !Number.isFinite(finalSubtotal)) {
+        console.error("[QuotationConfirmation] CRITICAL ERROR: finalSubtotal is invalid right before API call:", {
+          finalSubtotal,
+          type: typeof finalSubtotal,
+          isFinite: Number.isFinite(finalSubtotal),
+          currentSubtotal,
+          editableSubtotal,
+          productsSystemPrice: products.systemPrice,
+          calculatedSystemPrice: systemPrice,
+          componentSubtotal: subtotal,
+        })
+        alert(`Cannot create quotation: Subtotal is invalid (${finalSubtotal}). Please ensure a valid system configuration is selected and the subtotal field has a value greater than 0.`)
+        setIsGenerating(false)
+        return
+      }
+
+      // Save quotation via API
+      // finalSubtotal is now the total project cost (subtotal) - aligned with backend
+      // This MUST be > 0, otherwise backend will reject it
+      console.log("[QuotationConfirmation] Calling saveQuotation with:", { 
+        discount, 
+        subtotal: finalSubtotal,
+        subtotalType: typeof finalSubtotal,
+        isFinite: Number.isFinite(finalSubtotal),
+        isValid: finalSubtotal > 0
+      })
+      const quotation = await saveQuotation(discount, finalSubtotal)
+      setQuotationId(quotation.id)
 
       setIsGenerating(false)
       setGenerated(true)
@@ -142,7 +463,68 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       }, 2000)
     } catch (error) {
       console.error("Error generating quotation:", error)
+      console.error("Products data:", products)
       setIsGenerating(false)
+      
+      // Show error to user with more details
+      let errorMessage = "Failed to generate quotation. Please try again."
+      
+      if (error instanceof Error) {
+        errorMessage = error.message
+        
+        // Handle ApiError with specific error codes
+        if (error.name === "ApiError") {
+          const apiError = error as any
+          const errorCode = apiError.code
+          const errorDetails = apiError.details
+          
+          // Handle specific validation errors
+          if (errorCode === "VAL_001") {
+            errorMessage = "Subtotal Validation Error\n\n"
+            errorMessage += "Subtotal is required and must be greater than 0.\n\n"
+            if (errorDetails && Array.isArray(errorDetails)) {
+              errorMessage += "Details:\n"
+              errorDetails.forEach((d: any) => {
+                errorMessage += `- ${d.field}: ${d.message}\n`
+              })
+            }
+            errorMessage += "\nPlease ensure:\n"
+            errorMessage += "1. A system configuration is selected (Browse DCR/NON DCR/BOTH Configurations)\n"
+            errorMessage += "2. The system price is displayed in the Subtotal field\n"
+            errorMessage += "3. If the Subtotal field is empty, enter a valid amount (e.g., 300000)"
+          } else if (errorCode === "VAL_002") {
+            errorMessage = "Total Amount Validation Error\n\n"
+            errorMessage += "Total amount is required.\n\n"
+            if (errorDetails && Array.isArray(errorDetails)) {
+              errorMessage += "Details:\n"
+              errorDetails.forEach((d: any) => {
+                errorMessage += `- ${d.field}: ${d.message}\n`
+              })
+            }
+            errorMessage += "\nThis error should not occur. Please contact support if you see this message."
+          } else if (errorCode === "VAL_003") {
+            errorMessage = "Final Amount Validation Error\n\n"
+            errorMessage += "Final amount is required.\n\n"
+            if (errorDetails && Array.isArray(errorDetails)) {
+              errorMessage += "Details:\n"
+              errorDetails.forEach((d: any) => {
+                errorMessage += `- ${d.field}: ${d.message}\n`
+              })
+            }
+            errorMessage += "\nThis error should not occur. Please contact support if you see this message."
+          } else if (errorDetails && Array.isArray(errorDetails) && errorDetails.length > 0) {
+            // Generic ApiError with details
+            errorMessage = `${error.message}\n\nDetails:\n${errorDetails.map((d: any) => `- ${d.field || "unknown field"}: ${d.message}`).join("\n")}`
+          }
+        }
+        
+        // If error mentions panel size, provide helpful context
+        if (errorMessage.includes("panel size") || errorMessage.includes("Invalid product")) {
+          errorMessage += "\n\nNote: The panel size must match the backend product catalog. Please ensure the panel size is valid or contact support to add it to the catalog."
+        }
+      }
+      
+      alert(errorMessage)
     }
   }
 
@@ -158,15 +540,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
 
     try {
       const canvas = await html2canvas(input, {
-        scale: 2,
         useCORS: true,
         logging: false,
-        windowWidth: input.scrollWidth,
-        windowHeight: input.scrollHeight,
-        backgroundColor: "#ffffff",
-        removeContainer: true,
+        background: "#ffffff",
         allowTaint: false,
-        foreignObjectRendering: false,
       })
 
       const imgWidth = 210 // A4 width in mm
@@ -212,9 +589,6 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
 
   // Get unique brands for Make table
   const getUniqueBrands = () => {
-    if (products.systemType === "customize" && products.customPanels) {
-      return Array.from(new Set(products.customPanels.map((p) => p.brand))).join(", ")
-    }
     return products.panelBrand || "N/A"
   }
 
@@ -223,10 +597,6 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   }
 
   const getSystemSizes = () => {
-    if (products.systemType === "customize" && products.customPanels) {
-      const sizes = products.customPanels.map((p) => `${p.size}W`).join(", ")
-      return sizes || "As per selection"
-    }
     return `${products.panelSize}W` || "As per selection"
   }
 
@@ -695,7 +1065,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                   <strong>Phone:</strong> {customer.mobile}
                 </div>
                 <div className="pdf-info-item">
-                  <strong>Location:</strong> {customer.address.city}, {customer.address.state}
+                  <strong>Location:</strong> {customer.address?.city || ""}, {customer.address?.state || ""}
                 </div>
               </div>
               <div className="pdf-info-card">
@@ -728,11 +1098,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                   <div className="pdf-product-name">Solar Panel System</div>
                   <div className="pdf-product-details">
                     <div className="pdf-product-specs">
-                      {products.systemType !== "customize"
-                        ? `${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`
-                        : products.customPanels
-                            ?.map((p) => `${p.brand} ${p.size}W × ${p.quantity}`)
-                            .join(", ") || "N/A"}
+                      {`${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`}
                       <br />
                       Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
                       {products.structureType && (
@@ -776,12 +1142,12 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
             <div className="pdf-summary-section">
               <div className="pdf-summary-row">
                 <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
-                <span className="pdf-summary-value">₹{(totalProjectCost - discountAmount).toLocaleString()}</span>
+                <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
               </div>
-              {products.stateSubsidy && products.stateSubsidy > 0 && (
+              {(products.stateSubsidy ?? 0) > 0 && (
                 <div className="pdf-summary-row">
                   <span className="pdf-summary-label">⬇️ State Subsidy:</span>
-                  <span className="pdf-summary-value"> ₹{products.stateSubsidy.toLocaleString()}</span>
+                  <span className="pdf-summary-value"> ₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
                 </div>
               )}
               {products.centralSubsidy && products.centralSubsidy > 0 && (
@@ -1202,8 +1568,8 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.mobile}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.email}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground mt-2">
-                  {customer.address.street}, {customer.address.city}, {customer.address.state} -{" "}
-                  {customer.address.pincode}
+                  {customer.address?.street || ""}, {customer.address?.city || ""}, {customer.address?.state || ""} -{" "}
+                  {customer.address?.pincode || ""}
                 </p>
               </div>
             </div>
@@ -1234,27 +1600,12 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                     {products.systemType}
                   </span>
                 </div>
-                {products.systemType !== "customize" ? (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Panels</span>
-                    <span className="text-sm font-medium">
-                      {products.panelBrand} {products.panelSize} × {products.panelQuantity}
-                    </span>
-                  </div>
-                ) : (
-                  <>
-                    {products.customPanels?.map((panel, index) => (
-                      <div key={index} className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">
-                          Panel {index + 1} ({panel.type.toUpperCase()})
-                        </span>
-                        <span className="text-sm font-medium">
-                          {panel.brand} {panel.size} × {panel.quantity}
-                        </span>
-                      </div>
-                    ))}
-                  </>
-                )}
+                <div className="flex justify-between">
+                  <span className="text-sm text-muted-foreground">Panels</span>
+                  <span className="text-sm font-medium">
+                    {products.panelBrand} {products.panelSize} × {products.panelQuantity}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Inverter</span>
                   <span className="text-sm font-medium">
@@ -1284,81 +1635,90 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
               </div>
             </div>
 
-            {/* Pricing Breakdown */}
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-                <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                Pricing Breakdown
-              </h3>
-              <div className="space-y-2 border border-border rounded-xl overflow-hidden">
-                <div className="flex justify-between py-3 px-4 bg-muted/30">
-                  <span className="text-sm text-muted-foreground">Panel Cost</span>
-                  <span className="text-sm font-medium">₹{panelPrice.toLocaleString()}</span>
+            {/* Subtotal - Only show system set price */}
+            {products.systemType !== "customize" && (
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-primary" />
+                    Subtotal
+                  </h3>
+                  <div className="border border-border rounded-xl p-4 bg-muted/30">
+                    <div className="flex items-center gap-3">
+                      <Label htmlFor="subtotal-input" className="text-sm font-medium min-w-[80px]">
+                        Subtotal:
+                      </Label>
+                      <div className="flex items-center gap-2 flex-1">
+                        <span className="text-sm text-muted-foreground">₹</span>
+                        <Input
+                          id="subtotal-input"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={editableSubtotal !== null && editableSubtotal > 0 ? editableSubtotal : (subtotal > 0 ? subtotal : "")}
+                          onChange={(e) => {
+                            const inputValue = e.target.value
+                            const newSubtotal = inputValue ? Number.parseFloat(inputValue) : null
+                            if (newSubtotal !== null && !Number.isNaN(newSubtotal)) {
+                              setEditableSubtotal(newSubtotal)
+                            } else if (inputValue === "") {
+                              setEditableSubtotal(null)
+                            }
+                          }}
+                          onBlur={(e) => {
+                            // Ensure value is set on blur if it's valid
+                            const inputValue = e.target.value
+                            const parsedValue = inputValue ? Number.parseFloat(inputValue) : null
+                            if (parsedValue !== null && !Number.isNaN(parsedValue) && parsedValue > 0) {
+                              setEditableSubtotal(parsedValue)
+                            }
+                          }}
+                          className="flex-1"
+                          placeholder="Enter subtotal"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Complete set price for the system
+                    </p>
+                  </div>
                 </div>
-                <div className="flex justify-between py-3 px-4">
-                  <span className="text-sm text-muted-foreground">Inverter Cost</span>
-                  <span className="text-sm font-medium">₹{inverterPrice.toLocaleString()}</span>
-                </div>
-                {structurePrice > 0 && (
-                  <div className="flex justify-between py-3 px-4 bg-muted/30">
-                    <span className="text-sm text-muted-foreground">Structure Cost</span>
-                    <span className="text-sm font-medium">₹{structurePrice.toLocaleString()}</span>
-                  </div>
-                )}
-                {meterPrice > 0 && (
-                  <div className="flex justify-between py-3 px-4">
-                    <span className="text-sm text-muted-foreground">Meter Cost</span>
-                    <span className="text-sm font-medium">₹{meterPrice.toLocaleString()}</span>
-                  </div>
-                )}
-                {cablePrice > 0 && (
-                  <div className="flex justify-between py-3 px-4 bg-muted/30">
-                    <span className="text-sm text-muted-foreground">Cable Cost</span>
-                    <span className="text-sm font-medium">₹{cablePrice.toLocaleString()}</span>
-                  </div>
-                )}
-                {acdbDcdbPrice > 0 && (
-                  <div className="flex justify-between py-3 px-4">
-                    <span className="text-sm text-muted-foreground">ACDB/DCDB Cost</span>
-                    <span className="text-sm font-medium">₹{acdbDcdbPrice.toLocaleString()}</span>
-                  </div>
-                )}
-                {batteryPrice > 0 && (
-                  <div className="flex justify-between py-3 px-4 bg-muted/30">
-                    <span className="text-sm text-muted-foreground">Battery Cost</span>
-                    <span className="text-sm font-medium">₹{batteryPrice.toLocaleString()}</span>
-                  </div>
-                )}
-                <div className="flex justify-between py-3 px-4 bg-muted/50 font-semibold">
-                  <span className="text-sm">Subtotal</span>
-                  <span className="text-sm">₹{subtotal.toLocaleString()}</span>
-                </div>
+
+                {/* Subsidy Display */}
                 {totalSubsidy > 0 && (
-                  <>
-                    {products.centralSubsidy && products.centralSubsidy > 0 && (
-                      <div className="flex justify-between py-3 px-4">
-                        <span className="text-sm text-green-600">Central Subsidy</span>
-                        <span className="text-sm text-green-600 font-medium">
-                          -₹{products.centralSubsidy.toLocaleString()}
+                  <div className="border border-border rounded-xl overflow-hidden">
+                    <div className="bg-muted/30 px-4 py-2 border-b border-border">
+                      <h3 className="text-sm font-semibold text-foreground">Subsidy</h3>
+                    </div>
+                    <div className="space-y-0">
+                      {products.centralSubsidy && products.centralSubsidy > 0 && (
+                        <div className="flex justify-between py-3 px-4">
+                          <span className="text-sm text-muted-foreground">Central Subsidy</span>
+                          <span className="text-sm text-green-600 font-medium">
+                            ₹{products.centralSubsidy.toLocaleString()}
+                          </span>
+                        </div>
+                      )}
+                      {(products.stateSubsidy ?? 0) > 0 && (
+                        <div className="flex justify-between py-3 px-4 bg-muted/30">
+                          <span className="text-sm text-muted-foreground">State Subsidy</span>
+                          <span className="text-sm text-green-600 font-medium">
+                            ₹{(products.stateSubsidy ?? 0).toLocaleString()}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between py-3 px-4 bg-muted/50 font-semibold border-t border-border">
+                        <span className="text-sm">Total Subsidy</span>
+                        <span className="text-sm text-green-600">
+                          ₹{totalSubsidy.toLocaleString()}
                         </span>
                       </div>
-                    )}
-                    {products.stateSubsidy && products.stateSubsidy > 0 && (
-                      <div className="flex justify-between py-3 px-4 bg-muted/30">
-                        <span className="text-sm text-green-600">State Subsidy</span>
-                        <span className="text-sm text-green-600 font-medium">
-                          -₹{products.stateSubsidy.toLocaleString()}
-                        </span>
-                      </div>
-                    )}
-                  </>
+                    </div>
+                  </div>
                 )}
-                <div className="flex justify-between py-3 px-4 bg-muted/50 font-semibold">
-                  <span className="text-sm">Total Amount</span>
-                  <span className="text-sm">₹{totalAmount.toLocaleString()}</span>
-                </div>
+
               </div>
-            </div>
+            )}
 
             {/* Discount Input */}
             {!generated && (

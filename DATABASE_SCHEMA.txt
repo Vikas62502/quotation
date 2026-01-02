@@ -1,0 +1,647 @@
+================================================================================
+                    SOLAR QUOTATION MANAGEMENT SYSTEM
+                         DATABASE SCHEMA DESIGN
+================================================================================
+
+Version: 1.0
+Date: December 17, 2025
+Last Updated: December 23, 2025
+Company: ChairBord Pvt. Ltd.
+
+================================================================================
+                            TABLE OF CONTENTS
+================================================================================
+
+1. USERS & AUTHENTICATION
+   - Dealers
+   - Visitors
+   - Admin
+
+2. CUSTOMERS
+   - Customer Information
+   - Customer Address
+
+3. QUOTATIONS
+   - Quotation Master
+   - Product Selection
+   - Pricing Details
+
+4. VISITS
+   - Visit Schedule
+   - Visit Assignments
+   - Visit Status
+
+5. SYSTEM DATA
+   - Product Catalog
+   - Pricing Rules
+   - Configuration
+
+6. RELATIONSHIPS & CONSTRAINTS
+
+7. INDEXES & OPTIMIZATION
+
+8. DATA FLOW DIAGRAM
+
+================================================================================
+                        1. USERS & AUTHENTICATION
+================================================================================
+
+TABLE: dealers
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Unique dealer ID
+username            | VARCHAR(50)    | UNIQUE, NOT NULL     | Login username
+password            | VARCHAR(255)   | NOT NULL             | Hashed password
+firstName           | VARCHAR(100)   | NOT NULL             | First name
+lastName            | VARCHAR(100)   | NOT NULL             | Last name
+email               | VARCHAR(255)   | UNIQUE, NOT NULL     | Email address
+mobile              | VARCHAR(15)    | NOT NULL             | Mobile number (10 digits)
+gender              | ENUM           | NOT NULL             | 'Male', 'Female', 'Other'
+dateOfBirth         | DATE           | NOT NULL             | Date of birth (must be 18+)
+fatherName          | VARCHAR(100)   | NOT NULL             | Father's name
+fatherContact       | VARCHAR(15)    | NOT NULL             | Father's contact (10 digits)
+governmentIdType    | ENUM           | NOT NULL             | 'Aadhaar Card', 'PAN Card', 'Voter ID', 'Driving License', 'Passport'
+governmentIdNumber  | VARCHAR(100)   | NOT NULL             | Government ID number
+governmentIdImage   | VARCHAR(500)   |                      | Government ID image URL/base64
+address_street      | VARCHAR(255)   | NOT NULL             | Street address
+address_city        | VARCHAR(100)   | NOT NULL             | City
+address_state       | VARCHAR(100)   | NOT NULL             | State (must be valid Indian state)
+address_pincode     | VARCHAR(10)    | NOT NULL             | Pincode (6 digits)
+company             | VARCHAR(255)   |                      | Company name (optional)
+role                | ENUM           | NOT NULL             | 'dealer', 'admin'
+isActive            | BOOLEAN        | DEFAULT FALSE        | Account status (false = pending approval)
+emailVerified       | BOOLEAN        | DEFAULT FALSE        | Email verification status
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation timestamp
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update timestamp
+
+INDEXES:
+- PRIMARY KEY (id)
+- UNIQUE INDEX idx_dealer_username (username)
+- UNIQUE INDEX idx_dealer_email (email)
+- UNIQUE INDEX idx_dealer_mobile (mobile)
+- INDEX idx_dealer_role (role)
+- INDEX idx_dealer_active (isActive)
+- INDEX idx_dealer_created_at (createdAt)
+
+NOTES:
+- Admin users have role = 'admin' and username = 'admin'
+- Password should be hashed using bcrypt or similar
+- Mobile number format: Indian 10-digit format (exactly 10 digits)
+- New dealers register with isActive = false (pending admin approval)
+- Admin must approve/activate new dealer registrations before they can login
+- Email verification is separate from account activation
+- Date of birth must be 18+ years old
+- Government ID image is optional but recommended
+- Address fields stored in separate columns for better querying
+
+
+TABLE: visitors
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Unique visitor ID
+username            | VARCHAR(50)    | UNIQUE, NOT NULL     | Login username
+password            | VARCHAR(255)   | NOT NULL             | Hashed password
+firstName           | VARCHAR(100)   | NOT NULL             | First name
+lastName            | VARCHAR(100)   | NOT NULL             | Last name
+email               | VARCHAR(255)   | UNIQUE, NOT NULL     | Email address
+mobile              | VARCHAR(15)    | NOT NULL             | Mobile number
+employeeId          | VARCHAR(50)    | UNIQUE               | Employee ID
+createdBy           | VARCHAR(50)    | FOREIGN KEY          | Admin who created this visitor
+isActive            | BOOLEAN        | DEFAULT TRUE         | Account status
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation timestamp
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update timestamp
+
+INDEXES:
+- PRIMARY KEY (id)
+- UNIQUE INDEX idx_visitor_username (username)
+- UNIQUE INDEX idx_visitor_email (email)
+- INDEX idx_visitor_active (isActive)
+- INDEX idx_visitor_created_by (createdBy)
+- FOREIGN KEY (createdBy) REFERENCES dealers(id) WHERE role = 'admin'
+
+NOTES:
+- Visitors are field agents assigned to visits
+- Visitors can only be created by admin users
+- Multiple visitors can be assigned to a single visit
+- createdBy references the admin dealer who created the visitor
+
+
+================================================================================
+                            2. CUSTOMERS
+================================================================================
+
+TABLE: customers
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Unique customer ID
+firstName           | VARCHAR(100)   | NOT NULL             | First name
+lastName            | VARCHAR(100)   | NOT NULL             | Last name
+mobile              | VARCHAR(15)    | UNIQUE, NOT NULL     | Mobile number
+email               | VARCHAR(255)   | NOT NULL             | Email address
+streetAddress       | TEXT           | NOT NULL             | Street address
+city                | VARCHAR(100)   | NOT NULL             | City
+state               | VARCHAR(100)   | NOT NULL             | State
+pincode             | VARCHAR(6)     | NOT NULL             | PIN code
+dealerId            | VARCHAR(50)    | FOREIGN KEY          | Created by dealer
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation timestamp
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update timestamp
+
+INDEXES:
+- PRIMARY KEY (id)
+- UNIQUE INDEX idx_customer_mobile (mobile)
+- INDEX idx_customer_dealer (dealerId)
+- INDEX idx_customer_location (state, city)
+- FOREIGN KEY (dealerId) REFERENCES dealers(id)
+
+NOTES:
+- Mobile is unique identifier for customers
+- Indian states only (predefined list)
+- PIN code format: 6-digit numeric
+
+
+================================================================================
+                            3. QUOTATIONS
+================================================================================
+
+TABLE: quotations
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Quotation ID (QT-XXXXXX)
+dealerId            | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Creating dealer
+customerId          | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Customer reference
+systemType          | ENUM           | NOT NULL             | System type
+status              | ENUM           | DEFAULT 'pending'    | Quotation status
+discount            | DECIMAL(5,2)   | DEFAULT 0            | Discount percentage
+finalAmount         | DECIMAL(12,2)  | NOT NULL             | Final amount
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation date
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update
+validUntil          | DATE           | NOT NULL             | Validity date
+
+ENUMS:
+- systemType: 'on-grid', 'off-grid', 'hybrid', 'dcr', 'non-dcr', 'both', 'customize'
+- status: 'pending', 'approved', 'rejected', 'completed'
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_quotation_dealer (dealerId)
+- INDEX idx_quotation_customer (customerId)
+- INDEX idx_quotation_status (status)
+- INDEX idx_quotation_date (createdAt DESC)
+- FOREIGN KEY (dealerId) REFERENCES dealers(id)
+- FOREIGN KEY (customerId) REFERENCES customers(id)
+
+NOTES:
+- ID format: QT-XXXXXX (6 random alphanumeric chars)
+- validUntil = createdAt + 5 days
+- Discount range: 0-100%
+
+
+TABLE: quotation_products
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Product entry ID
+quotationId         | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Quotation reference
+systemType          | VARCHAR(50)    | NOT NULL             | System type
+
+-- Panel Configuration
+panelBrand          | VARCHAR(100)   |                      | Panel brand
+panelSize           | VARCHAR(50)    |                      | Panel wattage
+panelQuantity       | INT            |                      | Number of panels
+panelPrice          | DECIMAL(12,2)  |                      | Total panel cost
+
+-- DCR/Non-DCR Configuration
+dcrPanelBrand       | VARCHAR(100)   |                      | DCR panel brand
+dcrPanelSize        | VARCHAR(50)    |                      | DCR panel size
+dcrPanelQuantity    | INT            |                      | DCR panel quantity
+nonDcrPanelBrand    | VARCHAR(100)   |                      | Non-DCR panel brand
+nonDcrPanelSize     | VARCHAR(50)    |                      | Non-DCR panel size
+nonDcrPanelQuantity | INT            |                      | Non-DCR quantity
+
+-- Inverter Configuration
+inverterType        | VARCHAR(50)    |                      | Inverter type
+inverterBrand       | VARCHAR(100)   |                      | Inverter brand
+inverterSize        | VARCHAR(50)    |                      | Inverter capacity
+inverterPrice       | DECIMAL(12,2)  |                      | Inverter cost
+
+-- Structure & Mounting
+structureType       | VARCHAR(100)   |                      | Structure type
+structureSize       | VARCHAR(50)    |                      | Structure size
+structurePrice      | DECIMAL(12,2)  |                      | Structure cost
+
+-- Electrical Components
+meterBrand          | VARCHAR(100)   |                      | Meter brand
+meterPrice          | DECIMAL(12,2)  |                      | Meter cost
+acCableBrand        | VARCHAR(100)   |                      | AC cable brand
+acCableSize         | VARCHAR(50)    |                      | AC cable size
+acCablePrice        | DECIMAL(12,2)  |                      | AC cable cost
+dcCableBrand        | VARCHAR(100)   |                      | DC cable brand
+dcCableSize         | VARCHAR(50)    |                      | DC cable size
+dcCablePrice        | DECIMAL(12,2)  |                      | DC cable cost
+acdb                | VARCHAR(100)   |                      | ACDB specification
+acdbPrice           | DECIMAL(12,2)  |                      | ACDB cost
+dcdb                | VARCHAR(100)   |                      | DCDB specification
+dcdbPrice           | DECIMAL(12,2)  |                      | DCDB cost
+
+-- Battery (for hybrid/off-grid)
+hybridInverter      | VARCHAR(100)   |                      | Hybrid inverter
+batteryCapacity     | VARCHAR(50)    |                      | Battery capacity
+batteryPrice        | DECIMAL(12,2)  |                      | Battery cost
+
+-- Subsidies
+centralSubsidy      | DECIMAL(12,2)  | DEFAULT 0            | Central govt subsidy
+stateSubsidy        | DECIMAL(12,2)  | DEFAULT 0            | State govt subsidy
+
+-- Totals
+subtotal            | DECIMAL(12,2)  | NOT NULL             | Before subsidy
+totalAmount         | DECIMAL(12,2)  | NOT NULL             | After subsidy
+
+INDEXES:
+- PRIMARY KEY (id)
+- UNIQUE INDEX idx_quotation_products (quotationId)
+- FOREIGN KEY (quotationId) REFERENCES quotations(id) ON DELETE CASCADE
+
+NOTES:
+- One product configuration per quotation
+- Prices calculated based on brand and size
+
+
+TABLE: custom_panels
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Panel entry ID
+quotationId         | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Quotation reference
+brand               | VARCHAR(100)   | NOT NULL             | Panel brand
+size                | VARCHAR(50)    | NOT NULL             | Panel wattage
+quantity            | INT            | NOT NULL             | Quantity
+type                | ENUM           | NOT NULL             | 'dcr' or 'non-dcr'
+price               | DECIMAL(12,2)  | NOT NULL             | Total price
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation timestamp
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_custom_panel_quotation (quotationId)
+- FOREIGN KEY (quotationId) REFERENCES quotations(id) ON DELETE CASCADE
+
+NOTES:
+- Used for 'customize' system type
+- Multiple panels can be added per quotation
+
+
+================================================================================
+                            4. VISITS
+================================================================================
+
+TABLE: visits
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Visit ID
+quotationId         | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Related quotation
+dealerId            | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Creating dealer
+visitDate           | DATE           | NOT NULL             | Scheduled date
+visitTime           | TIME           | NOT NULL             | Scheduled time
+location            | TEXT           | NOT NULL             | Visit location
+locationLink        | VARCHAR(500)   | NOT NULL             | Current location link (Google Maps/GPS)
+notes               | TEXT           |                      | Additional notes
+status              | ENUM           | DEFAULT 'pending'    | Visit status
+feedback            | TEXT           |                      | Customer feedback
+rejectionReason     | TEXT           |                      | Rejection reason
+length              | DECIMAL(10,2)  |                      | Site length in cm (for completed visits)
+width               | DECIMAL(10,2)  |                      | Site width in cm (for completed visits)
+height              | DECIMAL(10,2)  |                      | Site height in cm (for completed visits)
+images              | JSON           |                      | Array of site images (base64 URLs or file paths)
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation timestamp
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update
+
+ENUMS:
+- status: 'pending', 'approved', 'completed', 'incomplete', 'rejected', 'rescheduled'
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_visit_quotation (quotationId)
+- INDEX idx_visit_dealer (dealerId)
+- INDEX idx_visit_date (visitDate, visitTime)
+- INDEX idx_visit_status (status)
+- FOREIGN KEY (quotationId) REFERENCES quotations(id) ON DELETE CASCADE
+- FOREIGN KEY (dealerId) REFERENCES dealers(id)
+
+NOTES:
+- Location pre-filled from customer address
+- locationLink is required (Google Maps link or GPS coordinates)
+- Can have multiple visits per quotation
+- Status flow: pending → approved → (completed/incomplete/rescheduled/rejected)
+- For completed visits: length, width, height, and images are required
+- For incomplete/rescheduled visits: rejectionReason field stores the reason
+- Images stored as JSON array of base64 strings or file URLs
+- Feedback added after visit completion
+
+
+TABLE: visit_assignments
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Assignment ID
+visitId             | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Visit reference
+visitorId           | VARCHAR(50)    | FOREIGN KEY, NOT NULL| Assigned visitor
+visitorName         | VARCHAR(255)   | NOT NULL             | Visitor full name
+availableFrom       | TIME           |                      | Available from time
+availableTo         | TIME           |                      | Available to time
+assignedAt          | TIMESTAMP      | DEFAULT NOW()        | Assignment timestamp
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_assignment_visit (visitId)
+- INDEX idx_assignment_visitor (visitorId)
+- UNIQUE INDEX idx_unique_assignment (visitId, visitorId)
+- FOREIGN KEY (visitId) REFERENCES visits(id) ON DELETE CASCADE
+- FOREIGN KEY (visitorId) REFERENCES visitors(id)
+
+NOTES:
+- Multiple visitors can be assigned to one visit
+- Assignments are fixed/permanent (not temporary)
+- availableFrom and availableTo fields are deprecated and should not be used
+- Visitor name cached for performance
+- Each visitor assignment represents a permanent assignment to the visit
+
+
+================================================================================
+                        5. SYSTEM DATA & CONFIGURATION
+================================================================================
+
+TABLE: product_catalog
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Product ID
+category            | ENUM           | NOT NULL             | Product category
+brand               | VARCHAR(100)   | NOT NULL             | Brand name
+model               | VARCHAR(100)   |                      | Model number
+size                | VARCHAR(50)    |                      | Size/Capacity
+basePrice           | DECIMAL(12,2)  | NOT NULL             | Base price
+description         | TEXT           |                      | Description
+specifications      | JSON           |                      | Technical specs
+isActive            | BOOLEAN        | DEFAULT TRUE         | Active status
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation date
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update
+
+ENUMS:
+- category: 'panel', 'inverter', 'structure', 'meter', 'cable', 'acdb', 'dcdb', 'battery'
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_product_category (category)
+- INDEX idx_product_brand (brand)
+- INDEX idx_product_active (isActive)
+
+NOTES:
+- Central catalog for all product types
+- Prices can be updated here
+
+
+TABLE: pricing_rules
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+id                  | VARCHAR(50)    | PRIMARY KEY          | Rule ID
+productCategory     | VARCHAR(50)    | NOT NULL             | Product category
+brand               | VARCHAR(100)   | NOT NULL             | Brand name
+size                | VARCHAR(50)    |                      | Size/Capacity
+pricePerUnit        | DECIMAL(12,2)  | NOT NULL             | Unit price
+effectiveFrom       | DATE           | NOT NULL             | Start date
+effectiveTo         | DATE           |                      | End date
+isActive            | BOOLEAN        | DEFAULT TRUE         | Active status
+createdAt           | TIMESTAMP      | DEFAULT NOW()        | Creation date
+
+INDEXES:
+- PRIMARY KEY (id)
+- INDEX idx_pricing_category_brand (productCategory, brand)
+- INDEX idx_pricing_dates (effectiveFrom, effectiveTo)
+- INDEX idx_pricing_active (isActive)
+
+NOTES:
+- Dynamic pricing based on date
+- Null effectiveTo means indefinite
+
+
+TABLE: system_config
+--------------------------------------------------------------------------------
+Field Name          | Data Type      | Constraints           | Description
+--------------------------------------------------------------------------------
+configKey           | VARCHAR(100)   | PRIMARY KEY          | Config key
+configValue         | TEXT           | NOT NULL             | Config value
+dataType            | VARCHAR(20)    | NOT NULL             | Value data type
+description         | TEXT           |                      | Description
+category            | VARCHAR(50)    |                      | Config category
+updatedAt           | TIMESTAMP      | ON UPDATE NOW()      | Last update
+
+EXAMPLES:
+- quotation_validity_days: 5
+- default_discount_limit: 15
+- subsidy_central_max: 78000
+- subsidy_state_max: 30000
+- company_gst: 08AAJCC8097M1ZT
+
+INDEXES:
+- PRIMARY KEY (configKey)
+- INDEX idx_config_category (category)
+
+
+================================================================================
+                    6. RELATIONSHIPS & CONSTRAINTS
+================================================================================
+
+ONE-TO-MANY RELATIONSHIPS:
+---------------------------
+1. dealers (1) ↔ (N) quotations
+   - One dealer creates many quotations
+   
+2. customers (1) ↔ (N) quotations
+   - One customer can have many quotations
+   
+3. quotations (1) ↔ (1) quotation_products
+   - Each quotation has one product configuration
+   
+4. quotations (1) ↔ (N) custom_panels
+   - One quotation can have multiple custom panels
+   
+5. quotations (1) ↔ (N) visits
+   - One quotation can have multiple visits
+   
+6. visits (1) ↔ (N) visit_assignments
+   - One visit can have multiple visitor assignments
+   
+7. visitors (1) ↔ (N) visit_assignments
+   - One visitor can be assigned to multiple visits
+   
+8. dealers (admin) (1) ↔ (N) visitors
+   - One admin dealer creates many visitors
+
+CASCADE DELETE RULES:
+----------------------
+- quotations deleted → cascade delete quotation_products
+- quotations deleted → cascade delete custom_panels
+- quotations deleted → cascade delete visits
+- visits deleted → cascade delete visit_assignments
+
+
+================================================================================
+                        7. INDEXES & OPTIMIZATION
+================================================================================
+
+COMPOSITE INDEXES:
+------------------
+1. idx_quotation_dealer_status (dealerId, status)
+   - For dealer dashboard filtering
+   
+2. idx_quotation_date_status (createdAt DESC, status)
+   - For recent quotations with status filter
+   
+3. idx_visit_dealer_date (dealerId, visitDate, status)
+   - For dealer visit management
+   
+4. idx_visitor_assignments (visitorId, visitDate)
+   - For visitor dashboard
+
+FULL-TEXT SEARCH INDEXES:
+--------------------------
+1. FULLTEXT idx_customer_search (firstName, lastName, mobile, email)
+   - For customer search
+   
+2. FULLTEXT idx_quotation_search (id)
+   - For quotation ID search
+
+
+================================================================================
+                        8. DATA FLOW DIAGRAM
+================================================================================
+
+NEW QUOTATION FLOW:
+-------------------
+1. Dealer logs in → dealers table
+2. Dealer creates customer → customers table
+3. Dealer configures product → quotation_products / custom_panels
+4. System generates quotation → quotations table
+5. System calculates pricing → pricing_rules reference
+6. Quotation saved with status='pending'
+
+VISIT SCHEDULING FLOW:
+-----------------------
+1. Dealer views quotation
+2. Dealer schedules visit → visits table
+3. Dealer assigns visitors → visit_assignments table
+4. Visitor logs in → visitors table
+5. Visitor sees assigned visits
+6. Visitor updates status → visits.status
+7. Visitor adds feedback → visits.feedback
+
+ADMIN WORKFLOW:
+---------------
+1. Admin logs in → dealers table (role='admin')
+2. Admin views all quotations → quotations + dealers join
+3. Admin updates status → quotations.status
+4. Admin views all dealers → dealers table
+5. Admin views statistics → aggregations
+
+
+================================================================================
+                        9. STORAGE REQUIREMENTS
+================================================================================
+
+ESTIMATED STORAGE (per record):
+--------------------------------
+- dealers: ~500 bytes
+- visitors: ~500 bytes
+- customers: ~800 bytes
+- quotations: ~300 bytes
+- quotation_products: ~1.5 KB
+- custom_panels: ~200 bytes
+- visits: ~600 bytes
+- visit_assignments: ~250 bytes
+
+ESTIMATED ANNUAL GROWTH:
+------------------------
+Assuming 100 dealers, each creating 10 quotations/month:
+- Quotations: 12,000/year × 300 bytes = ~3.6 MB
+- Products: 12,000/year × 1.5 KB = ~18 MB
+- Visits: 6,000/year × 600 bytes = ~3.6 MB
+- Total: ~25 MB/year (before indexes)
+
+
+================================================================================
+                        10. BACKUP & ARCHIVAL STRATEGY
+================================================================================
+
+DAILY BACKUPS:
+--------------
+- All active data (status != 'completed')
+- Last 30 days of completed quotations
+
+WEEKLY BACKUPS:
+---------------
+- Full database backup
+- All completed quotations
+- Historical data
+
+ARCHIVAL POLICY:
+----------------
+- Quotations older than 2 years → archive table
+- Completed visits older than 1 year → archive
+- Keep customer & dealer data indefinitely
+
+
+================================================================================
+                        11. SECURITY & PERMISSIONS
+================================================================================
+
+ROLE-BASED ACCESS:
+------------------
+DEALER:
+- Read/Write: Own quotations, customers
+- Read: Own visits
+- No Access: Other dealers' data, admin panel
+
+ADMIN:
+- Read/Write: All quotations, dealers, customers
+- Read: All visits
+- Update: Quotation status
+- No Access: Create new quotations
+
+VISITOR:
+- Read: Assigned visits only
+- Update: Visit status, feedback
+- No Access: Quotations, customers (except basic info)
+
+
+================================================================================
+                        12. FUTURE ENHANCEMENTS
+================================================================================
+
+PLANNED FEATURES:
+-----------------
+1. Payment tracking table
+2. Document management (PDF storage)
+3. Email/SMS notifications log
+4. Activity audit trail
+5. Performance reports table
+6. Lead management system
+7. Inventory tracking
+8. Service/maintenance scheduling
+
+================================================================================
+                            END OF SCHEMA
+================================================================================
+
+For implementation questions or clarification, contact:
+ChairBord Pvt. Ltd.
+Email: info@chairbord.com
+Phone: +91 9251666646
+
+
+
+

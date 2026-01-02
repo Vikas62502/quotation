@@ -67,37 +67,51 @@ export default function NewQuotationPage() {
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
           {/* Progress Steps */}
-          <div className="mb-8">
-            <div className="flex items-center justify-center">
-              {steps.map((step, index) => (
-                <div key={step.id} className="flex items-center">
-                  <div className="flex flex-col items-center">
-                    <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium ${
-                        currentStep > step.id
-                          ? "bg-primary text-primary-foreground"
-                          : currentStep === step.id
+          <div className="mb-6 sm:mb-8">
+            <div className="flex items-center justify-center overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
+              <div className="flex items-center min-w-fit">
+                {steps.map((step, index) => (
+                  <div key={step.id} className="flex items-center">
+                    <div className="flex flex-col items-center min-w-[60px] sm:min-w-[90px] md:min-w-[110px]">
+                      <div
+                        className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-all ${
+                          currentStep > step.id
                             ? "bg-primary text-primary-foreground"
-                            : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {currentStep > step.id ? <Check className="w-5 h-5" /> : step.id}
+                            : currentStep === step.id
+                              ? "bg-primary text-primary-foreground"
+                              : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        {currentStep > step.id ? (
+                          <Check className="w-4 h-4 sm:w-5 sm:h-5" />
+                        ) : (
+                          step.id
+                        )}
+                      </div>
+                      <span
+                        className={`text-[10px] sm:text-xs mt-1.5 sm:mt-2 text-center px-0.5 sm:px-1 leading-tight ${
+                          currentStep >= step.id ? "text-foreground font-medium" : "text-muted-foreground"
+                        }`}
+                      >
+                        {/* Show abbreviated names on mobile, full names on sm and up */}
+                        <span className="hidden sm:inline">{step.name}</span>
+                        <span className="sm:hidden">
+                          {step.name === "Customer Details" ? "Customer" :
+                           step.name === "Product Selection" ? "Products" :
+                           step.name}
+                        </span>
+                      </span>
                     </div>
-                    <span
-                      className={`text-xs mt-2 ${currentStep >= step.id ? "text-foreground" : "text-muted-foreground"}`}
-                    >
-                      {step.name}
-                    </span>
+                    {index < steps.length - 1 && (
+                      <div
+                        className={`w-8 sm:w-12 md:w-20 lg:w-28 xl:w-32 h-0.5 mx-1 sm:mx-2 mb-5 sm:mb-6 ${
+                          currentStep > step.id ? "bg-primary" : "bg-muted"
+                        }`}
+                      />
+                    )}
                   </div>
-                  {index < steps.length - 1 && (
-                    <div
-                      className={`w-16 sm:w-24 lg:w-32 h-0.5 mx-2 mb-6 ${
-                        currentStep > step.id ? "bg-primary" : "bg-muted"
-                      }`}
-                    />
-                  )}
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
           </div>
 

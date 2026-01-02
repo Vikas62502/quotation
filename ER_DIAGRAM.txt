@@ -1,0 +1,374 @@
+================================================================================
+                ENTITY RELATIONSHIP DIAGRAM (TEXT FORMAT)
+                  Solar Quotation Management System
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           MAIN ENTITIES OVERVIEW                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────┐          ┌──────────────┐          ┌──────────────┐
+│   DEALERS    │          │  CUSTOMERS   │          │   VISITORS   │
+│──────────────│          │──────────────│          │──────────────│
+│ • id (PK)    │          │ • id (PK)    │          │ • id (PK)    │
+│ • username   │          │ • mobile     │          │ • username   │
+│ • password   │          │ • email      │          │ • password   │
+│ • firstName  │          │ • firstName  │          │ • firstName  │
+│ • lastName   │          │ • lastName   │          │ • lastName   │
+│ • email      │          │ • address    │          │ • email      │
+│ • mobile     │          │ • dealerId   │          │ • mobile     │
+│ • gender     │          └──────┬───────┘          │ • createdBy  │
+│ • dateOfBirth│                 │                  │ • isActive   │
+│ • fatherName │                 │                  └──────┬───────┘
+│ • fatherContact│               │                         │
+│ • governmentIdType│                                      │
+│ • governmentIdNumber│                                    │
+│ • governmentIdImage│                                     │
+│ • address (street, city, state, pincode)│               │
+│ • company (optional)│                                    │
+│ • role (dealer/admin)│                                   │
+│ • isActive (pending/active)│                             │
+│ • emailVerified│                                         │
+│ • createdAt│                                             │
+│ • updatedAt│                                             │
+└──────┬───────┘          └──────┬───────┘          └──────┬───────┘
+       │                         │                          │
+       │ creates                 │ has                      │ created by
+       │ (1:N)                   │ (1:N)                   │ (N:1)
+       │                         │                          │
+       │ (Admin only)            │                          │
+       ▼                         ▼                         ▼
+┌──────────────────────────────────────────┐      ┌──────────────────┐
+│            QUOTATIONS                    │      │ VISIT_ASSIGNMENTS│
+│──────────────────────────────────────────│      │──────────────────│
+│ • id (PK)                                │◄─────┤ • id (PK)        │
+│ • dealerId (FK) → dealers.id             │      │ • visitId (FK)   │
+│ • customerId (FK) → customers.id         │      │ • visitorId (FK) │
+│ • systemType                             │      │ • availableFrom  │
+│ • status (pending/approved/completed)    │      │ • availableTo    │
+│ • discount                               │      └──────────────────┘
+│ • finalAmount                            │               ▲
+│ • createdAt                              │               │
+│ • validUntil                             │               │ assigned to (N:1)
+└──────┬───────────────────────────────────┘               │
+       │                                                    │
+       │ has (1:1)          has (1:N)          has (1:N)   │
+       │                    │                  │           │
+       ▼                    ▼                  ▼           │
+┌────────────────┐   ┌──────────────┐   ┌─────────┴──────┐
+│QUOTATION_      │   │CUSTOM_PANELS │   │    VISITS      │
+│PRODUCTS        │   │──────────────│   │────────────────│
+│────────────────│   │ • id (PK)    │   │ • id (PK)      │
+│• id (PK)       │   │ • quotation  │   │ • quotationId  │
+│• quotationId   │   │ • brand      │   │ • dealerId     │
+│• panelBrand    │   │ • size       │   │ • visitDate    │
+│• panelSize     │   │ • quantity   │   │ • visitTime    │
+│• panelQuantity │   │ • type (dcr) │   │ • location     │
+│• inverterType  │   │ • price      │   │ • locationLink │
+│• inverterBrand │   └──────────────┘   │ • notes        │
+│• structureType │                      │ • status       │
+│• meterBrand    │                      │ • feedback     │
+│• acCableBrand  │                      │ • rejection    │
+│• dcCableBrand  │                      │ • length       │
+│• acdb, dcdb    │                      │ • width        │
+│• batteryPrice  │                      │ • height       │
+│• subsidies     │                      │ • images       │
+│• subtotal      │                      └────────────────┘
+│• dcCableBrand  │
+│• acdb, dcdb    │
+│• batteryPrice  │
+│• subsidies     │
+│• subtotal      │
+└────────────────┘
+
+
+================================================================================
+                        DETAILED RELATIONSHIPS
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   1. QUOTATION CREATION FLOW                                │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+        ┌────────────┐
+        │  DEALER    │
+        │  (Login)   │
+        └─────┬──────┘
+              │
+              ▼
+    ┌─────────────────┐
+    │ Create Customer │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────────────┐
+    │ Configure Products      │
+    │ ┌─────────────────────┐ │
+    │ │ • System Type       │ │
+    │ │ • Panels            │ │
+    │ │ • Inverter          │ │
+    │ │ • Structure         │ │
+    │ │ • Cables & Others   │ │
+    │ │ • Battery (optional)│ │
+    │ └─────────────────────┘ │
+    └────────┬────────────────┘
+             │
+             ▼
+    ┌─────────────────────┐
+    │ Calculate Pricing   │
+    │ ┌─────────────────┐ │
+    │ │ Subtotal        │ │
+    │ │ - Subsidies     │ │
+    │ │ - Discount %    │ │
+    │ │ = Final Amount  │ │
+    │ └─────────────────┘ │
+    └────────┬────────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │  Save Quotation │
+    │  status=pending │
+    └─────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   2. VISIT MANAGEMENT FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌─────────────────┐
+    │   QUOTATION     │
+    │   (Created)     │
+    └────────┬────────┘
+             │
+             ▼
+    ┌─────────────────┐
+    │ Schedule Visit  │
+    │ ┌─────────────┐ │
+    │ │ • Date      │ │
+    │ │ • Time      │ │
+    │ │ • Location  │ │
+    │ │ • Location  │ │
+    │ │   Link *    │ │
+    │ │ • Notes     │ │
+    │ └─────────────┘ │
+    └────────┬────────┘
+             │
+             ▼
+    ┌──────────────────────┐
+    │ Assign Visitors      │
+    │ ┌──────────────────┐ │
+    │ │ Visitor 1        │ │
+    │ │ • Available Time │ │
+    │ ├──────────────────┤ │
+    │ │ Visitor 2        │ │
+    │ │ • Available Time │ │
+    │ └──────────────────┘ │
+    └────────┬─────────────┘
+             │
+             ▼
+    ┌─────────────────┐         ┌────────────────┐
+    │  VISITOR LOGIN  │         │ View Assigned  │
+    │                 │────────►│     Visits     │
+    └─────────────────┘         └────────┬───────┘
+                                         │
+                                         ▼
+                                ┌────────────────┐
+                                │ Approve Visit  │
+                                └────────┬───────┘
+                                         │
+                                         ▼
+                                ┌────────────────┐
+                                │ Update Status  │
+                                │ ┌────────────┐ │
+                                │ │ Complete   │ │
+                                │ │  (with     │ │
+                                │ │  dims &    │ │
+                                │ │  images)   │ │
+                                │ ├────────────┤ │
+                                │ │ Incomplete │ │
+                                │ │  (reason)  │ │
+                                │ ├────────────┤ │
+                                │ │ Reschedule │ │
+                                │ │  (reason)  │ │
+                                │ ├────────────┤ │
+                                │ │ Reject     │ │
+                                │ │  (reason)  │ │
+                                │ └────────────┘ │
+                                └────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                   3. ADMIN MANAGEMENT FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+        ┌────────────┐
+        │   ADMIN    │
+        │  (Login)   │
+        └─────┬──────┘
+              │
+              ├──────────────┬──────────────┬──────────────┬──────────────┐
+              │              │              │              │              │
+              ▼              ▼              ▼              ▼              ▼
+    ┌─────────────┐  ┌─────────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+    │View All     │  │Manage       │ │View All  │ │Manage    │ │Generate  │
+    │Quotations   │  │Dealers      │ │Customers │ │Visitors  │ │Reports   │
+    └──────┬──────┘  └──────┬──────┘ └──────────┘ └────┬─────┘ └──────────┘
+           │                │                          │
+           ├───────────┬────┼──────────┬──────────┐    │
+           │           │    │          │          │    │
+           ▼           ▼    ▼          ▼          ▼    │
+    ┌──────────┐ ┌────────┐ ┌────────┐ ┌────────┐     │
+    │ Update   │ │ Approve│ │ Filter │ │ Search │     │
+    │ Status   │ │Pending │ │By Agent│ │By ID   │     │
+    │          │ │Dealers │ │        │ │        │     │
+    │          │ │        │ │        │ │        │     │
+    │          │ │ View   │ │        │ │        │     │
+    │          │ │Complete│ │        │ │        │     │
+    │          │ │Reg. Info│ │        │ │        │     │
+    └──────────┘ └────────┘ └────────┘ └────────┘     │
+                │                                      │
+                │ Activate/Approve                     │
+                │ (Set isActive = true)                │
+                │                                      │
+                                                       ▼
+                                            ┌──────────────────┐
+                                            │ Manage Visitors  │
+                                            │ ┌──────────────┐ │
+                                            │ │ • Create     │ │
+                                            │ │ • Update     │ │
+                                            │ │ • Deactivate │ │
+                                            │ │ • View All   │ │
+                                            │ └──────────────┘ │
+                                            └──────────────────┘
+
+
+================================================================================
+                        CARDINALITY SUMMARY
+================================================================================
+
+RELATIONSHIP                           CARDINALITY    CASCADE DELETE
+─────────────────────────────────────────────────────────────────────────────
+dealers → quotations                   1 : N          No
+customers → quotations                 1 : N          No
+quotations → quotation_products        1 : 1          Yes
+quotations → custom_panels             1 : N          Yes
+quotations → visits                    1 : N          Yes
+visits → visit_assignments             1 : N          Yes
+visitors → visit_assignments           1 : N          No
+
+
+================================================================================
+                        STATUS TRANSITIONS
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      QUOTATION STATUS FLOW                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────┐
+                    │   PENDING   │ (Initial State)
+                    └──────┬──────┘
+                           │
+                ┌──────────┼──────────┬──────────┐
+                │          │          │          │
+                ▼          ▼          ▼          ▼
+         ┌──────────┐ ┌────────┐ ┌────────┐ ┌─────────┐
+         │ APPROVED │ │REJECTED│ │(PENDING)│ │COMPLETED│
+         └──────────┘ └────────┘ └────────┘ └────┬────┘
+                                                   │
+                                          (Final State)
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         VISIT STATUS FLOW                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                    ┌─────────────┐
+                    │   PENDING   │ (Initial State)
+                    └──────┬──────┘
+                           │
+                ┌──────────┼──────────┐
+                │          │          │
+                ▼          ▼          ▼
+         ┌──────────┐ ┌────────┐ ┌─────────────┐
+         │ APPROVED │ │REJECTED│ │ RESCHEDULED │
+         └─────┬────┘ └────────┘ └─────────────┘
+               │      (Terminal)   (Back to Pending)
+               │
+       ┌───────┼───────┬──────────┐
+       │       │       │          │
+       ▼       ▼       ▼          ▼
+┌──────────┐ ┌──────────┐ ┌─────────────┐ ┌──────────┐
+│COMPLETED │ │INCOMPLETE│ │ RESCHEDULED │ │ REJECTED │
+└──────────┘ └──────────┘ └─────────────┘ └──────────┘
+(Terminal)   (Terminal)   (Back to Pending) (Terminal)
+
+
+================================================================================
+                    DATA ACCESS PATTERNS BY ROLE
+================================================================================
+
+┌──────────────┬─────────────┬─────────────┬─────────────┬──────────────┐
+│   ENTITY     │   DEALER    │    ADMIN    │   VISITOR   │   PUBLIC     │
+├──────────────┼─────────────┼─────────────┼─────────────┼──────────────┤
+│ dealers      │ Own (R)     │ All (R/W)   │ None        │ None         │
+│ customers    │ Own (R/W)   │ All (R/W)   │ Basic (R)   │ None         │
+│ quotations   │ Own (R/W)   │ All (R/W)   │ Basic (R)   │ None         │
+│ products     │ Own (R/W)   │ All (R/W)   │ Basic (R)   │ None         │
+│ visits       │ Own (R/W)   │ All (R)     │Assigned(R/W)│ None         │
+│ visitors     │ None        │ All (R/W/C) │ Own (R)     │ None         │
+└──────────────┴─────────────┴─────────────┴─────────────┴──────────────┘
+
+Legend: R = Read, W = Write, C = Create
+Note: Only Admin can create visitors
+
+Legend: R = Read, W = Write
+
+
+================================================================================
+                        TYPICAL QUERIES
+================================================================================
+
+1. GET DEALER DASHBOARD DATA:
+   SELECT q.*, c.firstName, c.lastName, c.mobile
+   FROM quotations q
+   JOIN customers c ON q.customerId = c.id
+   WHERE q.dealerId = ?
+   ORDER BY q.createdAt DESC
+   LIMIT 10
+
+2. GET VISITOR ASSIGNED VISITS:
+   SELECT v.*, q.*, c.*
+   FROM visits v
+   JOIN visit_assignments va ON v.id = va.visitId
+   JOIN quotations q ON v.quotationId = q.id
+   JOIN customers c ON q.customerId = c.id
+   WHERE va.visitorId = ?
+   AND v.visitDate >= CURRENT_DATE
+   ORDER BY v.visitDate, v.visitTime
+
+3. GET ADMIN STATISTICS:
+   SELECT 
+     COUNT(*) as totalQuotations,
+     COUNT(DISTINCT dealerId) as activeDealers,
+     COUNT(DISTINCT customerId) as totalCustomers,
+     SUM(finalAmount) as totalRevenue
+   FROM quotations
+   WHERE createdAt >= DATE_SUB(NOW(), INTERVAL 1 MONTH)
+
+4. SEARCH QUOTATIONS:
+   SELECT q.*, c.firstName, c.lastName, d.firstName as dealerName
+   FROM quotations q
+   JOIN customers c ON q.customerId = c.id
+   JOIN dealers d ON q.dealerId = d.id
+   WHERE q.id LIKE ? 
+      OR c.firstName LIKE ?
+      OR c.mobile LIKE ?
+
+================================================================================
+                            END OF ER DIAGRAM
+================================================================================
+
+
+
+

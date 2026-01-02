@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import type { ProductSelection } from "@/lib/quotation-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,22 +10,31 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
-import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box } from "lucide-react"
+import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box, List } from "lucide-react"
+import { DcrConfigDialog } from "@/components/dcr-config-dialog"
+import { NonDcrConfigDialog } from "@/components/non-dcr-config-dialog"
+import { BothConfigDialog } from "@/components/both-config-dialog"
+import { 
+  type SystemPricing, 
+  type BothSystemPricing,
+  getSystemConfigOptionsByType,
+  getSystemConfigById,
+  configToProductSelection,
+  getSystemConfiguration,
+  getAvailablePanelSizes,
+  getAvailableStructureSizes,
+  getACDBOptions,
+  getDCDBOptions,
+  formatACDBOption,
+  formatDCDBOption,
+  determinePhase,
+  calculateSystemSize
+} from "@/lib/pricing-tables"
+import { usePricingTables } from "@/lib/use-pricing-tables"
 import {
   systemTypes,
-  panelBrands,
-  panelSizes,
-  inverterTypes,
-  inverterBrands,
-  inverterSizes,
-  structureTypes,
-  structureSizes,
-  meterBrands,
-  cableBrands,
-  cableSizes,
-  acdbOptions,
-  dcdbOptions,
 } from "@/lib/quotation-data"
+import { useProductCatalog } from "@/lib/use-product-catalog"
 
 interface Props {
   onSubmit: (products: ProductSelection) => void
@@ -34,7 +43,26 @@ interface Props {
 }
 
 export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
+  const { catalog } = useProductCatalog()
+  const { pricingTables, isLoading: isLoadingPricing, error: pricingError } = usePricingTables()
   const [error, setError] = useState("")
+  const [dcrConfigDialogOpen, setDcrConfigDialogOpen] = useState(false)
+  const [nonDcrConfigDialogOpen, setNonDcrConfigDialogOpen] = useState(false)
+  const [bothConfigDialogOpen, setBothConfigDialogOpen] = useState(false)
+  
+  // Use catalog data from API only (no dummy data fallback)
+  const panelBrandsList = catalog?.panels?.brands || []
+  // Get panel sizes from pricing tables instead of catalog
+  const panelSizesList = getAvailablePanelSizes(pricingTables || undefined)
+  const inverterTypesList = catalog?.inverters?.types || []
+  const inverterBrandsList = catalog?.inverters?.brands || []
+  const inverterSizesList = catalog?.inverters?.sizes || []
+  const structureTypesList = catalog?.structures?.types || []
+  // Get structure sizes from pricing tables instead of catalog
+  const structureSizesList = getAvailableStructureSizes(pricingTables || undefined)
+  const meterBrandsList = catalog?.meters?.brands || []
+  const cableBrandsList = catalog?.cables?.brands || []
+  const cableSizesList = catalog?.cables?.sizes || []
   const [formData, setFormData] = useState<ProductSelection>(
     initialData || {
       systemType: "",
@@ -68,10 +96,58 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     },
   )
 
+  // Determine phase based on system size and inverter size
+  // BOTH systems are always 3-Phase
+  let systemSizeForPhase = ""
+  if (formData.systemType === "both") {
+    // BOTH systems are always 3-Phase, but we still calculate system size for pricing lookup
+    const dcrKw = formData.dcrPanelSize && formData.dcrPanelQuantity 
+      ? (Number.parseFloat(formData.dcrPanelSize.replace("W", "")) * formData.dcrPanelQuantity) / 1000
+      : 0
+    const nonDcrKw = formData.nonDcrPanelSize && formData.nonDcrPanelQuantity
+      ? (Number.parseFloat(formData.nonDcrPanelSize.replace("W", "")) * formData.nonDcrPanelQuantity) / 1000
+      : 0
+    systemSizeForPhase = `${dcrKw + nonDcrKw}kW`
+  } else if (formData.panelSize && formData.panelQuantity) {
+    systemSizeForPhase = calculateSystemSize(formData.panelSize, formData.panelQuantity)
+  } else if (formData.dcrPanelSize && formData.dcrPanelQuantity) {
+    systemSizeForPhase = calculateSystemSize(formData.dcrPanelSize, formData.dcrPanelQuantity)
+  }
+  
+  // Determine phase - pass pricing tables to get accurate phase from pricing data
+  const currentPhase = formData.systemType === "both"
+    ? "3-Phase" as "1-Phase" | "3-Phase" // BOTH systems are always 3-Phase
+    : formData.inverterSize && systemSizeForPhase
+    ? determinePhase(systemSizeForPhase, formData.inverterSize, pricingTables || undefined)
+    : formData.inverterSize
+    ? (() => {
+        // If we only have inverter size, check if it's >= 7kW or if it's a common 3-phase size
+        const inverterKw = Number.parseFloat(formData.inverterSize.replace("kW", ""))
+        // Common 3-phase inverter sizes: 5kW (for 3-4kW systems), 8kW, 10kW, 12kW, 15kW, 20kW, 25kW, 30kW
+        // Common 1-phase inverter sizes: 3kW, 4kW, 5kW (when system matches), 6kW
+        if (inverterKw >= 7 || (inverterKw === 5 && !systemSizeForPhase)) {
+          return "3-Phase" as "1-Phase" | "3-Phase"
+        }
+        return "1-Phase" as "1-Phase" | "3-Phase"
+      })()
+    : "1-Phase" as "1-Phase" | "3-Phase"
+  
+  // Get ACDB/DCDB options filtered by phase from pricing tables
+  const acdbOptions = getACDBOptions(currentPhase, pricingTables || undefined)
+  const dcdbOptions = getDCDBOptions(currentPhase, pricingTables || undefined)
+  
+  // Format options for display
+  const acdbOptionsList = acdbOptions.map((opt) => formatACDBOption(opt.brand, opt.phase))
+  const dcdbOptionsList = dcdbOptions.map((opt) => formatDCDBOption(opt.brand, opt.phase))
+
   const updateFormData = <K extends keyof ProductSelection>(field: K, value: ProductSelection[K]) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
     setError("")
   }
+
+  // Quick Select dropdown removed - configurations are now selected via Browse dialogs
+  // The handlers below (handleDcrConfigSelect, handleNonDcrConfigSelect, handleBothConfigSelect)
+  // are used when selecting from the Browse dialogs
 
   const addCustomPanel = () => {
     setFormData((prev) => ({
@@ -92,6 +168,278 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       ...prev,
       customPanels: prev.customPanels?.filter((_, i) => i !== index),
     }))
+  }
+
+  // Handle BOTH (DCR + NON DCR) configuration selection from Browse dialog
+  const handleBothConfigSelect = (config: BothSystemPricing) => {
+    // Find matching system configuration preset that includes all component details
+    const systemConfig = getSystemConfiguration(
+      "both",
+      config.systemSize,
+      config.panelType,
+      pricingTables || undefined
+    )
+    
+    if (systemConfig) {
+      // Use the full system configuration preset to fill all fields
+      const preFilledData = configToProductSelection(systemConfig)
+      
+      // For BOTH systems, we need to calculate DCR and NON DCR panel quantities separately
+      const dcrKw = Number.parseFloat(config.dcrCapacity.replace("kW", ""))
+      const nonDcrKw = Number.parseFloat(config.nonDcrCapacity.replace("kW", ""))
+      const dcrW = dcrKw * 1000
+      const nonDcrW = nonDcrKw * 1000
+      const panelSize = Number.parseFloat(systemConfig.panelSize.replace("W", ""))
+      
+      const dcrQuantity = Math.ceil(dcrW / panelSize)
+      const nonDcrQuantity = Math.ceil(nonDcrW / panelSize)
+      
+      setFormData((prev) => {
+        const updated = {
+          ...prev,
+          ...preFilledData,
+          // Override panel quantities for BOTH system
+          dcrPanelBrand: systemConfig.panelBrand,
+          dcrPanelSize: systemConfig.panelSize,
+          dcrPanelQuantity: dcrQuantity,
+          nonDcrPanelBrand: systemConfig.panelBrand,
+          nonDcrPanelSize: systemConfig.panelSize,
+          nonDcrPanelQuantity: nonDcrQuantity,
+          // Ensure ACDB/DCDB are set from config (BOTH systems are always 3-Phase)
+          acdb: systemConfig.acdb || preFilledData.acdb || formatACDBOption("Havells", "3-Phase"),
+          dcdb: systemConfig.dcdb || preFilledData.dcdb || formatDCDBOption("Havells", "3-Phase"),
+          // Preserve subsidies if they exist
+          centralSubsidy: prev.centralSubsidy || 0,
+          stateSubsidy: prev.stateSubsidy || 0,
+          // Store the system price from the selected configuration
+          systemPrice: config.price,
+        }
+        console.log("[ProductSelectionForm] BOTH config selected from dialog - filled all fields:", updated)
+        console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
+        console.log("[ProductSelectionForm] System price from config:", config.price)
+        return updated
+      })
+    } else {
+      // Fallback to basic calculation if no preset found
+      const dcrKw = Number.parseFloat(config.dcrCapacity.replace("kW", ""))
+      const dcrW = dcrKw * 1000
+      const nonDcrKw = Number.parseFloat(config.nonDcrCapacity.replace("kW", ""))
+      const nonDcrW = nonDcrKw * 1000
+      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      
+      let bestDcrPanelSize = 545
+      let bestDcrQuantity = Math.ceil(dcrW / bestDcrPanelSize)
+      for (const size of panelSizesToTry) {
+        const qty = Math.ceil(dcrW / size)
+        const diff = Math.abs((qty * size) - dcrW)
+        const currentDiff = Math.abs((bestDcrQuantity * bestDcrPanelSize) - dcrW)
+        if (diff < currentDiff) {
+          bestDcrPanelSize = size
+          bestDcrQuantity = qty
+        }
+      }
+      
+      let bestNonDcrPanelSize = 545
+      let bestNonDcrQuantity = Math.ceil(nonDcrW / bestNonDcrPanelSize)
+      for (const size of panelSizesToTry) {
+        const qty = Math.ceil(nonDcrW / size)
+        const diff = Math.abs((qty * size) - nonDcrW)
+        const currentDiff = Math.abs((bestNonDcrQuantity * bestNonDcrPanelSize) - nonDcrW)
+        if (diff < currentDiff) {
+          bestNonDcrPanelSize = size
+          bestNonDcrQuantity = qty
+        }
+      }
+      
+      let panelBrand = "Adani"
+      if (config.panelType === "Tata") panelBrand = "Tata"
+      else if (config.panelType === "Waaree") panelBrand = "Waaree"
+      
+      // Determine phase for BOTH system (always 3-Phase)
+      const bothPhase = "3-Phase" as "1-Phase" | "3-Phase"
+      const defaultAcdb = formatACDBOption("Havells", bothPhase)
+      const defaultDcdb = formatDCDBOption("Havells", bothPhase)
+      
+      setFormData((prev) => ({
+        ...prev,
+        dcrPanelBrand: panelBrand,
+        dcrPanelSize: `${bestDcrPanelSize}W`,
+        dcrPanelQuantity: bestDcrQuantity,
+        nonDcrPanelBrand: panelBrand,
+        nonDcrPanelSize: `${bestNonDcrPanelSize}W`,
+        nonDcrPanelQuantity: bestNonDcrQuantity,
+        inverterType: "String Inverter",
+        inverterBrand: "Polycab",
+        inverterSize: config.inverterSize,
+        acdb: defaultAcdb,
+        dcdb: defaultDcdb,
+      }))
+    }
+  }
+
+  // Handle NON DCR configuration selection from Browse dialog
+  const handleNonDcrConfigSelect = (config: SystemPricing) => {
+    // Find matching system configuration preset that includes all component details
+    const systemConfig = getSystemConfiguration(
+      "non-dcr",
+      config.systemSize,
+      config.panelType,
+      pricingTables || undefined
+    )
+    
+    if (systemConfig) {
+      // Use the full system configuration preset to fill all fields
+      const preFilledData = configToProductSelection(systemConfig)
+      const panelSizeToSet = systemConfig.panelSize || preFilledData.panelSize || ""
+      
+      setFormData((prev) => {
+        const updated = {
+          ...prev,
+          ...preFilledData,
+          panelSize: panelSizeToSet,
+          // Ensure ACDB/DCDB are set from config
+          acdb: systemConfig.acdb || preFilledData.acdb || "",
+          dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
+          // Set subsidies from config (DCR systems have fixed central subsidy of 78000)
+          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0)),
+          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
+          // Store the system price from the selected configuration
+          systemPrice: config.price,
+        }
+        console.log("[ProductSelectionForm] NON DCR config selected from dialog - filled all fields:", updated)
+        console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
+        console.log("[ProductSelectionForm] System price from config:", config.price)
+        return updated
+      })
+    } else {
+      // Fallback to basic calculation if no preset found
+      const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
+      const systemW = systemKw * 1000
+      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      let bestPanelSize = 545
+      let bestQuantity = Math.ceil(systemW / bestPanelSize)
+      
+      for (const size of panelSizesToTry) {
+        const qty = Math.ceil(systemW / size)
+        const diff = Math.abs((qty * size) - systemW)
+        const currentDiff = Math.abs((bestQuantity * bestPanelSize) - systemW)
+        if (diff < currentDiff) {
+          bestPanelSize = size
+          bestQuantity = qty
+        }
+      }
+      
+      let panelBrand = "Adani"
+      if (config.panelType === "Tata") panelBrand = "Tata"
+      else if (config.panelType === "Waaree") panelBrand = "Waaree"
+      
+      // Determine phase based on system and inverter size
+      const systemSizeForPhase = `${systemKw}kW`
+      const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
+      const defaultAcdb = formatACDBOption("Havells", fallbackPhase)
+      const defaultDcdb = formatDCDBOption("Havells", fallbackPhase)
+      
+      setFormData((prev) => ({
+        ...prev,
+        panelBrand,
+        panelSize: `${bestPanelSize}W`,
+        panelQuantity: bestQuantity,
+        inverterType: "String Inverter",
+        inverterBrand: "Polycab",
+        inverterSize: config.inverterSize,
+        acdb: defaultAcdb,
+        dcdb: defaultDcdb,
+      }))
+    }
+  }
+
+  // Handle DCR configuration selection from Browse dialog
+  const handleDcrConfigSelect = (config: SystemPricing) => {
+    // Validate config price before proceeding
+    if (!config.price || config.price <= 0) {
+      console.error("[ProductSelectionForm] Invalid config price:", config.price)
+      setError(`Invalid configuration price: ${config.price}. Please select a valid configuration.`)
+      return
+    }
+
+    // Find matching system configuration preset that includes all component details
+    const systemConfig = getSystemConfiguration(
+      "dcr",
+      config.systemSize,
+      config.panelType,
+      pricingTables || undefined
+    )
+    
+    if (systemConfig) {
+      // Use the full system configuration preset to fill all fields
+      const preFilledData = configToProductSelection(systemConfig)
+      const panelSizeToSet = systemConfig.panelSize || preFilledData.panelSize || ""
+      
+      setFormData((prev) => {
+        const updated = {
+          ...prev,
+          ...preFilledData,
+          panelSize: panelSizeToSet,
+          // Ensure ACDB/DCDB are set from config
+          acdb: systemConfig.acdb || preFilledData.acdb || "",
+          dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
+          // Set subsidies from config (DCR systems have fixed central subsidy of 78000)
+          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0)),
+          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
+          // Store the system price from the selected configuration - CRITICAL: must be > 0
+          systemPrice: config.price,
+        }
+        console.log("[ProductSelectionForm] DCR config selected from dialog - filled all fields:", updated)
+        console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
+        console.log("[ProductSelectionForm] System price from config:", config.price)
+        
+        // Validate systemPrice was set correctly
+        if (!updated.systemPrice || updated.systemPrice <= 0) {
+          console.error("[ProductSelectionForm] ERROR: systemPrice is invalid after setting:", updated.systemPrice)
+          setError(`Failed to set system price. Please try selecting the configuration again.`)
+        }
+        return updated
+      })
+    } else {
+      // Fallback to basic calculation if no preset found
+      const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
+      const systemW = systemKw * 1000
+      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      let bestPanelSize = 545
+      let bestQuantity = Math.ceil(systemW / bestPanelSize)
+      
+      for (const size of panelSizesToTry) {
+        const qty = Math.ceil(systemW / size)
+        const diff = Math.abs((qty * size) - systemW)
+        const currentDiff = Math.abs((bestQuantity * bestPanelSize) - systemW)
+        if (diff < currentDiff) {
+          bestPanelSize = size
+          bestQuantity = qty
+        }
+      }
+      
+      let panelBrand = "Adani"
+      if (config.panelType === "Tata") panelBrand = "Tata"
+      else if (config.panelType === "Waaree") panelBrand = "Waaree"
+      
+      // Determine phase based on system and inverter size
+      const systemSizeForPhase = `${systemKw}kW`
+      const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
+      const defaultAcdb = formatACDBOption("Havells", fallbackPhase)
+      const defaultDcdb = formatDCDBOption("Havells", fallbackPhase)
+      
+      setFormData((prev) => ({
+        ...prev,
+        panelBrand,
+        panelSize: `${bestPanelSize}W`,
+        panelQuantity: bestQuantity,
+        inverterType: "String Inverter",
+        inverterBrand: "Polycab",
+        inverterSize: config.inverterSize,
+        acdb: defaultAcdb,
+        dcdb: defaultDcdb,
+      }))
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -115,6 +463,23 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete inverter selection")
         return
       }
+      // Validate other required fields for BOTH system
+      if (!formData.structureType || !formData.structureSize) {
+        setError("Please complete structure selection")
+        return
+      }
+      if (!formData.meterBrand) {
+        setError("Please select a meter brand")
+        return
+      }
+      if (!formData.acCableBrand || !formData.acCableSize || !formData.dcCableBrand || !formData.dcCableSize) {
+        setError("Please complete cable selection")
+        return
+      }
+      if (!formData.acdb || !formData.dcdb) {
+        setError("Please select ACDB and DCDB")
+        return
+      }
     } else if (formData.systemType !== "customize") {
       if (!formData.panelBrand || !formData.panelSize || !formData.panelQuantity) {
         setError("Please complete panel selection")
@@ -124,10 +489,34 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete inverter selection")
         return
       }
+      // Validate other required fields for DCR/NON DCR systems
+      if (!formData.structureType || !formData.structureSize) {
+        setError("Please complete structure selection")
+        return
+      }
+      if (!formData.meterBrand) {
+        setError("Please select a meter brand")
+        return
+      }
+      if (!formData.acCableBrand || !formData.acCableSize || !formData.dcCableBrand || !formData.dcCableSize) {
+        setError("Please complete cable selection")
+        return
+      }
+      if (!formData.acdb || !formData.dcdb) {
+        setError("Please select ACDB and DCDB")
+        return
+      }
     }
 
-    if (formData.systemType === "customize" && (!formData.customPanels || formData.customPanels.length === 0)) {
-      setError("Please add at least one panel configuration for custom setup")
+    // CUSTOMIZE option commented out - validation removed
+    // if (formData.systemType === "customize" && (!formData.customPanels || formData.customPanels.length === 0)) {
+    //   setError("Please add at least one panel configuration for custom setup")
+    //   return
+    // }
+    
+    // Ensure system type is not customize (should not be possible, but double-check)
+    if (formData.systemType === "customize") {
+      setError("Customize option is not available. Please select a pre-configured system.")
       return
     }
 
@@ -136,11 +525,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
   const showDcrFields = formData.systemType === "dcr"
   const showBothFields = formData.systemType === "both"
-  const showHybridFields = formData.systemType === "hybrid"
   const showCustomizeFields = formData.systemType === "customize"
   const showStandardFields = formData.systemType && !showCustomizeFields && !showBothFields
+  const showBatteryFields = formData.inverterType === "Hybrid Inverter"
 
   return (
+    <div>
     <Card className="border-0 shadow-xl">
       <CardHeader className="bg-gradient-to-r from-primary/10 to-primary/5 rounded-t-lg">
         <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
@@ -162,26 +552,55 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             <Label className="text-base font-medium">System Type *</Label>
             <RadioGroup
               value={formData.systemType}
-              onValueChange={(v) => updateFormData("systemType", v)}
+              onValueChange={(v) => {
+                updateFormData("systemType", v)
+              }}
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3"
             >
-              {systemTypes.map((type) => (
-                <div key={type.id}>
-                  <RadioGroupItem value={type.id} id={type.id} className="peer sr-only" />
-                  <Label
-                    htmlFor={type.id}
-                    className="flex flex-col p-4 border-2 border-border rounded-lg cursor-pointer hover:border-primary/50 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 transition-all"
-                  >
-                    <span className="font-medium">{type.name}</span>
-                    <span className="text-xs text-muted-foreground mt-1">{type.description}</span>
-                  </Label>
-                </div>
-              ))}
+              {systemTypes
+                .filter((type) => type.id !== "customize") // Filter out customize option
+                .map((type) => (
+                  <div key={type.id}>
+                    <RadioGroupItem value={type.id} id={type.id} className="peer sr-only" />
+                    <Label
+                      htmlFor={type.id}
+                      className="flex flex-col p-4 border-2 border-border rounded-lg cursor-pointer hover:border-primary/50 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 transition-all"
+                    >
+                      <span className="font-medium">{type.name}</span>
+                      <span className="text-xs text-muted-foreground mt-1">{type.description}</span>
+                    </Label>
+                  </div>
+                ))}
             </RadioGroup>
           </div>
 
           {showBothFields && (
             <>
+              {/* BOTH Configuration Selector */}
+              <div className="border-t border-border pt-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+                      <List className="w-4 h-4 text-purple-600" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-medium">BOTH (DCR + NON DCR) Configuration</h3>
+                      <p className="text-xs text-muted-foreground">Select a pre-configured BOTH system</p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setBothConfigDialogOpen(true)}
+                    className="flex items-center gap-2"
+                  >
+                    <List className="w-4 h-4" />
+                    Browse BOTH Configurations
+                  </Button>
+                </div>
+                {/* Quick Select dropdown removed - use Browse button to select configuration */}
+              </div>
+
               {/* DCR Panel Selection */}
               <div className="border-t border-border pt-6">
                 <div className="flex items-center gap-2 mb-4">
@@ -190,6 +609,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <h3 className="text-sm font-medium">DCR Panel Configuration</h3>
                   <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">With Subsidy</span>
+                  {(() => {
+                    const panelW = formData.dcrPanelSize ? Number.parseFloat(formData.dcrPanelSize.replace("W", "")) : 0
+                    const quantity = formData.dcrPanelQuantity || 0
+                    const totalW = panelW * quantity
+                    return totalW > 0 ? (
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                        Total: {totalW.toLocaleString()}W
+                      </span>
+                    ) : null
+                  })()}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-green-50/50 rounded-lg border border-green-100">
                   <div>
@@ -199,7 +628,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {panelBrands.map((brand) => (
+                        {panelBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -209,18 +638,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>DCR Panel Size *</Label>
-                    <Select value={formData.dcrPanelSize} onValueChange={(v) => updateFormData("dcrPanelSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {panelSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.dcrPanelSize || ""}
+                      onChange={(e) => updateFormData("dcrPanelSize", e.target.value)}
+                      placeholder={`e.g., ${panelSizesList.join(", ")}`}
+                    />
+                    {panelSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {panelSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label>DCR Panel Quantity *</Label>
@@ -231,6 +658,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("dcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
                       placeholder="Enter quantity"
                     />
+                    {(() => {
+                      const panelW = formData.dcrPanelSize ? Number.parseFloat(formData.dcrPanelSize.replace("W", "")) : 0
+                      const quantity = formData.dcrPanelQuantity || 0
+                      const totalW = panelW * quantity
+                      return totalW > 0 ? (
+                        <p className="text-xs text-muted-foreground mt-1 font-medium">
+                          Total: {totalW.toLocaleString()}W
+                        </p>
+                      ) : null
+                    })()}
                   </div>
                 </div>
               </div>
@@ -243,6 +680,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <h3 className="text-sm font-medium">Non-DCR Panel Configuration</h3>
                   <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Without Subsidy</span>
+                  {(() => {
+                    const panelW = formData.nonDcrPanelSize ? Number.parseFloat(formData.nonDcrPanelSize.replace("W", "")) : 0
+                    const quantity = formData.nonDcrPanelQuantity || 0
+                    const totalW = panelW * quantity
+                    return totalW > 0 ? (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                        Total: {totalW.toLocaleString()}W
+                      </span>
+                    ) : null
+                  })()}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-blue-50/50 rounded-lg border border-blue-100">
                   <div>
@@ -255,7 +702,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {panelBrands.map((brand) => (
+                        {panelBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -265,21 +712,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Non-DCR Panel Size *</Label>
-                    <Select
-                      value={formData.nonDcrPanelSize}
-                      onValueChange={(v) => updateFormData("nonDcrPanelSize", v)}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {panelSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.nonDcrPanelSize || ""}
+                      onChange={(e) => updateFormData("nonDcrPanelSize", e.target.value)}
+                      placeholder={`e.g., ${panelSizesList.join(", ")}`}
+                    />
+                    {panelSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {panelSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label>Non-DCR Panel Quantity *</Label>
@@ -290,6 +732,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("nonDcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
                       placeholder="Enter quantity"
                     />
+                    {(() => {
+                      const panelW = formData.nonDcrPanelSize ? Number.parseFloat(formData.nonDcrPanelSize.replace("W", "")) : 0
+                      const quantity = formData.nonDcrPanelQuantity || 0
+                      const totalW = panelW * quantity
+                      return totalW > 0 ? (
+                        <p className="text-xs text-muted-foreground mt-1 font-medium">
+                          Total: {totalW.toLocaleString()}W
+                        </p>
+                      ) : null
+                    })()}
                   </div>
                 </div>
               </div>
@@ -310,7 +762,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {inverterTypes.map((type) => (
+                        {inverterTypesList.map((type) => (
                           <SelectItem key={type} value={type}>
                             {type}
                           </SelectItem>
@@ -325,7 +777,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {inverterBrands.map((brand) => (
+                        {inverterBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -335,18 +787,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Inverter Size *</Label>
-                    <Select value={formData.inverterSize} onValueChange={(v) => updateFormData("inverterSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inverterSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.inverterSize || ""}
+                      onChange={(e) => updateFormData("inverterSize", e.target.value)}
+                      placeholder={`e.g., ${inverterSizesList.join(", ")}`}
+                    />
+                    {inverterSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {inverterSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -367,7 +817,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {structureTypes.map((type) => (
+                        {structureTypesList.map((type) => (
                           <SelectItem key={type} value={type}>
                             {type}
                           </SelectItem>
@@ -377,18 +827,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Structure Size</Label>
-                    <Select value={formData.structureSize} onValueChange={(v) => updateFormData("structureSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {structureSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.structureSize || ""}
+                      onChange={(e) => updateFormData("structureSize", e.target.value)}
+                      placeholder={`e.g., ${structureSizesList.join(", ")}`}
+                    />
+                    {structureSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {structureSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -409,7 +857,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {meterBrands.map((brand) => (
+                        {meterBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -424,7 +872,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableBrands.map((brand) => (
+                        {cableBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -439,7 +887,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select size" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableSizes.map((size) => (
+                        {cableSizesList.map((size) => (
                           <SelectItem key={size} value={size}>
                             {size}
                           </SelectItem>
@@ -454,7 +902,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableBrands.map((brand) => (
+                        {cableBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -469,7 +917,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select size" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableSizes.map((size) => (
+                        {cableSizesList.map((size) => (
                           <SelectItem key={size} value={size}>
                             {size}
                           </SelectItem>
@@ -491,36 +939,84 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>ACDB</Label>
-                    <Select value={formData.acdb} onValueChange={(v) => updateFormData("acdb", v)}>
+                    <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select ACDB" />
                       </SelectTrigger>
                       <SelectContent>
-                        {acdbOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
+                        {(() => {
+                          // Include current value in options if not already present
+                          const allOptions = [...new Set([...acdbOptionsList, formData.acdb].filter(Boolean))]
+                          return allOptions.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
                   <div>
                     <Label>DCDB</Label>
-                    <Select value={formData.dcdb} onValueChange={(v) => updateFormData("dcdb", v)}>
+                    <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select DCDB" />
                       </SelectTrigger>
                       <SelectContent>
-                        {dcdbOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
+                        {(() => {
+                          // Include current value in options if not already present
+                          const allOptions = [...new Set([...dcdbOptionsList, formData.dcdb].filter(Boolean))]
+                          return allOptions.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
               </div>
+
+              {/* Battery Configuration for BOTH - shown when Hybrid Inverter is selected */}
+              {showBatteryFields && (
+                <div className="border-t border-border pt-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Zap className="w-4 h-4 text-primary" />
+                    </div>
+                    <h3 className="text-sm font-medium">Battery Configuration</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <Label>Hybrid Inverter Model</Label>
+                      <Input
+                        value={formData.hybridInverter || ""}
+                        onChange={(e) => updateFormData("hybridInverter", e.target.value)}
+                        placeholder="Enter hybrid inverter model"
+                      />
+                    </div>
+                    <div>
+                      <Label>Battery Capacity</Label>
+                      <Input
+                        value={formData.batteryCapacity || ""}
+                        onChange={(e) => updateFormData("batteryCapacity", e.target.value)}
+                        placeholder="e.g., 5kWh, 10kWh"
+                      />
+                    </div>
+                    <div>
+                      <Label>Battery Price (₹)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={formData.batteryPrice || ""}
+                        onChange={(e) => updateFormData("batteryPrice", Number.parseInt(e.target.value) || 0)}
+                        placeholder="Enter battery price"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Subsidy Information for Both */}
               <div className="border-t border-border pt-6">
@@ -554,6 +1050,60 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           {/* Standard Product Fields (for DCR, Non-DCR, Hybrid) */}
           {showStandardFields && (
             <>
+              {/* DCR Configuration Selector */}
+              {showDcrFields && (
+                <div className="border-t border-border pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                        <List className="w-4 h-4 text-green-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium">DCR Configuration</h3>
+                        <p className="text-xs text-muted-foreground">Select a pre-configured DCR system</p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setDcrConfigDialogOpen(true)}
+                      className="flex items-center gap-2"
+                    >
+                      <List className="w-4 h-4" />
+                      Browse DCR Configurations
+                    </Button>
+                  </div>
+                  {/* Quick Select dropdown removed - use Browse button to select configuration */}
+                </div>
+              )}
+
+              {/* NON DCR Configuration Selector */}
+              {formData.systemType === "non-dcr" && (
+                <div className="border-t border-border pt-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                        <List className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-medium">NON DCR Configuration</h3>
+                        <p className="text-xs text-muted-foreground">Select a pre-configured NON DCR system</p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setNonDcrConfigDialogOpen(true)}
+                      className="flex items-center gap-2"
+                    >
+                      <List className="w-4 h-4" />
+                      Browse NON DCR Configurations
+                    </Button>
+                  </div>
+                  {/* Quick Select dropdown removed - use Browse button to select configuration */}
+                </div>
+              )}
+
               {/* Panel Selection */}
               <div className="border-t border-border pt-6">
                 <div className="flex items-center gap-2 mb-4">
@@ -561,6 +1111,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     <Sun className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Panel Configuration</h3>
+                  {(() => {
+                    const panelW = formData.panelSize ? Number.parseFloat(formData.panelSize.replace("W", "")) : 0
+                    const quantity = formData.panelQuantity || 0
+                    const totalW = panelW * quantity
+                    return totalW > 0 ? (
+                      <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                        Total: {totalW.toLocaleString()}W
+                      </span>
+                    ) : null
+                  })()}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div>
@@ -570,7 +1130,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {panelBrands.map((brand) => (
+                        {panelBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -580,18 +1140,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Panel Size *</Label>
-                    <Select value={formData.panelSize} onValueChange={(v) => updateFormData("panelSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {panelSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.panelSize || ""}
+                      onChange={(e) => updateFormData("panelSize", e.target.value)}
+                      placeholder={`e.g., ${panelSizesList.join(", ")}`}
+                    />
+                    {panelSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {panelSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                   <div>
                     <Label>Panel Quantity *</Label>
@@ -602,6 +1160,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("panelQuantity", Number.parseInt(e.target.value) || 0)}
                       placeholder="Enter quantity"
                     />
+                    {(() => {
+                      const panelW = formData.panelSize ? Number.parseFloat(formData.panelSize.replace("W", "")) : 0
+                      const quantity = formData.panelQuantity || 0
+                      const totalW = panelW * quantity
+                      return totalW > 0 ? (
+                        <p className="text-xs text-muted-foreground mt-1 font-medium">
+                          Total: {totalW.toLocaleString()}W
+                        </p>
+                      ) : null
+                    })()}
                   </div>
                 </div>
               </div>
@@ -622,7 +1190,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {inverterTypes.map((type) => (
+                        {inverterTypesList.map((type) => (
                           <SelectItem key={type} value={type}>
                             {type}
                           </SelectItem>
@@ -637,7 +1205,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {inverterBrands.map((brand) => (
+                        {inverterBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -647,18 +1215,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Inverter Size *</Label>
-                    <Select value={formData.inverterSize} onValueChange={(v) => updateFormData("inverterSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inverterSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.inverterSize || ""}
+                      onChange={(e) => updateFormData("inverterSize", e.target.value)}
+                      placeholder={`e.g., ${inverterSizesList.join(", ")}`}
+                    />
+                    {inverterSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {inverterSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -679,7 +1245,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select type" />
                       </SelectTrigger>
                       <SelectContent>
-                        {structureTypes.map((type) => (
+                        {structureTypesList.map((type) => (
                           <SelectItem key={type} value={type}>
                             {type}
                           </SelectItem>
@@ -689,18 +1255,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Structure Size</Label>
-                    <Select value={formData.structureSize} onValueChange={(v) => updateFormData("structureSize", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select size" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {structureSizes.map((size) => (
-                          <SelectItem key={size} value={size}>
-                            {size}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Input
+                      value={formData.structureSize || ""}
+                      onChange={(e) => updateFormData("structureSize", e.target.value)}
+                      placeholder={`e.g., ${structureSizesList.join(", ")}`}
+                    />
+                    {structureSizesList.length > 0 && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Available sizes: {structureSizesList.join(", ")}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
@@ -721,7 +1285,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {meterBrands.map((brand) => (
+                        {meterBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -736,7 +1300,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableBrands.map((brand) => (
+                        {cableBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -751,7 +1315,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select size" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableSizes.map((size) => (
+                        {cableSizesList.map((size) => (
                           <SelectItem key={size} value={size}>
                             {size}
                           </SelectItem>
@@ -766,7 +1330,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableBrands.map((brand) => (
+                        {cableBrandsList.map((brand) => (
                           <SelectItem key={brand} value={brand}>
                             {brand}
                           </SelectItem>
@@ -781,7 +1345,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         <SelectValue placeholder="Select size" />
                       </SelectTrigger>
                       <SelectContent>
-                        {cableSizes.map((size) => (
+                        {cableSizesList.map((size) => (
                           <SelectItem key={size} value={size}>
                             {size}
                           </SelectItem>
@@ -803,36 +1367,84 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <Label>ACDB</Label>
-                    <Select value={formData.acdb} onValueChange={(v) => updateFormData("acdb", v)}>
+                    <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select ACDB" />
                       </SelectTrigger>
                       <SelectContent>
-                        {acdbOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
+                        {(() => {
+                          // Include current value in options if not already present
+                          const allOptions = [...new Set([...acdbOptionsList, formData.acdb].filter(Boolean))]
+                          return allOptions.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
                   <div>
                     <Label>DCDB</Label>
-                    <Select value={formData.dcdb} onValueChange={(v) => updateFormData("dcdb", v)}>
+                    <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select DCDB" />
                       </SelectTrigger>
                       <SelectContent>
-                        {dcdbOptions.map((option) => (
-                          <SelectItem key={option} value={option}>
-                            {option}
-                          </SelectItem>
-                        ))}
+                        {(() => {
+                          // Include current value in options if not already present
+                          const allOptions = [...new Set([...dcdbOptionsList, formData.dcdb].filter(Boolean))]
+                          return allOptions.map((option) => (
+                            <SelectItem key={option} value={option}>
+                              {option}
+                            </SelectItem>
+                          ))
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
               </div>
+
+              {/* Battery Configuration for DCR/NON DCR - shown when Hybrid Inverter is selected */}
+              {showBatteryFields && (
+                <div className="border-t border-border pt-6">
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Zap className="w-4 h-4 text-primary" />
+                    </div>
+                    <h3 className="text-sm font-medium">Battery Configuration</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <Label>Hybrid Inverter Model</Label>
+                      <Input
+                        value={formData.hybridInverter || ""}
+                        onChange={(e) => updateFormData("hybridInverter", e.target.value)}
+                        placeholder="Enter hybrid inverter model"
+                      />
+                    </div>
+                    <div>
+                      <Label>Battery Capacity</Label>
+                      <Input
+                        value={formData.batteryCapacity || ""}
+                        onChange={(e) => updateFormData("batteryCapacity", e.target.value)}
+                        placeholder="e.g., 5kWh, 10kWh"
+                      />
+                    </div>
+                    <div>
+                      <Label>Battery Price (₹)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={formData.batteryPrice || ""}
+                        onChange={(e) => updateFormData("batteryPrice", Number.parseInt(e.target.value) || 0)}
+                        placeholder="Enter battery price"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* DCR Specific Fields */}
               {showDcrFields && (
@@ -864,12 +1476,18 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* Hybrid Specific Fields */}
-              {showHybridFields && (
+              {/* Battery Configuration - shown when Hybrid Inverter is selected */}
+              {showBatteryFields && (
                 <div className="border-t border-border pt-6">
-                  <h3 className="text-sm font-medium mb-4">Battery Configuration</h3>
+                  <div className="flex items-center gap-2 mb-4">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Zap className="w-4 h-4 text-primary" />
+                    </div>
+                    <h3 className="text-sm font-medium">Battery Configuration</h3>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
-                      <Label>Hybrid Inverter</Label>
+                      <Label>Hybrid Inverter Model</Label>
                       <Input
                         value={formData.hybridInverter || ""}
                         onChange={(e) => updateFormData("hybridInverter", e.target.value)}
@@ -900,7 +1518,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             </>
           )}
 
-          {showCustomizeFields && (
+          {/* CUSTOMIZE option commented out - users should use pre-configured systems */}
+          {false && showCustomizeFields && (
             <div className="border-t border-border pt-6">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
@@ -914,9 +1533,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 </Button>
               </div>
 
-              {formData.customPanels && formData.customPanels.length > 0 ? (
+              {/* CUSTOMIZE option commented out */}
+              {false && formData.customPanels && (formData.customPanels?.length ?? 0) > 0 ? (
                 <div className="space-y-4">
-                  {formData.customPanels.map((panel, index) => (
+                  {formData.customPanels?.map((panel, index) => (
                     <div key={index} className="p-4 border border-border rounded-lg relative bg-muted/30">
                       <Button
                         type="button"
@@ -947,7 +1567,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                               <SelectValue placeholder="Select brand" />
                             </SelectTrigger>
                             <SelectContent>
-                              {panelBrands.map((brand) => (
+                              {panelBrandsList.map((brand) => (
                                 <SelectItem key={brand} value={brand}>
                                   {brand}
                                 </SelectItem>
@@ -962,7 +1582,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                               <SelectValue placeholder="Select size" />
                             </SelectTrigger>
                             <SelectContent>
-                              {panelSizes.map((size) => (
+                              {panelSizesList.map((size) => (
                                 <SelectItem key={size} value={size}>
                                   {size}
                                 </SelectItem>
@@ -993,8 +1613,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 </div>
               )}
 
-              {/* Show all other fields for customize when panels are added */}
-              {formData.customPanels && formData.customPanels.length > 0 && (
+              {/* CUSTOMIZE option commented out - Show all other fields for customize when panels are added */}
+              {false && formData.customPanels && (formData.customPanels?.length ?? 0) > 0 && (
                 <>
                   {/* Inverter Selection */}
                   <div className="border-t border-border pt-6 mt-6">
@@ -1012,7 +1632,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select type" />
                           </SelectTrigger>
                           <SelectContent>
-                            {inverterTypes.map((type) => (
+                            {inverterTypesList.map((type) => (
                               <SelectItem key={type} value={type}>
                                 {type}
                               </SelectItem>
@@ -1030,7 +1650,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select brand" />
                           </SelectTrigger>
                           <SelectContent>
-                            {inverterBrands.map((brand) => (
+                            {inverterBrandsList.map((brand) => (
                               <SelectItem key={brand} value={brand}>
                                 {brand}
                               </SelectItem>
@@ -1040,18 +1660,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       </div>
                       <div>
                         <Label>Inverter Size</Label>
-                        <Select value={formData.inverterSize} onValueChange={(v) => updateFormData("inverterSize", v)}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select size" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {inverterSizes.map((size) => (
-                              <SelectItem key={size} value={size}>
-                                {size}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input
+                          value={formData.inverterSize || ""}
+                          onChange={(e) => updateFormData("inverterSize", e.target.value)}
+                          placeholder={`e.g., ${inverterSizesList.join(", ")}`}
+                        />
+                        {inverterSizesList.length > 0 && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Available sizes: {inverterSizesList.join(", ")}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1075,7 +1693,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select type" />
                           </SelectTrigger>
                           <SelectContent>
-                            {structureTypes.map((type) => (
+                            {structureTypesList.map((type) => (
                               <SelectItem key={type} value={type}>
                                 {type}
                               </SelectItem>
@@ -1085,21 +1703,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       </div>
                       <div>
                         <Label>Structure Size</Label>
-                        <Select
-                          value={formData.structureSize}
-                          onValueChange={(v) => updateFormData("structureSize", v)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select size" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {structureSizes.map((size) => (
-                              <SelectItem key={size} value={size}>
-                                {size}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Input
+                          value={formData.structureSize || ""}
+                          onChange={(e) => updateFormData("structureSize", e.target.value)}
+                          placeholder={`e.g., ${structureSizesList.join(", ")}`}
+                        />
+                        {structureSizesList.length > 0 && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Available sizes: {structureSizesList.join(", ")}
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1120,7 +1733,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select brand" />
                           </SelectTrigger>
                           <SelectContent>
-                            {meterBrands.map((brand) => (
+                            {meterBrandsList.map((brand) => (
                               <SelectItem key={brand} value={brand}>
                                 {brand}
                               </SelectItem>
@@ -1135,7 +1748,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select brand" />
                           </SelectTrigger>
                           <SelectContent>
-                            {cableBrands.map((brand) => (
+                            {cableBrandsList.map((brand) => (
                               <SelectItem key={brand} value={brand}>
                                 {brand}
                               </SelectItem>
@@ -1150,7 +1763,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select size" />
                           </SelectTrigger>
                           <SelectContent>
-                            {cableSizes.map((size) => (
+                            {cableSizesList.map((size) => (
                               <SelectItem key={size} value={size}>
                                 {size}
                               </SelectItem>
@@ -1165,7 +1778,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select brand" />
                           </SelectTrigger>
                           <SelectContent>
-                            {cableBrands.map((brand) => (
+                            {cableBrandsList.map((brand) => (
                               <SelectItem key={brand} value={brand}>
                                 {brand}
                               </SelectItem>
@@ -1180,7 +1793,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select size" />
                           </SelectTrigger>
                           <SelectContent>
-                            {cableSizes.map((size) => (
+                            {cableSizesList.map((size) => (
                               <SelectItem key={size} value={size}>
                                 {size}
                               </SelectItem>
@@ -1207,7 +1820,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select ACDB" />
                           </SelectTrigger>
                           <SelectContent>
-                            {acdbOptions.map((option) => (
+                            {acdbOptionsList.map((option) => (
                               <SelectItem key={option} value={option}>
                                 {option}
                               </SelectItem>
@@ -1222,7 +1835,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             <SelectValue placeholder="Select DCDB" />
                           </SelectTrigger>
                           <SelectContent>
-                            {dcdbOptions.map((option) => (
+                            {dcdbOptionsList.map((option) => (
                               <SelectItem key={option} value={option}>
                                 {option}
                               </SelectItem>
@@ -1311,5 +1924,33 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         </form>
       </CardContent>
     </Card>
+
+      {/* DCR Configuration Dialog */}
+      {showDcrFields && (
+        <DcrConfigDialog
+          open={dcrConfigDialogOpen}
+          onOpenChange={setDcrConfigDialogOpen}
+          onSelect={handleDcrConfigSelect}
+        />
+      )}
+
+      {/* NON DCR Configuration Dialog */}
+      {formData.systemType === "non-dcr" && (
+        <NonDcrConfigDialog
+          open={nonDcrConfigDialogOpen}
+          onOpenChange={setNonDcrConfigDialogOpen}
+          onSelect={handleNonDcrConfigSelect}
+        />
+      )}
+
+      {/* BOTH Configuration Dialog */}
+      {showBothFields && (
+        <BothConfigDialog
+          open={bothConfigDialogOpen}
+          onOpenChange={setBothConfigDialogOpen}
+          onSelect={handleBothConfigSelect}
+        />
+      )}
+    </div>
   )
 }

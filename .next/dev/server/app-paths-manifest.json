@@ -5,6 +5,6 @@
   "/dashboard/quotations/page": "app/dashboard/quotations/page.js",
   "/login/page": "app/login/page.js",
   "/page": "app/page.js",
-  "/visitor-login/page": "app/visitor-login/page.js",
+  "/register/page": "app/register/page.js",
   "/visitor/dashboard/page": "app/visitor/dashboard/page.js"
 }
