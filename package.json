@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "next build",
+    "build": "NEXT_PRIVATE_SKIP_TURBO=1 next build",
+    "build:docker": "NEXT_PRIVATE_SKIP_TURBO=1 next build",
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start"
