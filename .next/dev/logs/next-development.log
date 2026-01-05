@@ -1,1332 +1,187 @@
-[00:00:00.813] Server  LOG      ✓ Ready in 608ms
-[00:03:06.568] Server  LOG      ○ Compiling /dashboard/admin ...
-[00:03:11.809] Browser LOG     [API] ========================================
-[00:03:11.810] Browser LOG     [API] Starting API request
-[00:03:11.810] Browser LOG     [API] Endpoint: /admin/quotations
-[00:03:11.810] Browser LOG     [API] Method: GET
-[00:03:11.810] Browser LOG     [API] Requires Auth: true
-[00:03:11.810] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/quotations
-[00:03:11.810] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:11.810] Browser LOG     [API] Auth token added (length): 207
-[00:03:11.810] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:11.810] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/quotations"}
-[00:03:11.810] Browser LOG     [API] Sending fetch request...
-[00:03:11.810] Browser LOG     [API] ========================================
-[00:03:11.810] Browser LOG     [API] Starting API request
-[00:03:11.810] Browser LOG     [API] Endpoint: /quotations
-[00:03:11.810] Browser LOG     [API] Method: GET
-[00:03:11.810] Browser LOG     [API] Requires Auth: true
-[00:03:11.810] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:03:11.810] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:11.810] Browser LOG     [API] Auth token added (length): 207
-[00:03:11.810] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:11.810] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:03:11.810] Browser LOG     [API] Sending fetch request...
-[00:03:12.193] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:03:12.193] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard/admin","route":"/dashboard/admin"}
-[00:03:12.193] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/admin color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/admin","o":"http://localhost:3000/dashboard/admin","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767335869773}
-[00:03:12.193] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767335869805}
-[00:03:12.323] Browser LOG     [API] ========================================
-[00:03:12.323] Browser LOG     [API] Starting API request
-[00:03:12.323] Browser LOG     [API] Endpoint: /admin/quotations
-[00:03:12.323] Browser LOG     [API] Method: GET
-[00:03:12.323] Browser LOG     [API] Requires Auth: true
-[00:03:12.323] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/quotations
-[00:03:12.323] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:12.323] Browser LOG     [API] Auth token added (length): 207
-[00:03:12.323] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:12.323] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/quotations"}
-[00:03:12.323] Browser LOG     [API] Sending fetch request...
-[00:03:12.323] Browser LOG     [API] ========================================
-[00:03:12.323] Browser LOG     [API] Starting API request
-[00:03:12.323] Browser LOG     [API] Endpoint: /admin/quotations
-[00:03:12.323] Browser LOG     [API] Method: GET
-[00:03:12.323] Browser LOG     [API] Requires Auth: true
-[00:03:12.323] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/quotations
-[00:03:12.323] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:12.323] Browser LOG     [API] Auth token added (length): 207
-[00:03:12.323] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:12.323] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/quotations"}
-[00:03:12.323] Browser LOG     [API] Sending fetch request...
-[00:03:12.323] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/admin color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/admin","o":"http://localhost:3000/dashboard/admin","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767335869934}
-[00:03:12.983] Browser LOG     [API] Response received: {"headers":{"content-length":"4526","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:12.984] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:12.984] Browser LOG     [API] Parsing JSON response...
-[00:03:12.984] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:12.984] Browser LOG     [API] Request successful, returning data
-[00:03:12.984] Browser LOG     [API] Request completed successfully
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] Response received: {"headers":{"content-length":"3021","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:12.984] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:12.984] Browser LOG     [API] Parsing JSON response...
-[00:03:12.984] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:12.984] Browser LOG     [API] Request successful, returning data
-[00:03:12.984] Browser LOG     [API] Request completed successfully
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] Starting API request
-[00:03:12.984] Browser LOG     [API] Endpoint: /admin/dealers
-[00:03:12.984] Browser LOG     [API] Method: GET
-[00:03:12.984] Browser LOG     [API] Requires Auth: true
-[00:03:12.984] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/dealers
-[00:03:12.984] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:12.984] Browser LOG     [API] Auth token added (length): 207
-[00:03:12.984] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:12.984] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/dealers"}
-[00:03:12.984] Browser LOG     [API] Sending fetch request...
-[00:03:12.984] Browser LOG     [API] Response received: {"headers":{"content-length":"3021","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:12.984] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:12.984] Browser LOG     [API] Parsing JSON response...
-[00:03:12.984] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:12.984] Browser LOG     [API] Request successful, returning data
-[00:03:12.984] Browser LOG     [API] Request completed successfully
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] Starting API request
-[00:03:12.984] Browser LOG     [API] Endpoint: /admin/dealers
-[00:03:12.984] Browser LOG     [API] Method: GET
-[00:03:12.984] Browser LOG     [API] Requires Auth: true
-[00:03:12.984] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/dealers
-[00:03:12.984] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:12.984] Browser LOG     [API] Auth token added (length): 207
-[00:03:12.984] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:12.984] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/dealers"}
-[00:03:12.984] Browser LOG     [API] Sending fetch request...
-[00:03:12.984] Browser LOG     [API] Response received: {"headers":{"content-length":"3021","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:12.984] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:12.984] Browser LOG     [API] Parsing JSON response...
-[00:03:12.984] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:12.984] Browser LOG     [API] Request successful, returning data
-[00:03:12.984] Browser LOG     [API] Request completed successfully
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] ========================================
-[00:03:12.984] Browser LOG     [API] Starting API request
-[00:03:12.984] Browser LOG     [API] Endpoint: /admin/dealers
-[00:03:12.984] Browser LOG     [API] Method: GET
-[00:03:12.984] Browser LOG     [API] Requires Auth: true
-[00:03:12.984] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/dealers
-[00:03:12.984] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:12.984] Browser LOG     [API] Auth token added (length): 207
-[00:03:12.984] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:12.984] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/dealers"}
-[00:03:12.984] Browser LOG     [API] Sending fetch request...
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"1360","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] Starting API request
-[00:03:13.316] Browser LOG     [API] Endpoint: /admin/visitors
-[00:03:13.316] Browser LOG     [API] Method: GET
-[00:03:13.316] Browser LOG     [API] Requires Auth: true
-[00:03:13.316] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/visitors
-[00:03:13.316] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:13.316] Browser LOG     [API] Auth token added (length): 207
-[00:03:13.316] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:13.316] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/visitors"}
-[00:03:13.316] Browser LOG     [API] Sending fetch request...
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"1360","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] Starting API request
-[00:03:13.316] Browser LOG     [API] Endpoint: /admin/visitors
-[00:03:13.316] Browser LOG     [API] Method: GET
-[00:03:13.316] Browser LOG     [API] Requires Auth: true
-[00:03:13.316] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/visitors
-[00:03:13.316] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:13.316] Browser LOG     [API] Auth token added (length): 207
-[00:03:13.316] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:13.316] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/visitors"}
-[00:03:13.316] Browser LOG     [API] Sending fetch request...
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"1360","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] Starting API request
-[00:03:13.316] Browser LOG     [API] Endpoint: /admin/visitors
-[00:03:13.316] Browser LOG     [API] Method: GET
-[00:03:13.316] Browser LOG     [API] Requires Auth: true
-[00:03:13.316] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/visitors
-[00:03:13.316] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:03:13.316] Browser LOG     [API] Auth token added (length): 207
-[00:03:13.316] Browser LOG     [API] No request body (GET request or body not provided)
-[00:03:13.316] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/visitors"}
-[00:03:13.316] Browser LOG     [API] Sending fetch request...
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"719","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"719","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:03:13.316] Browser LOG     [API] Response received: {"headers":{"content-length":"719","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:03:13.316] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:03:13.316] Browser LOG     [API] Parsing JSON response...
-[00:03:13.316] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:03:13.316] Browser LOG     [API] Request successful, returning data
-[00:03:13.316] Browser LOG     [API] Request completed successfully
-[00:03:13.316] Browser LOG     [API] ========================================
-[00:10:01.611] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:10:02.353] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:10:02.353] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
-[00:10:02.353] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard","route":"/dashboard"}
-[00:10:02.353] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336279971}
-[00:10:02.353] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336279971}
-[00:10:08.973] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:10:09.080] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:10:09.080] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard","route":"/dashboard"}
-[00:10:09.080] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336286698}
-[00:10:14.049] Browser LOG     [API] ========================================
-[00:10:14.049] Browser LOG     [API] Starting API request
-[00:10:14.049] Browser LOG     [API] Endpoint: /auth/logout
-[00:10:14.049] Browser LOG     [API] Method: POST
-[00:10:14.049] Browser LOG     [API] Requires Auth: true
-[00:10:14.049] Browser LOG     [API] Full URL: http://localhost:3050/api/auth/logout
-[00:10:14.049] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:10:14.049] Browser LOG     [API] Auth token added (length): 232
-[00:10:14.049] Browser LOG     [API] No request body (GET request or body not provided)
-[00:10:14.049] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"POST","url":"http://localhost:3050/api/auth/logout"}
-[00:10:14.049] Browser LOG     [API] Sending fetch request...
-[00:10:14.049] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336291612}
-[00:10:14.049] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336291667}
-[00:10:14.830] Browser LOG     [API] Response received: {"headers":{"content-length":"52","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:10:14.830] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:10:14.830] Browser LOG     [API] Parsing JSON response...
-[00:10:14.830] Browser LOG     [API] Parsed response data: {"hasData":false,"hasError":false,"success":true}
-[00:10:14.830] Browser LOG     [API] Request successful, returning data
-[00:10:14.830] Browser LOG     [API] Request completed successfully
-[00:10:14.830] Browser LOG     [API] ========================================
-[00:10:14.830] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336292448}
-[00:10:43.529] Browser LOG     [API] ========================================
-[00:10:43.529] Browser LOG     [API] Starting API request
-[00:10:43.529] Browser LOG     [API] Endpoint: /auth/login
-[00:10:43.529] Browser LOG     [API] Method: POST
-[00:10:43.529] Browser LOG     [API] Requires Auth: false
-[00:10:43.529] Browser LOG     [API] Full URL: http://localhost:3050/api/auth/login
-[00:10:43.529] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:10:43.529] Browser LOG     [API] Auth not required for this request
-[00:10:43.529] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:10:43.529] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:10:43.529] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:10:43.529] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3050/api/auth/login"}
-[00:10:43.529] Browser LOG     [API] Sending fetch request...
-[00:10:44.338] Browser LOG     [API] Response received: {"headers":{"content-length":"699","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:10:44.338] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:10:44.338] Browser LOG     [API] Parsing JSON response...
-[00:10:44.338] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:10:44.338] Browser LOG     [API] Request successful, returning data
-[00:10:44.338] Browser LOG     [API] Request completed successfully
-[00:10:44.338] Browser LOG     [API] ========================================
-[00:10:44.338] Browser LOG     [API] ========================================
-[00:10:44.338] Browser LOG     [API] Starting API request
-[00:10:44.338] Browser LOG     [API] Endpoint: /quotations
-[00:10:44.338] Browser LOG     [API] Method: GET
-[00:10:44.338] Browser LOG     [API] Requires Auth: true
-[00:10:44.338] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:10:44.338] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:10:44.338] Browser LOG     [API] Auth token added (length): 217
-[00:10:44.338] Browser LOG     [API] No request body (GET request or body not provided)
-[00:10:44.338] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:10:44.338] Browser LOG     [API] Sending fetch request...
-[00:10:44.338] Browser LOG     [API] ========================================
-[00:10:44.338] Browser LOG     [API] Starting API request
-[00:10:44.338] Browser LOG     [API] Endpoint: /quotations
-[00:10:44.339] Browser LOG     [API] Method: GET
-[00:10:44.339] Browser LOG     [API] Requires Auth: true
-[00:10:44.339] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:10:44.339] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:10:44.339] Browser LOG     [API] Auth token added (length): 217
-[00:10:44.339] Browser LOG     [API] No request body (GET request or body not provided)
-[00:10:44.339] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:10:44.339] Browser LOG     [API] Sending fetch request...
-[00:10:44.339] Browser LOG     [API] ========================================
-[00:10:44.339] Browser LOG     [API] Starting API request
-[00:10:44.339] Browser LOG     [API] Endpoint: /quotations
-[00:10:44.339] Browser LOG     [API] Method: GET
-[00:10:44.339] Browser LOG     [API] Requires Auth: true
-[00:10:44.339] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:10:44.339] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:10:44.339] Browser LOG     [API] Auth token added (length): 217
-[00:10:44.339] Browser LOG     [API] No request body (GET request or body not provided)
-[00:10:44.339] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:10:44.339] Browser LOG     [API] Sending fetch request...
-[00:10:44.339] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336321941}
-[00:10:44.478] Browser LOG     [API] Response received: {"headers":{"content-length":"4073","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:10:44.478] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:10:44.478] Browser LOG     [API] Parsing JSON response...
-[00:10:44.478] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:10:44.478] Browser LOG     [API] Request successful, returning data
-[00:10:44.478] Browser LOG     [API] Request completed successfully
-[00:10:44.478] Browser LOG     [API] ========================================
-[00:10:44.588] Browser LOG     [API] Response received: {"headers":{"content-length":"4073","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:10:44.588] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:10:44.588] Browser LOG     [API] Parsing JSON response...
-[00:10:44.588] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:10:44.588] Browser LOG     [API] Request successful, returning data
-[00:10:44.588] Browser LOG     [API] Request completed successfully
-[00:10:44.588] Browser LOG     [API] ========================================
-[00:10:44.700] Browser LOG     [API] Response received: {"headers":{"content-length":"4073","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:10:44.700] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:10:44.700] Browser LOG     [API] Parsing JSON response...
-[00:10:44.700] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:10:44.700] Browser LOG     [API] Request successful, returning data
-[00:10:44.700] Browser LOG     [API] Request completed successfully
-[00:10:44.700] Browser LOG     [API] ========================================
-[00:11:00.426] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/new-quotation color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/new-quotation","o":"http://localhost:3000/dashboard/new-quotation","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336338040}
-[00:11:15.240] Browser LOG     [API] ========================================
-[00:11:15.240] Browser LOG     [API] Starting API request
-[00:11:15.240] Browser LOG     [API] Endpoint: /quotations/product-catalog
-[00:11:15.240] Browser LOG     [API] Method: GET
-[00:11:15.240] Browser LOG     [API] Requires Auth: true
-[00:11:15.240] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/product-catalog
-[00:11:15.240] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:11:15.240] Browser LOG     [API] Auth token added (length): 217
-[00:11:15.240] Browser LOG     [API] No request body (GET request or body not provided)
-[00:11:15.240] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/product-catalog"}
-[00:11:15.240] Browser LOG     [API] Sending fetch request...
-[00:11:15.240] Browser LOG     [API] ========================================
-[00:11:15.240] Browser LOG     [API] Starting API request
-[00:11:15.240] Browser LOG     [API] Endpoint: /quotations/pricing-tables
-[00:11:15.240] Browser LOG     [API] Method: GET
-[00:11:15.240] Browser LOG     [API] Requires Auth: true
-[00:11:15.240] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/pricing-tables
-[00:11:15.240] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:11:15.240] Browser LOG     [API] Auth token added (length): 217
-[00:11:15.240] Browser LOG     [API] No request body (GET request or body not provided)
-[00:11:15.240] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/pricing-tables"}
-[00:11:15.240] Browser LOG     [API] Sending fetch request...
-[00:11:15.240] Browser LOG     [API] ========================================
-[00:11:15.240] Browser LOG     [API] Starting API request
-[00:11:15.240] Browser LOG     [API] Endpoint: /quotations/product-catalog
-[00:11:15.240] Browser LOG     [API] Method: GET
-[00:11:15.240] Browser LOG     [API] Requires Auth: true
-[00:11:15.240] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/product-catalog
-[00:11:15.240] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:11:15.240] Browser LOG     [API] Auth token added (length): 217
-[00:11:15.240] Browser LOG     [API] No request body (GET request or body not provided)
-[00:11:15.240] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/product-catalog"}
-[00:11:15.240] Browser LOG     [API] Sending fetch request...
-[00:11:15.674] Browser LOG     [API] Response received: {"headers":{"content-length":"76","content-type":"application/json; charset=utf-8"},"ok":false,"status":404,"statusText":"Not Found"}
-[00:11:15.674] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:11:15.674] Browser LOG     [API] Parsing JSON response...
-[00:11:15.674] Browser LOG     [API] Parsed response data: {"errorCode":"RES_001","errorMessage":"Quotation not found","hasData":false,"hasError":true,"success":false}
-[00:11:15.674] Browser ERROR   [API] ===== API ERROR DETECTED =====
-[00:11:15.674] Browser ERROR   [API] API Error Response: {"code":"RES_001","fullData":{"error":{"code":"RES_001","message":"Quotation not found"},"success":false},"message":"Quotation not found","status":404,"statusText":"Not Found"}
-[00:11:15.674] Browser ERROR   [API] =================================
-[00:11:15.674] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:11:15.674] Browser ERROR   [API] Error type: ApiError
-[00:11:15.674] Browser ERROR   [API] Error message: Quotation not found
-[00:11:15.674] Browser ERROR   [API] ApiError detected, re-throwing: {"code":"RES_001","hasDetails":false,"message":"Quotation not found"}
-[00:11:15.674] Browser ERROR   [API] =================================
-[00:11:15.674] Browser LOG     [API] Response received: {"headers":{"content-length":"821","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:11:15.674] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:11:15.674] Browser LOG     [API] Parsing JSON response...
-[00:11:15.674] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:11:15.674] Browser LOG     [API] Request successful, returning data
-[00:11:15.674] Browser LOG     [API] Request completed successfully
-[00:11:15.674] Browser LOG     [API] ========================================
-[00:11:15.674] Browser LOG     Product catalog API response: {"acdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"cables":{"brands":["Polycab","Havells","KEI","Finolex","RR Kabel"],"sizes":["4 sq mm","6 sq mm","10 sq mm","16 sq mm","25 sq mm"]},"dcdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"inverters":{"brands":["Havells","Polycab","Luminous","XWatt","VSole"],"sizes":["3kW","5kW","6kW","8kW","10kW","15kW","20kW","25kW"],"types":["String Inverter","Micro Inverter","Hybrid Inverter"]},"meters":{"brands":["L&T","HPL","Havells","Genus","Secure"]},"panels":{"brands":["Adani","Tata","Waaree","Vikram Solar"],"sizes":["545W","550W","555W","575W","610W"]},"structures":{"sizes":["3kW","4kW","5kW","6kW","7kW","8kW","10kW","12kW","15kW","18kW","20kW","25kW","30kW","50kW"],"types":["GI Structure","Aluminum Structure","MS Structure"]}}
-[00:11:15.674] Browser LOG     [API] Response received: {"headers":{"content-length":"821","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:11:15.674] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:11:15.674] Browser LOG     [API] Parsing JSON response...
-[00:11:15.674] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:11:15.674] Browser LOG     [API] Request successful, returning data
-[00:11:15.674] Browser LOG     [API] Request completed successfully
-[00:11:15.674] Browser LOG     [API] ========================================
-[00:11:15.674] Browser LOG     Product catalog API response: {"acdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"cables":{"brands":["Polycab","Havells","KEI","Finolex","RR Kabel"],"sizes":["4 sq mm","6 sq mm","10 sq mm","16 sq mm","25 sq mm"]},"dcdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"inverters":{"brands":["Havells","Polycab","Luminous","XWatt","VSole"],"sizes":["3kW","5kW","6kW","8kW","10kW","15kW","20kW","25kW"],"types":["String Inverter","Micro Inverter","Hybrid Inverter"]},"meters":{"brands":["L&T","HPL","Havells","Genus","Secure"]},"panels":{"brands":["Adani","Tata","Waaree","Vikram Solar"],"sizes":["545W","550W","555W","575W","610W"]},"structures":{"sizes":["3kW","4kW","5kW","6kW","7kW","8kW","10kW","12kW","15kW","18kW","20kW","25kW","30kW","50kW"],"types":["GI Structure","Aluminum Structure","MS Structure"]}}
-[00:11:25.617] Browser LOG     [ProductSelectionForm] BOTH config selected from dialog - filled all fields: {"acCableBrand":"Polycab","acCableSize":"6 sq mm","acdb":"Havells (3-Phase)","batteryCapacity":"","batteryPrice":0,"centralSubsidy":0,"customPanels":[],"dcCableBrand":"Polycab","dcCableSize":"4 sq mm","dcdb":"Havells (3-Phase)","dcrPanelBrand":"Waaree","dcrPanelQuantity":6,"dcrPanelSize":"545W","hybridInverter":"","inverterBrand":"XWatt","inverterSize":"6kW","inverterType":"String Inverter","meterBrand":"L&T","nonDcrPanelBrand":"Waaree","nonDcrPanelQuantity":6,"nonDcrPanelSize":"545W","panelBrand":"Waaree","panelQuantity":12,"panelSize":"545W","stateSubsidy":0,"structureSize":"6kW","structureType":"GI Structure","systemPrice":300000,"systemType":"both"}
-[00:11:25.617] Browser LOG     [ProductSelectionForm] ACDB from config: Havells (3-Phase) DCDB from config: Havells (3-Phase)
-[00:11:25.617] Browser LOG     [ProductSelectionForm] System price from config: 300000
-[00:11:25.617] Browser LOG     [ProductSelectionForm] BOTH config selected from dialog - filled all fields: {"acCableBrand":"Polycab","acCableSize":"6 sq mm","acdb":"Havells (3-Phase)","batteryCapacity":"","batteryPrice":0,"centralSubsidy":0,"customPanels":[],"dcCableBrand":"Polycab","dcCableSize":"4 sq mm","dcdb":"Havells (3-Phase)","dcrPanelBrand":"Waaree","dcrPanelQuantity":6,"dcrPanelSize":"545W","hybridInverter":"","inverterBrand":"XWatt","inverterSize":"6kW","inverterType":"String Inverter","meterBrand":"L&T","nonDcrPanelBrand":"Waaree","nonDcrPanelQuantity":6,"nonDcrPanelSize":"545W","panelBrand":"Waaree","panelQuantity":12,"panelSize":"545W","stateSubsidy":0,"structureSize":"6kW","structureType":"GI Structure","systemPrice":300000,"systemType":"both"}
-[00:11:25.617] Browser LOG     [ProductSelectionForm] ACDB from config: Havells (3-Phase) DCDB from config: Havells (3-Phase)
-[00:11:25.617] Browser LOG     [ProductSelectionForm] System price from config: 300000
-[00:15:58.713] Server  LOG      ✓ Compiled in 810ms
-[00:16:23.921] Server  LOG      ✓ Compiled in 724ms
-[00:16:51.778] Browser LOG     Initializing editableSubtotal: {"calculatedPrice":300000,"currentEditableSubtotal":null,"priceToUse":300000,"productsSystemPrice":300000,"systemType":"both"}
-[00:16:51.779] Browser LOG     Setting editableSubtotal to: 300000
-[00:16:51.779] Browser LOG     Fallback initialization of editableSubtotal from subtotal: 300000
-[00:16:51.779] Browser LOG     Initializing editableSubtotal: {"calculatedPrice":300000,"currentEditableSubtotal":null,"priceToUse":300000,"productsSystemPrice":300000,"systemType":"both"}
-[00:16:51.779] Browser LOG     Setting editableSubtotal to: 300000
-[00:16:51.779] Browser LOG     Fallback initialization of editableSubtotal from subtotal: 300000
-[00:16:57.890] Browser LOG     Using editableSubtotal state value: 300000
-[00:16:57.891] Browser LOG     [QuotationConfirmation] === SUBTOTAL RESOLUTION ===
-[00:16:57.891] Browser LOG     [QuotationConfirmation] All available values: {"calculatedSystemPrice":300000,"calculatedSystemPriceType":"number","componentSubtotal":300000,"componentSubtotalType":"number","editableSubtotal":300000,"inputFieldValue":"300000","productsData":{"inverterSize":"6kW","panelBrand":"Waaree","panelQuantity":12,"panelSize":"545W","systemType":"both"},"productsSystemPrice":300000,"productsSystemPriceType":"number","resolvedSubtotal":300000,"resolvedSubtotalType":"number"}
-[00:16:57.891] Browser LOG     [QuotationConfirmation] ============================
-[00:16:57.891] Browser LOG     [QuotationConfirmation] === FINAL VALUES BEING SENT ===
-[00:16:57.891] Browser LOG     [QuotationConfirmation] Pricing calculations: {"amountAfterSubsidy":222000,"centralSubsidy":78000,"discount":0,"discountAmount":0,"finalAmount":222000,"stateSubsidy":0,"subtotal":300000,"totalAmount":222000,"totalSubsidy":78000}
-[00:16:57.891] Browser LOG     [QuotationConfirmation] Source values: {"calculatedSystemPrice":300000,"editableSubtotal":300000,"inputFieldValue":"300000","productsSystemPrice":300000}
-[00:16:57.891] Browser LOG     [QuotationConfirmation] ==============================
-[00:16:57.891] Browser LOG     [QuotationConfirmation] Calling saveQuotation with: {"discount":0,"isFinite":true,"isValid":true,"subtotal":300000,"subtotalType":"number"}
-[00:16:57.891] Browser LOG     [saveQuotation] === RECEIVED VALUES ===
-[00:16:57.891] Browser LOG     [saveQuotation] Received values: {"currentProductsSystemPrice":300000,"currentProductsSystemPriceType":"number","discount":0,"isFinite":true,"isNull":false,"isUndefined":false,"isZero":false,"subtotalValue":300000,"type":"number"}
-[00:16:57.891] Browser LOG     [saveQuotation] =======================
-[00:16:57.891] Browser LOG     [API] ========================================
-[00:16:57.891] Browser LOG     [API] Starting API request
-[00:16:57.892] Browser LOG     [API] Endpoint: /customers?search=9249929938
-[00:16:57.892] Browser LOG     [API] Method: GET
-[00:16:57.892] Browser LOG     [API] Requires Auth: true
-[00:16:57.892] Browser LOG     [API] Full URL: http://localhost:3050/api/customers?search=9249929938
-[00:16:57.892] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:16:57.892] Browser LOG     [API] Auth token added (length): 217
-[00:16:57.892] Browser LOG     [API] No request body (GET request or body not provided)
-[00:16:57.892] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/customers?search=9249929938"}
-[00:16:57.892] Browser LOG     [API] Sending fetch request...
-[00:16:58.597] Browser LOG     [API] Response received: {"headers":{"content-length":"132","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:16:58.597] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:16:58.597] Browser LOG     [API] Parsing JSON response...
-[00:16:58.597] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:16:58.597] Browser LOG     [API] Request successful, returning data
-[00:16:58.597] Browser LOG     [API] Request completed successfully
-[00:16:58.597] Browser LOG     [API] ========================================
-[00:16:58.597] Browser LOG     [API] ========================================
-[00:16:58.597] Browser LOG     [API] Starting API request
-[00:16:58.597] Browser LOG     [API] Endpoint: /customers
-[00:16:58.597] Browser LOG     [API] Method: POST
-[00:16:58.597] Browser LOG     [API] Requires Auth: true
-[00:16:58.597] Browser LOG     [API] Full URL: http://localhost:3050/api/customers
-[00:16:58.597] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:16:58.598] Browser LOG     [API] Auth token added (length): 217
-[00:16:58.598] Browser LOG     [API] Request body present: {"isObject":true,"keys":["firstName","lastName","mobile","email","address"],"type":"object"}
-[00:16:58.598] Browser LOG     [API] Body serialized to JSON, length: 194
-[00:16:58.598] Browser LOG     [API] Serialized body preview: {"firstName":"AMAN","lastName":"RAJAK","mobile":"9249929938","email":"amankrrajak288@gmail.com","address":{"street":"plot-10 shyam vihar","city":"Jaipur","state":"Rajasthan","pincode":"302012"}}
-[00:16:58.598] Browser LOG     [API] Final request config: {"bodyLength":194,"hasBody":true,"headersCount":2,"method":"POST","url":"http://localhost:3050/api/customers"}
-[00:16:58.598] Browser LOG     [API] Sending fetch request...
-[00:16:58.809] Browser LOG     [API] Response received: {"headers":{"content-length":"340","content-type":"application/json; charset=utf-8"},"ok":true,"status":201,"statusText":"Created"}
-[00:16:58.809] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:16:58.809] Browser LOG     [API] Parsing JSON response...
-[00:16:58.809] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:16:58.809] Browser LOG     [API] Request successful, returning data
-[00:16:58.809] Browser LOG     [API] Request completed successfully
-[00:16:58.809] Browser LOG     [API] ========================================
-[00:16:58.809] Browser LOG     [saveQuotation] Raw pricing values before validation: {"amountAfterSubsidy":222000,"centralSubsidy":78000,"discountAmount":0,"finalAmount":222000,"stateSubsidy":0,"subtotal":300000,"totalAmount":222000,"totalSubsidy":78000}
-[00:16:58.809] Browser LOG     [saveQuotation] Sending quotation data with pricing: {"amountAfterSubsidy":222000,"centralSubsidy":78000,"customerId":"279c14f9-7452-48b8-a711-f458df54beec","discount":0,"discountAmount":0,"finalAmount":222000,"stateSubsidy":0,"subtotal":300000,"totalAmount":222000,"totalSubsidy":78000}
-[00:16:58.809] Browser LOG     Panel Size being sent: 545W
-[00:16:58.809] Browser LOG     DCR Panel Size being sent: 545W
-[00:16:58.810] Browser LOG     Non-DCR Panel Size being sent: 545W
-[00:16:58.810] Browser LOG     [saveQuotation] === FINAL PAYLOAD BEING SENT TO BACKEND ===
-[00:16:58.810] Browser LOG     [saveQuotation] Complete quotation payload: {
-  "customerId": "279c14f9-7452-48b8-a711-f458df54beec",
-  "customer": {
-    "firstName": "AMAN",
-    "lastName": "RAJAK",
-    "mobile": "9249929938",
-    "email": "amankrrajak288@gmail.com",
-    "address": {
-      "street": "plot-10 shyam vihar",
-      "city": "Jaipur",
-      "state": "Rajasthan",
-      "pincode": "302012"
-    }
-  },
-  "products": {
-    "systemType": "both",
-    "panelBrand": "Waaree",
-    "panelSize": "545W",
-    "panelQuantity": 12,
-    "inverterType": "String Inverter",
-    "inverterBrand": "XWatt",
-    "inverterSize": "6kW",
-    "structureType": "GI Structure",
-    "structureSize": "6kW",
-    "meterBrand": "L&T",
-    "acCableBrand": "Polycab",
-    "acCableSize": "6 sq mm",
-    "dcCableBrand": "Polycab",
-    "dcCableSize": "4 sq mm",
-    "acdb": "Havells (3-Phase)",
-    "dcdb": "Havells (3-Phase)",
-    "centralSubsidy": 78000,
-    "stateSubsidy": 0,
-    "systemPrice": 300000,
-    "dcrPanelBrand": "Waaree",
-    "dcrPanelSize": "545W",
-    "dcrPanelQuantity": 6,
-    "nonDcrPanelBrand": "Waaree",
-    "nonDcrPanelSize": "545W",
-    "nonDcrPanelQuantity": 5,
-    "batteryPrice": 0
-  },
-  "discount": 0,
-  "subtotal": 300000,
-  "totalAmount": 222000,
-  "finalAmount": 222000,
-  "centralSubsidy": 78000,
-  "stateSubsidy": 0,
-  "totalSubsidy": 78000,
-  "amountAfterSubsidy": 222000,
-  "discountAmount": 0
-}
-[00:16:58.810] Browser LOG     [saveQuotation] Required fields validation (matching backend checks): {"finalAmount":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":222000},"subtotal":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":300000},"totalAmount":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":222000}}
-[00:16:58.810] Browser LOG     [saveQuotation] Payload keys at root level: ["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"]
-[00:16:58.810] Browser LOG     [saveQuotation] Backend will receive these fields at req.body: {"amountAfterSubsidy":222000,"centralSubsidy":78000,"discountAmount":0,"finalAmount":222000,"stateSubsidy":0,"subtotal":300000,"totalAmount":222000,"totalSubsidy":78000}
-[00:16:58.810] Browser LOG     [saveQuotation] ===========================================
-[00:16:58.810] Browser LOG     [API] ========================================
-[00:16:58.810] Browser LOG     [API] Starting API request
-[00:16:58.810] Browser LOG     [API] Endpoint: /quotations
-[00:16:58.810] Browser LOG     [API] Method: POST
-[00:16:58.810] Browser LOG     [API] Requires Auth: true
-[00:16:58.810] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:16:58.810] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:16:58.810] Browser LOG     [API] Auth token added (length): 217
-[00:16:58.810] Browser LOG     [API] Request body present: {"isObject":true,"keys":["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"],"type":"object"}
-[00:16:58.810] Browser LOG     [API] ===== QUOTATION CREATION REQUEST =====
-[00:16:58.810] Browser LOG     [API] Quotation creation request body: {"finalAmountType":"number","finalAmountValue":222000,"fullBody":"{\n  \"customerId\": \"279c14f9-7452-48b8-a711-f458df54beec\",\n  \"customer\": {\n    \"firstName\": \"AMAN\",\n    \"lastName\": \"RAJAK\",\n    \"mobile\": \"9249929938\",\n    \"email\": \"amankrrajak288@gmail.com\",\n    \"address\": {\n      \"street\": \"plot-10 shyam vihar\",\n      \"city\": \"Jaipur\",\n      \"state\": \"Rajasthan\",\n      \"pincode\": \"302012\"\n    }\n  },\n  \"products\": {\n    \"systemType\": \"both\",\n    \"panelBrand\": \"Waaree\",\n    \"panelSize\": \"545W\",\n    \"panelQuantity\": 12,\n    \"inverterType\": \"String Inverter\",\n    \"inverterBrand\": \"XWatt\",\n    \"inverterSize\": \"6kW\",\n    \"structureType\": \"GI Structure\",\n    \"structureSize\": \"6kW\",\n    \"meterBrand\": \"L&T\",\n    \"acCableBrand\": \"Polycab\",\n    \"acCableSize\": \"6 sq mm\",\n    \"dcCableBrand\": \"Polycab\",\n    \"dcCableSize\": \"4 sq mm\",\n    \"acdb\": \"Havells (3-Phase)\",\n    \"dcdb\": \"Havells (3-Phase)\",\n    \"centralSubsidy\": 78000,\n    \"stateSubsidy\": 0,\n    \"systemPrice\": 300000,\n    \"dcrPanelBrand\": \"Waaree\",\n    \"dcrPanelSize\": \"545W\",\n    \"dcrPanelQuantity\": 6,\n    \"nonDcrPanelBrand\": \"Waaree\",\n    \"nonDcrPanelSize\": \"545W\",\n    \"nonDcrPanelQuantity\": 5,\n    \"batteryPrice\": 0\n  },\n  \"discount\": 0,\n  \"subtotal\": 300000,\n  \"totalAmount\": 222000,\n  \"finalAmount\": 222000,\n  \"centralSubsidy\": 78000,\n  \"stateSubsidy\": 0,\n  \"totalSubsidy\": 78000,\n  \"amountAfterSubsidy\": 222000,\n  \"discountAmount\": 0\n}","hasFinalAmount":true,"hasSubtotal":true,"hasTotalAmount":true,"rootLevelKeys":["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"],"subtotalType":"number","subtotalValue":300000,"totalAmountType":"number","totalAmountValue":222000}
-[00:16:58.810] Browser LOG     [API] ========================================
-[00:16:58.810] Browser LOG     [API] Body serialized to JSON, length: 1058
-[00:16:58.810] Browser LOG     [API] Serialized body preview: {"customerId":"279c14f9-7452-48b8-a711-f458df54beec","customer":{"firstName":"AMAN","lastName":"RAJAK","mobile":"9249929938","email":"amankrrajak288@gmail.com","address":{"street":"plot-10 shyam vihar...
-[00:16:58.810] Browser LOG     [API] Final request config: {"bodyLength":1058,"hasBody":true,"headersCount":2,"method":"POST","url":"http://localhost:3050/api/quotations"}
-[00:16:58.810] Browser LOG     [API] Sending fetch request...
-[00:16:59.236] Browser LOG     [API] Response received: {"headers":{"content-length":"553","content-type":"application/json; charset=utf-8"},"ok":true,"status":201,"statusText":"Created"}
-[00:16:59.236] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:16:59.236] Browser LOG     [API] Parsing JSON response...
-[00:16:59.236] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:16:59.236] Browser LOG     [API] Request successful, returning data
-[00:16:59.236] Browser LOG     [API] Request completed successfully
-[00:16:59.236] Browser LOG     [API] ========================================
-[00:16:59.236] Browser LOG     [API] ========================================
-[00:16:59.236] Browser LOG     [API] Starting API request
-[00:16:59.236] Browser LOG     [API] Endpoint: /quotations
-[00:16:59.237] Browser LOG     [API] Method: GET
-[00:16:59.237] Browser LOG     [API] Requires Auth: true
-[00:16:59.237] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:16:59.237] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:16:59.237] Browser LOG     [API] Auth token added (length): 217
-[00:16:59.237] Browser LOG     [API] No request body (GET request or body not provided)
-[00:16:59.237] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:16:59.237] Browser LOG     [API] Sending fetch request...
-[00:16:59.237] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:16:59.237] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:16:59.237] Browser LOG     [API] Parsing JSON response...
-[00:16:59.237] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:16:59.237] Browser LOG     [API] Request successful, returning data
-[00:16:59.237] Browser LOG     [API] Request completed successfully
-[00:16:59.237] Browser LOG     [API] ========================================
-[00:17:02.122] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/quotations color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/quotations","o":"http://localhost:3000/dashboard/quotations","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336699730}
-[00:17:02.408] Browser LOG     [API] ========================================
-[00:17:02.408] Browser LOG     [API] Starting API request
-[00:17:02.408] Browser LOG     [API] Endpoint: /quotations
-[00:17:02.408] Browser LOG     [API] Method: GET
-[00:17:02.408] Browser LOG     [API] Requires Auth: true
-[00:17:02.408] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:17:02.408] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:17:02.408] Browser LOG     [API] Auth token added (length): 217
-[00:17:02.408] Browser LOG     [API] No request body (GET request or body not provided)
-[00:17:02.408] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:17:02.408] Browser LOG     [API] Sending fetch request...
-[00:17:02.408] Browser LOG     [API] ========================================
-[00:17:02.408] Browser LOG     [API] Starting API request
-[00:17:02.408] Browser LOG     [API] Endpoint: /quotations
-[00:17:02.408] Browser LOG     [API] Method: GET
-[00:17:02.408] Browser LOG     [API] Requires Auth: true
-[00:17:02.408] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:17:02.408] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:17:02.408] Browser LOG     [API] Auth token added (length): 217
-[00:17:02.408] Browser LOG     [API] No request body (GET request or body not provided)
-[00:17:02.408] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:17:02.408] Browser LOG     [API] Sending fetch request...
-[00:17:02.605] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:17:02.605] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:17:02.605] Browser LOG     [API] Parsing JSON response...
-[00:17:02.605] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:17:02.605] Browser LOG     [API] Request successful, returning data
-[00:17:02.605] Browser LOG     [API] Request completed successfully
-[00:17:02.605] Browser LOG     [API] ========================================
-[00:17:02.605] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:17:02.605] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:17:02.605] Browser LOG     [API] Parsing JSON response...
-[00:17:02.605] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:17:02.605] Browser LOG     [API] Request successful, returning data
-[00:17:02.605] Browser LOG     [API] Request completed successfully
-[00:17:02.605] Browser LOG     [API] ========================================
-[00:17:05.491] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.491] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.491] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:17:05.491] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.491] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.491] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:17:05.492] Browser LOG     [API] ========================================
-[00:17:05.492] Browser LOG     [API] Starting API request
-[00:17:05.492] Browser LOG     [API] Endpoint: /quotations/QT-P91ZO5
-[00:17:05.492] Browser LOG     [API] Method: GET
-[00:17:05.492] Browser LOG     [API] Requires Auth: true
-[00:17:05.492] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-P91ZO5
-[00:17:05.492] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:17:05.492] Browser LOG     [API] Auth token added (length): 217
-[00:17:05.492] Browser LOG     [API] No request body (GET request or body not provided)
-[00:17:05.492] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-P91ZO5"}
-[00:17:05.492] Browser LOG     [API] Sending fetch request...
-[00:17:05.492] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.492] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.492] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:17:05.492] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.492] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:17:05.492] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:17:05.492] Browser LOG     [API] Response received: {"headers":{"content-length":"1356","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:17:05.492] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:17:05.492] Browser LOG     [API] Parsing JSON response...
-[00:17:05.492] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:17:05.492] Browser LOG     [API] Request successful, returning data
-[00:17:05.492] Browser LOG     [API] Request completed successfully
-[00:17:05.492] Browser LOG     [API] ========================================
-[00:17:05.492] Browser LOG     [API] ========================================
-[00:17:05.492] Browser LOG     [API] Starting API request
-[00:17:05.492] Browser LOG     [API] Endpoint: /quotations/QT-P91ZO5/visits
-[00:17:05.492] Browser LOG     [API] Method: GET
-[00:17:05.492] Browser LOG     [API] Requires Auth: true
-[00:17:05.492] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-P91ZO5/visits
-[00:17:05.492] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:17:05.492] Browser LOG     [API] Auth token added (length): 217
-[00:17:05.492] Browser LOG     [API] No request body (GET request or body not provided)
-[00:17:05.492] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-P91ZO5/visits"}
-[00:17:05.492] Browser LOG     [API] Sending fetch request...
-[00:17:05.621] Browser LOG     [API] Response received: {"headers":{"content-length":"37","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:17:05.621] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:17:05.621] Browser LOG     [API] Parsing JSON response...
-[00:17:05.621] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:17:05.621] Browser LOG     [API] Request successful, returning data
-[00:17:05.622] Browser LOG     [API] Request completed successfully
-[00:17:05.622] Browser LOG     [API] ========================================
-[00:17:09.838] Browser DEBUG   #1 1ms Starting document clone with size 1440x812 scrolled to 0,0
-[00:17:10.259] Browser DEBUG   #1 364ms Document cloned, element located at 0,0 with size 793.6953125x2333.4609375 using computed rendering
-[00:17:10.259] Browser DEBUG   #1 364ms Starting DOM parsing
-[00:17:10.259] Browser DEBUG   #1 373ms Added image https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png
-[00:17:10.259] Browser DEBUG   #1 400ms Starting renderer for element at 0,0 with size 794x2334
-[00:17:10.259] Browser DEBUG   #1 400ms Canvas renderer initialized (794x2334) with scale 2
-[00:17:10.259] Browser DEBUG   #1 439ms Finished rendering
-[00:19:17.288] Server  LOG      ✓ Compiled in 854ms
-[00:19:25.993] Server  LOG      ✓ Compiled in 670ms
-[00:19:34.656] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:19:34.873] Browser LOG     [API] ========================================
-[00:19:34.873] Browser LOG     [API] Starting API request
-[00:19:34.873] Browser LOG     [API] Endpoint: /quotations
-[00:19:34.873] Browser LOG     [API] Method: GET
-[00:19:34.873] Browser LOG     [API] Requires Auth: true
-[00:19:34.873] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:19:34.873] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:34.873] Browser LOG     [API] Auth token added (length): 217
-[00:19:34.873] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:34.873] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:19:34.873] Browser LOG     [API] Sending fetch request...
-[00:19:34.873] Browser LOG     [API] ========================================
-[00:19:34.873] Browser LOG     [API] Starting API request
-[00:19:34.873] Browser LOG     [API] Endpoint: /quotations
-[00:19:34.873] Browser LOG     [API] Method: GET
-[00:19:34.873] Browser LOG     [API] Requires Auth: true
-[00:19:34.873] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:19:34.873] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:34.873] Browser LOG     [API] Auth token added (length): 217
-[00:19:34.873] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:34.873] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:19:34.873] Browser LOG     [API] Sending fetch request...
-[00:19:34.873] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:19:34.873] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard/quotations","route":"/dashboard/quotations"}
-[00:19:34.873] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
-[00:19:34.873] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/quotations color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/quotations","o":"http://localhost:3000/dashboard/quotations","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336852493}
-[00:19:34.873] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336852493}
-[00:19:35.275] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767336852896}
-[00:19:35.676] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:35.676] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:35.676] Browser LOG     [API] Parsing JSON response...
-[00:19:35.676] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:35.676] Browser LOG     [API] Request successful, returning data
-[00:19:35.676] Browser LOG     [API] Request completed successfully
-[00:19:35.676] Browser LOG     [API] ========================================
-[00:19:35.676] Browser LOG     [API] ========================================
-[00:19:35.676] Browser LOG     [API] Starting API request
-[00:19:35.676] Browser LOG     [API] Endpoint: /quotations
-[00:19:35.676] Browser LOG     [API] Method: GET
-[00:19:35.676] Browser LOG     [API] Requires Auth: true
-[00:19:35.676] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:19:35.676] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:35.676] Browser LOG     [API] Auth token added (length): 217
-[00:19:35.676] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:35.676] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:19:35.676] Browser LOG     [API] Sending fetch request...
-[00:19:35.676] Browser LOG     [API] ========================================
-[00:19:35.676] Browser LOG     [API] Starting API request
-[00:19:35.676] Browser LOG     [API] Endpoint: /quotations
-[00:19:35.676] Browser LOG     [API] Method: GET
-[00:19:35.676] Browser LOG     [API] Requires Auth: true
-[00:19:35.676] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:19:35.676] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:35.676] Browser LOG     [API] Auth token added (length): 217
-[00:19:35.676] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:35.676] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:19:35.676] Browser LOG     [API] Sending fetch request...
-[00:19:35.676] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:35.676] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:35.676] Browser LOG     [API] Parsing JSON response...
-[00:19:35.676] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:35.676] Browser LOG     [API] Request successful, returning data
-[00:19:35.676] Browser LOG     [API] Request completed successfully
-[00:19:35.676] Browser LOG     [API] ========================================
-[00:19:35.893] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:35.893] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:35.893] Browser LOG     [API] Parsing JSON response...
-[00:19:35.893] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:35.893] Browser LOG     [API] Request successful, returning data
-[00:19:35.893] Browser LOG     [API] Request completed successfully
-[00:19:35.893] Browser LOG     [API] ========================================
-[00:19:35.893] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:35.893] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:35.893] Browser LOG     [API] Parsing JSON response...
-[00:19:35.893] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:35.893] Browser LOG     [API] Request successful, returning data
-[00:19:35.893] Browser LOG     [API] Request completed successfully
-[00:19:35.893] Browser LOG     [API] ========================================
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:19:37.487] Browser LOG     [API] ========================================
-[00:19:37.487] Browser LOG     [API] Starting API request
-[00:19:37.487] Browser LOG     [API] Endpoint: /quotations/QT-P91ZO5
-[00:19:37.487] Browser LOG     [API] Method: GET
-[00:19:37.487] Browser LOG     [API] Requires Auth: true
-[00:19:37.487] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-P91ZO5
-[00:19:37.487] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:37.487] Browser LOG     [API] Auth token added (length): 217
-[00:19:37.487] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:37.487] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-P91ZO5"}
-[00:19:37.487] Browser LOG     [API] Sending fetch request...
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.487] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:19:37.488] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.488] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:19:37.488] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:19:37.488] Browser LOG     [API] Response received: {"headers":{"content-length":"1356","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:37.488] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:37.488] Browser LOG     [API] Parsing JSON response...
-[00:19:37.488] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:37.488] Browser LOG     [API] Request successful, returning data
-[00:19:37.488] Browser LOG     [API] Request completed successfully
-[00:19:37.488] Browser LOG     [API] ========================================
-[00:19:37.488] Browser LOG     [API] ========================================
-[00:19:37.488] Browser LOG     [API] Starting API request
-[00:19:37.488] Browser LOG     [API] Endpoint: /quotations/QT-P91ZO5/visits
-[00:19:37.488] Browser LOG     [API] Method: GET
-[00:19:37.488] Browser LOG     [API] Requires Auth: true
-[00:19:37.488] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-P91ZO5/visits
-[00:19:37.488] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:19:37.488] Browser LOG     [API] Auth token added (length): 217
-[00:19:37.488] Browser LOG     [API] No request body (GET request or body not provided)
-[00:19:37.488] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-P91ZO5/visits"}
-[00:19:37.488] Browser LOG     [API] Sending fetch request...
-[00:19:37.614] Browser LOG     [API] Response received: {"headers":{"content-length":"37","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:19:37.614] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:19:37.614] Browser LOG     [API] Parsing JSON response...
-[00:19:37.614] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:19:37.614] Browser LOG     [API] Request successful, returning data
-[00:19:37.614] Browser LOG     [API] Request completed successfully
-[00:19:37.614] Browser LOG     [API] ========================================
-[00:19:45.989] Browser DEBUG   #1 0ms Starting document clone with size 1440x812 scrolled to 0,0
-[00:19:46.350] Browser DEBUG   #1 281ms Document cloned, element located at 0,0 with size 793.6953125x2262.265625 using computed rendering
-[00:19:46.350] Browser DEBUG   #1 281ms Starting DOM parsing
-[00:19:46.350] Browser DEBUG   #1 286ms Added image https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png
-[00:19:46.350] Browser DEBUG   #1 312ms Starting renderer for element at 0,0 with size 794x2263
-[00:19:46.350] Browser DEBUG   #1 313ms Canvas renderer initialized (794x2263) with scale 2
-[00:19:46.350] Browser DEBUG   #1 357ms Finished rendering
-[00:22:05.128] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:05.129] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:08.651] Browser LOG     [API] ========================================
-[00:22:08.651] Browser LOG     [API] Starting API request
-[00:22:08.651] Browser LOG     [API] Endpoint: /quotations/QT-119AY7
-[00:22:08.651] Browser LOG     [API] Method: GET
-[00:22:08.651] Browser LOG     [API] Requires Auth: true
-[00:22:08.651] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-119AY7
-[00:22:08.651] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:22:08.651] Browser LOG     [API] Auth token added (length): 217
-[00:22:08.651] Browser LOG     [API] No request body (GET request or body not provided)
-[00:22:08.651] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-119AY7"}
-[00:22:08.651] Browser LOG     [API] Sending fetch request...
-[00:22:08.651] Browser LOG     [API] ========================================
-[00:22:08.651] Browser LOG     [API] Starting API request
-[00:22:08.651] Browser LOG     [API] Endpoint: /quotations/QT-P91ZO5/visits
-[00:22:08.651] Browser LOG     [API] Method: GET
-[00:22:08.651] Browser LOG     [API] Requires Auth: true
-[00:22:08.651] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-P91ZO5/visits
-[00:22:08.651] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:22:08.651] Browser LOG     [API] Auth token added (length): 217
-[00:22:08.651] Browser LOG     [API] No request body (GET request or body not provided)
-[00:22:08.651] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-P91ZO5/visits"}
-[00:22:08.651] Browser LOG     [API] Sending fetch request...
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getPanelPrice] Missing brand or size. Brand: , Size: 
-[00:22:08.651] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:22:09.360] Browser LOG     [API] Response received: {"headers":{"content-length":"1348","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:22:09.360] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:22:09.360] Browser LOG     [API] Parsing JSON response...
-[00:22:09.360] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:22:09.360] Browser LOG     [API] Request successful, returning data
-[00:22:09.360] Browser LOG     [API] Request completed successfully
-[00:22:09.360] Browser LOG     [API] ========================================
-[00:22:09.360] Browser LOG     [API] ========================================
-[00:22:09.360] Browser LOG     [API] Starting API request
-[00:22:09.360] Browser LOG     [API] Endpoint: /quotations/QT-119AY7/visits
-[00:22:09.360] Browser LOG     [API] Method: GET
-[00:22:09.360] Browser LOG     [API] Requires Auth: true
-[00:22:09.360] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-119AY7/visits
-[00:22:09.360] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:22:09.360] Browser LOG     [API] Auth token added (length): 217
-[00:22:09.360] Browser LOG     [API] No request body (GET request or body not provided)
-[00:22:09.360] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-119AY7/visits"}
-[00:22:09.360] Browser LOG     [API] Sending fetch request...
-[00:22:09.360] Browser LOG     [API] Response received: {"headers":{"content-length":"37","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:22:09.360] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:22:09.360] Browser LOG     [API] Parsing JSON response...
-[00:22:09.360] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:22:09.360] Browser LOG     [API] Request successful, returning data
-[00:22:09.360] Browser LOG     [API] Request completed successfully
-[00:22:09.360] Browser LOG     [API] ========================================
-[00:22:09.360] Browser LOG     [API] Response received: {"headers":{"content-length":"670","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:22:09.360] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:22:09.360] Browser LOG     [API] Parsing JSON response...
-[00:22:09.360] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:22:09.360] Browser LOG     [API] Request successful, returning data
-[00:22:09.360] Browser LOG     [API] Request completed successfully
-[00:22:09.360] Browser LOG     [API] ========================================
-[00:22:15.720] Browser DEBUG   #2 0ms Starting document clone with size 1440x812 scrolled to 0,-98
-[00:22:16.082] Browser DEBUG   #2 275ms Document cloned, element located at 0,98 with size 793.6953125x2245.03125 using computed rendering
-[00:22:16.082] Browser DEBUG   #2 275ms Starting DOM parsing
-[00:22:16.082] Browser DEBUG   #2 277ms Added image https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png
-[00:22:16.082] Browser DEBUG   #2 307ms Starting renderer for element at 0,98 with size 794x2246
-[00:22:16.082] Browser DEBUG   #2 308ms Canvas renderer initialized (794x2246) with scale 2
-[00:22:16.082] Browser DEBUG   #2 350ms Finished rendering
-[00:31:06.168] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:31:06.373] Browser LOG     [API] ========================================
-[00:31:06.373] Browser LOG     [API] Starting API request
-[00:31:06.373] Browser LOG     [API] Endpoint: /quotations
-[00:31:06.373] Browser LOG     [API] Method: GET
-[00:31:06.373] Browser LOG     [API] Requires Auth: true
-[00:31:06.373] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:31:06.373] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:31:06.373] Browser LOG     [API] Auth token added (length): 217
-[00:31:06.373] Browser LOG     [API] No request body (GET request or body not provided)
-[00:31:06.373] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:31:06.373] Browser LOG     [API] Sending fetch request...
-[00:31:06.373] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:31:06.373] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard","route":"/dashboard"}
-[00:31:06.373] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767337543921}
-[00:31:06.373] Browser LOG     [API] ========================================
-[00:31:06.373] Browser LOG     [API] Starting API request
-[00:31:06.373] Browser LOG     [API] Endpoint: /quotations
-[00:31:06.373] Browser LOG     [API] Method: GET
-[00:31:06.373] Browser LOG     [API] Requires Auth: true
-[00:31:06.373] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:31:06.373] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:31:06.373] Browser LOG     [API] Auth token added (length): 217
-[00:31:06.373] Browser LOG     [API] No request body (GET request or body not provided)
-[00:31:06.373] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:31:06.373] Browser LOG     [API] Sending fetch request...
-[00:31:06.373] Browser LOG     [API] ========================================
-[00:31:06.373] Browser LOG     [API] Starting API request
-[00:31:06.373] Browser LOG     [API] Endpoint: /quotations
-[00:31:06.373] Browser LOG     [API] Method: GET
-[00:31:06.373] Browser LOG     [API] Requires Auth: true
-[00:31:06.373] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:31:06.373] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:31:06.373] Browser LOG     [API] Auth token added (length): 217
-[00:31:06.373] Browser LOG     [API] No request body (GET request or body not provided)
-[00:31:06.373] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:31:06.373] Browser LOG     [API] Sending fetch request...
-[00:31:07.071] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:31:07.071] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:31:07.071] Browser LOG     [API] Parsing JSON response...
-[00:31:07.071] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:31:07.071] Browser LOG     [API] Request successful, returning data
-[00:31:07.071] Browser LOG     [API] Request completed successfully
-[00:31:07.071] Browser LOG     [API] ========================================
-[00:31:07.189] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:31:07.189] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:31:07.189] Browser LOG     [API] Parsing JSON response...
-[00:31:07.189] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:31:07.189] Browser LOG     [API] Request successful, returning data
-[00:31:07.189] Browser LOG     [API] Request completed successfully
-[00:31:07.189] Browser LOG     [API] ========================================
-[00:31:07.292] Browser LOG     [API] Response received: {"headers":{"content-length":"4522","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:31:07.292] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:31:07.292] Browser LOG     [API] Parsing JSON response...
-[00:31:07.292] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:31:07.292] Browser LOG     [API] Request successful, returning data
-[00:31:07.292] Browser LOG     [API] Request completed successfully
-[00:31:07.292] Browser LOG     [API] ========================================
-[00:53:19.671] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/new-quotation color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/new-quotation","o":"http://localhost:3000/dashboard/new-quotation","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767338877286}
-[00:53:31.244] Browser LOG     [API] ========================================
-[00:53:31.244] Browser LOG     [API] Starting API request
-[00:53:31.244] Browser LOG     [API] Endpoint: /quotations/product-catalog
-[00:53:31.244] Browser LOG     [API] Method: GET
-[00:53:31.244] Browser LOG     [API] Requires Auth: true
-[00:53:31.244] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/product-catalog
-[00:53:31.244] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:31.244] Browser LOG     [API] Auth token added (length): 217
-[00:53:31.244] Browser LOG     [API] No request body (GET request or body not provided)
-[00:53:31.244] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/product-catalog"}
-[00:53:31.244] Browser LOG     [API] Sending fetch request...
-[00:53:31.244] Browser LOG     [API] ========================================
-[00:53:31.244] Browser LOG     [API] Starting API request
-[00:53:31.244] Browser LOG     [API] Endpoint: /quotations/pricing-tables
-[00:53:31.244] Browser LOG     [API] Method: GET
-[00:53:31.244] Browser LOG     [API] Requires Auth: true
-[00:53:31.244] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/pricing-tables
-[00:53:31.244] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:31.244] Browser LOG     [API] Auth token added (length): 217
-[00:53:31.244] Browser LOG     [API] No request body (GET request or body not provided)
-[00:53:31.244] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/pricing-tables"}
-[00:53:31.244] Browser LOG     [API] Sending fetch request...
-[00:53:31.244] Browser LOG     [API] ========================================
-[00:53:31.244] Browser LOG     [API] Starting API request
-[00:53:31.244] Browser LOG     [API] Endpoint: /quotations/product-catalog
-[00:53:31.244] Browser LOG     [API] Method: GET
-[00:53:31.244] Browser LOG     [API] Requires Auth: true
-[00:53:31.244] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/product-catalog
-[00:53:31.244] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:31.244] Browser LOG     [API] Auth token added (length): 217
-[00:53:31.244] Browser LOG     [API] No request body (GET request or body not provided)
-[00:53:31.244] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/product-catalog"}
-[00:53:31.244] Browser LOG     [API] Sending fetch request...
-[00:53:31.914] Browser LOG     [API] Response received: {"headers":{"content-length":"821","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:53:31.914] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:31.914] Browser LOG     [API] Parsing JSON response...
-[00:53:31.914] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:31.914] Browser LOG     [API] Request successful, returning data
-[00:53:31.914] Browser LOG     [API] Request completed successfully
-[00:53:31.914] Browser LOG     [API] ========================================
-[00:53:31.914] Browser LOG     Product catalog API response: {"acdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"cables":{"brands":["Polycab","Havells","KEI","Finolex","RR Kabel"],"sizes":["4 sq mm","6 sq mm","10 sq mm","16 sq mm","25 sq mm"]},"dcdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"inverters":{"brands":["Havells","Polycab","Luminous","XWatt","VSole"],"sizes":["3kW","5kW","6kW","8kW","10kW","15kW","20kW","25kW"],"types":["String Inverter","Micro Inverter","Hybrid Inverter"]},"meters":{"brands":["L&T","HPL","Havells","Genus","Secure"]},"panels":{"brands":["Adani","Tata","Waaree","Vikram Solar"],"sizes":["545W","550W","555W","575W","610W"]},"structures":{"sizes":["3kW","4kW","5kW","6kW","7kW","8kW","10kW","12kW","15kW","18kW","20kW","25kW","30kW","50kW"],"types":["GI Structure","Aluminum Structure","MS Structure"]}}
-[00:53:31.914] Browser LOG     [API] Response received: {"headers":{"content-length":"76","content-type":"application/json; charset=utf-8"},"ok":false,"status":404,"statusText":"Not Found"}
-[00:53:31.914] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:31.914] Browser LOG     [API] Parsing JSON response...
-[00:53:31.914] Browser LOG     [API] Parsed response data: {"errorCode":"RES_001","errorMessage":"Quotation not found","hasData":false,"hasError":true,"success":false}
-[00:53:31.914] Browser ERROR   [API] ===== API ERROR DETECTED =====
-[00:53:31.914] Browser ERROR   [API] API Error Response: {"code":"RES_001","fullData":{"error":{"code":"RES_001","message":"Quotation not found"},"success":false},"message":"Quotation not found","status":404,"statusText":"Not Found"}
-[00:53:31.914] Browser ERROR   [API] =================================
-[00:53:31.914] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:53:31.914] Browser ERROR   [API] Error type: ApiError
-[00:53:31.914] Browser ERROR   [API] Error message: Quotation not found
-[00:53:31.914] Browser ERROR   [API] ApiError detected, re-throwing: {"code":"RES_001","hasDetails":false,"message":"Quotation not found"}
-[00:53:31.914] Browser ERROR   [API] =================================
-[00:53:31.914] Browser LOG     [API] Response received: {"headers":{"content-length":"821","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:53:31.914] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:31.914] Browser LOG     [API] Parsing JSON response...
-[00:53:31.914] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:31.914] Browser LOG     [API] Request successful, returning data
-[00:53:31.914] Browser LOG     [API] Request completed successfully
-[00:53:31.914] Browser LOG     [API] ========================================
-[00:53:31.914] Browser LOG     Product catalog API response: {"acdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"cables":{"brands":["Polycab","Havells","KEI","Finolex","RR Kabel"],"sizes":["4 sq mm","6 sq mm","10 sq mm","16 sq mm","25 sq mm"]},"dcdb":{"options":["Havells (1-Phase)","Havells (3-Phase)"]},"inverters":{"brands":["Havells","Polycab","Luminous","XWatt","VSole"],"sizes":["3kW","5kW","6kW","8kW","10kW","15kW","20kW","25kW"],"types":["String Inverter","Micro Inverter","Hybrid Inverter"]},"meters":{"brands":["L&T","HPL","Havells","Genus","Secure"]},"panels":{"brands":["Adani","Tata","Waaree","Vikram Solar"],"sizes":["545W","550W","555W","575W","610W"]},"structures":{"sizes":["3kW","4kW","5kW","6kW","7kW","8kW","10kW","12kW","15kW","18kW","20kW","25kW","30kW","50kW"],"types":["GI Structure","Aluminum Structure","MS Structure"]}}
-[00:53:40.035] Browser LOG     [ProductSelectionForm] DCR config selected from dialog - filled all fields: {"acCableBrand":"Polycab","acCableSize":"4 sq mm","acdb":"Havells (1-Phase)","batteryCapacity":"","batteryPrice":0,"centralSubsidy":78000,"customPanels":[],"dcCableBrand":"Polycab","dcCableSize":"4 sq mm","dcdb":"Havells (1-Phase)","dcrPanelBrand":"","dcrPanelQuantity":0,"dcrPanelSize":"","hybridInverter":"","inverterBrand":"GoodWe","inverterSize":"5kW","inverterType":"String Inverter","meterBrand":"L&T","nonDcrPanelBrand":"","nonDcrPanelQuantity":0,"nonDcrPanelSize":"","panelBrand":"Tata","panelQuantity":8,"panelSize":"545W","stateSubsidy":0,"structureSize":"4kW","structureType":"GI Structure","systemPrice":260000,"systemType":"dcr"}
-[00:53:40.035] Browser LOG     [ProductSelectionForm] ACDB from config: Havells (1-Phase) DCDB from config: Havells (1-Phase)
-[00:53:40.035] Browser LOG     [ProductSelectionForm] System price from config: 260000
-[00:53:40.035] Browser LOG     [ProductSelectionForm] DCR config selected from dialog - filled all fields: {"acCableBrand":"Polycab","acCableSize":"4 sq mm","acdb":"Havells (1-Phase)","batteryCapacity":"","batteryPrice":0,"centralSubsidy":78000,"customPanels":[],"dcCableBrand":"Polycab","dcCableSize":"4 sq mm","dcdb":"Havells (1-Phase)","dcrPanelBrand":"","dcrPanelQuantity":0,"dcrPanelSize":"","hybridInverter":"","inverterBrand":"GoodWe","inverterSize":"5kW","inverterType":"String Inverter","meterBrand":"L&T","nonDcrPanelBrand":"","nonDcrPanelQuantity":0,"nonDcrPanelSize":"","panelBrand":"Tata","panelQuantity":8,"panelSize":"545W","stateSubsidy":0,"structureSize":"4kW","structureType":"GI Structure","systemPrice":260000,"systemType":"dcr"}
-[00:53:40.035] Browser LOG     [ProductSelectionForm] ACDB from config: Havells (1-Phase) DCDB from config: Havells (1-Phase)
-[00:53:40.035] Browser LOG     [ProductSelectionForm] System price from config: 260000
-[00:53:49.367] Browser LOG     Initializing editableSubtotal: {"calculatedPrice":260000,"currentEditableSubtotal":null,"priceToUse":260000,"productsSystemPrice":260000,"systemType":"dcr"}
-[00:53:49.367] Browser LOG     Setting editableSubtotal to: 260000
-[00:53:49.367] Browser LOG     Fallback initialization of editableSubtotal from subtotal: 260000
-[00:53:49.367] Browser LOG     Initializing editableSubtotal: {"calculatedPrice":260000,"currentEditableSubtotal":null,"priceToUse":260000,"productsSystemPrice":260000,"systemType":"dcr"}
-[00:53:49.367] Browser LOG     Setting editableSubtotal to: 260000
-[00:53:49.367] Browser LOG     Fallback initialization of editableSubtotal from subtotal: 260000
-[00:53:57.925] Browser LOG     Using editableSubtotal state value: 260000
-[00:53:57.925] Browser LOG     [QuotationConfirmation] === SUBTOTAL RESOLUTION ===
-[00:53:57.925] Browser LOG     [QuotationConfirmation] All available values: {"calculatedSystemPrice":260000,"calculatedSystemPriceType":"number","componentSubtotal":260000,"componentSubtotalType":"number","editableSubtotal":260000,"inputFieldValue":"260000","productsData":{"inverterSize":"5kW","panelBrand":"Tata","panelQuantity":8,"panelSize":"545W","systemType":"dcr"},"productsSystemPrice":260000,"productsSystemPriceType":"number","resolvedSubtotal":260000,"resolvedSubtotalType":"number"}
-[00:53:57.925] Browser LOG     [QuotationConfirmation] ============================
-[00:53:57.925] Browser LOG     [QuotationConfirmation] === FINAL VALUES BEING SENT ===
-[00:53:57.925] Browser LOG     [QuotationConfirmation] Pricing calculations: {"amountAfterSubsidy":182000,"centralSubsidy":78000,"discount":0,"discountAmount":0,"finalAmount":182000,"stateSubsidy":0,"subtotal":260000,"totalAmount":182000,"totalSubsidy":78000}
-[00:53:57.925] Browser LOG     [QuotationConfirmation] Source values: {"calculatedSystemPrice":260000,"editableSubtotal":260000,"inputFieldValue":"260000","productsSystemPrice":260000}
-[00:53:57.925] Browser LOG     [QuotationConfirmation] ==============================
-[00:53:57.925] Browser LOG     [QuotationConfirmation] Calling saveQuotation with: {"discount":0,"isFinite":true,"isValid":true,"subtotal":260000,"subtotalType":"number"}
-[00:53:57.925] Browser LOG     [saveQuotation] === RECEIVED VALUES ===
-[00:53:57.925] Browser LOG     [saveQuotation] Received values: {"currentProductsSystemPrice":260000,"currentProductsSystemPriceType":"number","discount":0,"isFinite":true,"isNull":false,"isUndefined":false,"isZero":false,"subtotalValue":260000,"type":"number"}
-[00:53:57.925] Browser LOG     [saveQuotation] =======================
-[00:53:57.925] Browser LOG     [API] ========================================
-[00:53:57.925] Browser LOG     [API] Starting API request
-[00:53:57.925] Browser LOG     [API] Endpoint: /customers?search=2379827849
-[00:53:57.925] Browser LOG     [API] Method: GET
-[00:53:57.925] Browser LOG     [API] Requires Auth: true
-[00:53:57.925] Browser LOG     [API] Full URL: http://localhost:3050/api/customers?search=2379827849
-[00:53:57.925] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:57.925] Browser LOG     [API] Auth token added (length): 217
-[00:53:57.925] Browser LOG     [API] No request body (GET request or body not provided)
-[00:53:57.925] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/customers?search=2379827849"}
-[00:53:57.925] Browser LOG     [API] Sending fetch request...
-[00:53:58.342] Browser LOG     [API] Response received: {"headers":{"content-length":"132","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:53:58.342] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:58.342] Browser LOG     [API] Parsing JSON response...
-[00:53:58.342] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:58.342] Browser LOG     [API] Request successful, returning data
-[00:53:58.342] Browser LOG     [API] Request completed successfully
-[00:53:58.342] Browser LOG     [API] ========================================
-[00:53:58.342] Browser LOG     [API] ========================================
-[00:53:58.342] Browser LOG     [API] Starting API request
-[00:53:58.342] Browser LOG     [API] Endpoint: /customers
-[00:53:58.342] Browser LOG     [API] Method: POST
-[00:53:58.342] Browser LOG     [API] Requires Auth: true
-[00:53:58.342] Browser LOG     [API] Full URL: http://localhost:3050/api/customers
-[00:53:58.342] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:58.342] Browser LOG     [API] Auth token added (length): 217
-[00:53:58.342] Browser LOG     [API] Request body present: {"isObject":true,"keys":["firstName","lastName","mobile","email","address"],"type":"object"}
-[00:53:58.342] Browser LOG     [API] Body serialized to JSON, length: 195
-[00:53:58.342] Browser LOG     [API] Serialized body preview: {"firstName":"AMAN","lastName":"RAJAK","mobile":"2379827849","email":"amankrrajak2299@gmail.com","address":{"street":"plot-10 shyam vihar","city":"Jaipur","state":"Rajasthan","pincode":"302012"}}
-[00:53:58.342] Browser LOG     [API] Final request config: {"bodyLength":195,"hasBody":true,"headersCount":2,"method":"POST","url":"http://localhost:3050/api/customers"}
-[00:53:58.342] Browser LOG     [API] Sending fetch request...
-[00:53:58.486] Browser LOG     [API] Response received: {"headers":{"content-length":"341","content-type":"application/json; charset=utf-8"},"ok":true,"status":201,"statusText":"Created"}
-[00:53:58.486] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:58.486] Browser LOG     [API] Parsing JSON response...
-[00:53:58.486] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:58.486] Browser LOG     [API] Request successful, returning data
-[00:53:58.486] Browser LOG     [API] Request completed successfully
-[00:53:58.486] Browser LOG     [API] ========================================
-[00:53:58.486] Browser LOG     [saveQuotation] Raw pricing values before validation: {"amountAfterSubsidy":182000,"centralSubsidy":78000,"discountAmount":0,"finalAmount":182000,"stateSubsidy":0,"subtotal":260000,"totalAmount":182000,"totalSubsidy":78000}
-[00:53:58.486] Browser LOG     [saveQuotation] Sending quotation data with pricing: {"amountAfterSubsidy":182000,"centralSubsidy":78000,"customerId":"1971412e-c80b-42f0-b026-402321920e47","discount":0,"discountAmount":0,"finalAmount":182000,"stateSubsidy":0,"subtotal":260000,"totalAmount":182000,"totalSubsidy":78000}
-[00:53:58.486] Browser LOG     Panel Size being sent: 545W
-[00:53:58.486] Browser LOG     [saveQuotation] === FINAL PAYLOAD BEING SENT TO BACKEND ===
-[00:53:58.486] Browser LOG     [saveQuotation] Complete quotation payload: {
-  "customerId": "1971412e-c80b-42f0-b026-402321920e47",
-  "customer": {
-    "firstName": "AMAN",
-    "lastName": "RAJAK",
-    "mobile": "2379827849",
-    "email": "amankrrajak2299@gmail.com",
-    "address": {
-      "street": "plot-10 shyam vihar",
-      "city": "Jaipur",
-      "state": "Rajasthan",
-      "pincode": "302012"
-    }
-  },
-  "products": {
-    "systemType": "dcr",
-    "panelBrand": "Tata",
-    "panelSize": "545W",
-    "panelQuantity": 8,
-    "inverterType": "String Inverter",
-    "inverterBrand": "VSole",
-    "inverterSize": "5kW",
-    "structureType": "GI Structure",
-    "structureSize": "4kW",
-    "meterBrand": "L&T",
-    "acCableBrand": "Polycab",
-    "acCableSize": "4 sq mm",
-    "dcCableBrand": "Polycab",
-    "dcCableSize": "4 sq mm",
-    "acdb": "Havells (1-Phase)",
-    "dcdb": "Havells (1-Phase)",
-    "centralSubsidy": 78000,
-    "stateSubsidy": 0,
-    "systemPrice": 260000,
-    "batteryPrice": 0
-  },
-  "discount": 0,
-  "subtotal": 260000,
-  "totalAmount": 182000,
-  "finalAmount": 182000,
-  "centralSubsidy": 78000,
-  "stateSubsidy": 0,
-  "totalSubsidy": 78000,
-  "amountAfterSubsidy": 182000,
-  "discountAmount": 0
-}
-[00:53:58.486] Browser LOG     [saveQuotation] Required fields validation (matching backend checks): {"finalAmount":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":182000},"subtotal":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":260000},"totalAmount":{"isAtRoot":true,"isFinite":true,"isValid":true,"type":"number","value":182000}}
-[00:53:58.486] Browser LOG     [saveQuotation] Payload keys at root level: ["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"]
-[00:53:58.486] Browser LOG     [saveQuotation] Backend will receive these fields at req.body: {"amountAfterSubsidy":182000,"centralSubsidy":78000,"discountAmount":0,"finalAmount":182000,"stateSubsidy":0,"subtotal":260000,"totalAmount":182000,"totalSubsidy":78000}
-[00:53:58.486] Browser LOG     [saveQuotation] ===========================================
-[00:53:58.486] Browser LOG     [API] ========================================
-[00:53:58.486] Browser LOG     [API] Starting API request
-[00:53:58.486] Browser LOG     [API] Endpoint: /quotations
-[00:53:58.486] Browser LOG     [API] Method: POST
-[00:53:58.486] Browser LOG     [API] Requires Auth: true
-[00:53:58.486] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:53:58.486] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:58.486] Browser LOG     [API] Auth token added (length): 217
-[00:53:58.486] Browser LOG     [API] Request body present: {"isObject":true,"keys":["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"],"type":"object"}
-[00:53:58.486] Browser LOG     [API] ===== QUOTATION CREATION REQUEST =====
-[00:53:58.486] Browser LOG     [API] Quotation creation request body: {"finalAmountType":"number","finalAmountValue":182000,"fullBody":"{\n  \"customerId\": \"1971412e-c80b-42f0-b026-402321920e47\",\n  \"customer\": {\n    \"firstName\": \"AMAN\",\n    \"lastName\": \"RAJAK\",\n    \"mobile\": \"2379827849\",\n    \"email\": \"amankrrajak2299@gmail.com\",\n    \"address\": {\n      \"street\": \"plot-10 shyam vihar\",\n      \"city\": \"Jaipur\",\n      \"state\": \"Rajasthan\",\n      \"pincode\": \"302012\"\n    }\n  },\n  \"products\": {\n    \"systemType\": \"dcr\",\n    \"panelBrand\": \"Tata\",\n    \"panelSize\": \"545W\",\n    \"panelQuantity\": 8,\n    \"inverterType\": \"String Inverter\",\n    \"inverterBrand\": \"VSole\",\n    \"inverterSize\": \"5kW\",\n    \"structureType\": \"GI Structure\",\n    \"structureSize\": \"4kW\",\n    \"meterBrand\": \"L&T\",\n    \"acCableBrand\": \"Polycab\",\n    \"acCableSize\": \"4 sq mm\",\n    \"dcCableBrand\": \"Polycab\",\n    \"dcCableSize\": \"4 sq mm\",\n    \"acdb\": \"Havells (1-Phase)\",\n    \"dcdb\": \"Havells (1-Phase)\",\n    \"centralSubsidy\": 78000,\n    \"stateSubsidy\": 0,\n    \"systemPrice\": 260000,\n    \"batteryPrice\": 0\n  },\n  \"discount\": 0,\n  \"subtotal\": 260000,\n  \"totalAmount\": 182000,\n  \"finalAmount\": 182000,\n  \"centralSubsidy\": 78000,\n  \"stateSubsidy\": 0,\n  \"totalSubsidy\": 78000,\n  \"amountAfterSubsidy\": 182000,\n  \"discountAmount\": 0\n}","hasFinalAmount":true,"hasSubtotal":true,"hasTotalAmount":true,"rootLevelKeys":["customerId","customer","products","discount","subtotal","totalAmount","finalAmount","centralSubsidy","stateSubsidy","totalSubsidy","amountAfterSubsidy","discountAmount"],"subtotalType":"number","subtotalValue":260000,"totalAmountType":"number","totalAmountValue":182000}
-[00:53:58.486] Browser LOG     [API] ========================================
-[00:53:58.486] Browser LOG     [API] Body serialized to JSON, length: 910
-[00:53:58.486] Browser LOG     [API] Serialized body preview: {"customerId":"1971412e-c80b-42f0-b026-402321920e47","customer":{"firstName":"AMAN","lastName":"RAJAK","mobile":"2379827849","email":"amankrrajak2299@gmail.com","address":{"street":"plot-10 shyam viha...
-[00:53:58.486] Browser LOG     [API] Final request config: {"bodyLength":910,"hasBody":true,"headersCount":2,"method":"POST","url":"http://localhost:3050/api/quotations"}
-[00:53:58.486] Browser LOG     [API] Sending fetch request...
-[00:53:58.811] Browser LOG     [API] Response received: {"headers":{"content-length":"552","content-type":"application/json; charset=utf-8"},"ok":true,"status":201,"statusText":"Created"}
-[00:53:58.811] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:58.811] Browser LOG     [API] Parsing JSON response...
-[00:53:58.811] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:58.811] Browser LOG     [API] Request successful, returning data
-[00:53:58.811] Browser LOG     [API] Request completed successfully
-[00:53:58.811] Browser LOG     [API] ========================================
-[00:53:58.811] Browser LOG     [API] ========================================
-[00:53:58.811] Browser LOG     [API] Starting API request
-[00:53:58.811] Browser LOG     [API] Endpoint: /quotations
-[00:53:58.811] Browser LOG     [API] Method: GET
-[00:53:58.811] Browser LOG     [API] Requires Auth: true
-[00:53:58.811] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:53:58.811] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:53:58.811] Browser LOG     [API] Auth token added (length): 217
-[00:53:58.811] Browser LOG     [API] No request body (GET request or body not provided)
-[00:53:58.811] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:53:58.811] Browser LOG     [API] Sending fetch request...
-[00:53:58.811] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:53:58.811] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:53:58.811] Browser LOG     [API] Parsing JSON response...
-[00:53:58.811] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:53:58.811] Browser LOG     [API] Request successful, returning data
-[00:53:58.811] Browser LOG     [API] Request completed successfully
-[00:53:58.811] Browser LOG     [API] ========================================
-[00:54:00.899] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/quotations color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/quotations","o":"http://localhost:3000/dashboard/quotations","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767338918521}
-[00:54:01.367] Browser LOG     [API] ========================================
-[00:54:01.367] Browser LOG     [API] Starting API request
-[00:54:01.367] Browser LOG     [API] Endpoint: /quotations
-[00:54:01.367] Browser LOG     [API] Method: GET
-[00:54:01.367] Browser LOG     [API] Requires Auth: true
-[00:54:01.367] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:54:01.367] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:54:01.367] Browser LOG     [API] Auth token added (length): 217
-[00:54:01.367] Browser LOG     [API] No request body (GET request or body not provided)
-[00:54:01.367] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:54:01.367] Browser LOG     [API] Sending fetch request...
-[00:54:01.367] Browser LOG     [API] ========================================
-[00:54:01.367] Browser LOG     [API] Starting API request
-[00:54:01.367] Browser LOG     [API] Endpoint: /quotations
-[00:54:01.367] Browser LOG     [API] Method: GET
-[00:54:01.367] Browser LOG     [API] Requires Auth: true
-[00:54:01.367] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:54:01.367] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:54:01.367] Browser LOG     [API] Auth token added (length): 217
-[00:54:01.367] Browser LOG     [API] No request body (GET request or body not provided)
-[00:54:01.367] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:54:01.367] Browser LOG     [API] Sending fetch request...
-[00:54:01.367] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:54:01.367] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:54:01.367] Browser LOG     [API] Parsing JSON response...
-[00:54:01.367] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:54:01.367] Browser LOG     [API] Request successful, returning data
-[00:54:01.367] Browser LOG     [API] Request completed successfully
-[00:54:01.367] Browser LOG     [API] ========================================
-[00:54:01.367] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:54:01.367] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:54:01.367] Browser LOG     [API] Parsing JSON response...
-[00:54:01.367] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:54:01.367] Browser LOG     [API] Request successful, returning data
-[00:54:01.367] Browser LOG     [API] Request completed successfully
-[00:54:01.367] Browser LOG     [API] ========================================
-[00:54:07.504] Browser WARN    [getPanelPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getPanelPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser LOG     [API] ========================================
-[00:54:07.504] Browser LOG     [API] Starting API request
-[00:54:07.504] Browser LOG     [API] Endpoint: /quotations/QT-IBJIKG
-[00:54:07.504] Browser LOG     [API] Method: GET
-[00:54:07.504] Browser LOG     [API] Requires Auth: true
-[00:54:07.504] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-IBJIKG
-[00:54:07.504] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:54:07.504] Browser LOG     [API] Auth token added (length): 217
-[00:54:07.504] Browser LOG     [API] No request body (GET request or body not provided)
-[00:54:07.504] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-IBJIKG"}
-[00:54:07.504] Browser LOG     [API] Sending fetch request...
-[00:54:07.504] Browser WARN    [getPanelPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getPanelPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser WARN    [getInverterPrice] Missing brand or size. Brand: undefined, Size: undefined
-[00:54:07.504] Browser LOG     [API] Response received: {"headers":{"content-length":"1347","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:54:07.504] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:54:07.504] Browser LOG     [API] Parsing JSON response...
-[00:54:07.504] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:54:07.504] Browser LOG     [API] Request successful, returning data
-[00:54:07.504] Browser LOG     [API] Request completed successfully
-[00:54:07.504] Browser LOG     [API] ========================================
-[00:54:07.504] Browser LOG     [API] ========================================
-[00:54:07.504] Browser LOG     [API] Starting API request
-[00:54:07.504] Browser LOG     [API] Endpoint: /quotations/QT-IBJIKG/visits
-[00:54:07.504] Browser LOG     [API] Method: GET
-[00:54:07.504] Browser LOG     [API] Requires Auth: true
-[00:54:07.504] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations/QT-IBJIKG/visits
-[00:54:07.504] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:54:07.504] Browser LOG     [API] Auth token added (length): 217
-[00:54:07.504] Browser LOG     [API] No request body (GET request or body not provided)
-[00:54:07.504] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations/QT-IBJIKG/visits"}
-[00:54:07.504] Browser LOG     [API] Sending fetch request...
-[00:54:07.623] Browser LOG     [API] Response received: {"headers":{"content-length":"37","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:54:07.623] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:54:07.623] Browser LOG     [API] Parsing JSON response...
-[00:54:07.623] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:54:07.623] Browser LOG     [API] Request successful, returning data
-[00:54:07.623] Browser LOG     [API] Request completed successfully
-[00:54:07.623] Browser LOG     [API] ========================================
-[00:54:10.100] Browser DEBUG   #1 0ms Starting document clone with size 1440x812 scrolled to 0,0
-[00:54:10.464] Browser DEBUG   #1 288ms Document cloned, element located at 0,0 with size 793.6953125x2245.03125 using computed rendering
-[00:54:10.464] Browser DEBUG   #1 288ms Starting DOM parsing
-[00:54:10.464] Browser DEBUG   #1 293ms Added image https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png
-[00:54:10.464] Browser DEBUG   #1 339ms Starting renderer for element at 0,0 with size 794x2246
-[00:54:10.464] Browser DEBUG   #1 339ms Canvas renderer initialized (794x2246) with scale 2
-[00:54:10.464] Browser DEBUG   #1 370ms Finished rendering
-[25:52:35.620] Browser LOG     [API] ========================================
-[25:52:35.621] Browser LOG     [API] Starting API request
-[25:52:35.621] Browser LOG     [API] Endpoint: /quotations
-[25:52:35.621] Browser LOG     [API] Method: GET
-[25:52:35.621] Browser LOG     [API] Requires Auth: true
-[25:52:35.621] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[25:52:35.621] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:35.621] Browser LOG     [API] Auth token added (length): 207
-[25:52:35.621] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:35.621] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[25:52:35.621] Browser LOG     [API] Sending fetch request...
-[25:52:35.818] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[25:52:35.818] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
-[25:52:35.818] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/dashboard","route":"/dashboard"}
-[25:52:35.818] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767428833221}
-[25:52:35.818] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767428833222}
-[25:52:36.403] Browser LOG     [API] Response received: {"headers":{"content-length":"5420","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:36.403] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:36.403] Browser LOG     [API] Parsing JSON response...
-[25:52:36.403] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:36.403] Browser LOG     [API] Request successful, returning data
-[25:52:36.403] Browser LOG     [API] Request completed successfully
-[25:52:36.403] Browser LOG     [API] ========================================
-[25:52:36.519] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard/admin color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard/admin","o":"http://localhost:3000/dashboard/admin","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767428833938}
-[25:52:36.823] Browser LOG     [API] ========================================
-[25:52:36.823] Browser LOG     [API] Starting API request
-[25:52:36.823] Browser LOG     [API] Endpoint: /admin/quotations
-[25:52:36.823] Browser LOG     [API] Method: GET
-[25:52:36.823] Browser LOG     [API] Requires Auth: true
-[25:52:36.823] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/quotations
-[25:52:36.823] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:36.823] Browser LOG     [API] Auth token added (length): 207
-[25:52:36.823] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:36.823] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/quotations"}
-[25:52:36.823] Browser LOG     [API] Sending fetch request...
-[25:52:36.823] Browser LOG     [API] ========================================
-[25:52:36.823] Browser LOG     [API] Starting API request
-[25:52:36.823] Browser LOG     [API] Endpoint: /admin/quotations
-[25:52:36.823] Browser LOG     [API] Method: GET
-[25:52:36.823] Browser LOG     [API] Requires Auth: true
-[25:52:36.823] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/quotations
-[25:52:36.823] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:36.823] Browser LOG     [API] Auth token added (length): 207
-[25:52:36.823] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:36.823] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/quotations"}
-[25:52:36.823] Browser LOG     [API] Sending fetch request...
-[25:52:36.982] Browser LOG     [API] Response received: {"headers":{"content-length":"3602","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:36.982] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:36.982] Browser LOG     [API] Parsing JSON response...
-[25:52:36.982] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:36.982] Browser LOG     [API] Request successful, returning data
-[25:52:36.982] Browser LOG     [API] Request completed successfully
-[25:52:36.982] Browser LOG     [API] ========================================
-[25:52:36.982] Browser LOG     [API] ========================================
-[25:52:36.982] Browser LOG     [API] Starting API request
-[25:52:36.982] Browser LOG     [API] Endpoint: /admin/dealers
-[25:52:36.982] Browser LOG     [API] Method: GET
-[25:52:36.982] Browser LOG     [API] Requires Auth: true
-[25:52:36.982] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/dealers
-[25:52:36.982] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:36.982] Browser LOG     [API] Auth token added (length): 207
-[25:52:36.982] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:36.982] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/dealers"}
-[25:52:36.982] Browser LOG     [API] Sending fetch request...
-[25:52:37.228] Browser LOG     [API] Response received: {"headers":{"content-length":"3602","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:37.228] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:37.228] Browser LOG     [API] Parsing JSON response...
-[25:52:37.228] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:37.228] Browser LOG     [API] Request successful, returning data
-[25:52:37.228] Browser LOG     [API] Request completed successfully
-[25:52:37.228] Browser LOG     [API] ========================================
-[25:52:37.228] Browser LOG     [API] ========================================
-[25:52:37.228] Browser LOG     [API] Starting API request
-[25:52:37.228] Browser LOG     [API] Endpoint: /admin/dealers
-[25:52:37.228] Browser LOG     [API] Method: GET
-[25:52:37.228] Browser LOG     [API] Requires Auth: true
-[25:52:37.228] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/dealers
-[25:52:37.228] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:37.228] Browser LOG     [API] Auth token added (length): 207
-[25:52:37.228] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:37.228] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/dealers"}
-[25:52:37.228] Browser LOG     [API] Sending fetch request...
-[25:52:37.228] Browser LOG     [API] Response received: {"headers":{"content-length":"1360","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:37.228] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:37.228] Browser LOG     [API] Parsing JSON response...
-[25:52:37.228] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:37.228] Browser LOG     [API] Request successful, returning data
-[25:52:37.228] Browser LOG     [API] Request completed successfully
-[25:52:37.228] Browser LOG     [API] ========================================
-[25:52:37.228] Browser LOG     [API] ========================================
-[25:52:37.228] Browser LOG     [API] Starting API request
-[25:52:37.228] Browser LOG     [API] Endpoint: /admin/visitors
-[25:52:37.228] Browser LOG     [API] Method: GET
-[25:52:37.228] Browser LOG     [API] Requires Auth: true
-[25:52:37.228] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/visitors
-[25:52:37.228] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:37.228] Browser LOG     [API] Auth token added (length): 207
-[25:52:37.228] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:37.228] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/visitors"}
-[25:52:37.228] Browser LOG     [API] Sending fetch request...
-[25:52:37.333] Browser LOG     [API] Response received: {"headers":{"content-length":"719","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:37.333] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:37.333] Browser LOG     [API] Parsing JSON response...
-[25:52:37.333] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:37.333] Browser LOG     [API] Request successful, returning data
-[25:52:37.333] Browser LOG     [API] Request completed successfully
-[25:52:37.333] Browser LOG     [API] ========================================
-[25:52:37.333] Browser LOG     [API] Response received: {"headers":{"content-length":"1360","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:37.333] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:37.333] Browser LOG     [API] Parsing JSON response...
-[25:52:37.333] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:37.333] Browser LOG     [API] Request successful, returning data
-[25:52:37.333] Browser LOG     [API] Request completed successfully
-[25:52:37.333] Browser LOG     [API] ========================================
-[25:52:37.333] Browser LOG     [API] ========================================
-[25:52:37.333] Browser LOG     [API] Starting API request
-[25:52:37.333] Browser LOG     [API] Endpoint: /admin/visitors
-[25:52:37.333] Browser LOG     [API] Method: GET
-[25:52:37.333] Browser LOG     [API] Requires Auth: true
-[25:52:37.333] Browser LOG     [API] Full URL: http://localhost:3050/api/admin/visitors
-[25:52:37.333] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[25:52:37.333] Browser LOG     [API] Auth token added (length): 207
-[25:52:37.333] Browser LOG     [API] No request body (GET request or body not provided)
-[25:52:37.333] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/admin/visitors"}
-[25:52:37.333] Browser LOG     [API] Sending fetch request...
-[25:52:37.622] Browser LOG     [API] Response received: {"headers":{"content-length":"719","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[25:52:37.622] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[25:52:37.622] Browser LOG     [API] Parsing JSON response...
-[25:52:37.622] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[25:52:37.622] Browser LOG     [API] Request successful, returning data
-[25:52:37.622] Browser LOG     [API] Request completed successfully
-[25:52:37.622] Browser LOG     [API] ========================================
+[00:00:08.529] Server  LOG      ✓ Ready in 7.9s
+[00:00:22.389] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
+[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633236388}
+[00:00:24.591] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633238367}
+[00:00:33.094] Browser LOG     [API] ========================================
+[00:00:33.094] Browser LOG     [API] Starting API request
+[00:00:33.094] Browser LOG     [API] Endpoint: /auth/login
+[00:00:33.094] Browser LOG     [API] Method: POST
+[00:00:33.094] Browser LOG     [API] Requires Auth: false
+[00:00:33.094] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
+[00:00:33.094] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:33.094] Browser LOG     [API] Auth not required for this request
+[00:00:33.094] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:00:33.094] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:00:33.094] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:00:33.094] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
+[00:00:33.094] Browser LOG     [API] Sending fetch request...
+[00:00:34.446] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:34.446] Browser ERROR   [API] Error type: TypeError
+[00:00:34.446] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:34.446] Browser ERROR   [API] Generic Error detected
+[00:00:34.446] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:34.446] Browser ERROR   [API] =================================
+[00:00:34.446] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:34.446] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:00:34.446] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:01:05.023] Browser LOG     [API] ========================================
+[00:01:05.023] Browser LOG     [API] Starting API request
+[00:01:05.023] Browser LOG     [API] Endpoint: /auth/login
+[00:01:05.023] Browser LOG     [API] Method: POST
+[00:01:05.023] Browser LOG     [API] Requires Auth: false
+[00:01:05.023] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
+[00:01:05.023] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:01:05.023] Browser LOG     [API] Auth not required for this request
+[00:01:05.023] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:01:05.023] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:01:05.023] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:01:05.023] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
+[00:01:05.023] Browser LOG     [API] Sending fetch request...
+[00:01:05.375] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:01:05.375] Browser ERROR   [API] Error type: TypeError
+[00:01:05.375] Browser ERROR   [API] Error message: Failed to fetch
+[00:01:05.375] Browser ERROR   [API] Generic Error detected
+[00:01:05.375] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:01:05.375] Browser ERROR   [API] =================================
+[00:01:05.375] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:01:05.375] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:01:05.375] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:01:38.916] Server  LOG        Reload env: .env
+[00:01:39.040] Server  WARN     ⚠ Fast Refresh had to perform a full reload when ./lib/api-config.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+[00:01:39.041] Server  LOG      ✓ Compiled in 25ms
+[00:01:39.340] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
+[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633313313}
+[00:01:59.734] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
+[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633333743}
+[00:02:03.186] Browser LOG     [API] ========================================
+[00:02:03.186] Browser LOG     [API] Starting API request
+[00:02:03.186] Browser LOG     [API] Endpoint: /auth/login
+[00:02:03.186] Browser LOG     [API] Method: POST
+[00:02:03.186] Browser LOG     [API] Requires Auth: false
+[00:02:03.186] Browser LOG     [API] Full URL: http://localhost:3005/api/auth/login
+[00:02:03.186] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:02:03.186] Browser LOG     [API] Auth not required for this request
+[00:02:03.186] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:02:03.186] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:02:03.186] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:02:03.186] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3005/api/auth/login"}
+[00:02:03.186] Browser LOG     [API] Sending fetch request...
+[00:02:05.498] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:02:05.498] Browser ERROR   [API] Error type: TypeError
+[00:02:05.498] Browser ERROR   [API] Error message: Failed to fetch
+[00:02:05.498] Browser ERROR   [API] Generic Error detected
+[00:02:05.498] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:02:05.498] Browser ERROR   [API] =================================
+[00:02:05.498] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:02:05.498] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:02:05.498] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:08:32.504] Browser LOG     [API] ========================================
+[00:08:32.504] Browser LOG     [API] Starting API request
+[00:08:32.504] Browser LOG     [API] Endpoint: /auth/login
+[00:08:32.504] Browser LOG     [API] Method: POST
+[00:08:32.504] Browser LOG     [API] Requires Auth: false
+[00:08:32.504] Browser LOG     [API] Full URL: http://localhost:3005/api/auth/login
+[00:08:32.504] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:08:32.504] Browser LOG     [API] Auth not required for this request
+[00:08:32.504] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:08:32.504] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:08:32.504] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:08:32.504] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3005/api/auth/login"}
+[00:08:32.504] Browser LOG     [API] Sending fetch request...
+[00:08:34.814] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:08:34.814] Browser ERROR   [API] Error type: TypeError
+[00:08:34.814] Browser ERROR   [API] Error message: Failed to fetch
+[00:08:34.814] Browser ERROR   [API] Generic Error detected
+[00:08:34.814] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:08:34.814] Browser ERROR   [API] =================================
+[00:08:34.814] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:08:34.814] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:08:34.814] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:09:15.527] Server  LOG        Reload env: .env
+[00:09:15.612] Server  WARN     ⚠ Fast Refresh had to perform a full reload when ./lib/api-config.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+[00:09:15.613] Server  LOG      ✓ Compiled in 13ms
+[00:09:15.881] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:09:16.303] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:09:16.303] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
+[00:09:16.304] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633769905}
+[00:09:22.915] Browser LOG     [API] ========================================
+[00:09:22.915] Browser LOG     [API] Starting API request
+[00:09:22.915] Browser LOG     [API] Endpoint: /auth/login
+[00:09:22.915] Browser LOG     [API] Method: POST
+[00:09:22.915] Browser LOG     [API] Requires Auth: false
+[00:09:22.915] Browser LOG     [API] Full URL: http://localhost:3050/api/auth/login
+[00:09:22.915] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:09:22.915] Browser LOG     [API] Auth not required for this request
+[00:09:22.915] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:09:22.915] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:09:22.915] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:09:22.915] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3050/api/auth/login"}
+[00:09:22.915] Browser LOG     [API] Sending fetch request...
+[00:09:23.550] Browser LOG     [API] Response received: {"headers":{"content-length":"699","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
+[00:09:23.550] Browser LOG     [API] Response content-type: application/json; charset=utf-8
+[00:09:23.550] Browser LOG     [API] Parsing JSON response...
+[00:09:23.550] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
+[00:09:23.550] Browser LOG     [API] Request successful, returning data
+[00:09:23.550] Browser LOG     [API] Request completed successfully
+[00:09:23.550] Browser LOG     [API] ========================================
+[00:09:23.550] Browser LOG     [API] ========================================
+[00:09:23.550] Browser LOG     [API] Starting API request
+[00:09:23.550] Browser LOG     [API] Endpoint: /quotations
+[00:09:23.550] Browser LOG     [API] Method: GET
+[00:09:23.550] Browser LOG     [API] Requires Auth: true
+[00:09:23.550] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
+[00:09:23.550] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:09:23.550] Browser LOG     [API] Auth token added (length): 217
+[00:09:23.550] Browser LOG     [API] No request body (GET request or body not provided)
+[00:09:23.550] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
+[00:09:23.550] Browser LOG     [API] Sending fetch request...
+[00:09:23.686] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
+[00:09:23.686] Browser LOG     [API] Response content-type: application/json; charset=utf-8
+[00:09:23.686] Browser LOG     [API] Parsing JSON response...
+[00:09:23.686] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
+[00:09:23.686] Browser LOG     [API] Request successful, returning data
+[00:09:23.686] Browser LOG     [API] Request completed successfully
+[00:09:23.686] Browser LOG     [API] ========================================
+[00:09:25.253] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633779021}
+[00:09:25.599] Browser LOG     [API] ========================================
+[00:09:25.600] Browser LOG     [API] Starting API request
+[00:09:25.600] Browser LOG     [API] Endpoint: /quotations
+[00:09:25.600] Browser LOG     [API] Method: GET
+[00:09:25.600] Browser LOG     [API] Requires Auth: true
+[00:09:25.600] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
+[00:09:25.600] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:09:25.600] Browser LOG     [API] Auth token added (length): 217
+[00:09:25.600] Browser LOG     [API] No request body (GET request or body not provided)
+[00:09:25.600] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
+[00:09:25.600] Browser LOG     [API] Sending fetch request...
+[00:09:25.600] Browser LOG     [API] ========================================
+[00:09:25.600] Browser LOG     [API] Starting API request
+[00:09:25.600] Browser LOG     [API] Endpoint: /quotations
+[00:09:25.600] Browser LOG     [API] Method: GET
+[00:09:25.600] Browser LOG     [API] Requires Auth: true
+[00:09:25.600] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
+[00:09:25.600] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:09:25.600] Browser LOG     [API] Auth token added (length): 217
+[00:09:25.600] Browser LOG     [API] No request body (GET request or body not provided)
+[00:09:25.600] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
+[00:09:25.600] Browser LOG     [API] Sending fetch request...
+[00:09:25.871] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
+[00:09:25.871] Browser LOG     [API] Response content-type: application/json; charset=utf-8
+[00:09:25.871] Browser LOG     [API] Parsing JSON response...
+[00:09:25.871] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
+[00:09:25.871] Browser LOG     [API] Request successful, returning data
+[00:09:25.871] Browser LOG     [API] Request completed successfully
+[00:09:25.871] Browser LOG     [API] ========================================
+[00:09:25.871] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
+[00:09:25.871] Browser LOG     [API] Response content-type: application/json; charset=utf-8
+[00:09:25.871] Browser LOG     [API] Parsing JSON response...
+[00:09:25.871] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
+[00:09:25.871] Browser LOG     [API] Request successful, returning data
+[00:09:25.871] Browser LOG     [API] Request completed successfully
+[00:09:25.871] Browser LOG     [API] ========================================

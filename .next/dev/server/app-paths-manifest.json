@@ -1,8 +1,5 @@
 {
-  "/dashboard/admin/page": "app/dashboard/admin/page.js",
-  "/dashboard/new-quotation/page": "app/dashboard/new-quotation/page.js",
   "/dashboard/page": "app/dashboard/page.js",
-  "/dashboard/quotations/page": "app/dashboard/quotations/page.js",
   "/login/page": "app/login/page.js",
   "/page": "app/page.js"
 }

@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  app:
+    # Option 1: Build from local Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://api.inventory.chairbordsolar.com/api}
+    # Option 2: Use image from Docker Hub (uncomment to use)
+    # image: vikasyadav30/cbpl-solar-quotation:latest
+    container_name: quotation-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://api.inventory.chairbordsolar.com/api}
+    restart: unless-stopped
+    # Uncomment to load from .env file
+    # env_file:
+    #   - .env
+    # volumes:
+    #   - ./public:/app/public:ro
+
