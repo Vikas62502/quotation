@@ -33,11 +33,11 @@ export const governmentIds = ["Aadhaar Card", "PAN Card", "Voter ID", "Passport"
 
 // System Types
 export const systemTypes = [
-  { id: "dcr", name: "DCR", description: "Domestic Content Requirement - Eligible for subsidy" },
+  { id: "dcr", name: "DCR", description: "DCR panels - Eligible for subsidy" },
   { id: "non-dcr", name: "NON DCR", description: "Non-DCR panels - No subsidy eligibility" },
-  { id: "hybrid", name: "HYBRID", description: "With battery backup system" },
   { id: "both", name: "BOTH (DCR + NON DCR)", description: "Mixed panel configuration" },
-  { id: "customize", name: "CUSTOMIZE", description: "Custom configuration" },
+  // CUSTOMIZE option commented out - users should use pre-configured systems
+  // { id: "customize", name: "CUSTOMIZE", description: "Custom configuration" },
 ]
 
 // Indian States

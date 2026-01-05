@@ -13,6 +13,8 @@ import { Search, Eye, FileText, Calendar } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
+import { api, ApiError } from "@/lib/api"
+import { calculateSystemSize } from "@/lib/pricing-tables"
 
 const ADMIN_USERNAME = "admin"
 
@@ -27,6 +29,8 @@ export default function QuotationsPage() {
   const [visitQuotation, setVisitQuotation] = useState<Quotation | null>(null)
   const [visitDialogOpen, setVisitDialogOpen] = useState(false)
 
+  const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
   useEffect(() => {
     if (!isAuthenticated) {
       router.push("/login")
@@ -38,21 +42,51 @@ export default function QuotationsPage() {
       router.push("/dashboard/admin")
       return
     }
-    const all = JSON.parse(localStorage.getItem("quotations") || "[]")
-    const dealerQuotations = all
-      .filter((q: Quotation) => q.dealerId === dealer?.id)
-      .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
-    setQuotations(dealerQuotations)
+    
+    loadQuotations()
   }, [isAuthenticated, router, dealer])
+
+  const loadQuotations = async () => {
+    if (!dealer?.id) return
+    
+    try {
+      if (useApi) {
+        const response = await api.quotations.getAll()
+        const dealerQuotations = (response.quotations || [])
+          .map((q: any) => ({
+            id: q.id,
+            customer: q.customer || {},
+            // Preserve all products data - don't default to { systemType: "N/A" } if products exists
+            products: q.products || {},
+            discount: q.discount || 0,
+            totalAmount: q.pricing?.totalAmount || 0,
+            finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
+            createdAt: q.createdAt,
+            dealerId: q.dealerId || dealer.id,
+            status: q.status || "pending",
+          }))
+        setQuotations(dealerQuotations)
+      } else {
+        // Fallback to localStorage
+        const all = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const dealerQuotations = all
+          .filter((q: Quotation) => q.dealerId === dealer.id)
+          .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
+        setQuotations(dealerQuotations)
+      }
+    } catch (error) {
+      console.error("Error loading quotations:", error)
+    }
+  }
 
   if (!isAuthenticated) return null
 
   const filteredQuotations = quotations.filter((q) => {
     const matchesSearch =
-      q.customer.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.mobile.includes(searchTerm) ||
-      q.id.toLowerCase().includes(searchTerm.toLowerCase())
+      (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (q.customer?.mobile || "").includes(searchTerm) ||
+      (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())
 
     if (filterMonth === "all") return matchesSearch
 
@@ -102,6 +136,70 @@ export default function QuotationsPage() {
       default:
         return "bg-yellow-600 text-white"
     }
+  }
+
+  const getSystemSize = (quotation: Quotation): string => {
+    const products = quotation.products
+    if (!products) {
+      return "N/A"
+    }
+
+    // For BOTH system type
+    if (products.systemType === "both") {
+      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity
+        ? calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+        : null
+      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity
+        ? calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+        : null
+      
+      if (dcrSize && nonDcrSize && dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+        const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+        if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+          return `${dcrKw + nonDcrKw}kW`
+        }
+      }
+      if (dcrSize && dcrSize !== "0kW") return dcrSize
+      if (nonDcrSize && nonDcrSize !== "0kW") return nonDcrSize
+      // If BOTH type but can't calculate, show system type
+      return "BOTH"
+    }
+
+    // For CUSTOMIZE system type
+    if (products.systemType === "customize" && products.customPanels && products.customPanels.length > 0) {
+      const totalKw = products.customPanels.reduce((sum, panel) => {
+        if (!panel.size || !panel.quantity) return sum
+        try {
+          const sizeW = Number.parseInt(panel.size.replace("W", ""))
+          if (Number.isNaN(sizeW)) return sum
+          return sum + (sizeW * panel.quantity)
+        } catch {
+          return sum
+        }
+      }, 0) / 1000
+      if (totalKw > 0) return `${totalKw}kW`
+      return "CUSTOMIZE"
+    }
+
+    // For DCR, NON DCR, or other system types
+    if (products.panelSize && products.panelQuantity && products.panelQuantity > 0) {
+      const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+      if (systemSize !== "0kW") return systemSize
+    }
+
+    // Fallback: Show system type if available
+    if (products.systemType && products.systemType !== "N/A" && products.systemType.trim() !== "") {
+      // Format system type for display
+      const systemType = products.systemType.toLowerCase()
+      if (systemType === "dcr") return "DCR"
+      if (systemType === "non-dcr") return "NON DCR"
+      if (systemType === "both") return "BOTH"
+      if (systemType === "customize") return "CUSTOMIZE"
+      return products.systemType.toUpperCase()
+    }
+
+    return "N/A"
   }
 
   return (
@@ -192,19 +290,19 @@ export default function QuotationsPage() {
                         <td className="py-3 px-2">
                           <div>
                             <p className="text-sm font-medium">
-                              {quotation.customer.firstName} {quotation.customer.lastName}
+                              {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
                             </p>
-                            <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
+                            <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                           </div>
                         </td>
                         <td className="py-3 px-2 hidden md:table-cell">
                           <span className="px-2 py-1 bg-primary/10 text-primary rounded text-xs uppercase">
-                            {quotation.products.systemType}
+                            {getSystemSize(quotation)}
                           </span>
                         </td>
                         <td className="py-3 px-2 text-right">
                           <div>
-                            <p className="text-sm font-medium">₹{quotation.finalAmount?.toLocaleString()}</p>
+                            <p className="text-sm font-medium">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
                             {quotation.discount > 0 && (
                               <p className="text-xs text-muted-foreground">{quotation.discount}% off</p>
                             )}

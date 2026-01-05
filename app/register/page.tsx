@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
+import { ApiError } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -73,16 +74,22 @@ export default function RegisterPage() {
         }
         break
       case 2:
-        if (!formData.mobile || !formData.email || !formData.fatherName) {
+        if (!formData.mobile || !formData.email || !formData.fatherName || !formData.fatherContact) {
           setError("Please fill in all required fields")
           return false
         }
-        if (!/^\d{10}$/.test(formData.mobile)) {
+        const cleanedMobile = formData.mobile.replace(/\D/g, "")
+        if (!/^\d{10}$/.test(cleanedMobile)) {
           setError("Please enter a valid 10-digit mobile number")
           return false
         }
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
           setError("Please enter a valid email address")
+          return false
+        }
+        const cleanedFatherContact = formData.fatherContact.replace(/\D/g, "")
+        if (!/^\d{10}$/.test(cleanedFatherContact)) {
+          setError("Father's contact must be exactly 10 digits")
           return false
         }
         break
@@ -158,35 +165,67 @@ export default function RegisterPage() {
 
     setIsLoading(true)
     try {
+      // Clean fatherContact - remove spaces, dashes, and ensure it's exactly 10 digits
+      const cleanedFatherContact = formData.fatherContact.replace(/\D/g, "") // Remove non-digits
+      
       const success = await register({
         id: `DLR-${Date.now()}`,
         username: formData.username,
         firstName: formData.firstName,
         lastName: formData.lastName,
-        mobile: formData.mobile,
-        email: formData.email,
-        gender: formData.gender,
+        mobile: formData.mobile.replace(/\D/g, ""), // Clean mobile too
+        email: formData.email.trim(),
+        gender: formData.gender, // Now it's already "Male", "Female", or "Other"
         dateOfBirth: formData.dateOfBirth,
-        fatherName: formData.fatherName,
-        fatherContact: formData.fatherContact,
+        fatherName: formData.fatherName.trim(),
+        fatherContact: cleanedFatherContact,
         governmentIdType: formData.governmentIdType,
-        governmentIdNumber: formData.governmentIdNumber,
+        governmentIdNumber: formData.governmentIdNumber.trim(),
         address: {
-          street: formData.street,
-          city: formData.city,
-          state: formData.state,
-          pincode: formData.pincode,
+          street: formData.street.trim(),
+          city: formData.city.trim(),
+          state: formData.state.trim(),
+          pincode: formData.pincode.replace(/\D/g, ""), // Clean pincode too
         },
         password: formData.password,
       })
 
       if (success) {
         router.push("/login?registered=true")
-      } else {
-        setError("Username or email already exists")
       }
-    } catch {
-      setError("Registration failed. Please try again.")
+    } catch (err) {
+      console.error("Registration error:", err)
+      
+      // Log full error details for debugging
+      if (err instanceof ApiError) {
+        console.log("Error code:", err.code)
+        console.log("Error message:", err.message)
+        console.log("Error details:", err.details)
+      }
+      
+      if (err instanceof ApiError) {
+        // Format validation errors from API
+        if (err.details && Array.isArray(err.details) && err.details.length > 0) {
+          const errorMessages = err.details.map((detail: any) => {
+            const field = detail.field || "field"
+            const message = detail.message || "Invalid value"
+            // Capitalize field name for better display
+            const fieldDisplay = field.charAt(0).toUpperCase() + field.slice(1).replace(/([A-Z])/g, " $1")
+            return `${fieldDisplay}: ${message}`
+          }).join("\n")
+          setError(errorMessages)
+        } else {
+          // Use the error message from API, or fallback to generic message
+          const errorMsg = err.message || "Registration failed. Please check your information and try again."
+          setError(errorMsg === "Validation error" 
+            ? "Registration failed. Please check all fields and try again. (Check browser console for details)"
+            : errorMsg)
+        }
+      } else if (err instanceof Error) {
+        setError(err.message || "Registration failed. Please try again.")
+      } else {
+        setError("Registration failed. Please try again.")
+      }
     } finally {
       setIsLoading(false)
     }
@@ -249,7 +288,7 @@ export default function RegisterPage() {
             </CardHeader>
             <CardContent>
               {error && (
-                <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
+                <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm whitespace-pre-line">
                   {error}
                 </div>
               )}
@@ -297,9 +336,9 @@ export default function RegisterPage() {
                           <SelectValue placeholder="Select gender" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="male">Male</SelectItem>
-                          <SelectItem value="female">Female</SelectItem>
-                          <SelectItem value="other">Other</SelectItem>
+                          <SelectItem value="Male">Male</SelectItem>
+                          <SelectItem value="Female">Female</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -326,7 +365,11 @@ export default function RegisterPage() {
                       id="mobile"
                       type="tel"
                       value={formData.mobile}
-                      onChange={(e) => updateFormData("mobile", e.target.value)}
+                      onChange={(e) => {
+                        // Only allow digits, max 10
+                        const value = e.target.value.replace(/\D/g, "").slice(0, 10)
+                        updateFormData("mobile", value)
+                      }}
                       placeholder="Enter 10-digit mobile number"
                       maxLength={10}
                       className="h-11 mt-1"
@@ -354,13 +397,17 @@ export default function RegisterPage() {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="fatherContact">Father&apos;s Contact (Optional)</Label>
+                    <Label htmlFor="fatherContact">Father&apos;s Contact *</Label>
                     <Input
                       id="fatherContact"
                       type="tel"
                       value={formData.fatherContact}
-                      onChange={(e) => updateFormData("fatherContact", e.target.value)}
-                      placeholder="Enter father's contact number"
+                      onChange={(e) => {
+                        // Only allow digits, max 10
+                        const value = e.target.value.replace(/\D/g, "").slice(0, 10)
+                        updateFormData("fatherContact", value)
+                      }}
+                      placeholder="Enter 10-digit contact number"
                       maxLength={10}
                       className="h-11 mt-1"
                     />
@@ -439,7 +486,11 @@ export default function RegisterPage() {
                       <Input
                         id="pincode"
                         value={formData.pincode}
-                        onChange={(e) => updateFormData("pincode", e.target.value)}
+                        onChange={(e) => {
+                          // Only allow digits, max 6
+                          const value = e.target.value.replace(/\D/g, "").slice(0, 6)
+                          updateFormData("pincode", value)
+                        }}
                         placeholder="Enter 6-digit pincode"
                         maxLength={6}
                         className="h-11 mt-1"

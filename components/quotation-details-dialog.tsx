@@ -13,10 +13,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee } from "lucide-react"
+import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { useQuotation } from "@/lib/quotation-context"
+import { api } from "@/lib/api"
+import { useAuth } from "@/lib/auth-context"
+import { VisitManagementDialog } from "@/components/visit-management-dialog"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -53,73 +56,317 @@ const bankDetails = {
   },
 }
 
-// Price calculation helpers
-const getPanelPrice = (brand: string, size: string): number => {
-  const basePrices: Record<string, number> = {
-    Adani: 25000,
-    Tata: 26000,
-    Waaree: 24000,
-    "Vikram Solar": 24500,
-    RenewSys: 23500,
+import {
+  getDcrPrice,
+  getNonDcrPrice,
+  getBothPrice,
+  determinePhase,
+  calculateSystemSize,
+  getPanelPrice,
+  getInverterPrice,
+  getStructurePrice,
+  getMeterPrice,
+  getCablePrice,
+  getACDBPrice,
+  getDCDBPrice,
+} from "@/lib/pricing-tables"
+
+// Price calculation helpers are now imported from pricing-tables.ts
+// Individual component prices are only used for "customize" system type
+
+// Get system price based on system type
+const getSystemPrice = (products: any): number => {
+  if (!products || !products.systemType) return 0
+  
+  if (products.systemType === "dcr") {
+    if (!products.panelSize || !products.panelQuantity) return 0
+    const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+    if (systemSize === "0kW") return 0
+    const phase = determinePhase(systemSize, products.inverterSize)
+    const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    if (price !== null) return price
+  } else if (products.systemType === "non-dcr") {
+    if (!products.panelSize || !products.panelQuantity) return 0
+    const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+    if (systemSize === "0kW") return 0
+    const phase = determinePhase(systemSize, products.inverterSize)
+    const price = getNonDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    if (price !== null) return price
+  } else if (products.systemType === "both") {
+    const dcrSize = calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+    const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+    
+    // Only proceed if both sizes are valid (not "0kW")
+    if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+      const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+      const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+      if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+        const totalSystemSize = `${dcrKw + nonDcrKw}kW`
+        const phase = determinePhase(totalSystemSize, products.inverterSize)
+        const price = getBothPrice(
+          totalSystemSize,
+          phase,
+          products.inverterSize,
+          dcrSize,
+          nonDcrSize,
+          products.dcrPanelBrand || products.panelBrand
+        )
+        if (price !== null) return price
+      }
+    }
   }
-  const sizeMultiplier = Number.parseInt(size) / 440
-  return (basePrices[brand] || 24000) * sizeMultiplier
+  
+  // Fallback to old calculation method
+  return 0
 }
 
-const getInverterPrice = (brand: string, size: string): number => {
-  const basePrices: Record<string, number> = {
-    Growatt: 35000,
-    Solis: 32000,
-    Fronius: 45000,
-    Havells: 38000,
-    Polycab: 36000,
-    Delta: 40000,
-  }
-  const sizeKw = Number.parseInt(size)
-  return (basePrices[brand] || 35000) * (sizeKw / 3)
-}
+// getInverterPrice is now imported from pricing-tables.ts
 
 export function QuotationDetailsDialog({ quotation, open, onOpenChange }: QuotationDetailsDialogProps) {
+  const { dealer } = useAuth()
   const [quotationId, setQuotationId] = useState("")
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
   const [discount, setDiscount] = useState(0)
   const [isEditingDiscount, setIsEditingDiscount] = useState(false)
+  const [fullQuotation, setFullQuotation] = useState<Quotation | null>(null)
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false)
+  const [isEditingCustomer, setIsEditingCustomer] = useState(false)
+  const [customerEditForm, setCustomerEditForm] = useState({
+    firstName: "",
+    lastName: "",
+    mobile: "",
+    email: "",
+    address: {
+      street: "",
+      city: "",
+      state: "",
+      pincode: "",
+    },
+  })
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false)
+  const [visitDialogOpen, setVisitDialogOpen] = useState(false)
+  const [visits, setVisits] = useState<any[]>([])
+  const [isLoadingVisits, setIsLoadingVisits] = useState(false)
+
+  const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const isDealer = dealer && dealer.username !== "admin"
+
+  // Fetch full quotation details when dialog opens
+  // This API call (GET /api/quotations/{quotationId}) is made for both admin and dealer views
+  useEffect(() => {
+    if (quotation && open && useApi) {
+      setIsLoadingDetails(true)
+      // Always fetch full quotation details to ensure complete data (including customer email and address)
+      // This ensures admin panel and dealer panel both get complete customer data
+      // API endpoint: GET http://localhost:3050/api/quotations/{quotationId}
+      api.quotations.getById(quotation.id)
+        .then((response) => {
+          // apiRequest returns data.data, so response is already the quotation object
+          const fullData = response
+          if (fullData && fullData.customer) {
+            // Ensure customer address is properly structured
+            const customerData = fullData.customer
+            const address = customerData.address || {}
+            
+            const updatedQuotation = {
+              ...quotation,
+              customer: {
+                ...(customerData.id ? { id: customerData.id } : {}),
+                firstName: customerData.firstName || quotation.customer?.firstName || "",
+                lastName: customerData.lastName || quotation.customer?.lastName || "",
+                mobile: customerData.mobile || quotation.customer?.mobile || "",
+                email: customerData.email || quotation.customer?.email || "",
+                address: {
+                  street: address.street || "",
+                  city: address.city || "",
+                  state: address.state || "",
+                  pincode: address.pincode || "",
+                },
+              },
+              customerId: fullData.customerId || (customerData.id ? customerData.id : undefined),
+              products: fullData.products || quotation.products,
+              discount: fullData.discount ?? quotation.discount,
+              totalAmount: fullData.pricing?.totalAmount ?? quotation.totalAmount,
+              finalAmount: fullData.pricing?.finalAmount ?? fullData.finalAmount ?? quotation.finalAmount,
+              // Store backend pricing for use in calculations
+              pricing: fullData.pricing,
+            } as Quotation & { pricing?: any }
+            
+            setFullQuotation(updatedQuotation)
+            // Initialize edit form with customer data
+            setCustomerEditForm({
+              firstName: updatedQuotation.customer.firstName,
+              lastName: updatedQuotation.customer.lastName,
+              mobile: updatedQuotation.customer.mobile,
+              email: updatedQuotation.customer.email,
+              address: {
+                street: updatedQuotation.customer.address.street,
+                city: updatedQuotation.customer.address.city,
+                state: updatedQuotation.customer.address.state,
+                pincode: updatedQuotation.customer.address.pincode,
+              },
+            })
+          } else {
+            setFullQuotation(quotation)
+          }
+        })
+        .catch((error) => {
+          console.error("Error loading full quotation details:", error)
+          setFullQuotation(quotation) // Fallback to original quotation
+        })
+        .finally(() => {
+          setIsLoadingDetails(false)
+        })
+    } else if (quotation) {
+      setFullQuotation(quotation)
+      setIsLoadingDetails(false)
+      // Initialize edit form even when not using API
+      if (quotation.customer) {
+        setCustomerEditForm({
+          firstName: quotation.customer.firstName || "",
+          lastName: quotation.customer.lastName || "",
+          mobile: quotation.customer.mobile || "",
+          email: quotation.customer.email || "",
+          address: {
+            street: quotation.customer.address?.street || "",
+            city: quotation.customer.address?.city || "",
+            state: quotation.customer.address?.state || "",
+            pincode: quotation.customer.address?.pincode || "",
+          },
+        })
+      }
+    }
+  }, [quotation, open, useApi])
 
   useEffect(() => {
-    if (quotation) {
-      setQuotationId(quotation.id)
-      setDiscount(quotation.discount || 0)
+    if (fullQuotation) {
+      setQuotationId(fullQuotation.id)
+      setDiscount(fullQuotation.discount || 0)
     }
-  }, [quotation])
+  }, [fullQuotation])
+
+  // Load visits for the quotation
+  const loadVisits = async () => {
+    if (!fullQuotation) return
+    setIsLoadingVisits(true)
+    try {
+      const response = await api.visits.getByQuotation(fullQuotation.id)
+      const visitsList = response.visits || []
+      setVisits(visitsList.slice(0, 3)) // Show only first 3 visits
+    } catch (error) {
+      console.error("Error loading visits:", error)
+      setVisits([])
+    } finally {
+      setIsLoadingVisits(false)
+    }
+  }
+
+  useEffect(() => {
+    if (fullQuotation && open && useApi && isDealer) {
+      loadVisits()
+    }
+  }, [fullQuotation?.id, open, useApi, isDealer])
 
   if (!quotation) return null
 
-  // Calculate prices
-  const products = quotation.products
-  const customer = quotation.customer
+  // Use full quotation if available, otherwise fallback to original
+  const displayQuotation = fullQuotation || quotation
+  const backendPricing = (displayQuotation as any).pricing
 
-  const panelPrice =
-    products.systemType !== "customize"
-      ? getPanelPrice(products.panelBrand, products.panelSize) * products.panelQuantity
-      : products.customPanels?.reduce(
+  // Calculate prices - use backend pricing if available, otherwise calculate on frontend
+  const products = displayQuotation.products
+  const customer = displayQuotation.customer
+
+  // Use backend pricing if available (aligned with backend changes)
+  let panelPrice = 0
+  let inverterPrice = 0
+  let structurePrice = 0
+  let meterPrice = 0
+  let cablePrice = 0
+  let acdbDcdbPrice = 0
+  let batteryPrice = 0
+  let subtotal = 0
+  let totalSubsidy = 0
+  let totalProjectCost = 0
+  let totalAmount = 0
+  let amountAfterSubsidy = 0
+  let discountAmount = 0
+  let finalAmount = 0
+
+  if (backendPricing) {
+    // Use backend pricing breakdown (aligned with backend structure)
+    panelPrice = backendPricing.panelPrice ?? 0
+    inverterPrice = backendPricing.inverterPrice ?? 0
+    structurePrice = backendPricing.structurePrice ?? 0
+    meterPrice = backendPricing.meterPrice ?? 0
+    cablePrice = backendPricing.cablePrice ?? 0
+    acdbDcdbPrice = backendPricing.acdbDcdbPrice ?? 0
+    batteryPrice = products.batteryPrice ?? 0
+    
+    // Calculate subtotal from component prices if not provided, or use totalAmount
+    // totalAmount represents the total project cost (subtotal) according to backend structure
+    if (backendPricing.subtotal != null && backendPricing.subtotal > 0) {
+      subtotal = backendPricing.subtotal
+    } else if (backendPricing.totalAmount != null && backendPricing.totalAmount > 0) {
+      subtotal = backendPricing.totalAmount
+    } else {
+      // Calculate subtotal from component prices
+      subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
+    }
+    
+    totalSubsidy = backendPricing.totalSubsidy ?? ((products.centralSubsidy ?? 0) + (products.stateSubsidy ?? 0))
+    totalProjectCost = backendPricing.totalAmount ?? subtotal
+    totalAmount = backendPricing.totalAmount ?? subtotal
+    amountAfterSubsidy = backendPricing.amountAfterSubsidy ?? (subtotal - totalSubsidy)
+    discountAmount = backendPricing.discountAmount ?? (amountAfterSubsidy * (discount / 100))
+    finalAmount = backendPricing.finalAmount ?? (amountAfterSubsidy - discountAmount)
+  } else {
+    // Fallback to frontend calculation if backend pricing not available
+    const systemPrice = getSystemPrice(products)
+    
+    // Component prices (only used for customize system type)
+    structurePrice = products.structureSize ? getStructurePrice(products.structureType, products.structureSize) : 0
+    meterPrice = products.meterBrand ? getMeterPrice(products.meterBrand) : 0
+    cablePrice = (products.acCableBrand && products.acCableSize ? getCablePrice(products.acCableBrand, products.acCableSize, "AC") : 0) + 
+                 (products.dcCableBrand && products.dcCableSize ? getCablePrice(products.dcCableBrand, products.dcCableSize, "DC") : 0)
+    acdbDcdbPrice = (products.acdb ? getACDBPrice(products.acdb) : 0) + (products.dcdb ? getDCDBPrice(products.dcdb) : 0)
+    batteryPrice = products.batteryPrice || 0
+
+    // For DCR, NON DCR, and BOTH: Use set price (complete package)
+    // For CUSTOMIZE: Calculate from individual component prices
+    if (systemPrice > 0 && products.systemType !== "customize") {
+      // Use complete set price from pricing table (includes all components)
+      subtotal = systemPrice
+      
+      // For display purposes, estimate component prices
+      panelPrice = systemPrice * 0.65 // Approximate panel portion
+      inverterPrice = systemPrice * 0.20 // Approximate inverter portion
+    } else {
+      // For CUSTOMIZE: Calculate from individual component prices
+      if (products.systemType === "both") {
+        panelPrice = (getPanelPrice(products.dcrPanelBrand || "", products.dcrPanelSize || "") * (products.dcrPanelQuantity || 0)) +
+          (getPanelPrice(products.nonDcrPanelBrand || "", products.nonDcrPanelSize || "") * (products.nonDcrPanelQuantity || 0))
+      } else if (products.systemType === "customize") {
+        panelPrice = products.customPanels?.reduce(
           (acc, panel) => acc + getPanelPrice(panel.brand, panel.size) * panel.quantity,
           0,
         ) || 0
-
-  const inverterPrice = getInverterPrice(products.inverterBrand, products.inverterSize)
-
-  const structurePrice = products.structureSize ? Number.parseInt(products.structureSize) * 8000 : 0
-  const meterPrice = products.meterBrand ? 5000 : 0
-  const cablePrice = (products.acCableBrand ? 3000 : 0) + (products.dcCableBrand ? 3000 : 0)
-  const acdbDcdbPrice = (products.acdb ? 2500 : 0) + (products.dcdb ? 2500 : 0)
-  const batteryPrice = products.batteryPrice || 0
-
-  const subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
-  const totalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
-  const totalProjectCost = subtotal
-  const totalAmount = subtotal - totalSubsidy
-  const discountAmount = totalAmount * (discount / 100)
-  const finalAmount = totalAmount - discountAmount
+      } else {
+        panelPrice = getPanelPrice(products.panelBrand, products.panelSize) * products.panelQuantity
+      }
+      
+      inverterPrice = getInverterPrice(products.inverterBrand, products.inverterSize)
+      subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
+    }
+    
+    totalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
+    totalProjectCost = subtotal
+    // totalAmount now represents total project cost (subtotal) - aligned with backend
+    totalAmount = subtotal
+    amountAfterSubsidy = subtotal - totalSubsidy
+    discountAmount = amountAfterSubsidy * (discount / 100)
+    finalAmount = amountAfterSubsidy - discountAmount
+  }
 
   const handleSaveDiscount = () => {
     if (!quotation) return
@@ -127,13 +374,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     // Update quotation in localStorage
     const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
     const updatedQuotations = allQuotations.map((q: Quotation) => {
-      if (q.id === quotation.id) {
+      if (q.id === displayQuotation.id) {
         const updatedDiscount = discount
-        const updatedDiscountAmount = totalAmount * (updatedDiscount / 100)
+        const updatedAmountAfterSubsidy = subtotal - totalSubsidy
+        const updatedDiscountAmount = updatedAmountAfterSubsidy * (updatedDiscount / 100)
         return {
           ...q,
           discount: updatedDiscount,
-          finalAmount: totalAmount - updatedDiscountAmount,
+          finalAmount: updatedAmountAfterSubsidy - updatedDiscountAmount,
         }
       }
       return q
@@ -145,7 +393,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   }
 
   // Calculate quotation validity (5 days from creation)
-  const quotationDate = new Date(quotation.createdAt)
+  const quotationDate = new Date(displayQuotation.createdAt)
   const validityDate = new Date(quotationDate)
   validityDate.setDate(validityDate.getDate() + 5)
 
@@ -163,7 +411,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     // Wait a bit to ensure the hidden content is rendered
     await new Promise((resolve) => setTimeout(resolve, 200))
 
-    let input = document.getElementById(`quotation-content-${quotation.id}`)
+    let input = document.getElementById(`quotation-content-${displayQuotation.id}`)
 
     // If element not found, wait a bit more and try again
     if (!input) {
@@ -307,8 +555,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       }
 
       // Generate filename
-      const customerName = `${customer.firstName}_${customer.lastName}`.replace(/\s/g, "_")
+      const customerName = `${customer?.firstName || ""}_${customer?.lastName || ""}`.replace(/\s/g, "_")
       const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
+      
+      // Use displayQuotation for PDF generation
+      const pdfQuotation = displayQuotation
 
       // Save
       pdf.save(filename)
@@ -341,14 +592,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       const sizes = products.customPanels.map((p) => `${p.size}W`).join(", ")
       return sizes || "As per selection"
     }
-    return `${products.panelSize}W` || "As per selection"
+    return `${products.panelSize}` || "As per selection"
   }
 
   return (
     <>
       {/* Hidden PDF Content - Always rendered for PDF generation */}
       <div
-        id={`quotation-content-${quotation.id}`}
+        id={`quotation-content-${displayQuotation.id}`}
         className="bg-white p-4 sm:p-6 rounded-lg shadow-md"
         style={{ 
           position: "fixed", 
@@ -792,7 +1043,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               </div>
               <div className="pdf-quotation-info" style={{ marginTop: "-12px" }}>
                 <div>
-                  <strong>Quotation #{quotation.id}</strong>
+                  <strong>Quotation #{displayQuotation.id}</strong>
                 </div>
                 <div>📅 Date: {formatDate(quotationDate)}</div>
                 <div>⏰ Valid Until: {formatDate(validityDate)}</div>
@@ -807,16 +1058,16 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               <div className="pdf-info-card">
                 <h3>👤 Customer Details</h3>
                 <div className="pdf-info-item">
-                  <strong>Name:</strong> {customer.firstName} {customer.lastName}
+                  <strong>Name:</strong> {customer?.firstName || ""} {customer?.lastName || ""}
                 </div>
                 <div className="pdf-info-item">
-                  <strong>Email:</strong> {customer.email}
+                  <strong>Email:</strong> {customer?.email || ""}
                 </div>
                 <div className="pdf-info-item">
-                  <strong>Phone:</strong> {customer.mobile}
+                  <strong>Phone:</strong> {customer?.mobile || ""}
                 </div>
                 <div className="pdf-info-item">
-                  <strong>Location:</strong> {customer.address.city}, {customer.address.state}
+                  <strong>Location:</strong> {customer.address?.city || ""}, {customer.address?.state || ""}
                 </div>
               </div>
               <div className="pdf-info-card">
@@ -840,51 +1091,142 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             <div className="pdf-products-section" style={{ marginTop: "-10px" }}>
               <div className="pdf-product-category">
                 <div className="pdf-category-header">📦 SOLAR SETS</div>
-                <div className="pdf-product-item">
-                  <div className="pdf-product-name">Solar Panel System</div>
-                  <div className="pdf-product-details">
-                    <div className="pdf-product-specs">
-                      {products.systemType !== "customize"
-                        ? `${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`
-                        : products.customPanels
-                            ?.map((p) => `${p.brand} ${p.size}W × ${p.quantity}`)
-                            .join(", ") || "N/A"}
-                      <br />
-                      Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                      {products.structureType && (
-                        <>
-                          <br />
-                          Structure: {products.structureType} ({products.structureSize})
-                        </>
+                
+                {/* For BOTH system type, show separate DCR and NON DCR panels side by side */}
+                {products.systemType === "both" ? (
+                  <>
+                    {/* DCR and NON DCR Panels in same row */}
+                    <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
+                      {/* DCR Panels - Left side */}
+                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
+                          <div className="pdf-product-name">DCR Panels (With Subsidy)</div>
+                          <div className="pdf-product-details">
+                            <div className="pdf-product-specs">
+                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                              {products.dcrPanelSize && products.dcrPanelQuantity && (
+                                <>
+                                  <br />
+                                  <span style={{ fontSize: "10px", color: "#666" }}>
+                                    Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       )}
-                      {products.meterBrand && (
-                        <>
-                          <br />
-                          Meter: {products.meterBrand}
-                        </>
-                      )}
-                      {products.acCableBrand && (
-                        <>
-                          <br />
-                          AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                          {products.dcCableSize}
-                        </>
-                      )}
-                      {(products.acdb || products.dcdb) && (
-                        <>
-                          <br />
-                          ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                        </>
-                      )}
-                      {products.batteryCapacity && (
-                        <>
-                          <br />
-                          Battery: {products.batteryCapacity}
-                        </>
+                      
+                      {/* NON DCR Panels - Right side */}
+                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
+                          <div className="pdf-product-name">Non-DCR Panels (Without Subsidy)</div>
+                          <div className="pdf-product-details">
+                            <div className="pdf-product-specs">
+                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                              {products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                                <>
+                                  <br />
+                                  <span style={{ fontSize: "10px", color: "#666" }}>
+                                    Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
+                    
+                    {/* Common Components */}
+                    <div className="pdf-product-item">
+                      <div className="pdf-product-name">Common Components</div>
+                      <div className="pdf-product-details">
+                        <div className="pdf-product-specs">
+                          Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                          {products.structureType && (
+                            <>
+                              <br />
+                              Structure: {products.structureType} ({products.structureSize})
+                            </>
+                          )}
+                          {products.meterBrand && (
+                            <>
+                              <br />
+                              Meter: {products.meterBrand}
+                            </>
+                          )}
+                          {products.acCableBrand && (
+                            <>
+                              <br />
+                              AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
+                              {products.dcCableSize}
+                            </>
+                          )}
+                          {(products.acdb || products.dcdb) && (
+                            <>
+                              <br />
+                              ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                            </>
+                          )}
+                          {products.batteryCapacity && (
+                            <>
+                              <br />
+                              Battery: {products.batteryCapacity}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* For DCR, NON DCR, or CUSTOMIZE system types */
+                  <div className="pdf-product-item">
+                    <div className="pdf-product-name">Solar Panel System</div>
+                    <div className="pdf-product-details">
+                      <div className="pdf-product-specs">
+                        {products.systemType !== "customize"
+                          ? `${products.panelBrand} ${products.panelSize} × ${products.panelQuantity}`
+                          : products.customPanels
+                              ?.map((p) => `${p.brand} ${p.size} × ${p.quantity}`)
+                              .join(", ") || "N/A"}
+                        <br />
+                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {products.structureType && (
+                          <>
+                            <br />
+                            Structure: {products.structureType} ({products.structureSize})
+                          </>
+                        )}
+                        {products.meterBrand && (
+                          <>
+                            <br />
+                            Meter: {products.meterBrand}
+                          </>
+                        )}
+                        {products.acCableBrand && (
+                          <>
+                            <br />
+                            AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
+                            {products.dcCableSize}
+                          </>
+                        )}
+                        {(products.acdb || products.dcdb) && (
+                          <>
+                            <br />
+                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                          </>
+                        )}
+                        {products.batteryCapacity && (
+                          <>
+                            <br />
+                            Battery: {products.batteryCapacity}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
@@ -892,12 +1234,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             <div className="pdf-summary-section">
               <div className="pdf-summary-row">
                 <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
-                <span className="pdf-summary-value">₹{(totalProjectCost - discountAmount).toLocaleString()}</span>
+                <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
               </div>
-              {products.stateSubsidy && products.stateSubsidy > 0 && (
+              {(products.stateSubsidy ?? 0) > 0 && (
                 <div className="pdf-summary-row">
                   <span className="pdf-summary-label">⬇️ State Subsidy:</span>
-                  <span className="pdf-summary-value"> ₹{products.stateSubsidy.toLocaleString()}</span>
+                  <span className="pdf-summary-value"> ₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
                 </div>
               )}
               {products.centralSubsidy && products.centralSubsidy > 0 && (
@@ -992,7 +1334,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               </div>
               <div className="pdf-quotation-info" style={{ marginTop: "-12px" }}>
                 <div>
-                  <strong>Quotation #{quotation.id}</strong>
+                  <strong>Quotation #{displayQuotation.id}</strong>
                 </div>
                 <div>📅 Date: {formatDate(quotationDate)}</div>
                 <div>📋 Page 2 of 2</div>
@@ -1287,72 +1629,248 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
-            <DialogTitle className="text-lg sm:text-xl">Quotation Details - {quotation.id}</DialogTitle>
+            <DialogTitle className="text-lg sm:text-xl">Quotation Details - {displayQuotation.id}</DialogTitle>
             <DialogDescription className="text-sm">
               View quotation details and download PDF
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 sm:space-y-4">
-            {/* Customer Info */}
-            <Card className="border-primary/20">
+          {isLoadingDetails ? (
+            <div className="flex items-center justify-center py-12">
+              <p className="text-muted-foreground">Loading quotation details...</p>
+            </div>
+          ) : (
+            <div className="space-y-3 sm:space-y-4">
+              {/* Customer Info */}
+              <Card className="border-primary/20">
               <CardHeader className="bg-primary/5 p-3 sm:p-6">
-                <CardTitle className="text-base sm:text-lg flex items-center gap-2">
-                  <User className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
-                  Customer Information
+                <CardTitle className="text-base sm:text-lg flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <User className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
+                    Customer Information
+                  </div>
+                  {!isEditingCustomer && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsEditingCustomer(true)}
+                      className="h-8"
+                    >
+                      <Edit className="w-3 h-3 mr-1" />
+                      Edit
+                    </Button>
+                  )}
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 sm:space-y-3 pt-3 sm:pt-4 p-3 sm:p-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="flex items-start gap-3">
-                    <User className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Full Name</p>
-                      <p className="text-sm font-semibold">
-                        {customer.firstName} {customer.lastName}
-                      </p>
+                {isEditingCustomer ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>First Name</Label>
+                        <Input
+                          value={customerEditForm.firstName}
+                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, firstName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Last Name</Label>
+                        <Input
+                          value={customerEditForm.lastName}
+                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, lastName: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Mobile</Label>
+                        <Input
+                          value={customerEditForm.mobile}
+                          onChange={(e) => {
+                            const cleaned = e.target.value.replace(/\D/g, "").slice(0, 10)
+                            setCustomerEditForm({ ...customerEditForm, mobile: cleaned })
+                          }}
+                          maxLength={10}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Email</Label>
+                        <Input
+                          type="email"
+                          value={customerEditForm.email}
+                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, email: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2 md:col-span-2">
+                        <Label>Street Address</Label>
+                        <Input
+                          value={customerEditForm.address.street}
+                          onChange={(e) =>
+                            setCustomerEditForm({
+                              ...customerEditForm,
+                              address: { ...customerEditForm.address, street: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>City</Label>
+                        <Input
+                          value={customerEditForm.address.city}
+                          onChange={(e) =>
+                            setCustomerEditForm({
+                              ...customerEditForm,
+                              address: { ...customerEditForm.address, city: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>State</Label>
+                        <Input
+                          value={customerEditForm.address.state}
+                          onChange={(e) =>
+                            setCustomerEditForm({
+                              ...customerEditForm,
+                              address: { ...customerEditForm.address, state: e.target.value },
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Pincode</Label>
+                        <Input
+                          value={customerEditForm.address.pincode}
+                          onChange={(e) => {
+                            const cleaned = e.target.value.replace(/\D/g, "").slice(0, 6)
+                            setCustomerEditForm({
+                              ...customerEditForm,
+                              address: { ...customerEditForm.address, pincode: cleaned },
+                            })
+                          }}
+                          maxLength={6}
+                        />
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <Phone className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Phone Number</p>
-                      <a
-                        href={`tel:${customer.mobile}`}
-                        className="text-sm font-semibold text-primary hover:underline"
-                        title="Click to call"
+                    <div className="flex justify-end gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setIsEditingCustomer(false)
+                          // Reset form to original values
+                          if (customer) {
+                            setCustomerEditForm({
+                              firstName: customer.firstName || "",
+                              lastName: customer.lastName || "",
+                              mobile: customer.mobile || "",
+                              email: customer.email || "",
+                              address: {
+                                street: customer.address?.street || "",
+                                city: customer.address?.city || "",
+                                state: customer.address?.state || "",
+                                pincode: customer.address?.pincode || "",
+                              },
+                            })
+                          }
+                        }}
                       >
-                        {customer.mobile}
-                      </a>
-                    </div>
-                  </div>
-                  <div className="flex items-start gap-3">
-                    <Mail className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Email Address</p>
-                      <a
-                        href={`mailto:${customer.email}`}
-                        className="text-sm font-semibold text-primary hover:underline"
-                        title="Click to send email"
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={async () => {
+                          // Get customer ID from quotation (customerId field) or customer object
+                          const customerId = (displayQuotation as any).customerId || (displayQuotation.customer as any)?.id || (customer as any)?.id
+                          
+                          if (!customerId) {
+                            alert("Customer ID not found. Cannot update customer.")
+                            return
+                          }
+                          
+                          setIsSavingCustomer(true)
+                          try {
+                            await api.customers.update(customerId, {
+                              firstName: customerEditForm.firstName,
+                              lastName: customerEditForm.lastName,
+                              mobile: customerEditForm.mobile,
+                              email: customerEditForm.email,
+                              address: customerEditForm.address,
+                            })
+                            
+                            // Update local state
+                            setFullQuotation({
+                              ...displayQuotation,
+                              customer: {
+                                ...displayQuotation.customer,
+                                ...customerEditForm,
+                              },
+                            })
+                            
+                            setIsEditingCustomer(false)
+                            alert("Customer information updated successfully!")
+                          } catch (error) {
+                            console.error("Error updating customer:", error)
+                            alert(error instanceof Error ? error.message : "Failed to update customer information")
+                          } finally {
+                            setIsSavingCustomer(false)
+                          }
+                        }}
+                        disabled={isSavingCustomer}
                       >
-                        {customer.email}
-                      </a>
+                        <Save className="w-3 h-3 mr-1" />
+                        {isSavingCustomer ? "Saving..." : "Save"}
+                      </Button>
                     </div>
                   </div>
-                  <div className="flex items-start gap-3">
-                    <Home className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
-                    <div className="flex-1">
-                      <p className="text-xs text-muted-foreground mb-1">Complete Address</p>
-                      <p className="text-sm font-medium">
-                        {customer.address.street}
-                        <br />
-                        {customer.address.city}, {customer.address.state}
-                        <br />
-                        PIN: {customer.address.pincode}
-                      </p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-start gap-3">
+                      <User className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Full Name</p>
+                        <p className="text-sm font-semibold">
+                          {customer?.firstName || ""} {customer?.lastName || ""}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Phone className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Phone Number</p>
+                        <a
+                          href={`tel:${customer?.mobile || ""}`}
+                          className="text-sm font-semibold text-primary hover:underline"
+                          title="Click to call"
+                        >
+                          {customer?.mobile || ""}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Mail className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Email Address</p>
+                        <a
+                          href={`mailto:${customer?.email || ""}`}
+                          className="text-sm font-semibold text-primary hover:underline"
+                          title="Click to send email"
+                        >
+                          {customer?.email || ""}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Home className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <p className="text-xs text-muted-foreground mb-1">Complete Address</p>
+                        <p className="text-sm font-medium">
+                          {customer.address?.street || ""}
+                          <br />
+                          {customer.address?.city || ""}, {customer.address?.state || ""}
+                          <br />
+                          PIN: {customer.address?.pincode || ""}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </CardContent>
             </Card>
 
@@ -1420,10 +1938,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <span>Subtotal:</span>
                   <span>₹{subtotal.toLocaleString()}</span>
                 </div>
-                {products.stateSubsidy && products.stateSubsidy > 0 && (
+                {(products.stateSubsidy ?? 0) > 0 && (
                   <div className="flex justify-between text-green-600">
                     <span>State Subsidy:</span>
-                    <span>-₹{products.stateSubsidy.toLocaleString()}</span>
+                    <span>-₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
                   </div>
                 )}
                 {products.centralSubsidy && products.centralSubsidy > 0 && (
@@ -1457,7 +1975,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           size="sm"
                           variant="outline"
                           onClick={() => {
-                            setDiscount(quotation.discount || 0)
+                            setDiscount(displayQuotation.discount || 0)
                             setIsEditingDiscount(false)
                           }}
                           className="h-8 text-xs"
@@ -1503,7 +2021,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <FileText className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                     <div>
                       <p className="text-xs text-muted-foreground mb-1">Quotation ID</p>
-                      <p className="text-sm font-mono font-semibold">{quotation.id}</p>
+                      <p className="text-sm font-mono font-semibold">{displayQuotation.id}</p>
                     </div>
                   </div>
                   <div className="flex items-start gap-3">
@@ -1530,9 +2048,98 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 </div>
               </CardContent>
             </Card>
-          </div>
 
-          <div className="flex flex-col sm:flex-row justify-end gap-2 mt-4">
+            {/* Visits Section - Only for Dealers */}
+            {isDealer && (
+              <Card className="border-primary/20">
+                <CardHeader className="bg-primary/5 p-3 sm:p-6">
+                  <CardTitle className="text-base sm:text-lg flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Calendar className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
+                      Scheduled Visits
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setVisitDialogOpen(true)}
+                      className="h-8"
+                    >
+                      <Calendar className="w-3 h-3 mr-1" />
+                      Manage Visits
+                    </Button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-3 sm:pt-4 p-3 sm:p-6">
+                  {isLoadingVisits ? (
+                    <p className="text-sm text-muted-foreground">Loading visits...</p>
+                  ) : visits.length > 0 ? (
+                    <div className="space-y-3">
+                      {visits.map((visit: any) => (
+                        <div key={visit.id} className="border rounded-lg p-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Calendar className="w-4 h-4 text-muted-foreground" />
+                                <span className="text-sm font-semibold">
+                                  {new Date(visit.visitDate).toLocaleDateString("en-IN", {
+                                    day: "2-digit",
+                                    month: "short",
+                                    year: "numeric",
+                                  })}
+                                </span>
+                                <span className="text-sm text-muted-foreground">
+                                  at {visit.visitTime}
+                                </span>
+                              </div>
+                              {visit.location && (
+                                <div className="flex items-start gap-2 mb-2">
+                                  <MapPin className="w-4 h-4 text-muted-foreground mt-0.5" />
+                                  <span className="text-sm">{visit.location}</span>
+                                </div>
+                              )}
+                              {visit.visitors && visit.visitors.length > 0 && (
+                                <div className="flex items-start gap-2">
+                                  <Users className="w-4 h-4 text-muted-foreground mt-0.5" />
+                                  <div className="text-sm">
+                                    <span className="font-medium">Visitors: </span>
+                                    {visit.visitors.map((v: any, idx: number) => (
+                                      <span key={idx}>
+                                        {v.fullName || `${v.firstName || ""} ${v.lastName || ""}`.trim()}
+                                        {idx < visit.visitors.length - 1 && ", "}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {visits.length >= 3 && (
+                        <p className="text-xs text-muted-foreground text-center pt-2">
+                          Showing first 3 visits. Click "Manage Visits" to see all.
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-4">
+                      <Calendar className="w-8 h-8 mx-auto mb-2 text-muted-foreground opacity-50" />
+                      <p className="text-sm text-muted-foreground mb-2">No visits scheduled yet</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setVisitDialogOpen(true)}
+                      >
+                        <Calendar className="w-3 h-3 mr-1" />
+                        Schedule Visit
+                      </Button>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
+            <div className="flex flex-col sm:flex-row justify-end gap-2 mt-4">
             <Button 
               variant="outline" 
               onClick={() => onOpenChange(false)} 
@@ -1549,9 +2156,26 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               <Download className="w-4 h-4 mr-2" />
               {isGeneratingPDF ? "Generating PDF..." : "Download PDF"}
             </Button>
-          </div>
+            </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
+
+      {/* Visit Management Dialog - Only for Dealers */}
+      {isDealer && (
+        <VisitManagementDialog
+          quotation={fullQuotation || quotation}
+          open={visitDialogOpen}
+          onOpenChange={(open) => {
+            setVisitDialogOpen(open)
+            if (!open && fullQuotation) {
+              // Reload visits when dialog closes
+              loadVisits()
+            }
+          }}
+        />
+      )}
     </>
   )
 }

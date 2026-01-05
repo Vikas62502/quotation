@@ -12,6 +12,8 @@ import type { Quotation } from "@/lib/quotation-context"
 import { Badge } from "@/components/ui/badge"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
+import { api, ApiError } from "@/lib/api"
+import { calculateSystemSize } from "@/lib/pricing-tables"
 
 const ADMIN_USERNAME = "admin"
 
@@ -24,6 +26,8 @@ export default function DashboardPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [visitQuotation, setVisitQuotation] = useState<Quotation | null>(null)
   const [visitDialogOpen, setVisitDialogOpen] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -36,13 +40,48 @@ export default function DashboardPage() {
       router.push("/dashboard/admin")
       return
     }
-    // Load quotations
-    const all = JSON.parse(localStorage.getItem("quotations") || "[]")
-    const dealerQuotations = all
-      .filter((q: Quotation) => q.dealerId === dealer?.id)
-      .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
-    setQuotations(dealerQuotations)
+    
+    loadQuotations()
   }, [isAuthenticated, router, dealer])
+
+  const loadQuotations = async () => {
+    if (!dealer?.id) return
+    
+    setIsLoading(true)
+    try {
+      if (useApi) {
+        const response = await api.quotations.getAll()
+        const dealerQuotations = (response.quotations || [])
+          .map((q: any) => ({
+            id: q.id,
+            customer: q.customer || {},
+            // Preserve all products data - don't default to { systemType: "N/A" } if products exists
+            products: q.products || {},
+            discount: q.discount || 0,
+            totalAmount: q.pricing?.totalAmount || 0,
+            finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
+            createdAt: q.createdAt,
+            dealerId: q.dealerId || dealer.id,
+            status: q.status || "pending",
+          }))
+        setQuotations(dealerQuotations)
+      } else {
+        // Fallback to localStorage
+        const all = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const dealerQuotations = all
+          .filter((q: Quotation) => q.dealerId === dealer.id)
+          .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
+        setQuotations(dealerQuotations)
+      }
+    } catch (error) {
+      console.error("Error loading quotations:", error)
+      if (error instanceof ApiError) {
+        alert(`Error: ${error.message}`)
+      }
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
   if (!isAuthenticated) return null
 
@@ -61,15 +100,15 @@ export default function DashboardPage() {
     return date.getMonth() === lastMonth && date.getFullYear() === year
   })
 
-  const uniqueCustomers = new Set(quotations.map((q) => q.customer.mobile)).size
-  const totalRevenue = quotations.reduce((sum, q) => sum + q.finalAmount, 0)
+  const uniqueCustomers = new Set(quotations.map((q) => q.customer?.mobile || "").filter((m) => m)).size
+  const totalRevenue = quotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || 0), 0)
 
   const filteredQuotations = quotations.filter(
     (q) =>
-      q.customer.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.mobile.includes(searchTerm) ||
-      q.id.toLowerCase().includes(searchTerm.toLowerCase()),
+      (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (q.customer?.mobile || "").includes(searchTerm) ||
+      (q.id || "").toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
   const recentQuotations = [...filteredQuotations]
@@ -100,6 +139,68 @@ export default function DashboardPage() {
       default:
         return "bg-yellow-600 text-white"
     }
+  }
+
+  const getSystemSize = (quotation: Quotation): string => {
+    const products = quotation.products
+    if (!products) return "N/A"
+
+    // For BOTH system type
+    if (products.systemType === "both") {
+      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity
+        ? calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+        : null
+      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity
+        ? calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+        : null
+      
+      if (dcrSize && nonDcrSize && dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+        const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+        if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+          return `${dcrKw + nonDcrKw}kW`
+        }
+      }
+      if (dcrSize && dcrSize !== "0kW") return dcrSize
+      if (nonDcrSize && nonDcrSize !== "0kW") return nonDcrSize
+      // If BOTH type but can't calculate, show system type
+      return "BOTH"
+    }
+
+    // For CUSTOMIZE system type
+    if (products.systemType === "customize" && products.customPanels && products.customPanels.length > 0) {
+      const totalKw = products.customPanels.reduce((sum, panel) => {
+        if (!panel.size || !panel.quantity) return sum
+        try {
+          const sizeW = Number.parseInt(panel.size.replace("W", ""))
+          if (Number.isNaN(sizeW)) return sum
+          return sum + (sizeW * panel.quantity)
+        } catch {
+          return sum
+        }
+      }, 0) / 1000
+      if (totalKw > 0) return `${totalKw}kW`
+      return "CUSTOMIZE"
+    }
+
+    // For DCR, NON DCR, or other system types
+    if (products.panelSize && products.panelQuantity && products.panelQuantity > 0) {
+      const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+      if (systemSize !== "0kW") return systemSize
+    }
+
+    // Fallback: Show system type if available
+    if (products.systemType && products.systemType !== "N/A" && products.systemType.trim() !== "") {
+      // Format system type for display
+      const systemType = products.systemType.toLowerCase()
+      if (systemType === "dcr") return "DCR"
+      if (systemType === "non-dcr") return "NON DCR"
+      if (systemType === "both") return "BOTH"
+      if (systemType === "customize") return "CUSTOMIZE"
+      return products.systemType.toUpperCase()
+    }
+
+    return "N/A"
   }
 
   return (
@@ -239,18 +340,18 @@ export default function DashboardPage() {
                         <td className="py-4 px-3">
                           <div>
                             <p className="text-sm font-medium text-foreground">
-                              {quotation.customer.firstName} {quotation.customer.lastName}
+                              {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
                             </p>
-                            <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
+                            <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                           </div>
                         </td>
                         <td className="py-4 px-3 text-sm hidden sm:table-cell">
                           <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium uppercase">
-                            {quotation.products.systemType}
+                            {getSystemSize(quotation)}
                           </span>
                         </td>
                         <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                          ₹{quotation.finalAmount.toLocaleString()}
+                          ₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}
                         </td>
                         <td className="py-4 px-3 text-sm">
                           <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>
