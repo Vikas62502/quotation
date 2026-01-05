@@ -1,5 +1,4 @@
 # Docker Setup Guide
-
 This project includes Docker configuration for containerized deployment.
 
 ## Prerequisites

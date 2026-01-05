@@ -1,187 +1,196 @@
-[00:00:08.529] Server  LOG      ✓ Ready in 7.9s
-[00:00:22.389] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
-[00:00:22.610] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633236388}
-[00:00:24.591] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633238367}
-[00:00:33.094] Browser LOG     [API] ========================================
-[00:00:33.094] Browser LOG     [API] Starting API request
-[00:00:33.094] Browser LOG     [API] Endpoint: /auth/login
-[00:00:33.094] Browser LOG     [API] Method: POST
-[00:00:33.094] Browser LOG     [API] Requires Auth: false
-[00:00:33.094] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
-[00:00:33.094] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:00:33.094] Browser LOG     [API] Auth not required for this request
-[00:00:33.094] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:00:33.094] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:00:33.094] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:00:33.094] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
-[00:00:33.094] Browser LOG     [API] Sending fetch request...
-[00:00:34.446] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:00:34.446] Browser ERROR   [API] Error type: TypeError
-[00:00:34.446] Browser ERROR   [API] Error message: Failed to fetch
-[00:00:34.446] Browser ERROR   [API] Generic Error detected
-[00:00:34.446] Browser ERROR   [API] Network error detected: Failed to fetch
-[00:00:34.446] Browser ERROR   [API] =================================
-[00:00:34.446] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
-[00:00:34.446] Browser ERROR   API Error Code: NETWORK_ERROR
-[00:00:34.446] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
-[00:01:05.023] Browser LOG     [API] ========================================
-[00:01:05.023] Browser LOG     [API] Starting API request
-[00:01:05.023] Browser LOG     [API] Endpoint: /auth/login
-[00:01:05.023] Browser LOG     [API] Method: POST
-[00:01:05.023] Browser LOG     [API] Requires Auth: false
-[00:01:05.023] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
-[00:01:05.023] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:01:05.023] Browser LOG     [API] Auth not required for this request
-[00:01:05.023] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:01:05.023] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:01:05.023] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:01:05.023] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
-[00:01:05.023] Browser LOG     [API] Sending fetch request...
-[00:01:05.375] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:01:05.375] Browser ERROR   [API] Error type: TypeError
-[00:01:05.375] Browser ERROR   [API] Error message: Failed to fetch
-[00:01:05.375] Browser ERROR   [API] Generic Error detected
-[00:01:05.375] Browser ERROR   [API] Network error detected: Failed to fetch
-[00:01:05.375] Browser ERROR   [API] =================================
-[00:01:05.375] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
-[00:01:05.375] Browser ERROR   API Error Code: NETWORK_ERROR
-[00:01:05.375] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
-[00:01:38.916] Server  LOG        Reload env: .env
-[00:01:39.040] Server  WARN     ⚠ Fast Refresh had to perform a full reload when ./lib/api-config.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
-[00:01:39.041] Server  LOG      ✓ Compiled in 25ms
-[00:01:39.340] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
-[00:01:40.295] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633313313}
-[00:01:59.734] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
-[00:01:59.965] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633333743}
-[00:02:03.186] Browser LOG     [API] ========================================
-[00:02:03.186] Browser LOG     [API] Starting API request
-[00:02:03.186] Browser LOG     [API] Endpoint: /auth/login
-[00:02:03.186] Browser LOG     [API] Method: POST
-[00:02:03.186] Browser LOG     [API] Requires Auth: false
-[00:02:03.186] Browser LOG     [API] Full URL: http://localhost:3005/api/auth/login
-[00:02:03.186] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:02:03.186] Browser LOG     [API] Auth not required for this request
-[00:02:03.186] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:02:03.186] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:02:03.186] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:02:03.186] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3005/api/auth/login"}
-[00:02:03.186] Browser LOG     [API] Sending fetch request...
-[00:02:05.498] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:02:05.498] Browser ERROR   [API] Error type: TypeError
-[00:02:05.498] Browser ERROR   [API] Error message: Failed to fetch
-[00:02:05.498] Browser ERROR   [API] Generic Error detected
-[00:02:05.498] Browser ERROR   [API] Network error detected: Failed to fetch
-[00:02:05.498] Browser ERROR   [API] =================================
-[00:02:05.498] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
-[00:02:05.498] Browser ERROR   API Error Code: NETWORK_ERROR
-[00:02:05.498] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
-[00:08:32.504] Browser LOG     [API] ========================================
-[00:08:32.504] Browser LOG     [API] Starting API request
-[00:08:32.504] Browser LOG     [API] Endpoint: /auth/login
-[00:08:32.504] Browser LOG     [API] Method: POST
-[00:08:32.504] Browser LOG     [API] Requires Auth: false
-[00:08:32.504] Browser LOG     [API] Full URL: http://localhost:3005/api/auth/login
-[00:08:32.504] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:08:32.504] Browser LOG     [API] Auth not required for this request
-[00:08:32.504] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:08:32.504] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:08:32.504] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:08:32.504] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3005/api/auth/login"}
-[00:08:32.504] Browser LOG     [API] Sending fetch request...
-[00:08:34.814] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
-[00:08:34.814] Browser ERROR   [API] Error type: TypeError
-[00:08:34.814] Browser ERROR   [API] Error message: Failed to fetch
-[00:08:34.814] Browser ERROR   [API] Generic Error detected
-[00:08:34.814] Browser ERROR   [API] Network error detected: Failed to fetch
-[00:08:34.814] Browser ERROR   [API] =================================
-[00:08:34.814] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
-[00:08:34.814] Browser ERROR   API Error Code: NETWORK_ERROR
-[00:08:34.814] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
-[00:09:15.527] Server  LOG        Reload env: .env
-[00:09:15.612] Server  WARN     ⚠ Fast Refresh had to perform a full reload when ./lib/api-config.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
-[00:09:15.613] Server  LOG      ✓ Compiled in 13ms
-[00:09:15.881] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
-[00:09:16.303] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
-[00:09:16.303] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
-[00:09:16.304] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633769905}
-[00:09:22.915] Browser LOG     [API] ========================================
-[00:09:22.915] Browser LOG     [API] Starting API request
-[00:09:22.915] Browser LOG     [API] Endpoint: /auth/login
-[00:09:22.915] Browser LOG     [API] Method: POST
-[00:09:22.915] Browser LOG     [API] Requires Auth: false
-[00:09:22.915] Browser LOG     [API] Full URL: http://localhost:3050/api/auth/login
-[00:09:22.915] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:09:22.915] Browser LOG     [API] Auth not required for this request
-[00:09:22.915] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
-[00:09:22.915] Browser LOG     [API] Body serialized to JSON, length: 46
-[00:09:22.915] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
-[00:09:22.915] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://localhost:3050/api/auth/login"}
-[00:09:22.915] Browser LOG     [API] Sending fetch request...
-[00:09:23.550] Browser LOG     [API] Response received: {"headers":{"content-length":"699","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:09:23.550] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:09:23.550] Browser LOG     [API] Parsing JSON response...
-[00:09:23.550] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:09:23.550] Browser LOG     [API] Request successful, returning data
-[00:09:23.550] Browser LOG     [API] Request completed successfully
-[00:09:23.550] Browser LOG     [API] ========================================
-[00:09:23.550] Browser LOG     [API] ========================================
-[00:09:23.550] Browser LOG     [API] Starting API request
-[00:09:23.550] Browser LOG     [API] Endpoint: /quotations
-[00:09:23.550] Browser LOG     [API] Method: GET
-[00:09:23.550] Browser LOG     [API] Requires Auth: true
-[00:09:23.550] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:09:23.550] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:09:23.550] Browser LOG     [API] Auth token added (length): 217
-[00:09:23.550] Browser LOG     [API] No request body (GET request or body not provided)
-[00:09:23.550] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:09:23.550] Browser LOG     [API] Sending fetch request...
-[00:09:23.686] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:09:23.686] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:09:23.686] Browser LOG     [API] Parsing JSON response...
-[00:09:23.686] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:09:23.686] Browser LOG     [API] Request successful, returning data
-[00:09:23.686] Browser LOG     [API] Request completed successfully
-[00:09:23.686] Browser LOG     [API] ========================================
-[00:09:25.253] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767633779021}
-[00:09:25.599] Browser LOG     [API] ========================================
-[00:09:25.600] Browser LOG     [API] Starting API request
-[00:09:25.600] Browser LOG     [API] Endpoint: /quotations
-[00:09:25.600] Browser LOG     [API] Method: GET
-[00:09:25.600] Browser LOG     [API] Requires Auth: true
-[00:09:25.600] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:09:25.600] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:09:25.600] Browser LOG     [API] Auth token added (length): 217
-[00:09:25.600] Browser LOG     [API] No request body (GET request or body not provided)
-[00:09:25.600] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:09:25.600] Browser LOG     [API] Sending fetch request...
-[00:09:25.600] Browser LOG     [API] ========================================
-[00:09:25.600] Browser LOG     [API] Starting API request
-[00:09:25.600] Browser LOG     [API] Endpoint: /quotations
-[00:09:25.600] Browser LOG     [API] Method: GET
-[00:09:25.600] Browser LOG     [API] Requires Auth: true
-[00:09:25.600] Browser LOG     [API] Full URL: http://localhost:3050/api/quotations
-[00:09:25.600] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
-[00:09:25.600] Browser LOG     [API] Auth token added (length): 217
-[00:09:25.600] Browser LOG     [API] No request body (GET request or body not provided)
-[00:09:25.600] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://localhost:3050/api/quotations"}
-[00:09:25.600] Browser LOG     [API] Sending fetch request...
-[00:09:25.871] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:09:25.871] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:09:25.871] Browser LOG     [API] Parsing JSON response...
-[00:09:25.871] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:09:25.871] Browser LOG     [API] Request successful, returning data
-[00:09:25.871] Browser LOG     [API] Request completed successfully
-[00:09:25.871] Browser LOG     [API] ========================================
-[00:09:25.871] Browser LOG     [API] Response received: {"headers":{"content-length":"4968","content-type":"application/json; charset=utf-8"},"ok":true,"status":200,"statusText":"OK"}
-[00:09:25.871] Browser LOG     [API] Response content-type: application/json; charset=utf-8
-[00:09:25.871] Browser LOG     [API] Parsing JSON response...
-[00:09:25.871] Browser LOG     [API] Parsed response data: {"hasData":true,"hasError":false,"success":true}
-[00:09:25.871] Browser LOG     [API] Request successful, returning data
-[00:09:25.871] Browser LOG     [API] Request completed successfully
-[00:09:25.871] Browser LOG     [API] ========================================
+[00:00:02.804] Server  LOG      ✓ Ready in 2.4s
+[00:00:25.077] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:00:25.242] Browser LOG     [API] ========================================
+[00:00:25.242] Browser LOG     [API] Starting API request
+[00:00:25.242] Browser LOG     [API] Endpoint: /quotations
+[00:00:25.242] Browser LOG     [API] Method: GET
+[00:00:25.242] Browser LOG     [API] Requires Auth: true
+[00:00:25.242] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/quotations
+[00:00:25.242] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:25.242] Browser LOG     [API] Auth token added (length): 217
+[00:00:25.242] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:25.242] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://api.inventory.chairbordsolar.com/api/quotations"}
+[00:00:25.242] Browser LOG     [API] Sending fetch request...
+[00:00:26.035] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:26.035] Browser ERROR   [API] Error type: TypeError
+[00:00:26.035] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:26.035] Browser ERROR   [API] Generic Error detected
+[00:00:26.035] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:26.035] Browser ERROR   [API] =================================
+[00:00:26.035] Browser ERROR   Error loading quotations: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:27.329] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:00:27.329] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
+[00:00:27.329] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
+[00:00:27.329] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637343709}
+[00:00:27.329] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637343709}
+[00:00:27.449] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637343848}
+[00:00:30.132] Browser LOG     [API] ========================================
+[00:00:30.132] Browser LOG     [API] Starting API request
+[00:00:30.132] Browser LOG     [API] Endpoint: /quotations
+[00:00:30.132] Browser LOG     [API] Method: GET
+[00:00:30.132] Browser LOG     [API] Requires Auth: true
+[00:00:30.132] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/quotations
+[00:00:30.132] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:30.132] Browser LOG     [API] Auth token added (length): 217
+[00:00:30.132] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:30.132] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://api.inventory.chairbordsolar.com/api/quotations"}
+[00:00:30.132] Browser LOG     [API] Sending fetch request...
+[00:00:30.132] Browser LOG     [API] ========================================
+[00:00:30.132] Browser LOG     [API] Starting API request
+[00:00:30.132] Browser LOG     [API] Endpoint: /quotations
+[00:00:30.132] Browser LOG     [API] Method: GET
+[00:00:30.132] Browser LOG     [API] Requires Auth: true
+[00:00:30.132] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/quotations
+[00:00:30.132] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:30.132] Browser LOG     [API] Auth token added (length): 217
+[00:00:30.132] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:30.132] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://api.inventory.chairbordsolar.com/api/quotations"}
+[00:00:30.132] Browser LOG     [API] Sending fetch request...
+[00:00:30.132] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:30.132] Browser ERROR   [API] Error type: TypeError
+[00:00:30.132] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:30.132] Browser ERROR   [API] Generic Error detected
+[00:00:30.132] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:30.132] Browser ERROR   [API] =================================
+[00:00:30.132] Browser ERROR   Error loading quotations: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:30.132] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:30.132] Browser ERROR   [API] Error type: TypeError
+[00:00:30.132] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:30.132] Browser ERROR   [API] Generic Error detected
+[00:00:30.132] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:30.132] Browser ERROR   [API] =================================
+[00:00:30.132] Browser ERROR   Error loading quotations: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:32.212] Browser LOG     [API] ========================================
+[00:00:32.212] Browser LOG     [API] Starting API request
+[00:00:32.212] Browser LOG     [API] Endpoint: /auth/logout
+[00:00:32.212] Browser LOG     [API] Method: POST
+[00:00:32.212] Browser LOG     [API] Requires Auth: true
+[00:00:32.212] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/logout
+[00:00:32.212] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:32.212] Browser LOG     [API] Auth token added (length): 217
+[00:00:32.212] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:32.212] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/logout"}
+[00:00:32.212] Browser LOG     [API] Sending fetch request...
+[00:00:32.212] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637348539}
+[00:00:32.212] Browser LOG     [API] ========================================
+[00:00:32.212] Browser LOG     [API] Starting API request
+[00:00:32.212] Browser LOG     [API] Endpoint: /quotations
+[00:00:32.212] Browser LOG     [API] Method: GET
+[00:00:32.212] Browser LOG     [API] Requires Auth: true
+[00:00:32.212] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/quotations
+[00:00:32.212] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:32.212] Browser LOG     [API] Auth token added (length): 217
+[00:00:32.212] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:32.212] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://api.inventory.chairbordsolar.com/api/quotations"}
+[00:00:32.212] Browser LOG     [API] Sending fetch request...
+[00:00:32.212] Browser LOG     [API] ========================================
+[00:00:32.212] Browser LOG     [API] Starting API request
+[00:00:32.212] Browser LOG     [API] Endpoint: /quotations
+[00:00:32.212] Browser LOG     [API] Method: GET
+[00:00:32.212] Browser LOG     [API] Requires Auth: true
+[00:00:32.212] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/quotations
+[00:00:32.212] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:32.212] Browser LOG     [API] Auth token added (length): 217
+[00:00:32.212] Browser LOG     [API] No request body (GET request or body not provided)
+[00:00:32.212] Browser LOG     [API] Final request config: {"bodyLength":0,"hasBody":false,"headersCount":2,"method":"GET","url":"http://api.inventory.chairbordsolar.com/api/quotations"}
+[00:00:32.212] Browser LOG     [API] Sending fetch request...
+[00:00:32.212] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/dashboard color: rgb(120, 120, 120) color: inherit {"dp":"/dashboard","o":"http://localhost:3000/dashboard","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637348603}
+[00:00:34.054] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:34.054] Browser ERROR   [API] Error type: TypeError
+[00:00:34.054] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] Generic Error detected
+[00:00:34.054] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] =================================
+[00:00:34.054] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:34.054] Browser ERROR   [API] Error type: TypeError
+[00:00:34.054] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] Generic Error detected
+[00:00:34.054] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] =================================
+[00:00:34.054] Browser ERROR   Error loading quotations: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:34.054] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:34.054] Browser ERROR   [API] Error type: TypeError
+[00:00:34.054] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] Generic Error detected
+[00:00:34.054] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:34.054] Browser ERROR   [API] =================================
+[00:00:34.054] Browser ERROR   Error loading quotations: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:34.180] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767637350578}
+[00:00:37.129] Browser LOG     [API] ========================================
+[00:00:37.129] Browser LOG     [API] Starting API request
+[00:00:37.129] Browser LOG     [API] Endpoint: /auth/login
+[00:00:37.129] Browser LOG     [API] Method: POST
+[00:00:37.129] Browser LOG     [API] Requires Auth: false
+[00:00:37.129] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
+[00:00:37.129] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:37.129] Browser LOG     [API] Auth not required for this request
+[00:00:37.129] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:00:37.129] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:00:37.129] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:00:37.129] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
+[00:00:37.129] Browser LOG     [API] Sending fetch request...
+[00:00:37.129] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:37.129] Browser ERROR   [API] Error type: TypeError
+[00:00:37.129] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:37.129] Browser ERROR   [API] Generic Error detected
+[00:00:37.129] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:37.129] Browser ERROR   [API] =================================
+[00:00:37.129] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:37.129] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:00:37.129] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:00:40.892] Browser LOG     [API] ========================================
+[00:00:40.892] Browser LOG     [API] Starting API request
+[00:00:40.892] Browser LOG     [API] Endpoint: /auth/login
+[00:00:40.892] Browser LOG     [API] Method: POST
+[00:00:40.892] Browser LOG     [API] Requires Auth: false
+[00:00:40.892] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
+[00:00:40.892] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:00:40.892] Browser LOG     [API] Auth not required for this request
+[00:00:40.892] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:00:40.892] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:00:40.892] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:00:40.892] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
+[00:00:40.892] Browser LOG     [API] Sending fetch request...
+[00:00:40.892] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:00:40.892] Browser ERROR   [API] Error type: TypeError
+[00:00:40.892] Browser ERROR   [API] Error message: Failed to fetch
+[00:00:40.892] Browser ERROR   [API] Generic Error detected
+[00:00:40.892] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:00:40.892] Browser ERROR   [API] =================================
+[00:00:40.892] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:00:40.892] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:00:40.892] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:36:11.595] Browser LOG     [API] ========================================
+[00:36:11.595] Browser LOG     [API] Starting API request
+[00:36:11.595] Browser LOG     [API] Endpoint: /auth/login
+[00:36:11.595] Browser LOG     [API] Method: POST
+[00:36:11.595] Browser LOG     [API] Requires Auth: false
+[00:36:11.595] Browser LOG     [API] Full URL: http://api.inventory.chairbordsolar.com/api/auth/login
+[00:36:11.595] Browser LOG     [API] Request headers (before auth): {"Authorization":"***","Content-Type":"application/json"}
+[00:36:11.595] Browser LOG     [API] Auth not required for this request
+[00:36:11.595] Browser LOG     [API] Request body present: {"isObject":true,"keys":["username","password"],"type":"object"}
+[00:36:11.595] Browser LOG     [API] Body serialized to JSON, length: 46
+[00:36:11.595] Browser LOG     [API] Serialized body preview: {"username":"aman4119","password":"Aman@1234"}
+[00:36:11.595] Browser LOG     [API] Final request config: {"bodyLength":46,"hasBody":true,"headersCount":1,"method":"POST","url":"http://api.inventory.chairbordsolar.com/api/auth/login"}
+[00:36:11.595] Browser LOG     [API] Sending fetch request...
+[00:36:12.569] Browser ERROR   [API] ===== EXCEPTION CAUGHT =====
+[00:36:12.569] Browser ERROR   [API] Error type: TypeError
+[00:36:12.569] Browser ERROR   [API] Error message: Failed to fetch
+[00:36:12.569] Browser ERROR   [API] Generic Error detected
+[00:36:12.569] Browser ERROR   [API] Network error detected: Failed to fetch
+[00:36:12.569] Browser ERROR   [API] =================================
+[00:36:12.569] Browser ERROR   Login error: {"code":"NETWORK_ERROR","name":"ApiError"}
+[00:36:12.569] Browser ERROR   API Error Code: NETWORK_ERROR
+[00:36:12.569] Browser ERROR   API Error Message: Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api
+[00:46:31.475] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:46:31.794] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:46:31.794] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/","route":"/"}
+[00:46:31.794] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/ color: rgb(120, 120, 120) color: inherit {"dp":"/","o":"http://localhost:3000/","r":"","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767640108194}
+[00:46:32.667] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767640109058}
+[00:48:36.521] Server  LOG        Reload env: .env
+[00:48:36.782] Server  LOG      ✓ Compiled in 144ms
+[00:48:36.785] Server  WARN     ⚠ Fast Refresh had to perform a full reload when ./lib/api-config.ts changed. Read more: https://nextjs.org/docs/messages/fast-refresh-reload
+[00:48:37.108] Browser INFO    %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[00:48:37.674] Browser LOG     %c[Vercel Web Analytics]%c Debug mode is enabled by default in development. No requests will be sent to the server. color: rgb(120, 120, 120) color: inherit
+[00:48:37.674] Browser LOG     %c[Vercel Web Analytics]%c Running queued event color: rgb(120, 120, 120) color: inherit pageview {"path":"/login","route":"/login"}
+[00:48:37.674] Browser LOG     %c[Vercel Web Analytics]%c [pageview] http://localhost:3000/login color: rgb(120, 120, 120) color: inherit {"dp":"/login","o":"http://localhost:3000/login","sdkn":"@vercel/analytics/next","sdkv":"1.6.1","sv":"0.1.3","ts":1767640233733}
