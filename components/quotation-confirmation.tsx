@@ -1094,47 +1094,138 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
             <div className="pdf-products-section">
               <div className="pdf-product-category">
                 <div className="pdf-category-header">📦 SOLAR SETS</div>
-                <div className="pdf-product-item">
-                  <div className="pdf-product-name">Solar Panel System</div>
-                  <div className="pdf-product-details">
-                    <div className="pdf-product-specs">
-                      {`${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`}
-                      <br />
-                      Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                      {products.structureType && (
-                        <>
-                          <br />
-                          Structure: {products.structureType} ({products.structureSize})
-                        </>
+                
+                {/* For BOTH system type, show separate DCR and NON DCR panels side by side */}
+                {products.systemType === "both" ? (
+                  <>
+                    {/* DCR and NON DCR Panels in same row */}
+                    <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
+                      {/* DCR Panels - Left side */}
+                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
+                          <div className="pdf-product-name">DCR Panels (With Subsidy)</div>
+                          <div className="pdf-product-details">
+                            <div className="pdf-product-specs">
+                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                              {products.dcrPanelSize && products.dcrPanelQuantity && (
+                                <>
+                                  <br />
+                                  <span style={{ fontSize: "10px", color: "#666" }}>
+                                    Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       )}
-                      {products.meterBrand && (
-                        <>
-                          <br />
-                          Meter: {products.meterBrand}
-                        </>
-                      )}
-                      {products.acCableBrand && (
-                        <>
-                          <br />
-                          AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                          {products.dcCableSize}
-                        </>
-                      )}
-                      {(products.acdb || products.dcdb) && (
-                        <>
-                          <br />
-                          ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                        </>
-                      )}
-                      {products.batteryCapacity && (
-                        <>
-                          <br />
-                          Battery: {products.batteryCapacity}
-                        </>
+                      
+                      {/* NON DCR Panels - Right side */}
+                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
+                          <div className="pdf-product-name">Non-DCR Panels (Without Subsidy)</div>
+                          <div className="pdf-product-details">
+                            <div className="pdf-product-specs">
+                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                              {products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                                <>
+                                  <br />
+                                  <span style={{ fontSize: "10px", color: "#666" }}>
+                                    Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW
+                                  </span>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       )}
                     </div>
+                    
+                    {/* Common Components */}
+                    <div className="pdf-product-item">
+                      <div className="pdf-product-name">Common Components</div>
+                      <div className="pdf-product-details">
+                        <div className="pdf-product-specs">
+                          Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                          {products.structureType && (
+                            <>
+                              <br />
+                              Structure: {products.structureType} ({products.structureSize})
+                            </>
+                          )}
+                          {products.meterBrand && (
+                            <>
+                              <br />
+                              Meter: {products.meterBrand}
+                            </>
+                          )}
+                          {products.acCableBrand && (
+                            <>
+                              <br />
+                              AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
+                              {products.dcCableSize}
+                            </>
+                          )}
+                          {(products.acdb || products.dcdb) && (
+                            <>
+                              <br />
+                              ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                            </>
+                          )}
+                          {products.batteryCapacity && (
+                            <>
+                              <br />
+                              Battery: {products.batteryCapacity}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* For DCR, NON DCR, or CUSTOMIZE system types */
+                  <div className="pdf-product-item">
+                    <div className="pdf-product-name">Solar Panel System</div>
+                    <div className="pdf-product-details">
+                      <div className="pdf-product-specs">
+                        {`${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`}
+                        <br />
+                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {products.structureType && (
+                          <>
+                            <br />
+                            Structure: {products.structureType} ({products.structureSize})
+                          </>
+                        )}
+                        {products.meterBrand && (
+                          <>
+                            <br />
+                            Meter: {products.meterBrand}
+                          </>
+                        )}
+                        {products.acCableBrand && (
+                          <>
+                            <br />
+                            AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
+                            {products.dcCableSize}
+                          </>
+                        )}
+                        {(products.acdb || products.dcdb) && (
+                          <>
+                            <br />
+                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                          </>
+                        )}
+                        {products.batteryCapacity && (
+                          <>
+                            <br />
+                            Battery: {products.batteryCapacity}
+                          </>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             </div>
 
