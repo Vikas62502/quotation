@@ -50,7 +50,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.firstName || !formData.lastName || !formData.mobile || !formData.email) {
+    if (!formData.firstName || !formData.lastName || !formData.mobile) {
       setError("Please fill in all required fields")
       return
     }
@@ -60,7 +60,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
       return
     }
 
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       setError("Please enter a valid email address")
       return
     }
@@ -126,13 +126,13 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
               />
             </div>
             <div>
-              <Label htmlFor="email">Email Address *</Label>
+              <Label htmlFor="email">Email Address</Label>
               <Input
                 id="email"
                 type="email"
                 value={formData.email}
                 onChange={(e) => updateFormData("email", e.target.value)}
-                placeholder="Enter email address"
+                placeholder="Enter email address (optional)"
               />
             </div>
           </div>
