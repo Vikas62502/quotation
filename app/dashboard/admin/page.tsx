@@ -682,7 +682,7 @@ export default function AdminPanelPage() {
               </Card>
             </div>
 
-            {/* Top Dealers */}
+            {/* Top Dealers  */}
             <Card>
               <CardHeader>
                 <CardTitle>Top Dealers by Revenue</CardTitle>
