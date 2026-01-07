@@ -363,6 +363,22 @@ export const api = {
         body: { currentPassword, newPassword },
       })
     },
+
+    resetPassword: async (username: string, oldPassword: string, newPassword: string) => {
+      return apiRequest("/auth/reset-password", {
+        method: "POST",
+        body: { username, oldPassword, newPassword },
+        requiresAuth: false,
+      })
+    },
+
+    forgotPassword: async (username: string, dateOfBirth: string, newPassword: string) => {
+      return apiRequest("/auth/forgot-password", {
+        method: "POST",
+        body: { username, dateOfBirth, newPassword },
+        requiresAuth: false,
+      })
+    },
   },
 
   // Dealers

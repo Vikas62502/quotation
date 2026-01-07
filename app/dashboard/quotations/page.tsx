@@ -28,6 +28,7 @@ export default function QuotationsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [visitQuotation, setVisitQuotation] = useState<Quotation | null>(null)
   const [visitDialogOpen, setVisitDialogOpen] = useState(false)
+  const [quotationVisits, setQuotationVisits] = useState<Record<string, any[]>>({})
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -66,6 +67,8 @@ export default function QuotationsPage() {
             status: q.status || "pending",
           }))
         setQuotations(dealerQuotations)
+        // Load visits for all quotations
+        await loadVisitsForQuotations(dealerQuotations)
       } else {
         // Fallback to localStorage
         const all = JSON.parse(localStorage.getItem("quotations") || "[]")
@@ -73,9 +76,73 @@ export default function QuotationsPage() {
           .filter((q: Quotation) => q.dealerId === dealer.id)
           .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
         setQuotations(dealerQuotations)
+        // Load visits for all quotations
+        await loadVisitsForQuotations(dealerQuotations)
       }
     } catch (error) {
       console.error("Error loading quotations:", error)
+    }
+  }
+
+  const loadVisitsForQuotations = async (quotationList: Quotation[]) => {
+    const visitsMap: Record<string, any[]> = {}
+    
+    await Promise.all(
+      quotationList.map(async (quotation) => {
+        try {
+          if (useApi) {
+            const response = await api.visits.getByQuotation(quotation.id)
+            // Handle different response structures
+            let visitsList: any[] = []
+            if (Array.isArray(response)) {
+              visitsList = response
+            } else if (response?.visits && Array.isArray(response.visits)) {
+              visitsList = response.visits
+            } else if (response?.data?.visits && Array.isArray(response.data.visits)) {
+              visitsList = response.data.visits
+            }
+            
+            // Debug logging
+            if (visitsList.length > 0) {
+              console.log(`[Quotations] Loaded ${visitsList.length} visits for quotation ${quotation.id}:`, visitsList.map(v => ({ id: v.id, status: v.status })))
+            }
+            
+            visitsMap[quotation.id] = visitsList.map((v: any) => ({
+              id: v.id,
+              status: v.status || "pending",
+              date: v.visitDate || v.date,
+              time: v.visitTime || v.time,
+            }))
+          } else {
+            // Fallback to localStorage
+            const stored = localStorage.getItem(`visits_${quotation.id}`)
+            if (stored) {
+              const visits = JSON.parse(stored)
+              visitsMap[quotation.id] = visits.map((v: any) => ({
+                id: v.id,
+                status: v.status || "pending",
+                date: v.date,
+                time: v.time,
+              }))
+            } else {
+              visitsMap[quotation.id] = []
+            }
+          }
+        } catch (error) {
+          console.error(`Error loading visits for quotation ${quotation.id}:`, error)
+          visitsMap[quotation.id] = []
+        }
+      })
+    )
+    
+    setQuotationVisits(visitsMap)
+  }
+
+  const handleVisitDialogClose = (open: boolean) => {
+    setVisitDialogOpen(open)
+    // Reload visits when dialog closes to update status
+    if (!open && quotations.length > 0) {
+      loadVisitsForQuotations(quotations)
     }
   }
 
@@ -133,6 +200,55 @@ export default function QuotationsPage() {
         return "bg-red-600 text-white"
       case "completed":
         return "bg-blue-600 text-white"
+      default:
+        return "bg-yellow-600 text-white"
+    }
+  }
+
+  const getVisitStatus = (quotation: Quotation): string => {
+    const visits = quotationVisits[quotation.id] || []
+    
+    if (visits.length === 0) {
+      return "No visits"
+    }
+    
+    // Get the latest visit status (most recent by date/time)
+    const sortedVisits = [...visits].sort((a, b) => {
+      try {
+        const dateA = new Date(`${a.date}T${a.time || "00:00"}`).getTime()
+        const dateB = new Date(`${b.date}T${b.time || "00:00"}`).getTime()
+        return dateB - dateA
+      } catch {
+        // If date parsing fails, compare by createdAt or id
+        return 0
+      }
+    })
+    
+    const latestVisit = sortedVisits[0]
+    if (!latestVisit) {
+      return "No visits"
+    }
+    
+    const status = latestVisit.status || "pending"
+    
+    // Capitalize first letter
+    return status.charAt(0).toUpperCase() + status.slice(1)
+  }
+
+  const getVisitStatusBadgeColor = (status: string) => {
+    switch (status.toLowerCase()) {
+      case "approved":
+        return "bg-green-600 text-white"
+      case "completed":
+        return "bg-blue-600 text-white"
+      case "rejected":
+        return "bg-red-600 text-white"
+      case "incomplete":
+        return "bg-orange-600 text-white"
+      case "rescheduled":
+        return "bg-purple-600 text-white"
+      case "no visits":
+        return "bg-gray-500 text-white"
       default:
         return "bg-yellow-600 text-white"
     }
@@ -272,6 +388,7 @@ export default function QuotationsPage() {
                       </th>
                       <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Visit Status</th>
                       <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground hidden sm:table-cell">
                         Date
                       </th>
@@ -312,6 +429,11 @@ export default function QuotationsPage() {
                           <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>
                             {(quotation.status || "pending").charAt(0).toUpperCase() +
                               (quotation.status || "pending").slice(1)}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-2">
+                          <Badge className={`text-xs ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
+                            {getVisitStatus(quotation)}
                           </Badge>
                         </td>
                         <td className="py-3 px-2 text-right text-sm text-muted-foreground hidden sm:table-cell">
@@ -364,7 +486,7 @@ export default function QuotationsPage() {
       <VisitManagementDialog
         quotation={visitQuotation}
         open={visitDialogOpen}
-        onOpenChange={setVisitDialogOpen}
+        onOpenChange={handleVisitDialogClose}
       />
     </div>
   )

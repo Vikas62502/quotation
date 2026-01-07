@@ -38,6 +38,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api, ApiError } from "@/lib/api"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
+import { calculateSystemSize } from "@/lib/pricing-tables"
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
@@ -199,7 +200,8 @@ export default function AdminPanelPage() {
                 pincode: "",
               },
             },
-            products: q.products || { systemType: "N/A" },
+            // Preserve all products data - don't default to { systemType: "N/A" } if products exists
+            products: q.products || {},
             discount: q.discount || 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
@@ -524,6 +526,71 @@ export default function AdminPanelPage() {
     }
   }
 
+  // Get system size display
+  const getSystemSize = (quotation: Quotation): string => {
+    const products = quotation.products
+    if (!products) {
+      return "N/A"
+    }
+
+    // For BOTH system type
+    if (products.systemType === "both") {
+      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity
+        ? calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+        : null
+      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity
+        ? calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+        : null
+      
+      if (dcrSize && nonDcrSize && dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+        const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+        if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+          return `${dcrKw + nonDcrKw}kW`
+        }
+      }
+      if (dcrSize && dcrSize !== "0kW") return dcrSize
+      if (nonDcrSize && nonDcrSize !== "0kW") return nonDcrSize
+      // If BOTH type but can't calculate, show system type
+      return "BOTH"
+    }
+
+    // For CUSTOMIZE system type
+    if (products.systemType === "customize" && products.customPanels && products.customPanels.length > 0) {
+      const totalKw = products.customPanels.reduce((sum, panel) => {
+        if (!panel.size || !panel.quantity) return sum
+        try {
+          const sizeW = Number.parseInt(panel.size.replace("W", ""))
+          if (Number.isNaN(sizeW)) return sum
+          return sum + (sizeW * panel.quantity)
+        } catch {
+          return sum
+        }
+      }, 0) / 1000
+      if (totalKw > 0) return `${totalKw}kW`
+      return "CUSTOMIZE"
+    }
+
+    // For DCR, NON DCR, or other system types
+    if (products.panelSize && products.panelQuantity && products.panelQuantity > 0) {
+      const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
+      if (systemSize !== "0kW") return systemSize
+    }
+
+    // Fallback: Show system type if available
+    if (products.systemType && products.systemType !== "N/A" && products.systemType.trim() !== "") {
+      // Format system type for display
+      const systemType = products.systemType.toLowerCase()
+      if (systemType === "dcr") return "DCR"
+      if (systemType === "non-dcr") return "NON DCR"
+      if (systemType === "both") return "BOTH"
+      if (systemType === "customize") return "CUSTOMIZE"
+      return products.systemType.toUpperCase()
+    }
+
+    return "N/A"
+  }
+
   // Get dealer stats
   const dealerStats = dealers.map((d) => {
     const dealerQuotations = quotations.filter((q) => q.dealerId === d.id)
@@ -723,7 +790,7 @@ export default function AdminPanelPage() {
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">System:</span>
-                              <Badge variant="outline" className="text-xs">{quotation.products.systemType}</Badge>
+                              <Badge variant="outline" className="text-xs">{getSystemSize(quotation)}</Badge>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">Date:</span>
@@ -790,9 +857,6 @@ export default function AdminPanelPage() {
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
                               Agent/Dealer
                             </th>
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground hidden lg:table-cell">
-                              System Type
-                            </th>
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">
@@ -827,11 +891,6 @@ export default function AdminPanelPage() {
                                     <p className="text-xs text-muted-foreground">ID: {quotation.dealerId}</p>
                                   </div>
                                 </div>
-                              </td>
-                              <td className="py-3 px-2 hidden lg:table-cell">
-                                <Badge variant="outline" className="text-xs uppercase">
-                                  {quotation.products.systemType}
-                                </Badge>
                               </td>
                               <td className="py-3 px-2 text-right">
                                 <div>

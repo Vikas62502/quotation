@@ -180,6 +180,22 @@ function LoginForm() {
                         </button>
                       </div>
                     </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <button
+                        type="button"
+                        onClick={() => router.push("/forgot-password")}
+                        className="text-primary font-medium hover:underline"
+                      >
+                        Forgot Password?
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => router.push("/reset-password")}
+                        className="text-muted-foreground hover:text-primary hover:underline"
+                      >
+                        Reset Password
+                      </button>
+                    </div>
                     <Button type="submit" className="w-full h-11 shadow-lg shadow-primary/25" disabled={isLoading}>
                       {isLoading ? "Logging in..." : "Login"}
                     </Button>
