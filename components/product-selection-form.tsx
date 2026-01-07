@@ -225,7 +225,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const dcrW = dcrKw * 1000
       const nonDcrKw = Number.parseFloat(config.nonDcrCapacity.replace("kW", ""))
       const nonDcrW = nonDcrKw * 1000
-      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      // Include all common panel sizes available in the market
+      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
       
       let bestDcrPanelSize = 545
       let bestDcrQuantity = Math.ceil(dcrW / bestDcrPanelSize)
@@ -315,7 +316,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
       const systemW = systemKw * 1000
-      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      // Include all common panel sizes available in the market
+      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
       let bestPanelSize = 545
       let bestQuantity = Math.ceil(systemW / bestPanelSize)
       
@@ -404,7 +406,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
       const systemW = systemKw * 1000
-      const panelSizesToTry = [545, 550, 540, 555, 445, 440]
+      // Include all common panel sizes available in the market
+      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
       let bestPanelSize = 545
       let bestQuantity = Math.ceil(systemW / bestPanelSize)
       
