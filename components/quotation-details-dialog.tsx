@@ -588,6 +588,18 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   }
 
   const getSystemSizes = () => {
+    if (products.systemType === "both") {
+      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity 
+        ? `${products.dcrPanelSize} × ${products.dcrPanelQuantity}` 
+        : ""
+      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity 
+        ? `${products.nonDcrPanelSize} × ${products.nonDcrPanelQuantity}` 
+        : ""
+      if (dcrSize && nonDcrSize) {
+        return `DCR: ${dcrSize}, Non-DCR: ${nonDcrSize}`
+      }
+      return dcrSize || nonDcrSize || "As per selection"
+    }
     if (products.systemType === "customize" && products.customPanels) {
       const sizes = products.customPanels.map((p) => `${p.size}W`).join(", ")
       return sizes || "As per selection"
@@ -1887,16 +1899,37 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <span className="font-semibold">System Type: </span>
                   <span className="uppercase">{products.systemType}</span>
                 </div>
-                {products.systemType !== "customize" ? (
+                {products.systemType === "both" ? (
+                  <>
+                    {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                      <div>
+                        <span className="font-semibold">DCR Panels (With Subsidy): </span>
+                        {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                        <span className="text-xs text-muted-foreground ml-1">
+                          (Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW)
+                        </span>
+                      </div>
+                    )}
+                    {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                      <div>
+                        <span className="font-semibold">Non-DCR Panels (Without Subsidy): </span>
+                        {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                        <span className="text-xs text-muted-foreground ml-1">
+                          (Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW)
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : products.systemType !== "customize" ? (
                   <div>
                     <span className="font-semibold">Panels: </span>
-                    {products.panelBrand} {products.panelSize}W × {products.panelQuantity}
+                    {products.panelBrand} {products.panelSize} × {products.panelQuantity}
                   </div>
                 ) : (
                   products.customPanels?.map((panel, index) => (
                     <div key={index}>
                       <span className="font-semibold">Panel {index + 1}: </span>
-                      {panel.brand} {panel.size}W × {panel.quantity}
+                      {panel.brand} {panel.size} × {panel.quantity}
                     </div>
                   ))
                 )}

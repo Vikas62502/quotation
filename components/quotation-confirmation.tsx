@@ -522,6 +522,11 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
         if (errorMessage.includes("panel size") || errorMessage.includes("Invalid product")) {
           errorMessage += "\n\nNote: The panel size must match the backend product catalog. Please ensure the panel size is valid or contact support to add it to the catalog."
         }
+        
+        // If error mentions inverter size, provide helpful context
+        if (errorMessage.includes("inverter size") || errorMessage.includes("Invalid inverter")) {
+          errorMessage += "\n\nNote: The inverter size must match the backend product catalog. Common sizes are: 3kW, 5kW, 6kW, 8kW, 10kW, 12kW, 15kW, 20kW, 25kW, 30kW, 50kW, 100kW. Please ensure the inverter size is valid or contact support to add it to the catalog."
+        }
       }
       
       alert(errorMessage)
@@ -597,6 +602,18 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   }
 
   const getSystemSizes = () => {
+    if (products.systemType === "both") {
+      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity 
+        ? `${products.dcrPanelSize} × ${products.dcrPanelQuantity}` 
+        : ""
+      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity 
+        ? `${products.nonDcrPanelSize} × ${products.nonDcrPanelQuantity}` 
+        : ""
+      if (dcrSize && nonDcrSize) {
+        return `DCR: ${dcrSize}, Non-DCR: ${nonDcrSize}`
+      }
+      return dcrSize || nonDcrSize || "As per selection"
+    }
     return `${products.panelSize}W` || "As per selection"
   }
 
@@ -1691,12 +1708,40 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                     {products.systemType}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Panels</span>
-                  <span className="text-sm font-medium">
-                    {products.panelBrand} {products.panelSize} × {products.panelQuantity}
-                  </span>
-                </div>
+                {/* For BOTH system type, show DCR and NON-DCR panels separately */}
+                {products.systemType === "both" ? (
+                  <>
+                    {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">DCR Panels (With Subsidy)</span>
+                        <span className="text-sm font-medium">
+                          {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW)
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                    {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">Non-DCR Panels (Without Subsidy)</span>
+                        <span className="text-sm font-medium">
+                          {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW)
+                          </span>
+                        </span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex justify-between">
+                    <span className="text-sm text-muted-foreground">Panels</span>
+                    <span className="text-sm font-medium">
+                      {products.panelBrand} {products.panelSize} × {products.panelQuantity}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-sm text-muted-foreground">Inverter</span>
                   <span className="text-sm font-medium">

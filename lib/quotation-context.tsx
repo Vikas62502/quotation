@@ -234,18 +234,42 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             customerId = existingCustomer.id
           } else {
             // Create new customer
-            const newCustomer = await api.customers.create({
+            // Prepare customer data - ensure email is only sent if it exists and is valid
+            const customerData: any = {
               firstName: currentCustomer.firstName,
               lastName: currentCustomer.lastName,
               mobile: currentCustomer.mobile,
-              email: currentCustomer.email,
               address: currentCustomer.address,
-            })
+            }
+            
+            // Only include email if it's provided and valid
+            if (currentCustomer.email && currentCustomer.email.trim() !== "") {
+              customerData.email = currentCustomer.email.trim()
+            }
+            
+            const newCustomer = await api.customers.create(customerData)
             customerId = newCustomer.id
           }
-        } catch (err) {
+        } catch (err: any) {
           console.error("Error creating customer:", err)
-          throw new Error("Failed to create customer")
+          
+          // Provide more detailed error message
+          let errorMessage = "Failed to create customer"
+          if (err instanceof Error) {
+            errorMessage = err.message || errorMessage
+          } else if (err?.message) {
+            errorMessage = err.message
+          } else if (typeof err === "string") {
+            errorMessage = err
+          }
+          
+          // If it's an API error with details, include them
+          if (err?.details && Array.isArray(err.details)) {
+            const details = err.details.map((d: any) => `${d.field}: ${d.message}`).join(", ")
+            errorMessage += `. Details: ${details}`
+          }
+          
+          throw new Error(errorMessage)
         }
 
         // Calculate pricing values - matching backend controller logic
