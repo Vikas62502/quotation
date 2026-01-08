@@ -510,10 +510,30 @@ export const api = {
       return apiRequest(`/quotations/${quotationId}`)
     },
 
-    updateDiscount: async (quotationId: string, discount: number) => {
+    updateDiscount: async (quotationId: string, discount: number | string) => {
       return apiRequest(`/quotations/${quotationId}/discount`, {
         method: "PATCH",
         body: { discount },
+      })
+    },
+
+    updateProducts: async (quotationId: string, products: any) => {
+      return apiRequest(`/quotations/${quotationId}/products`, {
+        method: "PATCH",
+        body: { products },
+      })
+    },
+
+    updatePricing: async (quotationId: string, pricing: {
+      subtotal?: number
+      stateSubsidy?: number
+      centralSubsidy?: number
+      discount?: number
+      finalAmount?: number
+    }) => {
+      return apiRequest(`/quotations/${quotationId}/pricing`, {
+        method: "PATCH",
+        body: pricing,
       })
     },
 
