@@ -580,14 +580,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           {showBothFields && (
             <>
               {/* BOTH Configuration Selector */}
-              <div className="border-t border-border pt-6">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0">
                       <List className="w-4 h-4 text-purple-600" />
                     </div>
-                    <div>
-                      <h3 className="text-sm font-medium">BOTH (DCR + NON DCR) Configuration</h3>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-medium break-words">BOTH (DCR + NON DCR) Configuration</h3>
                       <p className="text-xs text-muted-foreground">Select a pre-configured BOTH system</p>
                     </div>
                   </div>
@@ -595,35 +595,36 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     type="button"
                     variant="outline"
                     onClick={() => setBothConfigDialogOpen(true)}
-                    className="flex items-center gap-2"
+                    className="flex items-center justify-center gap-2 w-full sm:w-auto"
                   >
                     <List className="w-4 h-4" />
-                    Browse BOTH Configurations
+                    <span className="hidden sm:inline">Browse BOTH Configurations</span>
+                    <span className="sm:hidden">Browse Configurations</span>
                   </Button>
                 </div>
                 {/* Quick Select dropdown removed - use Browse button to select configuration */}
               </div>
 
               {/* DCR Panel Selection */}
-              <div className="border-t border-border pt-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
                     <Sun className="w-4 h-4 text-green-600" />
                   </div>
                   <h3 className="text-sm font-medium">DCR Panel Configuration</h3>
-                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">With Subsidy</span>
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full whitespace-nowrap">With Subsidy</span>
                   {(() => {
                     const panelW = formData.dcrPanelSize ? Number.parseFloat(formData.dcrPanelSize.replace("W", "")) : 0
                     const quantity = formData.dcrPanelQuantity || 0
                     const totalW = panelW * quantity
                     return totalW > 0 ? (
-                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
+                      <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                         Total: {totalW.toLocaleString()}W
                       </span>
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-green-50/50 rounded-lg border border-green-100">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100">
                   <div>
                     <Label>DCR Panel Brand *</Label>
                     <Select value={formData.dcrPanelBrand} onValueChange={(v) => updateFormData("dcrPanelBrand", v)}>
@@ -676,25 +677,25 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Non-DCR Panel Selection */}
-              <div className="border-t border-border pt-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                     <Sun className="w-4 h-4 text-blue-600" />
                   </div>
                   <h3 className="text-sm font-medium">Non-DCR Panel Configuration</h3>
-                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">Without Subsidy</span>
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full whitespace-nowrap">Without Subsidy</span>
                   {(() => {
                     const panelW = formData.nonDcrPanelSize ? Number.parseFloat(formData.nonDcrPanelSize.replace("W", "")) : 0
                     const quantity = formData.nonDcrPanelQuantity || 0
                     const totalW = panelW * quantity
                     return totalW > 0 ? (
-                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                         Total: {totalW.toLocaleString()}W
                       </span>
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-4 bg-blue-50/50 rounded-lg border border-blue-100">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100">
                   <div>
                     <Label>Non-DCR Panel Brand *</Label>
                     <Select
@@ -750,14 +751,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Inverter Selection for Both */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Zap className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Inverter Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <Label>Inverter Type *</Label>
                     <Select value={formData.inverterType} onValueChange={(v) => updateFormData("inverterType", v)}>
@@ -805,14 +806,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Structure Selection for Both */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Box className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Structure Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>Structure Type</Label>
                     <Select value={formData.structureType} onValueChange={(v) => updateFormData("structureType", v)}>
@@ -845,14 +846,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Meter & Cables for Both */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Cable className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Meter & Cables</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <Label>Meter Brand</Label>
                     <Select value={formData.meterBrand} onValueChange={(v) => updateFormData("meterBrand", v)}>
@@ -932,14 +933,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* ACDB/DCDB for Both */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Gauge className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">ACDB & DCDB</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>ACDB</Label>
                     <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
@@ -983,14 +984,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
               {/* Battery Configuration for BOTH - shown when Hybrid Inverter is selected */}
               {showBatteryFields && (
-                <div className="border-t border-border pt-6">
+                <div className="border-t border-border pt-4 sm:pt-6">
                   <div className="flex items-center gap-2 mb-4">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                       <Zap className="w-4 h-4 text-primary" />
                     </div>
                     <h3 className="text-sm font-medium">Battery Configuration</h3>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                     <div>
                       <Label>Hybrid Inverter Model</Label>
                       <Input
@@ -1022,9 +1023,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* Subsidy Information for Both */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <h3 className="text-sm font-medium mb-4">Subsidy Information (for DCR panels)</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>Central Subsidy (₹)</Label>
                     <Input
@@ -1055,14 +1056,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             <>
               {/* DCR Configuration Selector */}
               {showDcrFields && (
-                <div className="border-t border-border pt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
+                <div className="border-t border-border pt-4 sm:pt-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0">
                         <List className="w-4 h-4 text-green-600" />
                       </div>
-                      <div>
-                        <h3 className="text-sm font-medium">DCR Configuration</h3>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-medium break-words">DCR Configuration</h3>
                         <p className="text-xs text-muted-foreground">Select a pre-configured DCR system</p>
                       </div>
                     </div>
@@ -1070,10 +1071,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       type="button"
                       variant="outline"
                       onClick={() => setDcrConfigDialogOpen(true)}
-                      className="flex items-center gap-2"
+                      className="flex items-center justify-center gap-2 w-full sm:w-auto"
                     >
                       <List className="w-4 h-4" />
-                      Browse DCR Configurations
+                      <span className="hidden sm:inline">Browse DCR Configurations</span>
+                      <span className="sm:hidden">Browse Configurations</span>
                     </Button>
                   </div>
                   {/* Quick Select dropdown removed - use Browse button to select configuration */}
@@ -1082,14 +1084,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
               {/* NON DCR Configuration Selector */}
               {formData.systemType === "non-dcr" && (
-                <div className="border-t border-border pt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                <div className="border-t border-border pt-4 sm:pt-6">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                         <List className="w-4 h-4 text-blue-600" />
                       </div>
-                      <div>
-                        <h3 className="text-sm font-medium">NON DCR Configuration</h3>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="text-sm font-medium break-words">NON DCR Configuration</h3>
                         <p className="text-xs text-muted-foreground">Select a pre-configured NON DCR system</p>
                       </div>
                     </div>
@@ -1097,10 +1099,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       type="button"
                       variant="outline"
                       onClick={() => setNonDcrConfigDialogOpen(true)}
-                      className="flex items-center gap-2"
+                      className="flex items-center justify-center gap-2 w-full sm:w-auto"
                     >
                       <List className="w-4 h-4" />
-                      Browse NON DCR Configurations
+                      <span className="hidden sm:inline">Browse NON DCR Configurations</span>
+                      <span className="sm:hidden">Browse Configurations</span>
                     </Button>
                   </div>
                   {/* Quick Select dropdown removed - use Browse button to select configuration */}
@@ -1108,9 +1111,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* Panel Selection */}
-              <div className="border-t border-border pt-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Sun className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Panel Configuration</h3>
@@ -1119,13 +1122,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     const quantity = formData.panelQuantity || 0
                     const totalW = panelW * quantity
                     return totalW > 0 ? (
-                      <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">
+                      <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium whitespace-nowrap">
                         Total: {totalW.toLocaleString()}W
                       </span>
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <Label>Panel Brand *</Label>
                     <Select value={formData.panelBrand} onValueChange={(v) => updateFormData("panelBrand", v)}>
@@ -1178,14 +1181,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Inverter Selection */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Zap className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Inverter Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <Label>Inverter Type *</Label>
                     <Select value={formData.inverterType} onValueChange={(v) => updateFormData("inverterType", v)}>
@@ -1233,14 +1236,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Structure Selection */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Box className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Structure Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>Structure Type</Label>
                     <Select value={formData.structureType} onValueChange={(v) => updateFormData("structureType", v)}>
@@ -1273,14 +1276,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* Meter & Cables */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Cable className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">Meter & Cables</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
                   <div>
                     <Label>Meter Brand</Label>
                     <Select value={formData.meterBrand} onValueChange={(v) => updateFormData("meterBrand", v)}>
@@ -1360,14 +1363,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               </div>
 
               {/* ACDB/DCDB */}
-              <div className="border-t border-border pt-6">
+              <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                     <Gauge className="w-4 h-4 text-primary" />
                   </div>
                   <h3 className="text-sm font-medium">ACDB & DCDB</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>ACDB</Label>
                     <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
@@ -1411,14 +1414,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
               {/* Battery Configuration for DCR/NON DCR - shown when Hybrid Inverter is selected */}
               {showBatteryFields && (
-                <div className="border-t border-border pt-6">
+                <div className="border-t border-border pt-4 sm:pt-6">
                   <div className="flex items-center gap-2 mb-4">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
                       <Zap className="w-4 h-4 text-primary" />
                     </div>
                     <h3 className="text-sm font-medium">Battery Configuration</h3>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
                     <div>
                       <Label>Hybrid Inverter Model</Label>
                       <Input
@@ -1451,9 +1454,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
               {/* DCR Specific Fields */}
               {showDcrFields && (
-                <div className="border-t border-border pt-6">
+                <div className="border-t border-border pt-4 sm:pt-6">
                   <h3 className="text-sm font-medium mb-4">Subsidy Information</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                     <div>
                       <Label>Central Subsidy (₹)</Label>
                       <Input
