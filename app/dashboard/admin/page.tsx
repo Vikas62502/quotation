@@ -28,9 +28,11 @@ import {
   Trash2,
   UserCheck,
   UserX,
+  Wallet,
+  History,
 } from "lucide-react"
 import type { Quotation, QuotationStatus } from "@/lib/quotation-context"
-import type { Dealer, Visitor } from "@/lib/auth-context"
+import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -39,6 +41,7 @@ import { api, ApiError } from "@/lib/api"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { calculateSystemSize } from "@/lib/pricing-tables"
+import { useToast } from "@/hooks/use-toast"
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
@@ -46,9 +49,11 @@ const ADMIN_USERNAME = "admin"
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer } = useAuth()
   const router = useRouter()
+  const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [dealers, setDealers] = useState<Dealer[]>([])
   const [visitors, setVisitors] = useState<Visitor[]>([])
+  const [accountManagers, setAccountManagers] = useState<AccountManager[]>([])
   const [customers, setCustomers] = useState<any[]>([])
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
@@ -63,6 +68,21 @@ export default function AdminPanelPage() {
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
   const [editingVisitor, setEditingVisitor] = useState<Visitor | null>(null)
+  const [accountManagerSearchTerm, setAccountManagerSearchTerm] = useState("")
+  const [accountManagerDialogOpen, setAccountManagerDialogOpen] = useState(false)
+  const [editingAccountManager, setEditingAccountManager] = useState<AccountManager | null>(null)
+  const [accountManagerHistoryDialogOpen, setAccountManagerHistoryDialogOpen] = useState(false)
+  const [selectedAccountManagerForHistory, setSelectedAccountManagerForHistory] = useState<AccountManager | null>(null)
+  const [accountManagerHistory, setAccountManagerHistory] = useState<any[]>([])
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [newAccountManager, setNewAccountManager] = useState({
+    username: "",
+    password: "",
+    firstName: "",
+    lastName: "",
+    email: "",
+    mobile: "",
+  })
   const [dealerSearchTerm, setDealerSearchTerm] = useState("")
   const [editingCustomer, setEditingCustomer] = useState<any | null>(null)
   const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
@@ -261,6 +281,29 @@ export default function AdminPanelPage() {
           visitCount: v.visitCount || 0, // Include visit count from API
         })))
 
+        // Load account managers
+        try {
+          const accountManagersResponse = await api.admin.accountManagers.getAll()
+          const accountManagersList = accountManagersResponse.accountManagers || accountManagersResponse || []
+          setAccountManagers(accountManagersList.map((am: any) => ({
+            id: am.id,
+            username: am.username || "",
+            firstName: am.firstName || "",
+            lastName: am.lastName || "",
+            email: am.email || "",
+            mobile: am.mobile || "",
+            isActive: am.isActive ?? true,
+            emailVerified: am.emailVerified ?? false,
+            createdAt: am.createdAt,
+            loginCount: am.loginCount || 0,
+            lastLogin: am.lastLogin,
+          })))
+        } catch (error) {
+          console.error("Error loading account managers:", error)
+          // If endpoint doesn't exist yet, use empty array
+          setAccountManagers([])
+        }
+
         // Load customers from quotations data (after dealers are loaded)
         const customerMap = new Map<string, any>()
         quotationsList.forEach((q: any) => {
@@ -331,6 +374,19 @@ export default function AdminPanelPage() {
           return dealerData
         })
         setDealers(dealersWithoutPassword)
+
+        // Load account managers from localStorage
+        try {
+          const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+          const accountManagersWithoutPassword = allAccountManagers.map((am: AccountManager & { password?: string }) => {
+            const { password: _, ...accountManagerData } = am
+            return accountManagerData
+          })
+          setAccountManagers(accountManagersWithoutPassword)
+        } catch (error) {
+          console.error("Error loading account managers from localStorage:", error)
+          setAccountManagers([])
+        }
 
         // Load all visitors
         const allVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
@@ -468,6 +524,9 @@ export default function AdminPanelPage() {
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
       }
+      
+      // Note: Account Management has separate login, so we don't redirect automatically
+      // Approved quotations will be visible when account management users log in
     } catch (error) {
       console.error("Error updating quotation status:", error)
       alert(error instanceof ApiError ? error.message : "Failed to update quotation status")
@@ -613,12 +672,13 @@ export default function AdminPanelPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-6">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-7">
             <TabsTrigger value="overview" className="text-xs sm:text-sm">Overview</TabsTrigger>
             <TabsTrigger value="quotations" className="text-xs sm:text-sm">Quotations</TabsTrigger>
             <TabsTrigger value="dealers" className="text-xs sm:text-sm">Dealers</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Customers</TabsTrigger>
             <TabsTrigger value="visitors" className="text-xs sm:text-sm">Visitors</TabsTrigger>
+            <TabsTrigger value="account-management" className="text-xs sm:text-sm">Account Mgmt</TabsTrigger>
             <TabsTrigger value="products" className="text-xs sm:text-sm">Products</TabsTrigger>
           </TabsList>
 
@@ -1526,6 +1586,295 @@ export default function AdminPanelPage() {
                                     }}
                                   >
                                     {visitor.isActive === false ? (
+                                      <>
+                                        <UserCheck className="w-3 h-3 mr-1" />
+                                        Activate
+                                      </>
+                                    ) : (
+                                      <>
+                                        <UserX className="w-3 h-3 mr-1" />
+                                        Deactivate
+                                      </>
+                                    )}
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Account Management Tab */}
+          <TabsContent value="account-management" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+                  <CardTitle>Account Management Users ({accountManagers.length})</CardTitle>
+                  <Button
+                    onClick={() => {
+                      setNewAccountManager({
+                        username: "",
+                        password: "",
+                        firstName: "",
+                        lastName: "",
+                        email: "",
+                        mobile: "",
+                      })
+                      setEditingAccountManager(null)
+                      setAccountManagerDialogOpen(true)
+                    }}
+                    className="w-full sm:w-auto"
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Create Account Manager
+                  </Button>
+                </div>
+                <div className="mt-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search by name, email, mobile, username..."
+                      value={accountManagerSearchTerm}
+                      onChange={(e) => setAccountManagerSearchTerm(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const filteredAccountManagers = accountManagers.filter((am) => {
+                    if (!accountManagerSearchTerm.trim()) return true
+                    const search = accountManagerSearchTerm.toLowerCase()
+                    return (
+                      am.firstName.toLowerCase().includes(search) ||
+                      am.lastName.toLowerCase().includes(search) ||
+                      am.email.toLowerCase().includes(search) ||
+                      am.mobile.includes(search) ||
+                      am.username.toLowerCase().includes(search)
+                    )
+                  })
+
+                  if (filteredAccountManagers.length === 0) {
+                    return (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+                          <Wallet className="w-8 h-8 opacity-50" />
+                        </div>
+                        <p className="font-medium mb-1">
+                          {accountManagerSearchTerm ? "No matching account managers found" : "No account management users found"}
+                        </p>
+                        {!accountManagerSearchTerm && (
+                          <p className="text-sm mt-1">Click "Create Account Manager" to add a new account management user</p>
+                        )}
+                      </div>
+                    )
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      {filteredAccountManagers.map((am) => {
+                        const loginCount = (am as any).loginCount || 0
+                        const lastLogin = (am as any).lastLogin
+                        return (
+                          <div
+                            key={am.id}
+                            className={`p-4 border rounded-lg transition-colors hover:bg-muted/50 ${am.isActive === false ? "opacity-60 bg-muted/30" : "bg-card"}`}
+                          >
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                                  <h3 className="font-semibold text-lg text-foreground">
+                                    {am.firstName} {am.lastName}
+                                  </h3>
+                                  {am.isActive === false ? (
+                                    <Badge variant="secondary" className="text-xs">Inactive</Badge>
+                                  ) : (
+                                    <Badge className="bg-green-500 text-white text-xs">Active</Badge>
+                                  )}
+                                  {am.emailVerified && (
+                                    <Badge variant="outline" className="text-xs border-blue-500 text-blue-700 dark:text-blue-400">Verified</Badge>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-muted-foreground">Email:</span>
+                                    <span className="text-foreground truncate">{am.email}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-muted-foreground">Mobile:</span>
+                                    <span className="text-foreground">{am.mobile}</span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-medium text-muted-foreground">Username:</span>
+                                    <span className="text-foreground font-mono text-xs">{am.username}</span>
+                                  </div>
+                                  {am.createdAt && (
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-muted-foreground">Created:</span>
+                                      <span className="text-foreground">{new Date(am.createdAt).toLocaleDateString()}</span>
+                                    </div>
+                                  )}
+                                  {lastLogin && (
+                                    <div className="md:col-span-2 flex items-center gap-2">
+                                      <span className="font-medium text-muted-foreground">Last Login:</span>
+                                      <span className="text-foreground">{new Date(lastLogin).toLocaleString()}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-3 shrink-0">
+                                <div className="text-center p-2 bg-primary/10 rounded-lg min-w-[60px]">
+                                  <div className="text-xl font-bold text-primary">{loginCount}</div>
+                                  <div className="text-xs text-muted-foreground mt-1">logins</div>
+                                </div>
+                                <div className="flex gap-2 flex-wrap justify-end">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={async () => {
+                                      setIsLoadingHistory(true)
+                                      setSelectedAccountManagerForHistory(am)
+                                      setAccountManagerHistoryDialogOpen(true)
+                                      
+                                      try {
+                                        if (useApi) {
+                                          const historyResponse = await api.admin.accountManagers.getHistory(am.id)
+                                          setAccountManagerHistory(historyResponse.history || historyResponse || [])
+                                        } else {
+                                          // Fallback to localStorage - create mock history
+                                          setAccountManagerHistory([
+                                            {
+                                              id: "hist-1",
+                                              action: "login",
+                                              timestamp: new Date().toISOString(),
+                                              details: "User logged in successfully",
+                                              ipAddress: "192.168.1.100",
+                                            },
+                                            {
+                                              id: "hist-2",
+                                              action: "view_quotations",
+                                              timestamp: new Date(Date.now() - 86400000).toISOString(),
+                                              details: "Viewed approved quotations list",
+                                              ipAddress: "192.168.1.100",
+                                            },
+                                          ])
+                                        }
+                                      } catch (error) {
+                                        console.error("Error loading account manager history:", error)
+                                        toast({
+                                          title: "Error",
+                                          description: error instanceof ApiError ? error.message : "Failed to load history. Please try again.",
+                                          variant: "destructive",
+                                        })
+                                        setAccountManagerHistory([])
+                                      } finally {
+                                        setIsLoadingHistory(false)
+                                      }
+                                    }}
+                                  >
+                                    <History className="w-3 h-3 mr-1" />
+                                    History
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={async () => {
+                                      if (useApi) {
+                                        try {
+                                          const fullAccountManager = await api.admin.accountManagers.getById(am.id)
+                                          setEditingAccountManager(fullAccountManager || am)
+                                          setNewAccountManager({
+                                            username: fullAccountManager?.username || am.username,
+                                            password: "",
+                                            firstName: fullAccountManager?.firstName || am.firstName,
+                                            lastName: fullAccountManager?.lastName || am.lastName,
+                                            email: fullAccountManager?.email || am.email,
+                                            mobile: fullAccountManager?.mobile || am.mobile,
+                                          })
+                                          setAccountManagerDialogOpen(true)
+                                        } catch (error) {
+                                          console.error("Error loading account manager details:", error)
+                                          setEditingAccountManager(am)
+                                          setNewAccountManager({
+                                            username: am.username,
+                                            password: "",
+                                            firstName: am.firstName,
+                                            lastName: am.lastName,
+                                            email: am.email,
+                                            mobile: am.mobile,
+                                          })
+                                          setAccountManagerDialogOpen(true)
+                                        }
+                                      } else {
+                                        setEditingAccountManager(am)
+                                        setNewAccountManager({
+                                          username: am.username,
+                                          password: "",
+                                          firstName: am.firstName,
+                                          lastName: am.lastName,
+                                          email: am.email,
+                                          mobile: am.mobile,
+                                        })
+                                        setAccountManagerDialogOpen(true)
+                                      }
+                                    }}
+                                  >
+                                    <Edit className="w-3 h-3 mr-1" />
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={async () => {
+                                      if (!confirm(`Are you sure you want to ${am.isActive === false ? "activate" : "deactivate"} this account manager?`)) return
+                                      
+                                      try {
+                                        if (useApi) {
+                                          if (am.isActive === false) {
+                                            await api.admin.accountManagers.activate(am.id)
+                                          } else {
+                                            await api.admin.accountManagers.deactivate(am.id)
+                                          }
+                                          await loadData()
+                                          toast({
+                                            title: "Success",
+                                            description: `Account manager ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
+                                          })
+                                        } else {
+                                          // Fallback to localStorage
+                                          const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+                                          const updated = allAccountManagers.map((accountManager: AccountManager & { password?: string }) =>
+                                            accountManager.id === am.id ? { ...accountManager, isActive: am.isActive === false ? true : false } : accountManager
+                                          )
+                                          localStorage.setItem("accountManagers", JSON.stringify(updated))
+                                          const accountManagersWithoutPassword = updated.map((am: AccountManager & { password?: string }) => {
+                                            const { password: _, ...accountManagerData } = am
+                                            return accountManagerData
+                                          })
+                                          setAccountManagers(accountManagersWithoutPassword)
+                                          toast({
+                                            title: "Success",
+                                            description: `Account manager ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
+                                          })
+                                        }
+                                      } catch (error) {
+                                        console.error("Error updating account manager status:", error)
+                                        toast({
+                                          title: "Error",
+                                          description: error instanceof ApiError ? error.message : "Failed to update account manager status",
+                                          variant: "destructive",
+                                        })
+                                      }
+                                    }}
+                                  >
+                                    {am.isActive === false ? (
                                       <>
                                         <UserCheck className="w-3 h-3 mr-1" />
                                         Activate
@@ -2786,6 +3135,364 @@ export default function AdminPanelPage() {
                   {editingVisitor ? "Update Visitor" : "Create Visitor"}
                 </Button>
               </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Account Manager Create/Edit Dialog */}
+        <Dialog open={accountManagerDialogOpen} onOpenChange={setAccountManagerDialogOpen}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{editingAccountManager ? "Edit Account Manager" : "Create New Account Manager"}</DialogTitle>
+              <DialogDescription>
+                {editingAccountManager ? "Update account manager information" : "Add a new account manager to the system"}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="am-firstName">First Name *</Label>
+                  <Input
+                    id="am-firstName"
+                    value={newAccountManager.firstName}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, firstName: e.target.value })}
+                    placeholder="Enter first name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="am-lastName">Last Name *</Label>
+                  <Input
+                    id="am-lastName"
+                    value={newAccountManager.lastName}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, lastName: e.target.value })}
+                    placeholder="Enter last name"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="am-username">Username *</Label>
+                <Input
+                  id="am-username"
+                  value={newAccountManager.username}
+                  onChange={(e) => setNewAccountManager({ ...newAccountManager, username: e.target.value })}
+                  placeholder="Enter username"
+                  disabled={!!editingAccountManager}
+                />
+                {editingAccountManager && (
+                  <p className="text-xs text-muted-foreground">Username cannot be changed</p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="am-password">
+                  {editingAccountManager ? "New Password (leave blank to keep current)" : "Password *"}
+                </Label>
+                <Input
+                  id="am-password"
+                  type="password"
+                  value={newAccountManager.password}
+                  onChange={(e) => setNewAccountManager({ ...newAccountManager, password: e.target.value })}
+                  placeholder={editingAccountManager ? "Enter new password" : "Enter password"}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="am-email">Email *</Label>
+                  <Input
+                    id="am-email"
+                    type="email"
+                    value={newAccountManager.email}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, email: e.target.value })}
+                    placeholder="Enter email"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="am-mobile">Mobile *</Label>
+                  <Input
+                    id="am-mobile"
+                    type="tel"
+                    value={newAccountManager.mobile}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, mobile: e.target.value })}
+                    placeholder="Enter 10-digit mobile number"
+                    maxLength={10}
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-4">
+                <Button variant="outline" onClick={() => setAccountManagerDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  onClick={async () => {
+                    if (!newAccountManager.firstName || !newAccountManager.lastName || !newAccountManager.username || !newAccountManager.email || !newAccountManager.mobile) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Please fill in all required fields",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (!editingAccountManager && !newAccountManager.password) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Password is required for new account managers",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    try {
+                      if (useApi) {
+                        if (editingAccountManager) {
+                          // Update existing account manager
+                          await api.admin.accountManagers.update(editingAccountManager.id, {
+                            firstName: newAccountManager.firstName.trim(),
+                            lastName: newAccountManager.lastName.trim(),
+                            email: newAccountManager.email.trim(),
+                            mobile: newAccountManager.mobile,
+                          })
+                          if (newAccountManager.password) {
+                            await api.admin.accountManagers.updatePassword(editingAccountManager.id, newAccountManager.password)
+                          }
+                        } else {
+                          // Create new account manager
+                          await api.admin.accountManagers.create({
+                            username: newAccountManager.username,
+                            password: newAccountManager.password,
+                            firstName: newAccountManager.firstName,
+                            lastName: newAccountManager.lastName,
+                            email: newAccountManager.email,
+                            mobile: newAccountManager.mobile,
+                          })
+                        }
+                        await loadData()
+                      } else {
+                        // Fallback to localStorage
+                        const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+
+                        if (editingAccountManager) {
+                          // Update existing account manager
+                          const updated = allAccountManagers.map((am: AccountManager & { password?: string }) => {
+                            if (am.id === editingAccountManager.id) {
+                              return {
+                                ...am,
+                                firstName: newAccountManager.firstName,
+                                lastName: newAccountManager.lastName,
+                                email: newAccountManager.email,
+                                mobile: newAccountManager.mobile,
+                                password: newAccountManager.password || am.password,
+                              }
+                            }
+                            return am
+                          })
+                          localStorage.setItem("accountManagers", JSON.stringify(updated))
+                        } else {
+                          // Create new account manager
+                          const newAccountManagerData: AccountManager & { password: string } = {
+                            id: `account-mgr-${Date.now()}`,
+                            username: newAccountManager.username,
+                            password: newAccountManager.password,
+                            firstName: newAccountManager.firstName,
+                            lastName: newAccountManager.lastName,
+                            email: newAccountManager.email,
+                            mobile: newAccountManager.mobile,
+                            isActive: true,
+                            emailVerified: false,
+                            createdAt: new Date().toISOString(),
+                          }
+
+                          // Check if username or email already exists (for localStorage fallback only)
+                          const usernameExists = allAccountManagers.some((am: AccountManager) => am.username === newAccountManager.username)
+                          const emailExists = allAccountManagers.some((am: AccountManager) => am.email === newAccountManager.email)
+
+                          if (usernameExists) {
+                            toast({
+                              title: "Validation Error",
+                              description: "Username already exists. Please choose a different username.",
+                              variant: "destructive",
+                            })
+                            return
+                          }
+
+                          if (emailExists) {
+                            toast({
+                              title: "Validation Error",
+                              description: "Email already exists. Please use a different email address.",
+                              variant: "destructive",
+                            })
+                            return
+                          }
+
+                          allAccountManagers.push(newAccountManagerData)
+                          localStorage.setItem("accountManagers", JSON.stringify(allAccountManagers))
+                        }
+
+                        // Reload account managers
+                        const updatedAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+                        const accountManagersWithoutPassword = updatedAccountManagers.map((am: AccountManager & { password?: string }) => {
+                          const { password: _, ...accountManagerData } = am
+                          return accountManagerData
+                        })
+                        setAccountManagers(accountManagersWithoutPassword)
+                      }
+
+                      setAccountManagerDialogOpen(false)
+                      setEditingAccountManager(null)
+                      setNewAccountManager({
+                        username: "",
+                        password: "",
+                        firstName: "",
+                        lastName: "",
+                        email: "",
+                        mobile: "",
+                      })
+                      
+                      toast({
+                        title: "Success",
+                        description: editingAccountManager ? "Account manager updated successfully!" : "Account manager created successfully!",
+                      })
+                    } catch (error) {
+                      console.error("Error saving account manager:", error)
+                      toast({
+                        title: "Error",
+                        description: error instanceof ApiError ? error.message : "Failed to save account manager",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {editingAccountManager ? "Update Account Manager" : "Create Account Manager"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Account Manager History Dialog */}
+        <Dialog open={accountManagerHistoryDialogOpen} onOpenChange={setAccountManagerHistoryDialogOpen}>
+          <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Wallet className="w-5 h-5 text-primary" />
+                </div>
+                <div>
+                  <DialogTitle className="text-xl">
+                    {selectedAccountManagerForHistory?.firstName} {selectedAccountManagerForHistory?.lastName}
+                  </DialogTitle>
+                  <DialogDescription className="mt-1">
+                    Activity and login history for this account manager
+                  </DialogDescription>
+                </div>
+              </div>
+            </DialogHeader>
+
+            <div className="space-y-4 mt-4">
+              {isLoadingHistory ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4 animate-pulse">
+                    <History className="w-8 h-8 opacity-50" />
+                  </div>
+                  <p className="font-medium">Loading history...</p>
+                </div>
+              ) : accountManagerHistory.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+                    <History className="w-8 h-8 opacity-50" />
+                  </div>
+                  <p className="font-medium">No history available</p>
+                  <p className="text-sm mt-1">Activity history will appear here once the account manager logs in</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {accountManagerHistory.map((historyItem: any, index: number) => {
+                    const getActionColor = (action: string) => {
+                      switch (action) {
+                        case "login":
+                          return "bg-green-500/10 text-green-700 border-green-500/20 dark:text-green-400 dark:bg-green-500/20"
+                        case "logout":
+                          return "bg-orange-500/10 text-orange-700 border-orange-500/20 dark:text-orange-400 dark:bg-orange-500/20"
+                        case "view_quotations":
+                        case "view_quotation_details":
+                          return "bg-blue-500/10 text-blue-700 border-blue-500/20 dark:text-blue-400 dark:bg-blue-500/20"
+                        case "password_change":
+                          return "bg-purple-500/10 text-purple-700 border-purple-500/20 dark:text-purple-400 dark:bg-purple-500/20"
+                        case "profile_update":
+                          return "bg-amber-500/10 text-amber-700 border-amber-500/20 dark:text-amber-400 dark:bg-amber-500/20"
+                        default:
+                          return "bg-gray-500/10 text-gray-700 border-gray-500/20 dark:text-gray-400 dark:bg-gray-500/20"
+                      }
+                    }
+                    
+                    const actionColor = getActionColor(historyItem.action || "")
+                    
+                    return (
+                      <div key={historyItem.id || historyItem.timestamp || index} className="p-4 border rounded-lg bg-card hover:bg-muted/50 transition-colors shadow-sm">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <Badge variant="outline" className={`${actionColor} font-medium capitalize text-xs`}>
+                                {historyItem.action?.replace(/_/g, " ") || "activity"}
+                              </Badge>
+                              <span className="text-xs text-muted-foreground font-medium">
+                                {historyItem.timestamp ? new Date(historyItem.timestamp).toLocaleString("en-IN", {
+                                  year: "numeric",
+                                  month: "short",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                }) : "N/A"}
+                              </span>
+                            </div>
+                            <p className="text-sm text-foreground mb-2 font-medium">
+                              {historyItem.details || historyItem.description || "No details available"}
+                            </p>
+                            {(historyItem.ipAddress || historyItem.userAgent) && (
+                              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground mt-3 pt-3 border-t border-border">
+                                {historyItem.ipAddress && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-semibold text-muted-foreground">IP Address:</span>
+                                    <span className="font-mono bg-muted px-2 py-0.5 rounded">{historyItem.ipAddress}</span>
+                                  </div>
+                                )}
+                                {historyItem.userAgent && (
+                                  <div className="flex items-center gap-2 max-w-md">
+                                    <span className="font-semibold text-muted-foreground">Device:</span>
+                                    <span className="truncate bg-muted px-2 py-0.5 rounded">{historyItem.userAgent}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-between items-center pt-4 border-t border-border mt-4">
+              <div className="text-sm text-muted-foreground flex items-center gap-2">
+                <History className="w-4 h-4" />
+                <span>Total activities: <span className="font-semibold text-foreground">{accountManagerHistory.length}</span></span>
+              </div>
+              <Button variant="outline" onClick={() => {
+                setAccountManagerHistoryDialogOpen(false)
+                setAccountManagerHistory([])
+                setSelectedAccountManagerForHistory(null)
+                setIsLoadingHistory(false)
+              }}>
+                Close
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

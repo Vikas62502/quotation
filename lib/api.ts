@@ -771,6 +771,85 @@ export const api = {
         })
       },
     },
+
+    accountManagers: {
+      create: async (accountManagerData: any) => {
+        return apiRequest("/admin/account-managers", {
+          method: "POST",
+          body: accountManagerData,
+        })
+      },
+
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        search?: string
+        isActive?: boolean
+        sortBy?: string
+        sortOrder?: "asc" | "desc"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        return apiRequest(`/admin/account-managers${query ? `?${query}` : ""}`)
+      },
+
+      getById: async (accountManagerId: string) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}`)
+      },
+
+      getHistory: async (accountManagerId: string, params?: {
+        page?: number
+        limit?: number
+        startDate?: string
+        endDate?: string
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        return apiRequest(`/admin/account-managers/${accountManagerId}/history${query ? `?${query}` : ""}`)
+      },
+
+      update: async (accountManagerId: string, accountManagerData: any) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}`, {
+          method: "PUT",
+          body: accountManagerData,
+        })
+      },
+
+      updatePassword: async (accountManagerId: string, newPassword: string) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}/password`, {
+          method: "PUT",
+          body: { newPassword },
+        })
+      },
+
+      activate: async (accountManagerId: string) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}/activate`, {
+          method: "PATCH",
+        })
+      },
+
+      deactivate: async (accountManagerId: string) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}/deactivate`, {
+          method: "PATCH",
+        })
+      },
+
+      delete: async (accountManagerId: string) => {
+        return apiRequest(`/admin/account-managers/${accountManagerId}`, {
+          method: "DELETE",
+        })
+      },
+    },
   },
 
   // System Config

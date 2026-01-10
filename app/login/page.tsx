@@ -26,7 +26,12 @@ function LoginForm() {
   useEffect(() => {
     // Redirect if already logged in
     if (isAuthenticated) {
-      if (role === "visitor") {
+      const redirectTo = searchParams.get("redirect")
+      
+      // If redirect parameter is set to account-management, go there
+      if (redirectTo === "account-management") {
+        router.push("/dashboard/account-management")
+      } else if (role === "visitor") {
         router.push("/visitor/dashboard")
       } else if (role === "admin") {
         router.push("/dashboard/admin")
@@ -34,7 +39,7 @@ function LoginForm() {
         router.push("/dashboard")
       }
     }
-  }, [isAuthenticated, role, router])
+  }, [isAuthenticated, role, router, searchParams])
 
   const [credentials, setCredentials] = useState({
     username: "",
@@ -61,11 +66,18 @@ function LoginForm() {
         // Get role from localStorage (set by login function)
         const userRole = localStorage.getItem("userRole")
         
+        // Check if redirect to account management is requested
+        const redirectTo = searchParams.get("redirect")
+        
         // Small delay to ensure state is updated
         setTimeout(() => {
-          if (userRole === "visitor") {
+          // If redirect parameter is set to account-management, go there
+          if (redirectTo === "account-management") {
+            router.push("/dashboard/account-management")
+          } else if (userRole === "visitor") {
             router.push("/visitor/dashboard")
           } else if (userRole === "admin") {
+            // Admin can go to admin panel or account management based on preference
             router.push("/dashboard/admin")
           } else {
             router.push("/dashboard")

@@ -1,4 +1,4 @@
-import type { Dealer, Visitor } from "./auth-context"
+import type { Dealer, Visitor, AccountManager } from "./auth-context"
 import type { Quotation, Customer, ProductSelection } from "./quotation-context"
 
 // Dummy Dealers (for login testing)
@@ -314,7 +314,8 @@ export function generateDummyQuotations(): Quotation[] {
         finalAmount,
         createdAt: quotationDate.toISOString(),
         dealerId: dealer.id,
-        status: (["pending", "approved", "rejected", "completed"][Math.floor(Math.random() * 4)] as "pending" | "approved" | "rejected" | "completed"),
+        // Make at least some quotations approved for account management testing
+        status: (i < 2 ? "approved" : (["pending", "approved", "rejected", "completed"][Math.floor(Math.random() * 4)])) as "pending" | "approved" | "rejected" | "completed",
       })
     }
   })
@@ -324,6 +325,32 @@ export function generateDummyQuotations(): Quotation[] {
 
 // Function to seed localStorage with dummy data
 export function seedDummyData() {
+  // Always ensure account managers exist (they might be deleted or missing)
+  const existingAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+  if (existingAccountManagers.length === 0) {
+    localStorage.setItem("accountManagers", JSON.stringify(dummyAccountManagers))
+  } else {
+    // Merge with dummy account managers to ensure all dummy account managers exist
+    const mergedAccountManagers = [...existingAccountManagers]
+    dummyAccountManagers.forEach((dummyAccountManager) => {
+      const exists = mergedAccountManagers.find((am: AccountManager & { password?: string }) => 
+        am.id === dummyAccountManager.id || am.username === dummyAccountManager.username
+      )
+      if (!exists) {
+        mergedAccountManagers.push(dummyAccountManager)
+      } else {
+        // Update existing account manager to ensure password is correct
+        const index = mergedAccountManagers.findIndex((am: AccountManager & { password?: string }) => 
+          am.id === dummyAccountManager.id || am.username === dummyAccountManager.username
+        )
+        if (index !== -1) {
+          mergedAccountManagers[index] = { ...mergedAccountManagers[index], password: dummyAccountManager.password }
+        }
+      }
+    })
+    localStorage.setItem("accountManagers", JSON.stringify(mergedAccountManagers))
+  }
+
   // Always ensure visitors exist (they might be deleted or missing)
   const existingVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
   if (existingVisitors.length === 0) {
@@ -361,13 +388,50 @@ export function seedDummyData() {
     if (existingQuotations.length === 0) {
       const dummyQuotations = generateDummyQuotations()
       localStorage.setItem("quotations", JSON.stringify(dummyQuotations))
+    } else {
+      // Ensure at least some quotations have "approved" status for account management testing
+      const updatedQuotations = existingQuotations.map((q: Quotation, index: number) => {
+        // Make first 2-3 quotations approved for testing
+        if (index < 3 && q.status !== "approved") {
+          return { ...q, status: "approved" as const }
+        }
+        return q
+      })
+      localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
     }
 
     localStorage.setItem("dummyDataSeeded", "true")
   }
 }
 
-// Dummy Visitors
+// Dummy Account Management Users (for login testing)
+export const dummyAccountManagers: (AccountManager & { password: string })[] = [
+  {
+    id: "account-mgr-001",
+    username: "accountmgr",
+    password: "account123",
+    firstName: "Arjun",
+    lastName: "Singh",
+    mobile: "9876543215",
+    email: "arjun.singh@accountmanagement.com",
+    isActive: true,
+    emailVerified: true,
+    createdAt: new Date().toISOString(),
+  },
+  {
+    id: "account-mgr-002",
+    username: "accmgr",
+    password: "accmgr123",
+    firstName: "Sneha",
+    lastName: "Reddy",
+    mobile: "9876543216",
+    email: "sneha.reddy@accountmanagement.com",
+    isActive: true,
+    emailVerified: true,
+    createdAt: new Date().toISOString(),
+  },
+]
+
 export const dummyVisitors: Visitor[] = [
   {
     id: "visitor-001",
@@ -406,4 +470,6 @@ export const loginCredentials = [
   { username: "visitor1", password: "visitor123", name: "Rahul Singh (Visitor)" },
   { username: "visitor2", password: "visitor123", name: "Sneha Verma (Visitor)" },
   { username: "visitor3", password: "visitor123", name: "Vikram Yadav (Visitor)" },
+  { username: "accountmgr", password: "account123", name: "Arjun Singh (Account Management)" },
+  { username: "accmgr", password: "accmgr123", name: "Sneha Reddy (Account Management)" },
 ]

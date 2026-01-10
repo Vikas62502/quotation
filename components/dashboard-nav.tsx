@@ -11,18 +11,25 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SolarLogo } from "@/components/solar-logo"
-import { Menu, X, Home, Users, FileText, PlusCircle, LogOut, User, Shield } from "lucide-react"
+import { Menu, X, Home, Users, FileText, PlusCircle, LogOut, User, Shield, Wallet } from "lucide-react"
 import { useState } from "react"
 
 const ADMIN_USERNAME = "admin"
 
-const getNavItems = (isAdmin: boolean) => {
-  // If admin, only show Admin Panel
-  if (isAdmin) {
-    return [{ href: "/dashboard/admin", label: "Admin Panel", icon: Shield }]
+const getNavItems = (isAdmin: boolean, role: string | null) => {
+  // Account Management users should not see regular navigation (they have their own header)
+  if (role === "account-management") {
+    return []
   }
   
-  // For regular dealers, show standard navigation
+  // If admin, show Admin Panel only (Account Management has separate login)
+  if (isAdmin) {
+    return [
+      { href: "/dashboard/admin", label: "Admin Panel", icon: Shield },
+    ]
+  }
+  
+  // For regular dealers, show standard navigation (Account Management has separate login)
   return [
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/dashboard/customers", label: "Customers", icon: Users },
@@ -34,10 +41,15 @@ const getNavItems = (isAdmin: boolean) => {
 export function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
-  const { dealer, logout } = useAuth()
+  const { dealer, logout, role } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const isAdmin = dealer?.username === ADMIN_USERNAME
-  const navItems = getNavItems(isAdmin)
+  const navItems = getNavItems(isAdmin, role)
+  
+  // Don't render navigation for account-management users (they have their own header)
+  if (role === "account-management") {
+    return null
+  }
 
   const handleLogout = () => {
     logout()

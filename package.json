@@ -5,7 +5,8 @@
   "scripts": {
     "build": "NEXT_PRIVATE_SKIP_TURBO=1 next build",
     "build:docker": "NEXT_PRIVATE_SKIP_TURBO=1 next build",
-    "dev": "next dev",
+    "dev": "next dev --turbo",
+    "dev:webpack": "next dev --turbo=false",
     "lint": "eslint .",
     "start": "next start"
   },

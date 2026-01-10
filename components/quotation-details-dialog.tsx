@@ -21,6 +21,9 @@ import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
 import { useToast } from "@/hooks/use-toast"
+import { CustomerDetailsForm } from "@/components/customer-details-form"
+import { ProductSelectionForm } from "@/components/product-selection-form"
+import type { Customer, ProductSelection } from "@/lib/quotation-context"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -132,19 +135,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const [isEditingDiscount, setIsEditingDiscount] = useState(false)
   const [fullQuotation, setFullQuotation] = useState<Quotation | null>(null)
   const [isLoadingDetails, setIsLoadingDetails] = useState(false)
-  const [isEditingCustomer, setIsEditingCustomer] = useState(false)
-  const [customerEditForm, setCustomerEditForm] = useState({
-    firstName: "",
-    lastName: "",
-    mobile: "",
-    email: "",
-    address: {
-      street: "",
-      city: "",
-      state: "",
-      pincode: "",
-    },
-  })
+  const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
   const [isSavingCustomer, setIsSavingCustomer] = useState(false)
   const [visitDialogOpen, setVisitDialogOpen] = useState(false)
   const [visits, setVisits] = useState<any[]>([])
@@ -154,12 +145,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     subtotal: 0,
     stateSubsidy: 0,
     centralSubsidy: 0,
-    discount: 0,
+    discount: 0, // Now represents discount amount in INR, not percentage
     finalAmount: 0,
   })
   const [isSavingPricing, setIsSavingPricing] = useState(false)
-  const [isEditingSystemConfig, setIsEditingSystemConfig] = useState(false)
-  const [systemConfigEditForm, setSystemConfigEditForm] = useState<any>({})
+  const [systemConfigEditDialogOpen, setSystemConfigEditDialogOpen] = useState(false)
   const [isSavingSystemConfig, setIsSavingSystemConfig] = useState(false)
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -207,19 +197,6 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             } as Quotation & { pricing?: any }
             
             setFullQuotation(updatedQuotation)
-            // Initialize edit form with customer data
-            setCustomerEditForm({
-              firstName: updatedQuotation.customer.firstName,
-              lastName: updatedQuotation.customer.lastName,
-              mobile: updatedQuotation.customer.mobile,
-              email: updatedQuotation.customer.email,
-              address: {
-                street: updatedQuotation.customer.address.street,
-                city: updatedQuotation.customer.address.city,
-                state: updatedQuotation.customer.address.state,
-                pincode: updatedQuotation.customer.address.pincode,
-              },
-            })
           } else {
             setFullQuotation(quotation)
           }
@@ -234,28 +211,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     } else if (quotation) {
       setFullQuotation(quotation)
       setIsLoadingDetails(false)
-      // Initialize edit form even when not using API
-      if (quotation.customer) {
-        setCustomerEditForm({
-          firstName: quotation.customer.firstName || "",
-          lastName: quotation.customer.lastName || "",
-          mobile: quotation.customer.mobile || "",
-          email: quotation.customer.email || "",
-          address: {
-            street: quotation.customer.address?.street || "",
-            city: quotation.customer.address?.city || "",
-            state: quotation.customer.address?.state || "",
-            pincode: quotation.customer.address?.pincode || "",
-          },
-        })
-      }
     }
   }, [quotation, open, useApi])
 
   useEffect(() => {
     if (fullQuotation) {
       setQuotationId(fullQuotation.id)
-      setDiscount(fullQuotation.discount || 0)
+      // Initialize discount - handle both old percentage and new amount formats
+      const savedDiscountValue = fullQuotation.discount || 0
+      // If discount > 100, assume it's already an amount; otherwise it's a percentage (old format)
+      // We'll store it as-is and calculate amount when needed
+      setDiscount(savedDiscountValue)
       // Initialize pricing edit form
       const products = fullQuotation.products
       const backendPricing = (fullQuotation as any).pricing
@@ -274,20 +240,26 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
         initialSubtotal = fullQuotation.totalAmount || 0
       }
       
+      // Calculate discount amount from existing discount (if it was stored as percentage)
+      // If discount is > 100, assume it's already an amount in INR, otherwise calculate from percentage
+      let initialDiscountAmount = 0
+      const savedDiscount = fullQuotation.discount || 0
+      if (savedDiscount > 100) {
+        // Likely already an amount in INR
+        initialDiscountAmount = savedDiscount
+      } else {
+        // Likely a percentage, calculate amount
+        const amountAfterSubsidy = initialSubtotal - (initialStateSubsidy + initialCentralSubsidy)
+        initialDiscountAmount = amountAfterSubsidy * (savedDiscount / 100)
+      }
+      
       setPricingEditForm({
         subtotal: initialSubtotal,
         stateSubsidy: initialStateSubsidy,
         centralSubsidy: initialCentralSubsidy,
-        discount: fullQuotation.discount || 0,
+        discount: initialDiscountAmount, // Now stores discount amount in INR
         finalAmount: fullQuotation.finalAmount || 0,
       })
-      
-      // Initialize system configuration edit form
-      if (fullQuotation.products) {
-        setSystemConfigEditForm({
-          ...fullQuotation.products,
-        })
-      }
     }
   }, [fullQuotation])
 
@@ -364,7 +336,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     totalProjectCost = backendPricing.totalAmount ?? subtotal
     totalAmount = backendPricing.totalAmount ?? subtotal
     amountAfterSubsidy = backendPricing.amountAfterSubsidy ?? (subtotal - totalSubsidy)
-    discountAmount = backendPricing.discountAmount ?? (amountAfterSubsidy * (discount / 100))
+    // Discount is now stored as amount in INR, not percentage
+    // Prefer discountAmount from backend, otherwise use discount field as amount (if > 100) or calculate from percentage for backward compatibility
+    if (backendPricing.discountAmount != null && backendPricing.discountAmount > 0) {
+      discountAmount = backendPricing.discountAmount
+    } else if (discount > 100) {
+      // If discount > 100, assume it's already an amount in INR
+      discountAmount = discount
+    } else {
+      // Backward compatibility: if discount <= 100, treat as percentage for old data
+      discountAmount = amountAfterSubsidy * (discount / 100)
+    }
     finalAmount = backendPricing.finalAmount ?? (amountAfterSubsidy - discountAmount)
   } else {
     // Fallback to frontend calculation if backend pricing not available
@@ -410,32 +392,47 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     // totalAmount now represents total project cost (subtotal) - aligned with backend
     totalAmount = subtotal
     amountAfterSubsidy = subtotal - totalSubsidy
-    discountAmount = amountAfterSubsidy * (discount / 100)
+    // Discount is now stored as amount in INR, not percentage
+    // If discount > 100, assume it's already an amount; otherwise treat as 0 (old percentage values)
+    discountAmount = discount > 100 ? discount : 0
     finalAmount = amountAfterSubsidy - discountAmount
   }
 
   const handleSaveDiscount = () => {
     if (!quotation) return
     
+    // Discount is now stored as amount in INR, not percentage
+    const updatedDiscountAmount = discount // discount is already an amount
+    const updatedAmountAfterSubsidy = subtotal - totalSubsidy
+    const updatedFinalAmount = updatedAmountAfterSubsidy - updatedDiscountAmount
+    
     // Update quotation in localStorage
     const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
     const updatedQuotations = allQuotations.map((q: Quotation) => {
       if (q.id === displayQuotation.id) {
-        const updatedDiscount = discount
-        const updatedAmountAfterSubsidy = subtotal - totalSubsidy
-        const updatedDiscountAmount = updatedAmountAfterSubsidy * (updatedDiscount / 100)
         return {
           ...q,
-          discount: updatedDiscount,
-          finalAmount: updatedAmountAfterSubsidy - updatedDiscountAmount,
+          discount: updatedDiscountAmount, // Store discount as amount in INR
+          finalAmount: updatedFinalAmount,
         }
       }
       return q
     })
     localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
+    
+    // Update local state
+    setFullQuotation({
+      ...displayQuotation,
+      discount: updatedDiscountAmount,
+      finalAmount: updatedFinalAmount,
+    })
+    setDiscount(updatedDiscountAmount)
     setIsEditingDiscount(false)
-    // Reload the page or update the quotation prop
-    window.location.reload()
+    
+    toast({
+      title: "Success",
+      description: "Discount updated successfully!",
+    })
   }
 
   // Calculate quotation validity (5 days from creation)
@@ -1338,9 +1335,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <span className="pdf-summary-value"> ₹{products.centralSubsidy.toLocaleString()}</span>
                 </div>
               )}
-              {discount > 0 && (
+              {discountAmount > 0 && (
                 <div className="pdf-summary-row">
-                  <span className="pdf-summary-label">⬇️ Discount ({discount}%):</span>
+                  <span className="pdf-summary-label">⬇️ Discount:</span>
                   <span className="pdf-summary-value"> ₹{discountAmount.toLocaleString()}</span>
                 </div>
               )}
@@ -1739,178 +1736,19 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <User className="w-4 h-4 sm:w-5 sm:h-5 text-primary" />
                     Customer Information
                   </div>
-                  {!isEditingCustomer && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsEditingCustomer(true)}
-                      className="h-8"
-                    >
-                      <Edit className="w-3 h-3 mr-1" />
-                      Edit
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCustomerEditDialogOpen(true)}
+                    className="h-8"
+                  >
+                    <Edit className="w-3 h-3 mr-1" />
+                    Edit
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2 sm:space-y-3 pt-3 sm:pt-4 p-3 sm:p-6">
-                {isEditingCustomer ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>First Name</Label>
-                        <Input
-                          value={customerEditForm.firstName}
-                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, firstName: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Last Name</Label>
-                        <Input
-                          value={customerEditForm.lastName}
-                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, lastName: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Mobile</Label>
-                        <Input
-                          value={customerEditForm.mobile}
-                          onChange={(e) => {
-                            const cleaned = e.target.value.replace(/\D/g, "").slice(0, 10)
-                            setCustomerEditForm({ ...customerEditForm, mobile: cleaned })
-                          }}
-                          maxLength={10}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Email</Label>
-                        <Input
-                          type="email"
-                          value={customerEditForm.email}
-                          onChange={(e) => setCustomerEditForm({ ...customerEditForm, email: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2 md:col-span-2">
-                        <Label>Street Address</Label>
-                        <Input
-                          value={customerEditForm.address.street}
-                          onChange={(e) =>
-                            setCustomerEditForm({
-                              ...customerEditForm,
-                              address: { ...customerEditForm.address, street: e.target.value },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>City</Label>
-                        <Input
-                          value={customerEditForm.address.city}
-                          onChange={(e) =>
-                            setCustomerEditForm({
-                              ...customerEditForm,
-                              address: { ...customerEditForm.address, city: e.target.value },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>State</Label>
-                        <Input
-                          value={customerEditForm.address.state}
-                          onChange={(e) =>
-                            setCustomerEditForm({
-                              ...customerEditForm,
-                              address: { ...customerEditForm.address, state: e.target.value },
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Pincode</Label>
-                        <Input
-                          value={customerEditForm.address.pincode}
-                          onChange={(e) => {
-                            const cleaned = e.target.value.replace(/\D/g, "").slice(0, 6)
-                            setCustomerEditForm({
-                              ...customerEditForm,
-                              address: { ...customerEditForm.address, pincode: cleaned },
-                            })
-                          }}
-                          maxLength={6}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setIsEditingCustomer(false)
-                          // Reset form to original values
-                          if (customer) {
-                            setCustomerEditForm({
-                              firstName: customer.firstName || "",
-                              lastName: customer.lastName || "",
-                              mobile: customer.mobile || "",
-                              email: customer.email || "",
-                              address: {
-                                street: customer.address?.street || "",
-                                city: customer.address?.city || "",
-                                state: customer.address?.state || "",
-                                pincode: customer.address?.pincode || "",
-                              },
-                            })
-                          }
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={async () => {
-                          // Get customer ID from quotation (customerId field) or customer object
-                          const customerId = (displayQuotation as any).customerId || (displayQuotation.customer as any)?.id || (customer as any)?.id
-                          
-                          if (!customerId) {
-                            alert("Customer ID not found. Cannot update customer.")
-                            return
-                          }
-                          
-                          setIsSavingCustomer(true)
-                          try {
-                            await api.customers.update(customerId, {
-                              firstName: customerEditForm.firstName,
-                              lastName: customerEditForm.lastName,
-                              mobile: customerEditForm.mobile,
-                              email: customerEditForm.email,
-                              address: customerEditForm.address,
-                            })
-                            
-                            // Update local state
-                            setFullQuotation({
-                              ...displayQuotation,
-                              customer: {
-                                ...displayQuotation.customer,
-                                ...customerEditForm,
-                              },
-                            })
-                            
-                            setIsEditingCustomer(false)
-                            alert("Customer information updated successfully!")
-                          } catch (error) {
-                            console.error("Error updating customer:", error)
-                            alert(error instanceof Error ? error.message : "Failed to update customer information")
-                          } finally {
-                            setIsSavingCustomer(false)
-                          }
-                        }}
-                        disabled={isSavingCustomer}
-                      >
-                        <Save className="w-3 h-3 mr-1" />
-                        {isSavingCustomer ? "Saving..." : "Save"}
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex items-start gap-3">
                       <User className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div>
@@ -1960,7 +1798,6 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </div>
                     </div>
                   </div>
-                )}
               </CardContent>
             </Card>
 
@@ -1972,254 +1809,23 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <FileText className="w-5 h-5 text-primary" />
                     System Configuration
                   </div>
-                  {!isEditingSystemConfig && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsEditingSystemConfig(true)}
-                      className="h-8"
-                    >
-                      <Edit className="w-3 h-3 mr-1" />
-                      Edit
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setSystemConfigEditDialogOpen(true)}
+                    className="h-8"
+                  >
+                    <Edit className="w-3 h-3 mr-1" />
+                    Edit
+                  </Button>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-4">
-                {isEditingSystemConfig ? (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>System Type</Label>
-                      <div className="text-sm font-medium uppercase">{systemConfigEditForm.systemType || products.systemType}</div>
-                    </div>
-                    
-                    {systemConfigEditForm.systemType === "both" ? (
-                      <>
-                        <div className="space-y-2">
-                          <Label>DCR Panel Brand</Label>
-                          <Input
-                            value={systemConfigEditForm.dcrPanelBrand || ""}
-                            onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, dcrPanelBrand: e.target.value })}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>DCR Panel Size</Label>
-                            <Input
-                              value={systemConfigEditForm.dcrPanelSize || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, dcrPanelSize: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>DCR Panel Quantity</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              value={systemConfigEditForm.dcrPanelQuantity || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, dcrPanelQuantity: Number.parseInt(e.target.value) || 0 })}
-                            />
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Non-DCR Panel Brand</Label>
-                          <Input
-                            value={systemConfigEditForm.nonDcrPanelBrand || ""}
-                            onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, nonDcrPanelBrand: e.target.value })}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>Non-DCR Panel Size</Label>
-                            <Input
-                              value={systemConfigEditForm.nonDcrPanelSize || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, nonDcrPanelSize: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Non-DCR Panel Quantity</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              value={systemConfigEditForm.nonDcrPanelQuantity || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, nonDcrPanelQuantity: Number.parseInt(e.target.value) || 0 })}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    ) : systemConfigEditForm.systemType !== "customize" ? (
-                      <>
-                        <div className="space-y-2">
-                          <Label>Panel Brand</Label>
-                          <Input
-                            value={systemConfigEditForm.panelBrand || ""}
-                            onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, panelBrand: e.target.value })}
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <Label>Panel Size</Label>
-                            <Input
-                              value={systemConfigEditForm.panelSize || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, panelSize: e.target.value })}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Panel Quantity</Label>
-                            <Input
-                              type="number"
-                              min="1"
-                              value={systemConfigEditForm.panelQuantity || ""}
-                              onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, panelQuantity: Number.parseInt(e.target.value) || 0 })}
-                            />
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="space-y-2">
-                        <Label>Custom Panels</Label>
-                        <div className="text-sm text-muted-foreground">
-                          Custom panels editing not available in this view
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Inverter Brand</Label>
-                        <Input
-                          value={systemConfigEditForm.inverterBrand || ""}
-                          onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, inverterBrand: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Inverter Type</Label>
-                        <Input
-                          value={systemConfigEditForm.inverterType || ""}
-                          onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, inverterType: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Inverter Size</Label>
-                      <Input
-                        value={systemConfigEditForm.inverterSize || ""}
-                        onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, inverterSize: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Structure Type</Label>
-                        <Input
-                          value={systemConfigEditForm.structureType || ""}
-                          onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, structureType: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Structure Size</Label>
-                        <Input
-                          value={systemConfigEditForm.structureSize || ""}
-                          onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, structureSize: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Meter Brand</Label>
-                      <Input
-                        value={systemConfigEditForm.meterBrand || ""}
-                        onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, meterBrand: e.target.value })}
-                      />
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Battery Capacity (Optional)</Label>
-                      <Input
-                        value={systemConfigEditForm.batteryCapacity || ""}
-                        onChange={(e) => setSystemConfigEditForm({ ...systemConfigEditForm, batteryCapacity: e.target.value })}
-                        placeholder="Enter battery capacity if applicable"
-                      />
-                    </div>
-                    
-                    <div className="flex justify-end gap-2 pt-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setIsEditingSystemConfig(false)
-                          // Reset form to original values
-                          if (fullQuotation && fullQuotation.products) {
-                            setSystemConfigEditForm({
-                              ...fullQuotation.products,
-                            })
-                          }
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={async () => {
-                          setIsSavingSystemConfig(true)
-                          try {
-                            if (useApi) {
-                              // Update via API
-                              // apiRequest returns data.data directly, so response is the data object
-                              const response = await api.quotations.updateProducts(displayQuotation.id, systemConfigEditForm)
-                              
-                              if (response) {
-                                // Update local state with server response
-                                const updatedQuotation = {
-                                  ...displayQuotation,
-                                  products: response.products || systemConfigEditForm,
-                                }
-                                setFullQuotation(updatedQuotation)
-                                setIsEditingSystemConfig(false)
-                                
-                                toast({
-                                  title: "Success",
-                                  description: "System configuration updated successfully!",
-                                })
-                              } else {
-                                throw new Error("Failed to update system configuration")
-                              }
-                            } else {
-                              // Fallback to local state update when not using API
-                              const updatedQuotation = {
-                                ...displayQuotation,
-                                products: systemConfigEditForm,
-                              }
-                              setFullQuotation(updatedQuotation)
-                              setIsEditingSystemConfig(false)
-                              
-                              toast({
-                                title: "Success",
-                                description: "System configuration updated successfully!",
-                              })
-                            }
-                          } catch (error) {
-                            console.error("Error updating system configuration:", error)
-                            const errorMessage = error instanceof Error ? error.message : "Failed to update system configuration"
-                            toast({
-                              title: "Error",
-                              description: errorMessage,
-                              variant: "destructive",
-                            })
-                          } finally {
-                            setIsSavingSystemConfig(false)
-                          }
-                        }}
-                        disabled={isSavingSystemConfig}
-                      >
-                        <Save className="w-3 h-3 mr-1" />
-                        {isSavingSystemConfig ? "Saving..." : "Save"}
-                      </Button>
-                    </div>
+                <>
+                  <div>
+                    <span className="font-semibold">System Type: </span>
+                    <span className="uppercase">{products.systemType}</span>
                   </div>
-                ) : (
-                  <>
-                    <div>
-                      <span className="font-semibold">System Type: </span>
-                      <span className="uppercase">{products.systemType}</span>
-                    </div>
                     {products.systemType === "both" ? (
                       <>
                         {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
@@ -2276,8 +1882,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         {products.batteryCapacity}
                       </div>
                     )}
-                  </>
-                )}
+                </>
               </CardContent>
             </Card>
 
@@ -2316,12 +1921,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const newSubtotal = value
                           const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = newSubtotal - totalSubsidy
-                          const newDiscountAmount = amountAfterSubsidy * (pricingEditForm.discount / 100)
-                          const newFinalAmount = amountAfterSubsidy - newDiscountAmount
+                          // Discount is now stored as amount in INR, not percentage
+                          const discountAmount = pricingEditForm.discount || 0
+                          // Ensure discount doesn't exceed amount after subsidy
+                          const maxDiscount = Math.max(0, amountAfterSubsidy)
+                          const validDiscount = Math.min(discountAmount, maxDiscount)
+                          const newFinalAmount = amountAfterSubsidy - validDiscount
                           setPricingEditForm({
                             ...pricingEditForm,
                             subtotal: newSubtotal,
-                            finalAmount: newFinalAmount,
+                            discount: validDiscount, // Update discount if it exceeds max
+                            finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
                       />
@@ -2337,12 +1947,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const newStateSubsidy = value
                           const totalSubsidy = newStateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
-                          const newDiscountAmount = amountAfterSubsidy * (pricingEditForm.discount / 100)
-                          const newFinalAmount = amountAfterSubsidy - newDiscountAmount
+                          // Discount is now stored as amount in INR, not percentage
+                          const discountAmount = pricingEditForm.discount || 0
+                          // Ensure discount doesn't exceed amount after subsidy
+                          const maxDiscount = Math.max(0, amountAfterSubsidy)
+                          const validDiscount = Math.min(discountAmount, maxDiscount)
+                          const newFinalAmount = amountAfterSubsidy - validDiscount
                           setPricingEditForm({
                             ...pricingEditForm,
                             stateSubsidy: newStateSubsidy,
-                            finalAmount: newFinalAmount,
+                            discount: validDiscount, // Update discount if it exceeds max
+                            finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
                       />
@@ -2358,35 +1973,43 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const newCentralSubsidy = value
                           const totalSubsidy = pricingEditForm.stateSubsidy + newCentralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
-                          const newDiscountAmount = amountAfterSubsidy * (pricingEditForm.discount / 100)
-                          const newFinalAmount = amountAfterSubsidy - newDiscountAmount
+                          // Discount is now stored as amount in INR, not percentage
+                          const discountAmount = pricingEditForm.discount || 0
+                          // Ensure discount doesn't exceed amount after subsidy
+                          const maxDiscount = Math.max(0, amountAfterSubsidy)
+                          const validDiscount = Math.min(discountAmount, maxDiscount)
+                          const newFinalAmount = amountAfterSubsidy - validDiscount
                           setPricingEditForm({
                             ...pricingEditForm,
                             centralSubsidy: newCentralSubsidy,
-                            finalAmount: newFinalAmount,
+                            discount: validDiscount, // Update discount if it exceeds max
+                            finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
                       />
                     </div>
                     <div className="space-y-2 border-t pt-2">
-                      <Label>Discount (%)</Label>
+                      <Label>Discount (₹)</Label>
                       <Input
                         type="number"
                         min="0"
-                        max="50"
                         value={pricingEditForm.discount || ""}
                         onChange={(e) => {
-                          const value = Math.min(50, Number.parseFloat(e.target.value) || 0)
+                          const value = Number.parseFloat(e.target.value) || 0
                           const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
-                          const newDiscountAmount = amountAfterSubsidy * (value / 100)
+                          // Discount is now amount in INR, not percentage
+                          // Ensure discount doesn't exceed amount after subsidy
+                          const maxDiscount = Math.max(0, amountAfterSubsidy)
+                          const newDiscountAmount = Math.min(value, maxDiscount)
                           const newFinalAmount = amountAfterSubsidy - newDiscountAmount
                           setPricingEditForm({
                             ...pricingEditForm,
-                            discount: value,
-                            finalAmount: newFinalAmount,
+                            discount: newDiscountAmount,
+                            finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
+                        placeholder="Enter discount amount in INR"
                       />
                     </div>
                     <div className="space-y-2 border-t pt-2">
@@ -2397,9 +2020,18 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         value={pricingEditForm.finalAmount || ""}
                         onChange={(e) => {
                           const value = Number.parseFloat(e.target.value) || 0
+                          const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
+                          const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
+                          // When final amount is manually changed, recalculate discount
+                          // Discount = Amount After Subsidy - Final Amount
+                          const calculatedDiscount = Math.max(0, amountAfterSubsidy - value)
+                          const maxDiscount = Math.max(0, amountAfterSubsidy)
+                          const validDiscount = Math.min(calculatedDiscount, maxDiscount)
+                          
                           setPricingEditForm({
                             ...pricingEditForm,
-                            finalAmount: value,
+                            discount: validDiscount,
+                            finalAmount: Math.max(0, value),
                           })
                         }}
                       />
@@ -2425,11 +2057,24 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                               initialSubtotal = fullQuotation.totalAmount || 0
                             }
                             
+                            // Calculate discount amount from existing discount (if it was stored as percentage)
+                            // If discount is > 100, assume it's already an amount in INR, otherwise calculate from percentage
+                            let resetDiscountAmount = 0
+                            const savedDiscountValue = fullQuotation.discount || 0
+                            if (savedDiscountValue > 100) {
+                              // Likely already an amount in INR
+                              resetDiscountAmount = savedDiscountValue
+                            } else {
+                              // Likely a percentage, calculate amount for backward compatibility
+                              const amountAfterSubsidy = initialSubtotal - ((products.stateSubsidy ?? 0) + (products.centralSubsidy ?? 0))
+                              resetDiscountAmount = amountAfterSubsidy * (savedDiscountValue / 100)
+                            }
+                            
                             setPricingEditForm({
                               subtotal: initialSubtotal,
                               stateSubsidy: products.stateSubsidy ?? 0,
                               centralSubsidy: products.centralSubsidy ?? 0,
-                              discount: fullQuotation.discount || 0,
+                              discount: resetDiscountAmount, // Now stores discount amount in INR
                               finalAmount: fullQuotation.finalAmount || 0,
                             })
                           }
@@ -2549,15 +2194,21 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         <span>Discount:</span>
                         {isEditingDiscount ? (
                           <div className="flex items-center gap-2">
+                            <span className="text-xs text-muted-foreground">₹</span>
                             <Input
                               type="number"
                               min="0"
-                              max="50"
                               value={discount || ""}
-                              onChange={(e) => setDiscount(Math.min(50, Number.parseInt(e.target.value) || 0))}
-                              className="w-20 h-8 text-sm"
+                              onChange={(e) => {
+                                const value = Number.parseFloat(e.target.value) || 0
+                                // Ensure discount doesn't exceed amount after subsidy
+                                const amountAfterSubsidy = subtotal - totalSubsidy
+                                const maxDiscount = Math.max(0, amountAfterSubsidy)
+                                setDiscount(Math.min(value, maxDiscount))
+                              }}
+                              className="w-28 h-8 text-sm"
+                              placeholder="0"
                             />
-                            <span className="text-xs text-muted-foreground">%</span>
                             <Button
                               size="sm"
                               onClick={handleSaveDiscount}
@@ -2569,7 +2220,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                               size="sm"
                               variant="outline"
                               onClick={() => {
-                                setDiscount(displayQuotation.discount || 0)
+                                // Get discount amount (handle both old percentage and new amount formats)
+                                const savedDiscountValue = displayQuotation.discount || 0
+                                let discountToSet = savedDiscountValue
+                                if (savedDiscountValue <= 100) {
+                                  // Old percentage format, calculate amount
+                                  const amountAfterSubsidy = subtotal - totalSubsidy
+                                  discountToSet = amountAfterSubsidy * (savedDiscountValue / 100)
+                                }
+                                setDiscount(discountToSet)
                                 setIsEditingDiscount(false)
                               }}
                               className="h-8 text-xs"
@@ -2579,13 +2238,24 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           </div>
                         ) : (
                           <div className="flex items-center gap-2">
-                            <span className={discount > 0 ? "text-orange-600" : ""}>
-                              {discount > 0 ? `${discount}% (-₹${discountAmount.toLocaleString()})` : "0%"}
+                            <span className={discountAmount > 0 ? "text-orange-600" : ""}>
+                              {discountAmount > 0 ? `₹${discountAmount.toLocaleString()}` : "₹0"}
                             </span>
                             <Button
                               size="sm"
                               variant="ghost"
-                              onClick={() => setIsEditingDiscount(true)}
+                              onClick={() => {
+                                // Initialize discount for editing (handle both old percentage and new amount formats)
+                                const savedDiscountValue = displayQuotation.discount || 0
+                                let discountToEdit = savedDiscountValue
+                                if (savedDiscountValue <= 100) {
+                                  // Old percentage format, calculate amount for editing
+                                  const amountAfterSubsidy = subtotal - totalSubsidy
+                                  discountToEdit = amountAfterSubsidy * (savedDiscountValue / 100)
+                                }
+                                setDiscount(discountToEdit)
+                                setIsEditingDiscount(true)
+                              }}
                               className="h-6 text-xs"
                             >
                               Edit
@@ -2772,6 +2442,212 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           }}
         />
       )}
+
+      {/* Customer Edit Dialog - Full Form with Browse/Select */}
+      <Dialog open={customerEditDialogOpen} onOpenChange={setCustomerEditDialogOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit Customer Information</DialogTitle>
+            <DialogDescription>Update customer details with browse and select options</DialogDescription>
+          </DialogHeader>
+          {customer && (
+            <CustomerDetailsForm
+              initialData={customer}
+              onSubmit={async (updatedCustomer: Customer) => {
+                setIsSavingCustomer(true)
+                try {
+                  // Get customer ID from quotation
+                  const customerId = (displayQuotation as any).customerId || (displayQuotation.customer as any)?.id || (customer as any)?.id
+                  
+                  if (useApi && customerId) {
+                    // Update via API
+                    await api.customers.update(customerId, updatedCustomer)
+                    
+                    // Update local state
+                    setFullQuotation({
+                      ...displayQuotation,
+                      customer: updatedCustomer,
+                    })
+                    
+                    toast({
+                      title: "Success",
+                      description: "Customer information updated successfully!",
+                    })
+                  } else {
+                    // Fallback to local state update
+                    setFullQuotation({
+                      ...displayQuotation,
+                      customer: updatedCustomer,
+                    })
+                    
+                    toast({
+                      title: "Success",
+                      description: "Customer information updated successfully!",
+                    })
+                  }
+                  
+                  setCustomerEditDialogOpen(false)
+                } catch (error) {
+                  console.error("Error updating customer:", error)
+                  toast({
+                    title: "Error",
+                    description: error instanceof Error ? error.message : "Failed to update customer information",
+                    variant: "destructive",
+                  })
+                } finally {
+                  setIsSavingCustomer(false)
+                }
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* System Configuration Edit Dialog - Full Form with Browse/Select */}
+      <Dialog open={systemConfigEditDialogOpen} onOpenChange={setSystemConfigEditDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Edit System Configuration</DialogTitle>
+            <DialogDescription>Update system configuration with browse and select options for products</DialogDescription>
+          </DialogHeader>
+          {products && (
+            <ProductSelectionForm
+              initialData={products}
+              onBack={() => setSystemConfigEditDialogOpen(false)}
+              onSubmit={async (updatedProducts: ProductSelection) => {
+                setIsSavingSystemConfig(true)
+                try {
+                  // Calculate system price from updated products
+                  // Priority: 1. systemPrice from products (set by browse config), 2. Calculate using getSystemPrice()
+                  let calculatedSubtotal = updatedProducts.systemPrice || 0
+                  
+                  if (calculatedSubtotal <= 0) {
+                    // Calculate system price if not already set
+                    calculatedSubtotal = getSystemPrice(updatedProducts)
+                  }
+                  
+                  // If still no price, use existing subtotal as fallback
+                  if (calculatedSubtotal <= 0) {
+                    calculatedSubtotal = pricingEditForm.subtotal || displayQuotation.totalAmount || 0
+                  }
+                  
+                  // Get subsidies from updated products
+                  const updatedStateSubsidy = updatedProducts.stateSubsidy || 0
+                  const updatedCentralSubsidy = updatedProducts.centralSubsidy || 0
+                  const totalSubsidy = updatedStateSubsidy + updatedCentralSubsidy
+                  
+                  // Calculate final amount: Subtotal - Subsidies - Discount
+                  const amountAfterSubsidy = calculatedSubtotal - totalSubsidy
+                  // Discount is now stored as amount in INR, not percentage
+                  // Get existing discount amount from pricingEditForm or calculate from old percentage format
+                  let currentDiscountAmount = pricingEditForm.discount || 0
+                  const savedDiscountValue = displayQuotation.discount || 0
+                  
+                  // If discount > 100, assume it's already an amount; otherwise calculate from percentage for backward compatibility
+                  if (savedDiscountValue > 100) {
+                    currentDiscountAmount = savedDiscountValue
+                  } else if (savedDiscountValue > 0 && currentDiscountAmount <= 100) {
+                    // Backward compatibility: calculate from percentage
+                    currentDiscountAmount = amountAfterSubsidy * (savedDiscountValue / 100)
+                  }
+                  
+                  // Ensure discount doesn't exceed amount after subsidy
+                  const maxDiscount = Math.max(0, amountAfterSubsidy)
+                  currentDiscountAmount = Math.min(currentDiscountAmount, maxDiscount)
+                  
+                  const calculatedFinalAmount = amountAfterSubsidy - currentDiscountAmount
+                  
+                  // Update pricing edit form with calculated values
+                  setPricingEditForm({
+                    subtotal: calculatedSubtotal,
+                    stateSubsidy: updatedStateSubsidy,
+                    centralSubsidy: updatedCentralSubsidy,
+                    discount: currentDiscountAmount, // Store discount as amount in INR
+                    finalAmount: Math.max(0, calculatedFinalAmount),
+                  })
+                  
+                  if (useApi) {
+                    // Update products via API
+                    const productsResponse = await api.quotations.updateProducts(displayQuotation.id, updatedProducts)
+                    
+                    if (productsResponse) {
+                      // Update pricing with calculated subtotal and discount amount (not percentage)
+                      const pricingResponse = await api.quotations.updatePricing(displayQuotation.id, {
+                        subtotal: calculatedSubtotal,
+                        stateSubsidy: updatedStateSubsidy,
+                        centralSubsidy: updatedCentralSubsidy,
+                        discount: currentDiscountAmount, // Now passes discount amount in INR
+                        finalAmount: calculatedFinalAmount,
+                      })
+                      
+                      if (pricingResponse) {
+                        // Update local state with server response
+                        const updatedQuotation = {
+                          ...displayQuotation,
+                          products: productsResponse.products || updatedProducts,
+                          discount: pricingResponse.discount ?? currentDiscountAmount, // Store discount amount
+                          totalAmount: pricingResponse.totalAmount ?? pricingResponse.pricing?.totalAmount ?? calculatedSubtotal,
+                          finalAmount: pricingResponse.finalAmount ?? pricingResponse.pricing?.finalAmount ?? calculatedFinalAmount,
+                          pricing: pricingResponse.pricing,
+                        }
+                        setFullQuotation(updatedQuotation)
+                        setDiscount(pricingResponse.discount ?? currentDiscountAmount) // Store discount amount
+                        
+                        toast({
+                          title: "Success",
+                          description: `System configuration updated! Subtotal automatically set to ₹${calculatedSubtotal.toLocaleString()}`,
+                        })
+                      } else {
+                        // Products updated but pricing failed - still update local state
+                        const updatedQuotation = {
+                          ...displayQuotation,
+                          products: productsResponse.products || updatedProducts,
+                          totalAmount: calculatedSubtotal,
+                          finalAmount: calculatedFinalAmount,
+                        }
+                        setFullQuotation(updatedQuotation)
+                        
+                        toast({
+                          title: "Partial Success",
+                          description: "System configuration updated, but pricing update failed. Please update pricing manually.",
+                          variant: "default",
+                        })
+                      }
+                    } else {
+                      throw new Error("Failed to update system configuration")
+                    }
+                  } else {
+                    // Fallback to local state update
+                    const updatedQuotation = {
+                      ...displayQuotation,
+                      products: updatedProducts,
+                      totalAmount: calculatedSubtotal,
+                      finalAmount: calculatedFinalAmount,
+                    }
+                    setFullQuotation(updatedQuotation)
+                    
+                    toast({
+                      title: "Success",
+                      description: `System configuration updated! Subtotal automatically set to ₹${calculatedSubtotal.toLocaleString()}`,
+                    })
+                  }
+                  
+                  setSystemConfigEditDialogOpen(false)
+                } catch (error) {
+                  console.error("Error updating system configuration:", error)
+                  toast({
+                    title: "Error",
+                    description: error instanceof Error ? error.message : "Failed to update system configuration",
+                    variant: "destructive",
+                  })
+                } finally {
+                  setIsSavingSystemConfig(false)
+                }
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
