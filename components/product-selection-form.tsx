@@ -140,6 +140,17 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const acdbOptionsList = acdbOptions.map((opt) => formatACDBOption(opt.brand, opt.phase))
   const dcdbOptionsList = dcdbOptions.map((opt) => formatDCDBOption(opt.brand, opt.phase))
 
+  // Ensure non-dcr systems always have 0 subsidies
+  useEffect(() => {
+    if (formData.systemType === "non-dcr" && (formData.centralSubsidy !== 0 || formData.stateSubsidy !== 0)) {
+      setFormData((prev) => ({
+        ...prev,
+        centralSubsidy: 0,
+        stateSubsidy: 0,
+      }))
+    }
+  }, [formData.systemType, formData.centralSubsidy, formData.stateSubsidy])
+
   const updateFormData = <K extends keyof ProductSelection>(field: K, value: ProductSelection[K]) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
     setError("")
@@ -208,9 +219,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           // Ensure ACDB/DCDB are set from config (BOTH systems are always 3-Phase)
           acdb: systemConfig.acdb || preFilledData.acdb || formatACDBOption("Havells", "3-Phase"),
           dcdb: systemConfig.dcdb || preFilledData.dcdb || formatDCDBOption("Havells", "3-Phase"),
-          // Preserve subsidies if they exist
-          centralSubsidy: prev.centralSubsidy || 0,
-          stateSubsidy: prev.stateSubsidy || 0,
+          // BOTH systems require central subsidy (default: 78000) - mandatory
+          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000),
+          // State subsidy can be set or preserved if it exists
+          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
           // Store the system price from the selected configuration
           systemPrice: config.price,
         }
@@ -274,6 +286,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
+        // DCR systems require central subsidy (mandatory: 78000)
+        centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
+        stateSubsidy: prev.stateSubsidy || 0,
       }))
     }
   }
@@ -301,9 +316,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           // Ensure ACDB/DCDB are set from config
           acdb: systemConfig.acdb || preFilledData.acdb || "",
           dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
-          // Set subsidies from config (DCR systems have fixed central subsidy of 78000)
-          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0)),
-          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
+          // NON-DCR systems should always have 0 subsidies
+          centralSubsidy: 0,
+          stateSubsidy: 0,
           // Store the system price from the selected configuration
           systemPrice: config.price,
         }
@@ -351,6 +366,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
+        // NON-DCR systems should always have 0 subsidies
+        centralSubsidy: 0,
+        stateSubsidy: 0,
       }))
     }
   }
@@ -441,6 +459,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
+        // DCR systems require central subsidy (mandatory: 78000)
+        centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
+        stateSubsidy: prev.stateSubsidy || 0,
       }))
     }
   }
@@ -523,6 +544,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       return
     }
 
+    // Validate subsidies: DCR and BOTH systems require central subsidy
+    if (formData.systemType === "dcr" || formData.systemType === "both") {
+      if (!formData.centralSubsidy || formData.centralSubsidy <= 0) {
+        setError("Central subsidy is mandatory for DCR and BOTH systems. Please set a valid central subsidy amount.")
+        return
+      }
+    }
+
     onSubmit(formData)
   }
 
@@ -556,7 +585,30 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             <RadioGroup
               value={formData.systemType}
               onValueChange={(v) => {
-                updateFormData("systemType", v)
+                const previousSystemType = formData.systemType
+                // If changing from "both" or "dcr" to "non-dcr", reset subsidies to 0
+                if (v === "non-dcr" && (previousSystemType === "both" || previousSystemType === "dcr")) {
+                  setFormData((prev) => ({
+                    ...prev,
+                    systemType: v,
+                    stateSubsidy: 0,
+                    centralSubsidy: 0,
+                  }))
+                } else if ((v === "dcr" || v === "both") && (previousSystemType === "non-dcr" || !previousSystemType)) {
+                  // When changing from "non-dcr" (or empty) to "dcr" or "both", set mandatory subsidies
+                  // DCR and BOTH systems require central subsidy (default: 78000)
+                  setFormData((prev) => ({
+                    ...prev,
+                    systemType: v,
+                    // Set central subsidy to default 78000 if not already set
+                    centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
+                    // Preserve state subsidy if it exists, otherwise keep it as is (user can set later)
+                    stateSubsidy: prev.stateSubsidy || 0,
+                  }))
+                } else {
+                  // For other transitions, preserve existing subsidies
+                  updateFormData("systemType", v)
+                }
               }}
               className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3"
             >

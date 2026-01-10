@@ -226,8 +226,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       const products = fullQuotation.products
       const backendPricing = (fullQuotation as any).pricing
       let initialSubtotal = 0
-      let initialStateSubsidy = products.stateSubsidy ?? 0
-      let initialCentralSubsidy = products.centralSubsidy ?? 0
+      // NON-DCR systems should always have 0 subsidies
+      let initialStateSubsidy = products.systemType === "non-dcr" ? 0 : (products.stateSubsidy ?? 0)
+      let initialCentralSubsidy = products.systemType === "non-dcr" ? 0 : (products.centralSubsidy ?? 0)
       
       if (backendPricing) {
         if (backendPricing.subtotal != null && backendPricing.subtotal > 0) {
@@ -332,7 +333,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
     }
     
-    totalSubsidy = backendPricing.totalSubsidy ?? ((products.centralSubsidy ?? 0) + (products.stateSubsidy ?? 0))
+    // For non-dcr systems, subsidies should always be 0
+    const effectiveCentralSubsidy = products.systemType === "non-dcr" ? 0 : (products.centralSubsidy ?? 0)
+    const effectiveStateSubsidy = products.systemType === "non-dcr" ? 0 : (products.stateSubsidy ?? 0)
+    totalSubsidy = backendPricing.totalSubsidy ?? (effectiveCentralSubsidy + effectiveStateSubsidy)
     totalProjectCost = backendPricing.totalAmount ?? subtotal
     totalAmount = backendPricing.totalAmount ?? subtotal
     amountAfterSubsidy = backendPricing.amountAfterSubsidy ?? (subtotal - totalSubsidy)
@@ -387,7 +391,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       subtotal = panelPrice + inverterPrice + structurePrice + meterPrice + cablePrice + acdbDcdbPrice + batteryPrice
     }
     
-    totalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
+    // For non-dcr systems, subsidies should always be 0
+    const effectiveCentralSubsidy = products.systemType === "non-dcr" ? 0 : (products.centralSubsidy || 0)
+    const effectiveStateSubsidy = products.systemType === "non-dcr" ? 0 : (products.stateSubsidy || 0)
+    totalSubsidy = effectiveCentralSubsidy + effectiveStateSubsidy
     totalProjectCost = subtotal
     // totalAmount now represents total project cost (subtotal) - aligned with backend
     totalAmount = subtotal
@@ -1323,13 +1330,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
                 <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
               </div>
-              {(products.stateSubsidy ?? 0) > 0 && (
+              {/* NON-DCR systems should not display subsidies in PDF */}
+              {products.systemType !== "non-dcr" && (products.stateSubsidy ?? 0) > 0 && (
                 <div className="pdf-summary-row">
                   <span className="pdf-summary-label">⬇️ State Subsidy:</span>
                   <span className="pdf-summary-value"> ₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
                 </div>
               )}
-              {products.centralSubsidy && products.centralSubsidy > 0 && (
+              {/* NON-DCR systems should not display subsidies in PDF */}
+              {products.systemType !== "non-dcr" && products.centralSubsidy && products.centralSubsidy > 0 && (
                 <div className="pdf-summary-row">
                   <span className="pdf-summary-label">⬇️ Central Subsidy:</span>
                   <span className="pdf-summary-value"> ₹{products.centralSubsidy.toLocaleString()}</span>
@@ -1714,7 +1723,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
       {/* Dialog for viewing quotation details */}
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="text-lg sm:text-xl">Quotation Details - {displayQuotation.id}</DialogTitle>
             <DialogDescription className="text-sm">
@@ -2177,13 +2186,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <span>Subtotal:</span>
                       <span>₹{subtotal.toLocaleString()}</span>
                     </div>
-                    {(products.stateSubsidy ?? 0) > 0 && (
+                    {/* NON-DCR systems should not display subsidies */}
+                    {products.systemType !== "non-dcr" && (products.stateSubsidy ?? 0) > 0 && (
                       <div className="flex justify-between text-green-600">
                         <span>State Subsidy:</span>
                         <span>-₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
                       </div>
                     )}
-                    {products.centralSubsidy && products.centralSubsidy > 0 && (
+                    {/* NON-DCR systems should not display subsidies */}
+                    {products.systemType !== "non-dcr" && products.centralSubsidy && products.centralSubsidy > 0 && (
                       <div className="flex justify-between text-green-600">
                         <span>Central Subsidy:</span>
                         <span>-₹{products.centralSubsidy.toLocaleString()}</span>
