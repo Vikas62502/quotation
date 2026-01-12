@@ -619,35 +619,56 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
 
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
-    if (products.systemType === "both") {
-      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
-      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
-      if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
-        const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
-        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
-        if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
-          const totalSystemSize = `${dcrKw + nonDcrKw}kW`
-          const phase = determinePhase(totalSystemSize, products.inverterSize || "")
-          const panelBrand = products.dcrPanelBrand || products.nonDcrPanelBrand || "Solar"
-          return `${totalSystemSize} (${phase}) Solar System - ${panelBrand} Panels`
-        }
+  const phase = products.phase // ✅ phase comes from table/selection
+
+  if (products.systemType === "both") {
+    const dcrSize = calculateSystemSize(
+      products.dcrPanelSize || "",
+      products.dcrPanelQuantity || 0
+    )
+    const nonDcrSize = calculateSystemSize(
+      products.nonDcrPanelSize || "",
+      products.nonDcrPanelQuantity || 0
+    )
+
+    if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+      const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
+      const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+
+      if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
+        const systemSize = `${dcrKw + nonDcrKw}kW`
+        const panelBrand =
+          products.dcrPanelBrand ||
+          products.nonDcrPanelBrand ||
+          "Solar"
+
+        return `${systemSize} (${phase}) Solar System - ${panelBrand} Panels`
       }
-      return "Solar Panel System"
-    } else if (products.systemType === "customize") {
-      return "Solar Panel System"
-    } else {
-      // For DCR and NON-DCR
-      if (products.panelSize && products.panelQuantity) {
-        const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
-        if (systemSize !== "0kW") {
-          const phase = determinePhase(systemSize, products.inverterSize || "")
-          const panelBrand = products.panelBrand || "Solar"
-          return `${systemSize} (${phase}) Solar System - ${panelBrand} Panels`
-        }
-      }
-      return "Solar Panel System"
+    }
+
+    return "Solar Panel System"
+  }
+
+  if (products.systemType === "customize") {
+    return "Solar Panel System"
+  }
+
+  // ✅ DCR / NON-DCR
+  if (products.panelSize && products.panelQuantity) {
+    const systemSize = calculateSystemSize(
+      products.panelSize,
+      products.panelQuantity
+    )
+
+    if (systemSize !== "0kW") {
+      const panelBrand = products.panelBrand || "Solar"
+      return `${systemSize} (${products.phase}) Solar System - ${panelBrand} Panels`
     }
   }
+
+  return "Solar Panel System"
+}
+
 
   return (
     <div className="space-y-6">

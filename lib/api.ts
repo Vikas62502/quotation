@@ -88,6 +88,8 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
       console.log('[API] Auth token added (length):', token.length)
     } else {
       console.warn('[API] WARNING: Auth required but no token found')
+      // Don't throw error here - let the backend return 401 so we can handle it properly
+      // This allows the error handling flow to work correctly
     }
   } else {
     console.log('[API] Auth not required for this request')
@@ -196,6 +198,19 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
         details: errorDetails,
         fullData: data
       })
+      
+      // Special handling for "User not authenticated" errors
+      if (errorMessage?.toLowerCase().includes("not authenticated") || 
+          errorMessage?.toLowerCase().includes("user not authenticated") ||
+          errorCode === "AUTH_001" || 
+          errorCode === "AUTH_003") {
+        console.error('[API] Authentication error detected - clearing tokens and redirecting')
+        clearAuthTokens()
+        if (typeof window !== "undefined") {
+          // Don't redirect immediately - let the calling code handle it
+          // This allows for better error messages
+        }
+      }
       
       // Special logging for quotation creation errors
       if (endpoint.includes('/quotations') && method === 'POST') {

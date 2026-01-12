@@ -13,7 +13,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Badge } from "@/components/ui/badge"
+import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin, CreditCard } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { useQuotation } from "@/lib/quotation-context"
@@ -127,7 +129,7 @@ const getSystemPrice = (products: any): number => {
 // getInverterPrice is now imported from pricing-tables.ts
 
 export function QuotationDetailsDialog({ quotation, open, onOpenChange }: QuotationDetailsDialogProps) {
-  const { dealer } = useAuth()
+  const { dealer, role } = useAuth()
   const { toast } = useToast()
   const [quotationId, setQuotationId] = useState("")
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
@@ -151,65 +153,96 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const [isSavingPricing, setIsSavingPricing] = useState(false)
   const [systemConfigEditDialogOpen, setSystemConfigEditDialogOpen] = useState(false)
   const [isSavingSystemConfig, setIsSavingSystemConfig] = useState(false)
+  const [paymentMode, setPaymentMode] = useState<string>("")
+  const [isSavingPaymentMode, setIsSavingPaymentMode] = useState(false)
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const isDealer = dealer && dealer.username !== "admin"
+  const isAccountManagement = role === "account-management"
+
+  // Payment mode options
+  const paymentModes = [
+    { value: "cash", label: "Cash" },
+    { value: "bank_transfer", label: "Bank Transfer" },
+    { value: "upi", label: "UPI" },
+    { value: "cheque", label: "Cheque" },
+    { value: "neft", label: "NEFT" },
+    { value: "rtgs", label: "RTGS" },
+    { value: "credit_card", label: "Credit Card" },
+    { value: "debit_card", label: "Debit Card" },
+  ]
 
   // Fetch full quotation details when dialog opens
   // This API call (GET /api/quotations/{quotationId}) is made for both admin and dealer views
   useEffect(() => {
-    if (quotation && open && useApi) {
-      setIsLoadingDetails(true)
-      // Always fetch full quotation details to ensure complete data (including customer email and address)
-      // This ensures admin panel and dealer panel both get complete customer data
-      // API endpoint: GET http://localhost:3050/api/quotations/{quotationId}
-      api.quotations.getById(quotation.id)
-        .then((response) => {
-          // apiRequest returns data.data, so response is already the quotation object
-          const fullData = response
-          if (fullData && fullData.customer) {
-            // Ensure customer address is properly structured
-            const customerData = fullData.customer
-            const address = customerData.address || {}
-            
-            const updatedQuotation = {
-              ...quotation,
-              customer: {
-                ...(customerData.id ? { id: customerData.id } : {}),
-                firstName: customerData.firstName || quotation.customer?.firstName || "",
-                lastName: customerData.lastName || quotation.customer?.lastName || "",
-                mobile: customerData.mobile || quotation.customer?.mobile || "",
-                email: customerData.email || quotation.customer?.email || "",
-                address: {
-                  street: address.street || "",
-                  city: address.city || "",
-                  state: address.state || "",
-                  pincode: address.pincode || "",
-                },
-              },
-              customerId: fullData.customerId || (customerData.id ? customerData.id : undefined),
-              products: fullData.products || quotation.products,
-              discount: fullData.discount ?? quotation.discount,
-              totalAmount: fullData.pricing?.totalAmount ?? quotation.totalAmount,
-              finalAmount: fullData.pricing?.finalAmount ?? fullData.finalAmount ?? quotation.finalAmount,
-              // Store backend pricing for use in calculations
-              pricing: fullData.pricing,
-            } as Quotation & { pricing?: any }
-            
-            setFullQuotation(updatedQuotation)
-          } else {
-            setFullQuotation(quotation)
-          }
-        })
-        .catch((error) => {
-          console.error("Error loading full quotation details:", error)
-          setFullQuotation(quotation) // Fallback to original quotation
-        })
-        .finally(() => {
-          setIsLoadingDetails(false)
-        })
-    } else if (quotation) {
+    if (quotation && open) {
+      // Immediately set the quotation so data is visible right away
       setFullQuotation(quotation)
+      setIsLoadingDetails(true)
+      
+      // If using API, fetch full quotation details in the background
+      if (useApi && quotation.id) {
+        // Always fetch full quotation details to ensure complete data (including customer email and address)
+        // This ensures admin panel and dealer panel both get complete customer data
+        // API endpoint: GET http://localhost:3050/api/quotations/{quotationId}
+        api.quotations.getById(quotation.id)
+          .then((response) => {
+            // apiRequest returns data.data, so response is already the quotation object
+            const fullData = response
+            if (fullData && fullData.customer) {
+              // Ensure customer address is properly structured
+              const customerData = fullData.customer
+              const address = customerData.address || {}
+              
+              const updatedQuotation = {
+                ...quotation,
+                customer: {
+                  ...(customerData.id ? { id: customerData.id } : {}),
+                  firstName: customerData.firstName || quotation.customer?.firstName || "",
+                  lastName: customerData.lastName || quotation.customer?.lastName || "",
+                  mobile: customerData.mobile || quotation.customer?.mobile || "",
+                  email: customerData.email || quotation.customer?.email || "",
+                  address: {
+                    street: address.street || "",
+                    city: address.city || "",
+                    state: address.state || "",
+                    pincode: address.pincode || "",
+                  },
+                },
+                customerId: fullData.customerId || (customerData.id ? customerData.id : undefined),
+                products: fullData.products || quotation.products,
+                discount: fullData.discount ?? quotation.discount,
+                totalAmount: fullData.pricing?.totalAmount ?? quotation.totalAmount,
+                finalAmount: fullData.pricing?.finalAmount ?? fullData.finalAmount ?? quotation.finalAmount,
+                paymentMode: fullData.paymentMode || quotation.paymentMode,
+                paymentStatus: fullData.paymentStatus || quotation.paymentStatus,
+                dealer: fullData.dealer || quotation.dealer || null, // NEW: Include dealer information
+                validUntil: fullData.validUntil || quotation.validUntil, // NEW: Include validity date
+                // Store backend pricing for use in calculations
+                pricing: fullData.pricing,
+              } as Quotation & { pricing?: any }
+              
+              setFullQuotation(updatedQuotation)
+            } else {
+              // If API response doesn't have customer data, keep the quotation passed in
+              // (already set above)
+            }
+          })
+          .catch((error) => {
+            console.error("Error loading full quotation details:", error)
+            // Keep the original quotation (already set above) if API call fails
+            // Don't show error toast as the data is already visible
+          })
+          .finally(() => {
+            setIsLoadingDetails(false)
+          })
+      } else {
+        // Not using API or no quotation ID - data already set above
+        setIsLoadingDetails(false)
+      }
+    } else if (!open) {
+      // Reset when dialog closes
+      setFullQuotation(null)
       setIsLoadingDetails(false)
     }
   }, [quotation, open, useApi])
@@ -222,6 +255,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       // If discount > 100, assume it's already an amount; otherwise it's a percentage (old format)
       // We'll store it as-is and calculate amount when needed
       setDiscount(savedDiscountValue)
+      // Initialize payment mode
+      setPaymentMode(fullQuotation.paymentMode || "")
       // Initialize pricing edit form
       const products = fullQuotation.products
       const backendPricing = (fullQuotation as any).pricing
@@ -289,7 +324,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   if (!quotation) return null
 
   // Use full quotation if available, otherwise fallback to original
+  // Use fullQuotation if available, otherwise fall back to quotation
+  // This ensures data is always available even if API call fails
   const displayQuotation = fullQuotation || quotation
+  
+  // If no quotation data at all, don't render
+  if (!displayQuotation && !quotation) {
+    return null
+  }
   const backendPricing = (displayQuotation as any).pricing
 
   // Calculate prices - use backend pricing if available, otherwise calculate on frontend
@@ -659,35 +701,56 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
+    const phase = products.phase // ✅ phase comes from table/selection
+  
     if (products.systemType === "both") {
-      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
-      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
+      const dcrSize = calculateSystemSize(
+        products.dcrPanelSize || "",
+        products.dcrPanelQuantity || 0
+      )
+      const nonDcrSize = calculateSystemSize(
+        products.nonDcrPanelSize || "",
+        products.nonDcrPanelQuantity || 0
+      )
+  
       if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
         const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
         const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
+  
         if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
-          const totalSystemSize = `${dcrKw + nonDcrKw}kW`
-          const phase = determinePhase(totalSystemSize, products.inverterSize || "")
-          const panelBrand = products.dcrPanelBrand || products.nonDcrPanelBrand || "Solar"
-          return `${totalSystemSize} (${phase}) Solar System - ${panelBrand} Panels`
-        }
-      }
-      return "Solar Panel System"
-    } else if (products.systemType === "customize") {
-      return "Solar Panel System"
-    } else {
-      // For DCR and NON-DCR
-      if (products.panelSize && products.panelQuantity) {
-        const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
-        if (systemSize !== "0kW") {
-          const phase = determinePhase(systemSize, products.inverterSize || "")
-          const panelBrand = products.panelBrand || "Solar"
+          const systemSize = `${dcrKw + nonDcrKw}kW`
+          const panelBrand =
+            products.dcrPanelBrand ||
+            products.nonDcrPanelBrand ||
+            "Solar"
+  
           return `${systemSize} (${phase}) Solar System - ${panelBrand} Panels`
         }
       }
+  
       return "Solar Panel System"
     }
+  
+    if (products.systemType === "customize") {
+      return "Solar Panel System"
+    }
+  
+    // ✅ DCR / NON-DCR
+    if (products.panelSize && products.panelQuantity) {
+      const systemSize = calculateSystemSize(
+        products.panelSize,
+        products.panelQuantity
+      )
+  
+      if (systemSize !== "0kW") {
+        const panelBrand = products.panelBrand || "Solar"
+        return `${systemSize} (${products.phase}) Solar System - ${panelBrand} Panels`
+      }
+    }
+  
+    return "Solar Panel System"
   }
+  
 
   return (
     <>
@@ -1308,7 +1371,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         {(products.acdb || products.dcdb) && (
                           <>
                             <br />
-                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                            ACDB/DCDB: {products.acdb ? "Havells" : ""} {products.dcdb ? "Havells" : ""}
                           </>
                         )}
                         {products.batteryCapacity && (
@@ -1810,6 +1873,86 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               </CardContent>
             </Card>
 
+            {/* Dealer/Admin Information - Show for account management users */}
+            {isAccountManagement && displayQuotation.dealer && (
+              <Card className="border-blue-500/20">
+                <CardHeader className="bg-blue-500/5 p-3 sm:p-6">
+                  <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                    <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                    Dealer/Admin Information
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2 sm:space-y-3 pt-3 sm:pt-4 p-3 sm:p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="flex items-start gap-3">
+                      <User className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Full Name</p>
+                        <p className="text-sm font-semibold">
+                          {displayQuotation.dealer.firstName} {displayQuotation.dealer.lastName}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0 flex items-center justify-center">
+                        <Badge 
+                          variant="outline" 
+                          className={`text-xs ${
+                            displayQuotation.dealer.role === "admin" 
+                              ? "border-purple-500 text-purple-700 dark:text-purple-400" 
+                              : "border-blue-500 text-blue-700 dark:text-blue-400"
+                          }`}
+                        >
+                          {displayQuotation.dealer.role === "admin" ? "Admin" : "Dealer"}
+                        </Badge>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Role</p>
+                        <p className="text-sm font-semibold capitalize">
+                          {displayQuotation.dealer.role}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Phone className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Phone Number</p>
+                        <a
+                          href={`tel:${displayQuotation.dealer.mobile}`}
+                          className="text-sm font-semibold text-primary hover:underline"
+                          title="Click to call"
+                        >
+                          {displayQuotation.dealer.mobile}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <Mail className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Email Address</p>
+                        <a
+                          href={`mailto:${displayQuotation.dealer.email}`}
+                          className="text-sm font-semibold text-primary hover:underline"
+                          title="Click to send email"
+                        >
+                          {displayQuotation.dealer.email}
+                        </a>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <CreditCard className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Username</p>
+                        <p className="text-sm font-semibold">
+                          {displayQuotation.dealer.username}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* System Configuration */}
             <Card>
               <CardHeader className="bg-muted/50">
@@ -2283,6 +2426,120 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 )}
               </CardContent>
             </Card>
+
+            {/* Payment Mode Selection - Only for Account Management */}
+            {isAccountManagement && (
+              <Card className="border-blue-200 dark:border-blue-800">
+                <CardHeader className="bg-blue-50 dark:bg-blue-950/20">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <CreditCard className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                    Payment Mode Selection
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="payment-mode">Select Payment Mode *</Label>
+                    <Select
+                      value={paymentMode}
+                      onValueChange={(value) => setPaymentMode(value)}
+                      disabled={isSavingPaymentMode}
+                    >
+                      <SelectTrigger id="payment-mode" className="w-full">
+                        <SelectValue placeholder="Select payment mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {paymentModes.map((mode) => (
+                          <SelectItem key={mode.value} value={mode.value}>
+                            {mode.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {paymentMode && (
+                      <div className="flex items-center justify-end gap-2 pt-2">
+                        <Button
+                          onClick={async () => {
+                            if (!paymentMode) {
+                              toast({
+                                title: "Error",
+                                description: "Please select a payment mode",
+                                variant: "destructive",
+                              })
+                              return
+                            }
+                            
+                            setIsSavingPaymentMode(true)
+                            try {
+                              if (useApi) {
+                                // Update payment mode via API
+                                // Note: Backend needs to support this endpoint
+                                // For now, we'll update locally and show a message
+                                const updatedQuotation = {
+                                  ...displayQuotation,
+                                  paymentMode: paymentMode,
+                                }
+                                setFullQuotation(updatedQuotation)
+                                
+                                toast({
+                                  title: "Success",
+                                  description: `Payment mode set to ${paymentModes.find(m => m.value === paymentMode)?.label}`,
+                                })
+                              } else {
+                                // Fallback to localStorage
+                                const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
+                                const updatedQuotations = allQuotations.map((q: Quotation) => {
+                                  if (q.id === displayQuotation.id) {
+                                    return {
+                                      ...q,
+                                      paymentMode: paymentMode,
+                                    }
+                                  }
+                                  return q
+                                })
+                                localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
+                                
+                                const updatedQuotation = {
+                                  ...displayQuotation,
+                                  paymentMode: paymentMode,
+                                }
+                                setFullQuotation(updatedQuotation)
+                                
+                                toast({
+                                  title: "Success",
+                                  description: `Payment mode set to ${paymentModes.find(m => m.value === paymentMode)?.label}`,
+                                })
+                              }
+                            } catch (error) {
+                              console.error("Error updating payment mode:", error)
+                              toast({
+                                title: "Error",
+                                description: error instanceof Error ? error.message : "Failed to update payment mode",
+                                variant: "destructive",
+                              })
+                            } finally {
+                              setIsSavingPaymentMode(false)
+                            }
+                          }}
+                          disabled={isSavingPaymentMode || !paymentMode}
+                          className="gap-2"
+                        >
+                          <Save className="w-4 h-4" />
+                          {isSavingPaymentMode ? "Saving..." : "Save Payment Mode"}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  {displayQuotation.paymentMode && (
+                    <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                      <p className="text-sm text-muted-foreground mb-1">Current Payment Mode:</p>
+                      <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                        {paymentModes.find(m => m.value === displayQuotation.paymentMode)?.label || displayQuotation.paymentMode}
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Quotation Info */}
             <Card className="border-primary/20">

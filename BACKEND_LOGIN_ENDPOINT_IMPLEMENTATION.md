@@ -5,19 +5,26 @@ The frontend is ready for account management login, but the backend login endpoi
 
 ---
 
-## ⚠️ CRITICAL ISSUE
+## ⚠️ CRITICAL ISSUE - BLOCKING ACCOUNT MANAGEMENT LOGIN
 
 **Status**: ❌ **Login endpoint does not support account managers**
+
+**Error Users See**: "Error: User not authenticated" or "User not authenticated"
 
 **Current Behavior**: 
 - `/api/auth/login` only checks the `users` table
 - Account managers cannot login because they're in a separate `account_managers` table
+- When account management users try to login, they get authentication errors
+- Frontend cannot get a valid JWT token for account management users
 
 **Required Behavior**:
 - `/api/auth/login` should check both `users` and `account_managers` tables
 - If user is found in `account_managers` table, return `role: "account-management"`
+- Return a valid JWT token that includes the account-management role
 - Update `loginCount` and `lastLogin` fields
 - Log login history automatically
+
+**Priority**: 🔴 **HIGHEST - This is blocking all account management functionality when API is enabled**
 
 ---
 

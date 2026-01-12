@@ -19,6 +19,7 @@ export interface Customer {
 }
 
 export interface ProductSelection {
+  phase: string
   systemType: string
   panelBrand: string
   panelSize: string
@@ -56,6 +57,17 @@ export interface ProductSelection {
 
 export type QuotationStatus = "pending" | "approved" | "rejected" | "completed"
 
+// Dealer/Admin information included in quotation responses
+export interface DealerInfo {
+  id: string
+  firstName: string
+  lastName: string
+  email: string
+  mobile: string
+  username: string
+  role: "dealer" | "admin"
+}
+
 export interface Quotation {
   id: string
   customer: Customer
@@ -65,7 +77,11 @@ export interface Quotation {
   finalAmount: number
   createdAt: string
   dealerId: string
+  dealer?: DealerInfo | null // NEW: Dealer/admin information from backend
   status?: QuotationStatus
+  paymentMode?: string
+  paymentStatus?: "pending" | "completed" | "partial"
+  validUntil?: string // Optional: quotation validity date
 }
 
 interface QuotationContextType {

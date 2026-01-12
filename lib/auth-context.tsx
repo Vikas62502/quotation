@@ -386,8 +386,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }))
             localStorage.removeItem("dealer")
             localStorage.removeItem("visitor")
-            localStorage.removeItem("authToken")
-            localStorage.removeItem("refreshToken")
+            // Note: In localStorage mode, we don't have real tokens, but we keep the structure
+            // If API mode is enabled later, user will need to login again
             console.log("Account Management login successful (after seeding):", accountManagerData.username)
             return true
           }
