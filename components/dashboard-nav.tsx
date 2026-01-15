@@ -41,13 +41,13 @@ const getNavItems = (isAdmin: boolean, role: string | null) => {
 export function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
-  const { dealer, logout, role } = useAuth()
+  const { dealer, logout, role, accountManager } = useAuth()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const isAdmin = dealer?.username === ADMIN_USERNAME
   const navItems = getNavItems(isAdmin, role)
   
-  // Don't render navigation for account-management users (they have their own header)
-  if (role === "account-management") {
+  // Don't render navigation for account-management users/routes (they have their own header)
+  if (role === "account-management" || accountManager || pathname.startsWith("/dashboard/account-management")) {
     return null
   }
 

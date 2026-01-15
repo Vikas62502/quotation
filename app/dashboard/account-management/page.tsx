@@ -18,6 +18,7 @@ import { api, ApiError } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 
 // Payment Phase Interface
@@ -30,6 +31,7 @@ interface PaymentPhase {
   paidAmount: number
   paymentDate?: string
   paymentMode?: string
+  transactionId?: string
 }
 
 interface CustomerPayment {
@@ -56,7 +58,43 @@ export default function AccountManagementPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isInitialLoad, setIsInitialLoad] = useState(true)
   const [activeTab, setActiveTab] = useState("approved")
+  const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
+  const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const accountDisplayName = accountManager
+    ? `${accountManager.firstName || ""} ${accountManager.lastName || ""}`.trim() ||
+      accountManager.username ||
+      accountManager.email ||
+      "Account Manager"
+    : "Account Manager"
+
+  const buildInstallments = (total: number, count: number, existing?: PaymentPhase[]) => {
+    const safeCount = Math.max(1, count)
+    const baseAmount = Math.floor(total / safeCount)
+    const remainder = Math.round(total - baseAmount * safeCount)
+    return Array.from({ length: safeCount }, (_, index) => {
+      const existingPhase = existing?.find((phase) => phase.phaseNumber === index + 1)
+      const amount = baseAmount + (index === safeCount - 1 ? remainder : 0)
+      const paidAmount = existingPhase?.paidAmount ?? 0
+      const status: PaymentPhase["status"] =
+        paidAmount >= amount ? "completed" : paidAmount > 0 ? "partial" : "pending"
+      return {
+        phaseNumber: index + 1,
+        phaseName: `Installment ${index + 1}`,
+        amount,
+        status,
+        paidAmount,
+        dueDate: existingPhase?.dueDate,
+        paymentDate: existingPhase?.paymentDate,
+        paymentMode: existingPhase?.paymentMode,
+        transactionId: existingPhase?.transactionId,
+      }
+    })
+  }
+
+  const activePayment = activePaymentId
+    ? customerPayments.find((payment) => payment.quotationId === activePaymentId) || null
+    : null
 
   useEffect(() => {
     // Initialize on mount - wait for auth state
@@ -110,18 +148,18 @@ export default function AccountManagementPage() {
         
         // Backend should return only approved quotations, but filter again as safety measure
         const approvedQuotations = quotationsList
-          .filter((q: any) => q.status === "approved")  // Double-check on frontend for security
+          .filter((q: any) => String(q.status || "").toLowerCase() === "approved")  // Double-check on frontend for security
           .map((q: any) => ({
             id: q.id,
             customer: q.customer || {},
             products: q.products || {},
             discount: q.discount || 0,
-            totalAmount: q.pricing?.totalAmount || 0,
-            finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
+            totalAmount: q.pricing?.subtotal ?? q.pricing?.totalAmount ?? q.totalAmount ?? q.finalAmount ?? 0,
+            finalAmount: q.pricing?.finalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0,
             createdAt: q.createdAt,
             dealerId: q.dealerId,
             dealer: q.dealer || null, // NEW: Include dealer/admin information
-            status: "approved",  // Ensure status is always approved
+            status: "approved" as const,  // Ensure status is always approved
             paymentMode: q.paymentMode,
             paymentStatus: q.paymentStatus,
             validUntil: q.validUntil,
@@ -132,7 +170,7 @@ export default function AccountManagementPage() {
         try {
           const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
           const approvedQuotations = allQuotations
-            .filter((q: Quotation) => q.status === "approved" || q.status === "Approved")
+            .filter((q: Quotation) => String(q.status || "").toLowerCase() === "approved")
             .map((q: Quotation) => ({ 
               ...q, 
               status: "approved" as const,
@@ -140,8 +178,8 @@ export default function AccountManagementPage() {
               customer: q.customer || {},
               products: q.products || {},
               discount: q.discount || 0,
-              totalAmount: q.totalAmount || 0,
-              finalAmount: q.finalAmount || q.totalAmount || 0,
+              totalAmount: (q as any).pricing?.subtotal ?? (q as any).pricing?.totalAmount ?? q.totalAmount ?? q.finalAmount ?? 0,
+              finalAmount: q.finalAmount ?? (q as any).pricing?.finalAmount ?? q.totalAmount ?? 0,
               createdAt: q.createdAt || new Date().toISOString(),
               dealerId: q.dealerId || null,
             }))
@@ -245,38 +283,16 @@ export default function AccountManagementPage() {
   useEffect(() => {
     if (quotations.length > 0) {
       const payments: CustomerPayment[] = quotations.map((q) => {
-        const totalAmount = q.finalAmount || q.totalAmount || 0
-        // Default: 3 payment phases (30%, 40%, 30%)
-        const phases: PaymentPhase[] = [
-          {
-            phaseNumber: 1,
-            phaseName: "Advance Payment",
-            amount: Math.round(totalAmount * 0.3),
-            status: "pending",
-            paidAmount: 0,
-          },
-          {
-            phaseNumber: 2,
-            phaseName: "Installation Payment",
-            amount: Math.round(totalAmount * 0.4),
-            status: "pending",
-            paidAmount: 0,
-          },
-          {
-            phaseNumber: 3,
-            phaseName: "Final Payment",
-            amount: Math.round(totalAmount * 0.3),
-            status: "pending",
-            paidAmount: 0,
-          },
-        ]
+        const totalAmount = q.totalAmount || q.finalAmount || 0
+        // Start empty; installments are created when needed
+        const phases: PaymentPhase[] = []
 
         return {
           quotationId: q.id || "",
           customerName: `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.trim() || "Unknown",
           customerMobile: q.customer?.mobile || "",
           totalAmount: q.totalAmount || 0,
-          finalAmount: totalAmount,
+          finalAmount: q.finalAmount || q.totalAmount || 0,
           paymentMode: q.paymentMode || undefined,
           paymentStatus: q.paymentStatus || "pending",
           phases,
@@ -419,11 +435,21 @@ export default function AccountManagementPage() {
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/5 border border-primary/20">
                   <User className="w-4 h-4 text-primary" />
                   <span className="text-sm font-semibold text-foreground hidden sm:inline">
-                    {accountManager.firstName} {accountManager.lastName}
+                    {accountDisplayName}
                   </span>
                   <span className="text-sm font-semibold text-foreground sm:hidden">
-                    {accountManager.firstName.charAt(0)}{accountManager.lastName.charAt(0)}
+                    {accountDisplayName
+                      .split(" ")
+                      .filter(Boolean)
+                      .map((part) => part.charAt(0))
+                      .slice(0, 2)
+                      .join("") || "AM"}
                   </span>
+                  {accountManager.username && (
+                    <span className="hidden lg:inline text-xs text-muted-foreground">
+                      ({accountManager.username})
+                    </span>
+                  )}
                 </div>
               )}
               <span className="text-sm font-medium text-muted-foreground hidden lg:inline">Account Management</span>
@@ -453,7 +479,7 @@ export default function AccountManagementPage() {
                 Account Management
                 {accountManager && (
                   <span className="text-lg font-normal text-muted-foreground ml-2">
-                    - Welcome, {accountManager.firstName}!
+                    - Welcome, {accountDisplayName}!
                   </span>
                 )}
               </h1>
@@ -726,172 +752,33 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
                               <div className="text-right">
-                                <p className="text-sm text-muted-foreground">Total Amount</p>
-                                <p className="text-lg font-bold">₹{payment.finalAmount.toLocaleString()}</p>
+                                <p className="text-sm text-muted-foreground">Subtotal</p>
+                                <p className="text-lg font-bold">₹{payment.totalAmount.toLocaleString()}</p>
                               </div>
                             </div>
                           </CardHeader>
                           <CardContent>
                             <div className="space-y-3">
-                              <div className="flex items-center justify-between mb-4">
-                                <Label className="text-sm font-medium">Payment Mode</Label>
-                                <Select
-                                  value={payment.paymentMode || ""}
-                                  onValueChange={(value) => {
-                                    // Update payment mode
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === payment.quotationId
-                                        ? { ...p, paymentMode: value }
-                                        : p
-                                    )
-                                    setCustomerPayments(updated)
-                                    // TODO: Save to backend
+                              <div className="flex items-center justify-between gap-4 rounded-lg border border-border/50 bg-muted/20 px-4 py-3">
+                                <div>
+                                  <p className="text-sm font-medium">Installments</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    {payment.phases.length === 0
+                                      ? "No installments yet"
+                                      : `${payment.phases.length} installment${payment.phases.length > 1 ? "s" : ""}`}
+                                  </p>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setActivePaymentId(payment.quotationId)
+                                    setInstallmentDialogOpen(true)
                                   }}
                                 >
-                                  <SelectTrigger className="w-48">
-                                    <SelectValue placeholder="Select payment mode" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="cash">Cash</SelectItem>
-                                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                                    <SelectItem value="upi">UPI</SelectItem>
-                                    <SelectItem value="cheque">Cheque</SelectItem>
-                                    <SelectItem value="neft">NEFT</SelectItem>
-                                    <SelectItem value="rtgs">RTGS</SelectItem>
-                                    <SelectItem value="credit_card">Credit Card</SelectItem>
-                                    <SelectItem value="debit_card">Debit Card</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              
-                              <div className="space-y-2">
-                                <Label className="text-sm font-medium">Payment Phases</Label>
-                                {payment.phases.map((phase) => {
-                                  const isCompleted = phase.status === "completed"
-                                  const isPartial = phase.status === "partial"
-                                  const isPending = phase.status === "pending"
-                                  
-                                  return (
-                                    <div
-                                      key={phase.phaseNumber}
-                                      className={`p-4 rounded-lg border ${
-                                        isCompleted
-                                          ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
-                                          : isPartial
-                                          ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
-                                          : "bg-gray-50 dark:bg-gray-950/20 border-border"
-                                      }`}
-                                    >
-                                      <div className="flex items-center justify-between mb-3">
-                                        <div className="flex items-center gap-2">
-                                          <div
-                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                              isCompleted
-                                                ? "bg-green-500 text-white"
-                                                : isPartial
-                                                ? "bg-amber-500 text-white"
-                                                : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
-                                            }`}
-                                          >
-                                            {phase.phaseNumber}
-                                          </div>
-                                          <div>
-                                            <p className="text-sm font-semibold">{phase.phaseName}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                              Amount: ₹{phase.amount.toLocaleString()}
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <Badge
-                                          className={
-                                            isCompleted
-                                              ? "bg-green-600 text-white"
-                                              : isPartial
-                                              ? "bg-amber-600 text-white"
-                                              : "bg-gray-500 text-white"
-                                          }
-                                        >
-                                          {isCompleted ? (
-                                            <><CheckCircle2 className="w-3 h-3 mr-1" /> Completed</>
-                                          ) : isPartial ? (
-                                            <><Clock className="w-3 h-3 mr-1" /> Partial</>
-                                          ) : (
-                                            <><AlertCircle className="w-3 h-3 mr-1" /> Pending</>
-                                          )}
-                                        </Badge>
-                                      </div>
-                                      
-                                      <div className="grid grid-cols-2 gap-4 mt-3">
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Paid Amount</Label>
-                                          <Input
-                                            type="number"
-                                            value={phase.paidAmount}
-                                            onChange={(e) => {
-                                              const paid = Number.parseFloat(e.target.value) || 0
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === payment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? {
-                                                              ...ph,
-                                                              paidAmount: paid,
-                                                              status:
-                                                                paid >= ph.amount
-                                                                  ? "completed"
-                                                                  : paid > 0
-                                                                  ? "partial"
-                                                                  : "pending",
-                                                              paymentDate: paid > 0 ? new Date().toISOString() : undefined,
-                                                            }
-                                                          : ph
-                                                      ),
-                                                    }
-                                                  : p
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                            placeholder="0"
-                                          />
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Due Date</Label>
-                                          <Input
-                                            type="date"
-                                            value={phase.dueDate ? new Date(phase.dueDate).toISOString().split("T")[0] : ""}
-                                            onChange={(e) => {
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === payment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? { ...ph, dueDate: e.target.value }
-                                                          : ph
-                                                      ),
-                                                    }
-                                                  : p
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                          />
-                                        </div>
-                                      </div>
-                                      
-                                      {phase.paidAmount > 0 && (
-                                        <div className="mt-3 pt-3 border-t border-border">
-                                          <p className="text-xs text-muted-foreground">
-                                            Remaining: ₹{(phase.amount - phase.paidAmount).toLocaleString()}
-                                          </p>
-                                        </div>
-                                      )}
-                                    </div>
-                                  )
-                                })}
+                                  Manage
+                                </Button>
                               </div>
                               
                               <div className="mt-4 pt-4 border-t border-border">
@@ -906,7 +793,7 @@ export default function AccountManagementPage() {
                                     <p className="text-sm text-muted-foreground">Remaining</p>
                                     <p className="text-xl font-bold text-amber-600">
                                       ₹{(
-                                        payment.finalAmount -
+                                        payment.totalAmount -
                                         payment.phases.reduce((sum, p) => sum + p.paidAmount, 0)
                                       ).toLocaleString()}
                                     </p>
@@ -931,6 +818,300 @@ export default function AccountManagementPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
+
+      {/* Installments Modal */}
+      <Dialog
+        open={installmentDialogOpen}
+        onOpenChange={(open) => {
+          setInstallmentDialogOpen(open)
+          if (!open) {
+            setActivePaymentId(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Installments</DialogTitle>
+            <DialogDescription>Manage installments, payment modes, and transaction IDs.</DialogDescription>
+          </DialogHeader>
+          {activePayment && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold">{activePayment.customerName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {activePayment.customerMobile} • {activePayment.quotationId}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Subtotal</p>
+                  <p className="text-base font-semibold">₹{activePayment.totalAmount.toLocaleString()}</p>
+                </div>
+              </div>
+
+              {activePayment.phases.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-muted/10 py-8">
+                  <p className="text-sm text-muted-foreground">No installments created yet.</p>
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const updated = customerPayments.map((p) =>
+                        p.quotationId === activePayment.quotationId
+                          ? { ...p, phases: buildInstallments(p.totalAmount, 1) }
+                          : p
+                      )
+                      setCustomerPayments(updated)
+                    }}
+                  >
+                    Create Installment
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">Installments</p>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          const updated = customerPayments.map((p) =>
+                            p.quotationId === activePayment.quotationId
+                              ? { ...p, phases: buildInstallments(p.totalAmount, p.phases.length + 1, p.phases) }
+                              : p
+                          )
+                          setCustomerPayments(updated)
+                        }}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {activePayment.phases.map((phase) => {
+                      const isCompleted = phase.status === "completed"
+                      const isPartial = phase.status === "partial"
+                      const isPending = phase.status === "pending"
+                      const paidBefore = activePayment.phases
+                        .filter((p) => p.phaseNumber < phase.phaseNumber)
+                        .reduce((sum, p) => sum + p.paidAmount, 0)
+                      const remainingBefore = Math.max(activePayment.totalAmount - paidBefore, 0)
+
+                      return (
+                        <div
+                          key={phase.phaseNumber}
+                          className={`rounded-lg border px-4 py-3 ${
+                            isCompleted
+                              ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
+                              : isPartial
+                              ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
+                              : "bg-gray-50 dark:bg-gray-950/20 border-border"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                                  isCompleted
+                                    ? "bg-green-500 text-white"
+                                    : isPartial
+                                    ? "bg-amber-500 text-white"
+                                    : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
+                                }`}
+                              >
+                                {phase.phaseNumber}
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold">{phase.phaseName}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Remaining before this installment: ₹{remainingBefore.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                            <Badge
+                              className={
+                                isCompleted
+                                  ? "bg-green-600 text-white"
+                                  : isPartial
+                                  ? "bg-amber-600 text-white"
+                                  : "bg-gray-500 text-white"
+                              }
+                            >
+                              {isCompleted ? (
+                                <>
+                                  <CheckCircle2 className="w-3 h-3 mr-1" /> Completed
+                                </>
+                              ) : isPartial ? (
+                                <>
+                                  <Clock className="w-3 h-3 mr-1" /> Partial
+                                </>
+                              ) : (
+                                <>
+                                  <AlertCircle className="w-3 h-3 mr-1" /> Pending
+                                </>
+                              )}
+                            </Badge>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Paid Amount</Label>
+                              <Input
+                                type="number"
+                                value={phase.paidAmount}
+                                onChange={(e) => {
+                                  const paid = Number.parseFloat(e.target.value) || 0
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
+                                          phases: p.phases.map((ph) =>
+                                            ph.phaseNumber === phase.phaseNumber
+                                              ? (() => {
+                                                  const nextStatus: PaymentPhase["status"] =
+                                                    paid >= ph.amount ? "completed" : paid > 0 ? "partial" : "pending"
+                                                  return {
+                                                    ...ph,
+                                                    paidAmount: paid,
+                                                    status: nextStatus,
+                                                    paymentDate: paid > 0 ? new Date().toISOString() : undefined,
+                                                  }
+                                                })()
+                                              : ph
+                                          ),
+                                        }
+                                      : p
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
+                                className="mt-1"
+                                placeholder="0"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Due Date</Label>
+                              <Input
+                                type="date"
+                                value={phase.dueDate ? new Date(phase.dueDate).toISOString().split("T")[0] : ""}
+                                onChange={(e) => {
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
+                                          phases: p.phases.map((ph) =>
+                                            ph.phaseNumber === phase.phaseNumber
+                                              ? { ...ph, dueDate: e.target.value }
+                                              : ph
+                                          ),
+                                        }
+                                      : p
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
+                                className="mt-1"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Payment Mode</Label>
+                              <Select
+                                value={phase.paymentMode || ""}
+                                onValueChange={(value) => {
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
+                                          phases: p.phases.map((ph) =>
+                                            ph.phaseNumber === phase.phaseNumber ? { ...ph, paymentMode: value } : ph
+                                          ),
+                                        }
+                                      : p
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
+                              >
+                                <SelectTrigger className="mt-1">
+                                  <SelectValue placeholder="Select payment mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="cash">Cash</SelectItem>
+                                  <SelectItem value="upi">UPI</SelectItem>
+                                  <SelectItem value="loan">Loan</SelectItem>
+                                  <SelectItem value="netbanking">Net Banking</SelectItem>
+                                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                  <SelectItem value="cheque">Cheque</SelectItem>
+                                  <SelectItem value="card">Card</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Transaction ID</Label>
+                              <Input
+                                value={phase.transactionId || ""}
+                                onChange={(e) => {
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
+                                          phases: p.phases.map((ph) =>
+                                            ph.phaseNumber === phase.phaseNumber
+                                              ? { ...ph, transactionId: e.target.value }
+                                              : ph
+                                          ),
+                                        }
+                                      : p
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
+                                className="mt-1"
+                                placeholder="Optional"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
+                            <p className="text-xs text-muted-foreground">
+                              Remaining after this installment: ₹{Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
+                            </p>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const updated = customerPayments.map((p) =>
+                                  p.quotationId === activePayment.quotationId
+                                    ? {
+                                        ...p,
+                                        phases: buildInstallments(
+                                          p.totalAmount,
+                                          p.phases.length - 1,
+                                          p.phases.filter((ph) => ph.phaseNumber !== phase.phaseNumber)
+                                        ),
+                                      }
+                                    : p
+                                )
+                                setCustomerPayments(updated)
+                              }}
+                              disabled={activePayment.phases.length <= 1}
+                              className="text-destructive"
+                            >
+                              Remove installment
+                            </Button>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

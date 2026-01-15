@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from "
 import { api, ApiError } from "./api"
 import { useAuth } from "./auth-context"
 import { seedDummyData } from "./dummy-data"
+import { calculateSystemSize, determinePhase } from "./pricing-tables"
 
 export interface Customer {
   firstName: string
@@ -216,11 +217,21 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
     })
     console.log("[saveQuotation] =======================")
 
+    let normalizedSubtotal = subtotalValue
+    if (
+      (normalizedSubtotal === null || normalizedSubtotal === undefined || !Number.isFinite(normalizedSubtotal) || normalizedSubtotal <= 0) &&
+      Number.isFinite(Number(currentProducts.systemPrice)) &&
+      Number(currentProducts.systemPrice) > 0
+    ) {
+      normalizedSubtotal = Number(currentProducts.systemPrice)
+    }
+
     // STRICT validation - must be > 0, not just truthy
-    if (subtotalValue === null || subtotalValue === undefined || !Number.isFinite(subtotalValue) || subtotalValue <= 0) {
+    if (normalizedSubtotal === null || normalizedSubtotal === undefined || !Number.isFinite(normalizedSubtotal) || normalizedSubtotal <= 0) {
       console.error("[saveQuotation] === INVALID SUBTOTAL VALUE ===")
       console.error("[saveQuotation] Invalid subtotalValue received:", {
         subtotalValue,
+        normalizedSubtotal,
         type: typeof subtotalValue,
         isFinite: Number.isFinite(subtotalValue),
         isZero: subtotalValue === 0,
@@ -239,7 +250,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
     }
     
     // Double-check after conversion
-    const validatedSubtotalValue = Number(subtotalValue)
+    const validatedSubtotalValue = Number(normalizedSubtotal)
     if (!Number.isFinite(validatedSubtotalValue) || validatedSubtotalValue <= 0) {
       console.error("[saveQuotation] Subtotal validation failed after Number conversion:", validatedSubtotalValue)
       throw new Error(`Subtotal validation failed: ${validatedSubtotalValue}. Subtotal must be greater than 0.`)
@@ -304,7 +315,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         // Calculate pricing values - matching backend controller logic
         // subtotalValue parameter = Subtotal (set price - complete package price)
         // Backend expects: subtotal, totalAmount, finalAmount at root level
-        const subtotal = Number(subtotalValue) // Subtotal is the set price (complete package price)
+        const subtotal = Number(validatedSubtotalValue) // Subtotal is the set price (complete package price)
         
         // Double-check subtotal is still valid after conversion
         if (!subtotal || subtotal <= 0 || !Number.isFinite(subtotal)) {
@@ -337,6 +348,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         // Remove empty strings and ensure required fields are present
         const cleanedProducts: ProductSelection = {
           systemType: currentProducts.systemType,
+          phase: currentProducts.phase || "",
           panelBrand: currentProducts.panelBrand || "",
           panelSize: currentProducts.panelSize || "",
           panelQuantity: currentProducts.panelQuantity || 0,
@@ -352,6 +364,20 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           dcCableSize: currentProducts.dcCableSize || "",
           acdb: currentProducts.acdb || "",
           dcdb: currentProducts.dcdb || "",
+        }
+
+        if (!cleanedProducts.phase || cleanedProducts.phase.trim() === "") {
+          if (cleanedProducts.systemType === "both") {
+            cleanedProducts.phase = "3-Phase"
+          } else if (cleanedProducts.panelSize && cleanedProducts.panelQuantity && cleanedProducts.inverterSize) {
+            const systemSize = calculateSystemSize(cleanedProducts.panelSize, cleanedProducts.panelQuantity)
+            if (systemSize !== "0kW") {
+              cleanedProducts.phase = determinePhase(systemSize, cleanedProducts.inverterSize)
+            }
+          }
+          if (!cleanedProducts.phase || cleanedProducts.phase.trim() === "") {
+            cleanedProducts.phase = "1-Phase"
+          }
         }
 
         // Add optional fields if they exist
@@ -599,6 +625,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
       } else {
         // Fallback to localStorage
         // totalAmount is now subtotal (total project cost)
+        const totalAmount = validatedSubtotalValue
         const centralSubsidy = currentProducts.centralSubsidy || 0
         const stateSubsidy = currentProducts.stateSubsidy || 0
         const totalSubsidy = centralSubsidy + stateSubsidy

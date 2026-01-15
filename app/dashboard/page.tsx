@@ -18,7 +18,7 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 const ADMIN_USERNAME = "admin"
 
 export default function DashboardPage() {
-  const { isAuthenticated, dealer } = useAuth()
+  const { isAuthenticated, dealer, role } = useAuth()
   const router = useRouter()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [searchTerm, setSearchTerm] = useState("")
@@ -35,6 +35,11 @@ export default function DashboardPage() {
       router.push("/login")
       return
     }
+
+    if (role === "account-management") {
+      router.push("/dashboard/account-management")
+      return
+    }
     
     // Redirect admin to admin panel
     if (dealer?.username === ADMIN_USERNAME) {
@@ -43,7 +48,7 @@ export default function DashboardPage() {
     }
     
     loadQuotations()
-  }, [isAuthenticated, router, dealer])
+  }, [isAuthenticated, router, dealer, role])
 
   const loadQuotations = async () => {
     if (!dealer?.id) return
@@ -146,6 +151,18 @@ export default function DashboardPage() {
   }
 
   if (!isAuthenticated) return null
+  if (role === "account-management") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-8 h-8 opacity-50" />
+          </div>
+          <p className="text-muted-foreground">Redirecting to Account Management...</p>
+        </div>
+      </div>
+    )
+  }
 
   const currentMonth = new Date().getMonth()
   const currentYear = new Date().getFullYear()
