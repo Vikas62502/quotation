@@ -88,14 +88,14 @@ const getSystemPrice = (products: any): number => {
     if (!products.panelSize || !products.panelQuantity) return 0
     const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
     if (systemSize === "0kW") return 0
-    const phase = determinePhase(systemSize, products.inverterSize)
+    const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
     const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
     if (price !== null) return price
   } else if (products.systemType === "non-dcr") {
     if (!products.panelSize || !products.panelQuantity) return 0
     const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
     if (systemSize === "0kW") return 0
-    const phase = determinePhase(systemSize, products.inverterSize)
+    const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
     const price = getNonDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
     if (price !== null) return price
   } else if (products.systemType === "both") {
@@ -108,7 +108,7 @@ const getSystemPrice = (products: any): number => {
       const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
       if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
         const totalSystemSize = `${dcrKw + nonDcrKw}kW`
-        const phase = determinePhase(totalSystemSize, products.inverterSize)
+        const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(totalSystemSize, products.inverterSize)
         const price = getBothPrice(
           totalSystemSize,
           phase,

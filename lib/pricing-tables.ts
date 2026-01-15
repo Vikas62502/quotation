@@ -732,6 +732,7 @@ export function configToProductSelection(
   
   return {
     systemType: config.systemType,
+    phase: config.phase,
     panelBrand: config.panelBrand,
     panelSize: config.panelSize,
     panelQuantity: calculatedQuantity,

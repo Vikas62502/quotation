@@ -72,7 +72,7 @@ const getSystemPrice = (products: ProductSelection): number => {
     if (systemSize === "0kW") {
       return products.systemPrice || 0
     }
-    const phase = determinePhase(systemSize, products.inverterSize)
+    const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
     const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
     if (price !== null) return price
     // Fallback to stored systemPrice if price lookup fails
@@ -85,7 +85,7 @@ const getSystemPrice = (products: ProductSelection): number => {
     if (systemSize === "0kW") {
       return products.systemPrice || 0
     }
-    const phase = determinePhase(systemSize, products.inverterSize)
+    const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
     const price = getNonDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
     if (price !== null) return price
     // Fallback to stored systemPrice if price lookup fails
@@ -100,7 +100,7 @@ const getSystemPrice = (products: ProductSelection): number => {
       const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
       if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
         const totalSystemSize = `${dcrKw + nonDcrKw}kW`
-        const phase = determinePhase(totalSystemSize, products.inverterSize)
+        const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(totalSystemSize, products.inverterSize)
         const price = getBothPrice(
           totalSystemSize,
           phase,

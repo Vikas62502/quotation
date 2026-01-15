@@ -65,6 +65,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const cableSizesList = catalog?.cables?.sizes || []
   const [formData, setFormData] = useState<ProductSelection>(
     initialData || {
+      phase: "",
       systemType: "",
       panelBrand: "",
       panelSize: "",
@@ -115,7 +116,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   }
   
   // Determine phase - pass pricing tables to get accurate phase from pricing data
-  const currentPhase = formData.systemType === "both"
+  const currentPhase = formData.phase
+    ? (formData.phase as "1-Phase" | "3-Phase")
+    : formData.systemType === "both"
     ? "3-Phase" as "1-Phase" | "3-Phase" // BOTH systems are always 3-Phase
     : formData.inverterSize && systemSizeForPhase
     ? determinePhase(systemSizeForPhase, formData.inverterSize, pricingTables || undefined)
@@ -209,6 +212,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const updated = {
           ...prev,
           ...preFilledData,
+          phase: config.phase || systemConfig.phase || "3-Phase",
           // Override panel quantities for BOTH system
           dcrPanelBrand: systemConfig.panelBrand,
           dcrPanelSize: systemConfig.panelSize,
@@ -275,6 +279,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       
       setFormData((prev) => ({
         ...prev,
+        phase: bothPhase,
         dcrPanelBrand: panelBrand,
         dcrPanelSize: `${bestDcrPanelSize}W`,
         dcrPanelQuantity: bestDcrQuantity,
@@ -312,6 +317,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const updated = {
           ...prev,
           ...preFilledData,
+          phase: config.phase || systemConfig.phase || "",
           panelSize: panelSizeToSet,
           // Ensure ACDB/DCDB are set from config
           acdb: systemConfig.acdb || preFilledData.acdb || "",
@@ -358,6 +364,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       
       setFormData((prev) => ({
         ...prev,
+        phase: fallbackPhase,
         panelBrand,
         panelSize: `${bestPanelSize}W`,
         panelQuantity: bestQuantity,
@@ -399,6 +406,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const updated = {
           ...prev,
           ...preFilledData,
+          phase: config.phase || systemConfig.phase || "",
           panelSize: panelSizeToSet,
           // Ensure ACDB/DCDB are set from config
           acdb: systemConfig.acdb || preFilledData.acdb || "",
@@ -451,6 +459,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       
       setFormData((prev) => ({
         ...prev,
+        phase: fallbackPhase,
         panelBrand,
         panelSize: `${bestPanelSize}W`,
         panelQuantity: bestQuantity,
@@ -552,7 +561,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       }
     }
 
-    onSubmit(formData)
+    const normalizedProducts: ProductSelection = {
+      ...formData,
+      phase: formData.phase || currentPhase,
+    }
+
+    setFormData(normalizedProducts)
+    onSubmit(normalizedProducts)
   }
 
   const showDcrFields = formData.systemType === "dcr"
