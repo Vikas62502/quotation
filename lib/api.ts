@@ -552,6 +552,35 @@ export const api = {
       })
     },
 
+    updateDocuments: async (quotationId: string, formData: FormData) => {
+      const token = getAuthToken()
+      const url = `${API_BASE_URL}/quotations/${quotationId}/documents`
+      const response = await fetch(url, {
+        method: "PATCH",
+        headers: {
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+        body: formData,
+      })
+
+      const contentType = response.headers.get("content-type")
+      if (contentType?.includes("application/json")) {
+        const data = await response.json()
+        if (!response.ok || data?.success === false) {
+          const message = data?.error?.message || response.statusText
+          throw new ApiError(message, data?.error?.code || `HTTP_${response.status}`)
+        }
+        return data?.data || data
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText)
+        throw new ApiError(errorText || `HTTP_${response.status}`)
+      }
+
+      return response as any
+    },
+
     downloadPDF: async (quotationId: string) => {
       const token = getAuthToken()
       const url = `${API_BASE_URL}/quotations/${quotationId}/pdf`

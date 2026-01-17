@@ -14,12 +14,16 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
 import { api, ApiError } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
+import { useToast } from "@/hooks/use-toast"
 
 const ADMIN_USERNAME = "admin"
 
 export default function DashboardPage() {
   const { isAuthenticated, dealer, role } = useAuth()
   const router = useRouter()
+  const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
@@ -28,6 +32,10 @@ export default function DashboardPage() {
   const [visitDialogOpen, setVisitDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [quotationVisits, setQuotationVisits] = useState<Record<string, any[]>>({})
+  const [documentsDialogOpen, setDocumentsDialogOpen] = useState(false)
+  const [documentsQuotation, setDocumentsQuotation] = useState<Quotation | null>(null)
+  const [documentsFormById, setDocumentsFormById] = useState<Record<string, any>>({})
+  const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
@@ -267,6 +275,78 @@ export default function DashboardPage() {
       default:
         return "bg-yellow-600 text-white"
     }
+  }
+
+  const getDocumentsForm = (quotationId: string) => {
+    return (
+      documentsFormById[quotationId] || {
+        isCompliantSenior: false,
+        aadharNumber: "",
+        aadharFront: null,
+        aadharBack: null,
+        compliantAadharNumber: "",
+        compliantAadharFront: null,
+        compliantAadharBack: null,
+        compliantContactPhone: "",
+        panNumber: "",
+        panImage: null,
+        electricityKno: "",
+        electricityBillImage: null,
+        bankAccountNumber: "",
+        bankIfsc: "",
+        bankName: "",
+        bankBranch: "",
+        bankPassbookImage: null,
+        contactPhone: "",
+        contactEmail: "",
+      }
+    )
+  }
+
+  const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
+    setDocumentsFormById((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...getDocumentsForm(quotationId),
+        ...updates,
+      },
+    }))
+  }
+
+  const buildDocumentsFormData = (form: Record<string, any>) => {
+    const formData = new FormData()
+    const appendIfValue = (key: string, value: any) => {
+      if (value === undefined || value === null || value === "") return
+      formData.append(key, String(value))
+    }
+    const appendFile = (key: string, value: File | null) => {
+      if (value instanceof File) formData.append(key, value)
+    }
+
+    appendIfValue("isCompliantSenior", form.isCompliantSenior ? "true" : "false")
+    appendIfValue("aadharNumber", form.aadharNumber)
+    appendIfValue("phoneNumber", form.contactPhone)
+    appendFile("aadharFront", form.aadharFront)
+    appendFile("aadharBack", form.aadharBack)
+
+    appendIfValue("compliantAadharNumber", form.compliantAadharNumber)
+    appendIfValue("compliantContactPhone", form.compliantContactPhone)
+    appendFile("compliantAadharFront", form.compliantAadharFront)
+    appendFile("compliantAadharBack", form.compliantAadharBack)
+
+    appendIfValue("panNumber", form.panNumber)
+    appendFile("panImage", form.panImage)
+    appendIfValue("electricityKno", form.electricityKno)
+    appendFile("electricityBillImage", form.electricityBillImage)
+
+    appendIfValue("bankAccountNumber", form.bankAccountNumber)
+    appendIfValue("bankIfsc", form.bankIfsc)
+    appendIfValue("bankName", form.bankName)
+    appendIfValue("bankBranch", form.bankBranch)
+    appendFile("bankPassbookImage", form.bankPassbookImage)
+
+    appendIfValue("emailId", form.contactEmail)
+    return formData
   }
 
   const getSystemSize = (quotation: Quotation): string => {
@@ -516,6 +596,18 @@ export default function DashboardPage() {
                               variant="ghost"
                               size="sm"
                               onClick={() => {
+                                setDocumentsQuotation(quotation)
+                                setDocumentsDialogOpen(true)
+                              }}
+                              className="h-8 w-8 p-0"
+                              title="Document Submission"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
                                 setSelectedQuotation(quotation)
                                 setDialogOpen(true)
                               }}
@@ -549,6 +641,406 @@ export default function DashboardPage() {
         open={visitDialogOpen}
         onOpenChange={handleVisitDialogClose}
       />
+
+      {/* Document Submission Dialog */}
+      <Dialog
+        open={documentsDialogOpen}
+        onOpenChange={(open) => {
+          setDocumentsDialogOpen(open)
+          if (!open) {
+            setDocumentsQuotation(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Document Submission</DialogTitle>
+            <DialogDescription>
+              Upload customer documents and payment details for this quotation.
+            </DialogDescription>
+          </DialogHeader>
+          {documentsQuotation && (
+            <div className="space-y-6">
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+                <p className="text-sm font-semibold">
+                  {documentsQuotation.customer?.firstName || ""} {documentsQuotation.customer?.lastName || ""}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {documentsQuotation.customer?.mobile || ""} • {documentsQuotation.id}
+                </p>
+              </div>
+
+              {(() => {
+                const form = getDocumentsForm(documentsQuotation.id)
+                const isCompliant = Boolean(form.isCompliantSenior)
+
+                return (
+                  <>
+                    <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-3">
+                      <div className="flex items-start gap-3">
+                        <input
+                          id="compliant-senior"
+                          type="checkbox"
+                          checked={isCompliant}
+                          onChange={(e) =>
+                            updateDocumentsForm(documentsQuotation.id, { isCompliantSenior: e.target.checked })
+                          }
+                          className="h-4 w-4 mt-1"
+                        />
+                        <div>
+                          <Label htmlFor="compliant-senior" className="text-sm font-medium">
+                            Compliant (age &gt; 60)
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            When checked, compliant Aadhar front/back and contact number are mandatory.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Aadhar Details</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Aadhar Number</Label>
+                          <Input
+                            value={form.aadharNumber}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { aadharNumber: e.target.value })}
+                            placeholder="Enter Aadhar number"
+                          />
+                        </div>
+                        <div>
+                          <Label>Phone Number</Label>
+                          <Input
+                            value={form.contactPhone}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactPhone: e.target.value })}
+                            placeholder="Enter phone number"
+                          />
+                        </div>
+                        <div>
+                          <Label>Aadhar Front Image</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, { aadharFront: e.target.files?.[0] || null })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label>Aadhar Back Image</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, { aadharBack: e.target.files?.[0] || null })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {isCompliant && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-4">
+                        <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label>Compliant Aadhar Number *</Label>
+                            <Input
+                              value={form.compliantAadharNumber}
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, { compliantAadharNumber: e.target.value })
+                              }
+                              placeholder="Enter compliant Aadhar number"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Compliant Contact No *</Label>
+                            <Input
+                              value={form.compliantContactPhone}
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, { compliantContactPhone: e.target.value })
+                              }
+                              placeholder="Enter compliant contact number"
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Compliant Aadhar Front Image *</Label>
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, {
+                                  compliantAadharFront: e.target.files?.[0] || null,
+                                })
+                              }
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label>Compliant Aadhar Back Image *</Label>
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, {
+                                  compliantAadharBack: e.target.files?.[0] || null,
+                                })
+                              }
+                              required
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">PAN Details</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>PAN Number</Label>
+                          <Input
+                            value={form.panNumber}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { panNumber: e.target.value })}
+                            placeholder="Enter PAN number"
+                          />
+                        </div>
+                        <div>
+                          <Label>PAN Image</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, { panImage: e.target.files?.[0] || null })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Electricity Bill</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Electricity Bill KNO</Label>
+                          <Input
+                            value={form.electricityKno}
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, { electricityKno: e.target.value })
+                            }
+                            placeholder="Enter KNO"
+                          />
+                        </div>
+                        <div>
+                          <Label>Electricity Bill Image</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                electricityBillImage: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Bank Details</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Bank Account Number</Label>
+                          <Input
+                            value={form.bankAccountNumber}
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, { bankAccountNumber: e.target.value })
+                            }
+                            placeholder="Enter account number"
+                          />
+                        </div>
+                        <div>
+                          <Label>IFSC Code</Label>
+                          <Input
+                            value={form.bankIfsc}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { bankIfsc: e.target.value })}
+                            placeholder="Enter IFSC code"
+                          />
+                        </div>
+                        <div>
+                          <Label>Bank Name</Label>
+                          <Input
+                            value={form.bankName}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { bankName: e.target.value })}
+                            placeholder="Enter bank name"
+                          />
+                        </div>
+                        <div>
+                          <Label>Branch</Label>
+                          <Input
+                            value={form.bankBranch}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { bankBranch: e.target.value })}
+                            placeholder="Enter branch name"
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <Label>Bank Passbook Image</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                bankPassbookImage: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Contact Details</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Email ID</Label>
+                          <Input
+                            type="email"
+                            value={form.contactEmail}
+                            onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactEmail: e.target.value })}
+                            placeholder="Enter email"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDocumentsDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    if (!documentsQuotation) return
+                    const form = getDocumentsForm(documentsQuotation.id)
+                    const isCompliant = Boolean(form.isCompliantSenior)
+                    const aadharPattern = /^\d{12}$/
+                    const panPattern = /^[A-Z]{5}\d{4}[A-Z]{1}$/
+                    const phonePattern = /^\d{10}$/
+
+                    if (form.aadharNumber && !aadharPattern.test(form.aadharNumber)) {
+                      toast({
+                        title: "Invalid Aadhar",
+                        description: "Aadhar number must be 12 digits.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (form.panNumber && !panPattern.test(form.panNumber.toUpperCase())) {
+                      toast({
+                        title: "Invalid PAN",
+                        description: "PAN must be in format ABCDE1234F.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (form.contactPhone && !phonePattern.test(form.contactPhone)) {
+                      toast({
+                        title: "Invalid phone number",
+                        description: "Phone number must be 10 digits.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (isCompliant) {
+                      if (form.compliantAadharNumber && !aadharPattern.test(form.compliantAadharNumber)) {
+                        toast({
+                          title: "Invalid compliant Aadhar",
+                          description: "Aadhar number must be 12 digits.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      if (form.compliantContactPhone && !phonePattern.test(form.compliantContactPhone)) {
+                        toast({
+                          title: "Invalid compliant phone",
+                          description: "Phone number must be 10 digits.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      const missing =
+                        !form.compliantAadharNumber ||
+                        !form.compliantContactPhone ||
+                        !form.compliantAadharFront ||
+                        !form.compliantAadharBack
+                      if (missing) {
+                        toast({
+                          title: "Missing compliant details",
+                          description: "Please fill compliant Aadhar details and contact number.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+                    }
+
+                    setIsSubmittingDocuments(true)
+                    if (useApi) {
+                      const formData = buildDocumentsFormData(form)
+                      api.quotations
+                        .updateDocuments(documentsQuotation.id, formData)
+                        .then(() => {
+                          toast({
+                            title: "Document details saved",
+                            description: "Documents uploaded successfully.",
+                          })
+                          setDocumentsDialogOpen(false)
+                        })
+                        .catch((error: unknown) => {
+                          const message =
+                            error instanceof Error ? error.message : "Failed to upload documents."
+                          toast({
+                            title: "Upload failed",
+                            description: message,
+                            variant: "destructive",
+                          })
+                        })
+                        .finally(() => setIsSubmittingDocuments(false))
+                    } else {
+                      localStorage.setItem(
+                        `quotation_documents_${documentsQuotation.id}`,
+                        JSON.stringify(form)
+                      )
+                      toast({
+                        title: "Document details saved",
+                        description: "Documents saved locally.",
+                      })
+                      setIsSubmittingDocuments(false)
+                      setDocumentsDialogOpen(false)
+                    }
+                  }}
+                  disabled={isSubmittingDocuments}
+                >
+                  {isSubmittingDocuments ? "Submitting..." : "Submit"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
