@@ -159,6 +159,17 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setError("")
   }
 
+  const normalizeSizeValue = (value: string) => value.trim().toLowerCase()
+  const isValueInList = (value: string, list: string[]) => {
+    if (!value || list.length === 0) return true
+    const normalized = normalizeSizeValue(value)
+    const withUnit = normalized.endsWith("w") ? normalized : `${normalized}w`
+    return list.some((item) => {
+      const normalizedItem = normalizeSizeValue(item)
+      return normalizedItem === normalized || normalizedItem === withUnit
+    })
+  }
+
   // Quick Select dropdown removed - configurations are now selected via Browse dialogs
   // The handlers below (handleDcrConfigSelect, handleNonDcrConfigSelect, handleBothConfigSelect)
   // are used when selecting from the Browse dialogs
@@ -501,6 +512,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete structure selection")
         return
       }
+      if (!isValueInList(formData.dcrPanelSize, panelSizesList) || !isValueInList(formData.nonDcrPanelSize, panelSizesList)) {
+        setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
+        return
+      }
+      if (!isValueInList(formData.structureSize, structureSizesList)) {
+        setError(`Please select a valid structure size from available sizes: ${structureSizesList.join(", ")}`)
+        return
+      }
       if (!formData.meterBrand) {
         setError("Please select a meter brand")
         return
@@ -525,6 +544,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Validate other required fields for DCR/NON DCR systems
       if (!formData.structureType || !formData.structureSize) {
         setError("Please complete structure selection")
+        return
+      }
+      if (!isValueInList(formData.panelSize, panelSizesList)) {
+        setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
+        return
+      }
+      if (!isValueInList(formData.structureSize, structureSizesList)) {
+        setError(`Please select a valid structure size from available sizes: ${structureSizesList.join(", ")}`)
         return
       }
       if (!formData.meterBrand) {

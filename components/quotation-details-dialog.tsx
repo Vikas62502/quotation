@@ -1530,7 +1530,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <tbody>
                       <tr>
                         <td className="label-cell">• Solar Module</td>
-                        <td>{getUniqueBrands()}</td>
+                        <td>{getUniqueBrands()} Bifacial Panels</td>
                       </tr>
                       <tr>
                         <td className="label-cell">• GTI Inverter</td>
@@ -1546,7 +1546,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </tr>
                       <tr>
                         <td className="label-cell">• AC Cable</td>
-                        <td>JMP (6 sq.mm), Polycab (6 sq.mm), etc.</td>
+                        <td>Polycab (6 sq.mm), etc.</td>
                       </tr>
                       <tr>
                         <td className="label-cell">• Structure</td>
