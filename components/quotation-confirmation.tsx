@@ -669,6 +669,18 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   return "Solar Panel System"
 }
 
+const getStructureDetails = (products: ProductSelection) => {
+  const type = products.structureType || ""
+  const size = products.structureSize || ""
+  if (!type && !size) {
+    return "Tata / Appollo GI Pipe, etc."
+  }
+  if (type && size) {
+    return `${type} (${size})`
+  }
+  return type || size
+}
+
 
   return (
     <div className="space-y-6">
@@ -1458,9 +1470,9 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
                         <td className="label-cell">• AC Cable</td>
                         <td>Polycab (6 sq.mm), etc.</td>
                       </tr>
-                      <tr>
+                      <tr>   
                         <td className="label-cell">• Structure</td>
-                        <td>Tata / Appollo GI Pipe, etc.</td>
+                        <td>Tata GI Pipes(2mm) like 72*72, 60*40, 40*40</td>
                       </tr>
                       <tr>
                         <td className="label-cell">• Lightning Arrester & Earthing</td>

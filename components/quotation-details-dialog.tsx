@@ -1550,7 +1550,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </tr>
                       <tr>
                         <td className="label-cell">• Structure</td>
-                        <td>Tata / Appollo GI Pipe, etc.</td>
+                        <td>Tata GI Pipes(2mm) like 72*72, 60*40, 40*40</td>
                       </tr>
                       <tr>
                         <td className="label-cell">• Lightning Arrester & Earthing</td>
