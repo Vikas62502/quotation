@@ -516,10 +516,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
         return
       }
-      if (!isValueInList(formData.structureSize, structureSizesList)) {
-        setError(`Please select a valid structure size from available sizes: ${structureSizesList.join(", ")}`)
-        return
-      }
       if (!formData.meterBrand) {
         setError("Please select a meter brand")
         return
@@ -548,10 +544,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       }
       if (!isValueInList(formData.panelSize, panelSizesList)) {
         setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
-        return
-      }
-      if (!isValueInList(formData.structureSize, structureSizesList)) {
-        setError(`Please select a valid structure size from available sizes: ${structureSizesList.join(", ")}`)
         return
       }
       if (!formData.meterBrand) {
