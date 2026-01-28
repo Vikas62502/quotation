@@ -9,7 +9,7 @@ import { Plus, Trash2, Save, X } from "lucide-react"
 import { api } from "@/lib/api"
 import { useProductCatalog, type ProductCatalog } from "@/lib/use-product-catalog"
 
-// Helper function to normalize catalog data - ensures all fields are arrays
+// Helper function to normalize catalog data - ensures all fields are array
 const normalizeCatalog = (catalog: ProductCatalog | null): ProductCatalog | null => {
   if (!catalog) return null
 
