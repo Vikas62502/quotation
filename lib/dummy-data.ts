@@ -68,7 +68,7 @@ export const dummyDealers: (Dealer & { password: string })[] = [
   },
 ]
 
-// Dummy Customers
+// Dummy Customer
 export const dummyCustomers: Customer[] = [
   {
     firstName: "Vikram",

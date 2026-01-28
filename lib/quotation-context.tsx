@@ -524,7 +524,6 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           customerId,
           customer: currentCustomer,
           products: cleanedProducts,
-          discount: validatedDiscountAmount,
           // REQUIRED FIELDS (at root level - matching backend destructuring)
           subtotal: validatedSubtotal, // Set price (complete package price) - REQUIRED
           totalAmount: validatedTotalAmount, // Amount after discount (Subtotal - Subsidy - Discount) - REQUIRED

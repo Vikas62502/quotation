@@ -200,7 +200,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   const amountAfterSubsidy = subtotal - totalSubsidy
   
   const sanitizedDiscountAmount = Math.max(0, discountAmount)
-
+  
   // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
   const totalAmount = Math.max(amountAfterSubsidy - sanitizedDiscountAmount, 0)
   
@@ -1468,7 +1468,7 @@ const getStructureDetails = (products: ProductSelection) => {
                         <td className="label-cell">• AC Cable</td>
                         <td>Polycab (6 sq.mm), etc.</td>
                       </tr>
-                      <tr>   
+                      <tr>
                         <td className="label-cell">• Structure</td>
                         <td>Tata GI Pipes(2mm) like 72*72, 60*40, 40*40</td>
                       </tr>
@@ -1945,7 +1945,7 @@ const getStructureDetails = (products: ProductSelection) => {
             )}
 
             {/* Final Amount */}
-              <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-6 border border-primary/20">
+            <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-6 border border-primary/20">
               <div className="flex justify-between items-center">
                 <span className="text-lg font-semibold text-foreground">Final Amount</span>
                 <span className="text-3xl font-bold text-primary">₹{totalAmount.toLocaleString()}</span>

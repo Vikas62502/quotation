@@ -324,7 +324,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   // Use fullQuotation if available, otherwise fall back to quotation
   // This ensures data is always available even if API call fails
   const displayQuotation = fullQuotation || quotation
-
+  
   // If no quotation data at all, don't render
   if (!displayQuotation && !quotation) {
     return null
@@ -2057,7 +2057,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const calculatedDiscount = Math.max(0, amountAfterSubsidy - value)
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const validDiscount = Math.min(calculatedDiscount, maxDiscount)
-
+                          
                           setPricingEditForm({
                             ...pricingEditForm,
                             discountAmount: validDiscount,
@@ -2231,13 +2231,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </div>
                     )}
                     <div className="border-t pt-2 mt-2">
-                      <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2">
                         <span>Discount:</span>
                         <span
                           className={discountAmount > 0 ? "text-orange-600 font-semibold" : "text-muted-foreground"}
                         >
-                          {discountAmount > 0 ? `₹${discountAmount.toLocaleString()}` : "₹0"}
-                        </span>
+                              {discountAmount > 0 ? `₹${discountAmount.toLocaleString()}` : "₹0"}
+                            </span>
                       </div>
                     </div>
                     <div className="flex justify-between font-bold text-lg border-t pt-2 mt-2">

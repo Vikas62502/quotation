@@ -855,12 +855,12 @@ export default function AccountManagementPage() {
                   <Button
                     type="button"
                     onClick={() => {
-                      const updated = customerPayments.map((p) =>
+                                    const updated = customerPayments.map((p) =>
                         p.quotationId === activePayment.quotationId
                           ? { ...p, phases: buildInstallments(p.totalAmount, 1) }
-                          : p
-                      )
-                      setCustomerPayments(updated)
+                                        : p
+                                    )
+                                    setCustomerPayments(updated)
                     }}
                   >
                     Create Installment
@@ -887,134 +887,134 @@ export default function AccountManagementPage() {
                         Add
                       </Button>
                     </div>
-                  </div>
-
+                              </div>
+                              
                   <div className="space-y-3">
                     {activePayment.phases.map((phase) => {
-                      const isCompleted = phase.status === "completed"
-                      const isPartial = phase.status === "partial"
-                      const isPending = phase.status === "pending"
+                                  const isCompleted = phase.status === "completed"
+                                  const isPartial = phase.status === "partial"
+                                  const isPending = phase.status === "pending"
                       const paidBefore = activePayment.phases
                         .filter((p) => p.phaseNumber < phase.phaseNumber)
                         .reduce((sum, p) => sum + p.paidAmount, 0)
                       const remainingBefore = Math.max(activePayment.totalAmount - paidBefore, 0)
-
-                      return (
-                        <div
-                          key={phase.phaseNumber}
+                                  
+                                  return (
+                                    <div
+                                      key={phase.phaseNumber}
                           className={`rounded-lg border px-4 py-3 ${
-                            isCompleted
-                              ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
-                              : isPartial
-                              ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
-                              : "bg-gray-50 dark:bg-gray-950/20 border-border"
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="flex items-center gap-2">
-                              <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                  isCompleted
-                                    ? "bg-green-500 text-white"
-                                    : isPartial
-                                    ? "bg-amber-500 text-white"
-                                    : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
-                                }`}
-                              >
-                                {phase.phaseNumber}
-                              </div>
-                              <div>
-                                <p className="text-sm font-semibold">{phase.phaseName}</p>
-                                <p className="text-xs text-muted-foreground">
+                                        isCompleted
+                                          ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
+                                          : isPartial
+                                          ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
+                                          : "bg-gray-50 dark:bg-gray-950/20 border-border"
+                                      }`}
+                                    >
+                                      <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                          <div
+                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                                              isCompleted
+                                                ? "bg-green-500 text-white"
+                                                : isPartial
+                                                ? "bg-amber-500 text-white"
+                                                : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
+                                            }`}
+                                          >
+                                            {phase.phaseNumber}
+                                          </div>
+                                          <div>
+                                            <p className="text-sm font-semibold">{phase.phaseName}</p>
+                                            <p className="text-xs text-muted-foreground">
                                   Remaining before this installment: ₹{remainingBefore.toLocaleString()}
-                                </p>
-                              </div>
-                            </div>
-                            <Badge
-                              className={
-                                isCompleted
-                                  ? "bg-green-600 text-white"
-                                  : isPartial
-                                  ? "bg-amber-600 text-white"
-                                  : "bg-gray-500 text-white"
-                              }
-                            >
-                              {isCompleted ? (
+                                            </p>
+                                          </div>
+                                        </div>
+                                        <Badge
+                                          className={
+                                            isCompleted
+                                              ? "bg-green-600 text-white"
+                                              : isPartial
+                                              ? "bg-amber-600 text-white"
+                                              : "bg-gray-500 text-white"
+                                          }
+                                        >
+                                          {isCompleted ? (
                                 <>
                                   <CheckCircle2 className="w-3 h-3 mr-1" /> Completed
                                 </>
-                              ) : isPartial ? (
+                                          ) : isPartial ? (
                                 <>
                                   <Clock className="w-3 h-3 mr-1" /> Partial
                                 </>
-                              ) : (
+                                          ) : (
                                 <>
                                   <AlertCircle className="w-3 h-3 mr-1" /> Pending
                                 </>
-                              )}
-                            </Badge>
-                          </div>
-
+                                          )}
+                                        </Badge>
+                                      </div>
+                                      
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Paid Amount</Label>
-                              <Input
-                                type="number"
-                                value={phase.paidAmount}
-                                onChange={(e) => {
-                                  const paid = Number.parseFloat(e.target.value) || 0
-                                  const updated = customerPayments.map((p) =>
+                                        <div>
+                                          <Label className="text-xs text-muted-foreground">Paid Amount</Label>
+                                          <Input
+                                            type="number"
+                                            value={phase.paidAmount}
+                                            onChange={(e) => {
+                                              const paid = Number.parseFloat(e.target.value) || 0
+                                              const updated = customerPayments.map((p) =>
                                     p.quotationId === activePayment.quotationId
-                                      ? {
-                                          ...p,
-                                          phases: p.phases.map((ph) =>
-                                            ph.phaseNumber === phase.phaseNumber
+                                                  ? {
+                                                      ...p,
+                                                      phases: p.phases.map((ph) =>
+                                                        ph.phaseNumber === phase.phaseNumber
                                               ? (() => {
                                                   const nextStatus: PaymentPhase["status"] =
                                                     paid >= ph.amount ? "completed" : paid > 0 ? "partial" : "pending"
                                                   return {
-                                                    ...ph,
-                                                    paidAmount: paid,
+                                                              ...ph,
+                                                              paidAmount: paid,
                                                     status: nextStatus,
-                                                    paymentDate: paid > 0 ? new Date().toISOString() : undefined,
-                                                  }
+                                                              paymentDate: paid > 0 ? new Date().toISOString() : undefined,
+                                                            }
                                                 })()
-                                              : ph
-                                          ),
-                                        }
-                                      : p
-                                  )
-                                  setCustomerPayments(updated)
-                                }}
-                                className="mt-1"
-                                placeholder="0"
-                              />
-                            </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Due Date</Label>
-                              <Input
-                                type="date"
-                                value={phase.dueDate ? new Date(phase.dueDate).toISOString().split("T")[0] : ""}
-                                onChange={(e) => {
-                                  const updated = customerPayments.map((p) =>
+                                                          : ph
+                                                      ),
+                                                    }
+                                                  : p
+                                              )
+                                              setCustomerPayments(updated)
+                                            }}
+                                            className="mt-1"
+                                            placeholder="0"
+                                          />
+                                        </div>
+                                        <div>
+                                          <Label className="text-xs text-muted-foreground">Due Date</Label>
+                                          <Input
+                                            type="date"
+                                            value={phase.dueDate ? new Date(phase.dueDate).toISOString().split("T")[0] : ""}
+                                            onChange={(e) => {
+                                              const updated = customerPayments.map((p) =>
                                     p.quotationId === activePayment.quotationId
-                                      ? {
-                                          ...p,
-                                          phases: p.phases.map((ph) =>
-                                            ph.phaseNumber === phase.phaseNumber
-                                              ? { ...ph, dueDate: e.target.value }
-                                              : ph
-                                          ),
-                                        }
-                                      : p
-                                  )
-                                  setCustomerPayments(updated)
-                                }}
-                                className="mt-1"
-                              />
-                            </div>
-                          </div>
-
+                                                  ? {
+                                                      ...p,
+                                                      phases: p.phases.map((ph) =>
+                                                        ph.phaseNumber === phase.phaseNumber
+                                                          ? { ...ph, dueDate: e.target.value }
+                                                          : ph
+                                                      ),
+                                                    }
+                                                  : p
+                                              )
+                                              setCustomerPayments(updated)
+                                            }}
+                                            className="mt-1"
+                                          />
+                                        </div>
+                                      </div>
+                                      
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
                             <div>
                               <Label className="text-xs text-muted-foreground">Payment Mode</Label>
@@ -1047,7 +1047,7 @@ export default function AccountManagementPage() {
                                   <SelectItem value="card">Card</SelectItem>
                                 </SelectContent>
                               </Select>
-                            </div>
+                                        </div>
                             <div>
                               <Label className="text-xs text-muted-foreground">Transaction ID</Label>
                               <Input
@@ -1071,8 +1071,8 @@ export default function AccountManagementPage() {
                                 placeholder="Optional"
                               />
                             </div>
-                          </div>
-
+                              </div>
+                              
                           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
                             <p className="text-xs text-muted-foreground">
                               Remaining after this installment: ₹{Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
@@ -1101,15 +1101,15 @@ export default function AccountManagementPage() {
                             >
                               Remove installment
                             </Button>
-                          </div>
-                        </div>
+                                  </div>
+                                  </div>
                       )
                     })}
-                  </div>
+                                </div>
                 </>
               )}
-            </div>
-          )}
+                  </div>
+                )}
         </DialogContent>
       </Dialog>
     </div>
