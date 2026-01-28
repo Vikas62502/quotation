@@ -123,7 +123,7 @@ const getSystemPrice = (products: ProductSelection): number => {
 export function QuotationConfirmation({ customer, products, onBack, onEditCustomer, onEditProducts }: Props) {
   const router = useRouter()
   const { saveQuotation, clearCurrent } = useQuotation()
-  const [discount, setDiscount] = useState(0)
+  const [discountAmount, setDiscountAmount] = useState(0)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generated, setGenerated] = useState(false)
   const [quotationId, setQuotationId] = useState("")
@@ -199,12 +199,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   // Calculate amount after subsidy: Subtotal - Total Subsidy
   const amountAfterSubsidy = subtotal - totalSubsidy
   
-  // Calculate discount amount: Discount % of Amount After Subsidy
-  const discountAmount = amountAfterSubsidy * (discount / 100)
-  
+  const sanitizedDiscountAmount = Math.max(0, discountAmount)
+
   // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
-  // This is what customer pays after all deductions
-  const totalAmount = amountAfterSubsidy - discountAmount
+  const totalAmount = Math.max(amountAfterSubsidy - sanitizedDiscountAmount, 0)
   
   // finalAmount = Subtotal - Subsidy (discount is NOT applied to final amount)
   // This is the final amount before discount
@@ -374,13 +372,13 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       // Recalculate all pricing values with the correct subtotal (matching backend logic)
       const finalTotalSubsidy = (products.centralSubsidy || 0) + (products.stateSubsidy || 0)
       const finalAmountAfterSubsidy = finalSubtotal - finalTotalSubsidy
-      const finalDiscountAmount = finalAmountAfterSubsidy * (discount / 100)
+      const finalDiscountAmount = sanitizedDiscountAmount
       
       // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
       const finalTotalAmount = finalAmountAfterSubsidy - finalDiscountAmount
       
-      // finalAmount = Subtotal - Subsidy (discount is NOT applied to final amount)
-      const finalFinalAmount = finalSubtotal - finalTotalSubsidy
+      // finalAmount now matches totalAmount (after discount)
+      const finalFinalAmount = finalTotalAmount
 
       // Log values before sending - CRITICAL for debugging (matching backend log format)
       console.log("[QuotationConfirmation] === FINAL VALUES BEING SENT ===")
@@ -390,10 +388,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
         stateSubsidy: products.stateSubsidy || 0,
         totalSubsidy: finalTotalSubsidy,
         amountAfterSubsidy: finalAmountAfterSubsidy,
-        discount: discount,
+        discount: sanitizedDiscountAmount,
         discountAmount: finalDiscountAmount,
         totalAmount: finalTotalAmount, // Amount after discount
-        finalAmount: finalFinalAmount, // Subtotal - Subsidy (no discount)
+        finalAmount: finalFinalAmount, // Amount after discount (matches totalAmount)
       })
       console.log("[QuotationConfirmation] Source values:", {
         editableSubtotal,
@@ -442,13 +440,13 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       // finalSubtotal is now the total project cost (subtotal) - aligned with backend
       // This MUST be > 0, otherwise backend will reject it
       console.log("[QuotationConfirmation] Calling saveQuotation with:", { 
-        discount, 
+        discount: sanitizedDiscountAmount, 
         subtotal: finalSubtotal,
         subtotalType: typeof finalSubtotal,
         isFinite: Number.isFinite(finalSubtotal),
         isValid: finalSubtotal > 0
       })
-      const quotation = await saveQuotation(discount, finalSubtotal)
+      const quotation = await saveQuotation(sanitizedDiscountAmount, finalSubtotal)
       setQuotationId(quotation.id)
 
       setIsGenerating(false)
@@ -1329,15 +1327,15 @@ const getStructureDetails = (products: ProductSelection) => {
                   <span className="pdf-summary-value"> ₹{products.centralSubsidy.toLocaleString()}</span>
                 </div>
               )}
-              {discount > 0 && (
+              {sanitizedDiscountAmount > 0 && (
                 <div className="pdf-summary-row">
-                  <span className="pdf-summary-label">⬇️ Discount ({discount}%):</span>
-                  <span className="pdf-summary-value"> ₹{discountAmount.toLocaleString()}</span>
+                  <span className="pdf-summary-label">⬇️ Discount:</span>
+                  <span className="pdf-summary-value"> ₹{sanitizedDiscountAmount.toLocaleString()}</span>
                 </div>
               )}
               <div className="pdf-summary-row price-after-subsidy">
                 <span className="pdf-summary-label">🎯 Final Price:</span>
-                <span className="pdf-summary-value">₹{finalAmount.toLocaleString()}</span>
+                <span className="pdf-summary-value">₹{totalAmount.toLocaleString()}</span>
               </div>
             </div>
 
@@ -1925,21 +1923,19 @@ const getStructureDetails = (products: ProductSelection) => {
             {!generated && (
               <div className="bg-muted/30 rounded-xl p-4 border border-border">
                 <Label htmlFor="discount" className="text-sm font-semibold">
-                  Apply Discount
+                  Discount Amount
                 </Label>
                 <div className="flex items-center gap-3 mt-2">
                   <Input
                     id="discount"
                     type="number"
                     min="0"
-                    max="50"
-                    value={discount || ""}
-                    onChange={(e) => setDiscount(Math.min(50, Number.parseInt(e.target.value) || 0))}
-                    className="w-24 h-10"
-                    placeholder="0"
+                    value={discountAmount || ""}
+                    onChange={(e) => setDiscountAmount(Number.parseFloat(e.target.value) || 0)}
+                    className="w-32 h-10"
+                    placeholder="₹0"
                   />
-                  <span className="text-sm text-muted-foreground">% (max 50%)</span>
-                  {discount > 0 && (
+                  {discountAmount > 0 && (
                     <span className="text-sm text-primary font-medium ml-auto">
                       -₹{discountAmount.toLocaleString()}
                     </span>
@@ -1949,10 +1945,10 @@ const getStructureDetails = (products: ProductSelection) => {
             )}
 
             {/* Final Amount */}
-            <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-6 border border-primary/20">
+              <div className="bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-6 border border-primary/20">
               <div className="flex justify-between items-center">
                 <span className="text-lg font-semibold text-foreground">Final Amount</span>
-                <span className="text-3xl font-bold text-primary">₹{finalAmount.toLocaleString()}</span>
+                <span className="text-3xl font-bold text-primary">₹{totalAmount.toLocaleString()}</span>
               </div>
             </div>
           </CardContent>

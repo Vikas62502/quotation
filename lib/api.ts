@@ -543,7 +543,8 @@ export const api = {
       subtotal?: number
       stateSubsidy?: number
       centralSubsidy?: number
-      discount?: number
+      discountAmount?: number
+      totalAmount?: number
       finalAmount?: number
     }) => {
       return apiRequest(`/quotations/${quotationId}/pricing`, {

@@ -334,15 +334,15 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         
         // Calculate derived amounts (matching backend calculations)
         const amountAfterSubsidy = subtotal - totalSubsidy
-        const discountAmount = amountAfterSubsidy * (discount / 100)
+        const requestedDiscountAmount = Math.max(0, Number(discount) || 0)
+        const discountCap = Math.max(amountAfterSubsidy, 0)
+        const finalDiscountAmount = Math.min(requestedDiscountAmount, discountCap)
         
         // totalAmount = Amount after discount (Subtotal - Subsidy - Discount)
-        // This is what customer pays after all deductions
-        const totalAmount = amountAfterSubsidy - discountAmount
+        const totalAmount = Math.max(amountAfterSubsidy - finalDiscountAmount, 0)
         
-        // finalAmount = Subtotal - Subsidy (discount is NOT applied to final amount)
-        // This is the final amount before discount
-        const finalAmount = subtotal - totalSubsidy
+        // finalAmount now equals totalAmount (after discount)
+        const finalAmount = totalAmount
 
         // Clean and validate products data before sending
         // Remove empty strings and ensure required fields are present
@@ -448,7 +448,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           stateSubsidy,
           totalSubsidy,
           amountAfterSubsidy,
-          discountAmount,
+          discountAmount: finalDiscountAmount,
           totalAmount,
           finalAmount,
         })
@@ -479,7 +479,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         }
         
         // Validate finalAmount - must be a valid number (can be 0 if subsidy equals subtotal)
-        const validatedFinalAmount = Number(finalAmount)
+        const validatedFinalAmount = validatedTotalAmount
         if (!Number.isFinite(validatedFinalAmount) || validatedFinalAmount < 0) {
           console.error("[saveQuotation] Invalid finalAmount:", validatedFinalAmount)
           throw new Error(`Invalid final amount: ${validatedFinalAmount}. Cannot proceed with quotation creation.`)
@@ -490,7 +490,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         const validatedStateSubsidy = Number(stateSubsidy) || 0
         const validatedTotalSubsidy = Number(totalSubsidy) || 0
         const validatedAmountAfterSubsidy = Number(amountAfterSubsidy) || (validatedSubtotal - validatedTotalSubsidy)
-        const validatedDiscountAmount = Number(discountAmount) || 0
+        const validatedDiscountAmount = Number(finalDiscountAmount) || 0
 
         // Log the data being sent for debugging (matching backend log format)
         console.log("[saveQuotation] Sending quotation data with pricing:", {
@@ -524,7 +524,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           customerId,
           customer: currentCustomer,
           products: cleanedProducts,
-          discount: Number(discount) || 0,
+          discount: validatedDiscountAmount,
           // REQUIRED FIELDS (at root level - matching backend destructuring)
           subtotal: validatedSubtotal, // Set price (complete package price) - REQUIRED
           totalAmount: validatedTotalAmount, // Amount after discount (Subtotal - Subsidy - Discount) - REQUIRED
@@ -606,15 +606,17 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         const calculatedSubtotal = subtotalValue // subtotalValue parameter is the subtotal
         const calculatedSubsidy = (currentProducts.centralSubsidy || 0) + (currentProducts.stateSubsidy || 0)
         const calculatedAmountAfterSubsidy = calculatedSubtotal - calculatedSubsidy
-        const calculatedDiscountAmount = calculatedAmountAfterSubsidy * (discount / 100)
-        const calculatedTotalAmount = calculatedAmountAfterSubsidy - calculatedDiscountAmount
-        const calculatedFinalAmount = calculatedSubtotal - calculatedSubsidy
+        const calculatedRequestedDiscount = Math.max(0, Number(discount) || 0)
+        const calculatedDiscountCap = Math.max(calculatedAmountAfterSubsidy, 0)
+        const calculatedDiscountAmount = Math.min(calculatedRequestedDiscount, calculatedDiscountCap)
+        const calculatedTotalAmount = Math.max(calculatedAmountAfterSubsidy - calculatedDiscountAmount, 0)
+        const calculatedFinalAmount = calculatedTotalAmount
         
         return {
           id: quotation.id,
           customer: currentCustomer,
           products: currentProducts,
-          discount: quotation.discount || discount,
+          discount: quotation.discount || validatedDiscountAmount,
           // Use backend pricing values (from database) as source of truth
           totalAmount: backendPricing?.totalAmount ?? calculatedTotalAmount,
           finalAmount: backendPricing?.finalAmount ?? calculatedFinalAmount,
@@ -625,21 +627,24 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
       } else {
         // Fallback to localStorage
         // totalAmount is now subtotal (total project cost)
-        const totalAmount = validatedSubtotalValue
+        const totalProjectCost = validatedSubtotalValue
         const centralSubsidy = currentProducts.centralSubsidy || 0
         const stateSubsidy = currentProducts.stateSubsidy || 0
         const totalSubsidy = centralSubsidy + stateSubsidy
-        const amountAfterSubsidy = totalAmount - totalSubsidy
-        const discountAmount = amountAfterSubsidy * (discount / 100)
-        // Final Amount: Subtotal - Subsidy (discount is not applied to final amount)
-        const finalAmount = totalAmount - totalSubsidy
+        const amountAfterSubsidy = totalProjectCost - totalSubsidy
+        const requestedDiscountAmount = Math.max(0, Number(discount) || 0)
+        const discountCap = Math.max(amountAfterSubsidy, 0)
+        const discountAmount = Math.min(requestedDiscountAmount, discountCap)
+        const totalAmount = Math.max(amountAfterSubsidy - discountAmount, 0)
+        // Final Amount = Amount after discount (matches totalAmount)
+        const finalAmount = totalAmount
         
         const quotation: Quotation = {
           id: `QT-${Date.now()}`,
           customer: currentCustomer,
           products: currentProducts,
-          discount,
-          totalAmount, // This is now subtotal (total project cost)
+          discount: discountAmount,
+          totalAmount,
           finalAmount,
           createdAt: new Date().toISOString(),
           dealerId: dealer.id,

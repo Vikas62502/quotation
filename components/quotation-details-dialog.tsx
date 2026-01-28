@@ -133,8 +133,6 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const { toast } = useToast()
   const [quotationId, setQuotationId] = useState("")
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
-  const [discount, setDiscount] = useState(0)
-  const [isEditingDiscount, setIsEditingDiscount] = useState(false)
   const [fullQuotation, setFullQuotation] = useState<Quotation | null>(null)
   const [isLoadingDetails, setIsLoadingDetails] = useState(false)
   const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
@@ -147,7 +145,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     subtotal: 0,
     stateSubsidy: 0,
     centralSubsidy: 0,
-    discount: 0, // Now represents discount amount in INR, not percentage
+    discountAmount: 0,
     finalAmount: 0,
   })
   const [isSavingPricing, setIsSavingPricing] = useState(false)
@@ -254,7 +252,6 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       const savedDiscountValue = fullQuotation.discount || 0
       // If discount > 100, assume it's already an amount; otherwise it's a percentage (old format)
       // We'll store it as-is and calculate amount when needed
-      setDiscount(savedDiscountValue)
       // Initialize payment mode
       setPaymentMode(fullQuotation.paymentMode || "")
       // Initialize pricing edit form
@@ -293,7 +290,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
         subtotal: initialSubtotal,
         stateSubsidy: initialStateSubsidy,
         centralSubsidy: initialCentralSubsidy,
-        discount: initialDiscountAmount, // Now stores discount amount in INR
+        discountAmount: initialDiscountAmount, // Now stores discount amount in INR
         finalAmount: fullQuotation.finalAmount || 0,
       })
     }
@@ -327,11 +324,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   // Use fullQuotation if available, otherwise fall back to quotation
   // This ensures data is always available even if API call fails
   const displayQuotation = fullQuotation || quotation
-  
+
   // If no quotation data at all, don't render
   if (!displayQuotation && !quotation) {
     return null
   }
+  const storedDiscountValue = displayQuotation.discount || 0
   const backendPricing = (displayQuotation as any).pricing
 
   // Calculate prices - use backend pricing if available, otherwise calculate on frontend
@@ -386,12 +384,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     // Prefer discountAmount from backend, otherwise use discount field as amount (if > 100) or calculate from percentage for backward compatibility
     if (backendPricing.discountAmount != null && backendPricing.discountAmount > 0) {
       discountAmount = backendPricing.discountAmount
-    } else if (discount > 100) {
+    } else if (storedDiscountValue > 100) {
       // If discount > 100, assume it's already an amount in INR
-      discountAmount = discount
+      discountAmount = storedDiscountValue
     } else {
       // Backward compatibility: if discount <= 100, treat as percentage for old data
-      discountAmount = amountAfterSubsidy * (discount / 100)
+      discountAmount = amountAfterSubsidy * (storedDiscountValue / 100)
     }
     finalAmount = backendPricing.finalAmount ?? (amountAfterSubsidy - discountAmount)
   } else {
@@ -443,45 +441,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     amountAfterSubsidy = subtotal - totalSubsidy
     // Discount is now stored as amount in INR, not percentage
     // If discount > 100, assume it's already an amount; otherwise treat as 0 (old percentage values)
-    discountAmount = discount > 100 ? discount : 0
+    discountAmount = storedDiscountValue > 100 ? storedDiscountValue : 0
     finalAmount = amountAfterSubsidy - discountAmount
-  }
-
-  const handleSaveDiscount = () => {
-    if (!quotation) return
-    
-    // Discount is now stored as amount in INR, not percentage
-    const updatedDiscountAmount = discount // discount is already an amount
-    const updatedAmountAfterSubsidy = subtotal - totalSubsidy
-    const updatedFinalAmount = updatedAmountAfterSubsidy - updatedDiscountAmount
-    
-    // Update quotation in localStorage
-    const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
-    const updatedQuotations = allQuotations.map((q: Quotation) => {
-      if (q.id === displayQuotation.id) {
-        return {
-          ...q,
-          discount: updatedDiscountAmount, // Store discount as amount in INR
-          finalAmount: updatedFinalAmount,
-        }
-      }
-      return q
-    })
-    localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
-    
-    // Update local state
-    setFullQuotation({
-      ...displayQuotation,
-      discount: updatedDiscountAmount,
-      finalAmount: updatedFinalAmount,
-    })
-    setDiscount(updatedDiscountAmount)
-    setIsEditingDiscount(false)
-    
-    toast({
-      title: "Success",
-      description: "Discount updated successfully!",
-    })
   }
 
   // Calculate quotation validity (5 days from creation)
@@ -1995,7 +1956,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = newSubtotal - totalSubsidy
                           // Discount is now stored as amount in INR, not percentage
-                          const discountAmount = pricingEditForm.discount || 0
+                          const discountAmount = pricingEditForm.discountAmount || 0
                           // Ensure discount doesn't exceed amount after subsidy
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const validDiscount = Math.min(discountAmount, maxDiscount)
@@ -2003,7 +1964,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           setPricingEditForm({
                             ...pricingEditForm,
                             subtotal: newSubtotal,
-                            discount: validDiscount, // Update discount if it exceeds max
+                            discountAmount: validDiscount,
                             finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
@@ -2021,7 +1982,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const totalSubsidy = newStateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
                           // Discount is now stored as amount in INR, not percentage
-                          const discountAmount = pricingEditForm.discount || 0
+                          const discountAmount = pricingEditForm.discountAmount || 0
                           // Ensure discount doesn't exceed amount after subsidy
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const validDiscount = Math.min(discountAmount, maxDiscount)
@@ -2029,7 +1990,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           setPricingEditForm({
                             ...pricingEditForm,
                             stateSubsidy: newStateSubsidy,
-                            discount: validDiscount, // Update discount if it exceeds max
+                            discountAmount: validDiscount,
                             finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
@@ -2047,7 +2008,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const totalSubsidy = pricingEditForm.stateSubsidy + newCentralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
                           // Discount is now stored as amount in INR, not percentage
-                          const discountAmount = pricingEditForm.discount || 0
+                          const discountAmount = pricingEditForm.discountAmount || 0
                           // Ensure discount doesn't exceed amount after subsidy
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const validDiscount = Math.min(discountAmount, maxDiscount)
@@ -2055,7 +2016,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           setPricingEditForm({
                             ...pricingEditForm,
                             centralSubsidy: newCentralSubsidy,
-                            discount: validDiscount, // Update discount if it exceeds max
+                            discountAmount: validDiscount,
                             finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
@@ -2066,19 +2027,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <Input
                         type="number"
                         min="0"
-                        value={pricingEditForm.discount || ""}
+                        value={pricingEditForm.discountAmount || ""}
                         onChange={(e) => {
                           const value = Number.parseFloat(e.target.value) || 0
                           const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
-                          // Discount is now amount in INR, not percentage
-                          // Ensure discount doesn't exceed amount after subsidy
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const newDiscountAmount = Math.min(value, maxDiscount)
                           const newFinalAmount = amountAfterSubsidy - newDiscountAmount
                           setPricingEditForm({
                             ...pricingEditForm,
-                            discount: newDiscountAmount,
+                            discountAmount: newDiscountAmount,
                             finalAmount: Math.max(0, newFinalAmount),
                           })
                         }}
@@ -2095,15 +2054,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           const value = Number.parseFloat(e.target.value) || 0
                           const totalSubsidy = pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy
                           const amountAfterSubsidy = pricingEditForm.subtotal - totalSubsidy
-                          // When final amount is manually changed, recalculate discount
-                          // Discount = Amount After Subsidy - Final Amount
                           const calculatedDiscount = Math.max(0, amountAfterSubsidy - value)
                           const maxDiscount = Math.max(0, amountAfterSubsidy)
                           const validDiscount = Math.min(calculatedDiscount, maxDiscount)
-                          
+
                           setPricingEditForm({
                             ...pricingEditForm,
-                            discount: validDiscount,
+                            discountAmount: validDiscount,
                             finalAmount: Math.max(0, value),
                           })
                         }}
@@ -2147,7 +2104,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                               subtotal: initialSubtotal,
                               stateSubsidy: products.stateSubsidy ?? 0,
                               centralSubsidy: products.centralSubsidy ?? 0,
-                              discount: resetDiscountAmount, // Now stores discount amount in INR
+                            discountAmount: resetDiscountAmount, // Now stores discount amount in INR
                               finalAmount: fullQuotation.finalAmount || 0,
                             })
                           }
@@ -2162,12 +2119,19 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                             if (useApi) {
                               // Update pricing via API
                               // apiRequest returns data.data directly, so response is the data object
+                              const amountAfterSubsidy =
+                                pricingEditForm.subtotal - (pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy)
+                              const calculatedTotalAmount = Math.max(
+                                amountAfterSubsidy - (pricingEditForm.discountAmount || 0),
+                                0
+                              )
                               const response = await api.quotations.updatePricing(displayQuotation.id, {
                                 subtotal: pricingEditForm.subtotal,
                                 stateSubsidy: pricingEditForm.stateSubsidy,
                                 centralSubsidy: pricingEditForm.centralSubsidy,
-                                discount: pricingEditForm.discount,
-                                finalAmount: pricingEditForm.finalAmount,
+                                discountAmount: pricingEditForm.discountAmount,
+                                totalAmount: calculatedTotalAmount,
+                                finalAmount: calculatedTotalAmount,
                               })
                               
                               if (response) {
@@ -2181,16 +2145,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                 const updatedQuotation = {
                                   ...displayQuotation,
                                   products: updatedProducts,
-                                  discount: response.discount ?? pricingEditForm.discount,
-                                  totalAmount: response.totalAmount ?? response.pricing?.totalAmount ?? pricingEditForm.subtotal,
-                                  finalAmount: response.finalAmount ?? response.pricing?.finalAmount ?? pricingEditForm.finalAmount,
+                                  discount: response.discount ?? pricingEditForm.discountAmount,
+                                  totalAmount: response.totalAmount ?? response.pricing?.totalAmount ?? calculatedTotalAmount,
+                                  finalAmount: response.finalAmount ?? response.pricing?.finalAmount ?? calculatedTotalAmount,
                                   pricing: response.pricing,
                                 }
                                 
                                 setFullQuotation(updatedQuotation)
-                                setDiscount(response.discount ?? pricingEditForm.discount)
                                 setIsEditingPricing(false)
-                                setIsEditingDiscount(false)
                                 
                                 toast({
                                   title: "Success",
@@ -2207,18 +2169,22 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                 centralSubsidy: pricingEditForm.centralSubsidy,
                               }
                               
+                              const amountAfterSubsidy =
+                                pricingEditForm.subtotal - (pricingEditForm.stateSubsidy + pricingEditForm.centralSubsidy)
+                              const calculatedTotalAmount = Math.max(
+                                amountAfterSubsidy - (pricingEditForm.discountAmount || 0),
+                                0
+                              )
                               const updatedQuotation = {
                                 ...displayQuotation,
                                 products: updatedProducts,
-                                discount: pricingEditForm.discount,
-                                totalAmount: pricingEditForm.subtotal,
-                                finalAmount: pricingEditForm.finalAmount,
+                                discount: pricingEditForm.discountAmount,
+                                totalAmount: calculatedTotalAmount,
+                                finalAmount: calculatedTotalAmount,
                               }
                               
                               setFullQuotation(updatedQuotation)
-                              setDiscount(pricingEditForm.discount)
                               setIsEditingPricing(false)
-                              setIsEditingDiscount(false)
                               
                               toast({
                                 title: "Success",
@@ -2265,78 +2231,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </div>
                     )}
                     <div className="border-t pt-2 mt-2">
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
                         <span>Discount:</span>
-                        {isEditingDiscount ? (
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs text-muted-foreground">₹</span>
-                            <Input
-                              type="number"
-                              min="0"
-                              value={discount || ""}
-                              onChange={(e) => {
-                                const value = Number.parseFloat(e.target.value) || 0
-                                // Ensure discount doesn't exceed amount after subsidy
-                                const amountAfterSubsidy = subtotal - totalSubsidy
-                                const maxDiscount = Math.max(0, amountAfterSubsidy)
-                                setDiscount(Math.min(value, maxDiscount))
-                              }}
-                              className="w-28 h-8 text-sm"
-                              placeholder="0"
-                            />
-                            <Button
-                              size="sm"
-                              onClick={handleSaveDiscount}
-                              className="h-8 text-xs"
-                            >
-                              Save
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                // Get discount amount (handle both old percentage and new amount formats)
-                                const savedDiscountValue = displayQuotation.discount || 0
-                                let discountToSet = savedDiscountValue
-                                if (savedDiscountValue <= 100) {
-                                  // Old percentage format, calculate amount
-                                  const amountAfterSubsidy = subtotal - totalSubsidy
-                                  discountToSet = amountAfterSubsidy * (savedDiscountValue / 100)
-                                }
-                                setDiscount(discountToSet)
-                                setIsEditingDiscount(false)
-                              }}
-                              className="h-8 text-xs"
-                            >
-                              Cancel
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span className={discountAmount > 0 ? "text-orange-600" : ""}>
-                              {discountAmount > 0 ? `₹${discountAmount.toLocaleString()}` : "₹0"}
-                            </span>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                // Initialize discount for editing (handle both old percentage and new amount formats)
-                                const savedDiscountValue = displayQuotation.discount || 0
-                                let discountToEdit = savedDiscountValue
-                                if (savedDiscountValue <= 100) {
-                                  // Old percentage format, calculate amount for editing
-                                  const amountAfterSubsidy = subtotal - totalSubsidy
-                                  discountToEdit = amountAfterSubsidy * (savedDiscountValue / 100)
-                                }
-                                setDiscount(discountToEdit)
-                                setIsEditingDiscount(true)
-                              }}
-                              className="h-6 text-xs"
-                            >
-                              Edit
-                            </Button>
-                          </div>
-                        )}
+                        <span
+                          className={discountAmount > 0 ? "text-orange-600 font-semibold" : "text-muted-foreground"}
+                        >
+                          {discountAmount > 0 ? `₹${discountAmount.toLocaleString()}` : "₹0"}
+                        </span>
                       </div>
                     </div>
                     <div className="flex justify-between font-bold text-lg border-t pt-2 mt-2">
@@ -2616,7 +2517,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   const amountAfterSubsidy = calculatedSubtotal - totalSubsidy
                   // Discount is now stored as amount in INR, not percentage
                   // Get existing discount amount from pricingEditForm or calculate from old percentage format
-                  let currentDiscountAmount = pricingEditForm.discount || 0
+                  let currentDiscountAmount = pricingEditForm.discountAmount || 0
                   const savedDiscountValue = displayQuotation.discount || 0
                   
                   // If discount > 100, assume it's already an amount; otherwise calculate from percentage for backward compatibility
@@ -2638,7 +2539,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     subtotal: calculatedSubtotal,
                     stateSubsidy: updatedStateSubsidy,
                     centralSubsidy: updatedCentralSubsidy,
-                    discount: currentDiscountAmount, // Store discount as amount in INR
+                    discountAmount: currentDiscountAmount, // Store discount as amount in INR
                     finalAmount: Math.max(0, calculatedFinalAmount),
                   })
                   
@@ -2652,7 +2553,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         subtotal: calculatedSubtotal,
                         stateSubsidy: updatedStateSubsidy,
                         centralSubsidy: updatedCentralSubsidy,
-                        discount: currentDiscountAmount, // Now passes discount amount in INR
+                        discountAmount: currentDiscountAmount, // Now passes discount amount in INR
+                        totalAmount: calculatedFinalAmount,
                         finalAmount: calculatedFinalAmount,
                       })
                       
@@ -2667,7 +2569,6 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           pricing: pricingResponse.pricing,
                         }
                         setFullQuotation(updatedQuotation)
-                        setDiscount(pricingResponse.discount ?? currentDiscountAmount) // Store discount amount
                         
                         toast({
                           title: "Success",
