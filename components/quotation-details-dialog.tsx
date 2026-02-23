@@ -334,6 +334,60 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   // Calculate prices - use backend pricing if available, otherwise calculate on frontend
   const products = displayQuotation.products
+  const resolveProductPhase = (): "1-Phase" | "3-Phase" => {
+    const explicitPhase = products.phase
+    if (explicitPhase === "1-Phase" || explicitPhase === "3-Phase") {
+      return explicitPhase
+    }
+
+    let systemSizeForPhase = ""
+
+    if (products.systemType === "both") {
+      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
+      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
+      if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+        const dcrKw = Number.parseFloat(dcrSize.replace("kW", "")) || 0
+        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", "")) || 0
+        const totalKw = dcrKw + nonDcrKw
+        if (!Number.isNaN(totalKw) && totalKw > 0) {
+          systemSizeForPhase = `${totalKw}kW`
+        }
+      }
+    } else if (products.panelSize && products.panelQuantity) {
+      systemSizeForPhase = calculateSystemSize(products.panelSize, products.panelQuantity)
+    } else if (products.dcrPanelSize && products.dcrPanelQuantity) {
+      systemSizeForPhase = calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+    } else if (products.nonDcrPanelSize && products.nonDcrPanelQuantity) {
+      systemSizeForPhase = calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+    } else if (products.customPanels && products.customPanels.length > 0) {
+      const totalKw = products.customPanels.reduce((sum, panel) => {
+        const kw = Number.parseFloat(panel.size.replace("W", "")) / 1000
+        return sum + (Number.isNaN(kw) ? 0 : kw * (panel.quantity || 0))
+      }, 0)
+      if (!Number.isNaN(totalKw) && totalKw > 0) {
+        systemSizeForPhase = `${totalKw}kW`
+      }
+    }
+
+    if (
+      products.inverterSize &&
+      systemSizeForPhase &&
+      systemSizeForPhase !== "0kW"
+    ) {
+      return determinePhase(systemSizeForPhase, products.inverterSize)
+    }
+
+    if (products.inverterSize) {
+      const inverterKw = Number.parseFloat(products.inverterSize.replace("kW", ""))
+      if (!Number.isNaN(inverterKw) && inverterKw >= 7) {
+        return "3-Phase"
+      }
+    }
+
+    return "1-Phase"
+  }
+
+  const resolvedPhase = resolveProductPhase()
   const customer = displayQuotation.customer
 
   // Use backend pricing if available (aligned with backend changes)
@@ -401,7 +455,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     meterPrice = products.meterBrand ? getMeterPrice(products.meterBrand) : 0
     cablePrice = (products.acCableBrand && products.acCableSize ? getCablePrice(products.acCableBrand, products.acCableSize, "AC") : 0) + 
                  (products.dcCableBrand && products.dcCableSize ? getCablePrice(products.dcCableBrand, products.dcCableSize, "DC") : 0)
-    acdbDcdbPrice = (products.acdb ? getACDBPrice(products.acdb) : 0) + (products.dcdb ? getDCDBPrice(products.dcdb) : 0)
+    acdbDcdbPrice =
+      (products.acdb ? getACDBPrice(products.acdb, resolvedPhase) : 0) +
+      (products.dcdb ? getDCDBPrice(products.dcdb, resolvedPhase) : 0)
     batteryPrice = products.batteryPrice || 0
 
     // For DCR, NON DCR, and BOTH: Use set price (complete package)
@@ -660,6 +716,57 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     return `${products.panelSize}` || "As per selection"
   }
 
+  const toKwValue = (value?: string) => {
+    if (!value) return 0
+    const normalized = value.toLowerCase().trim()
+    const numeric = Number.parseFloat(normalized.replace(/[^0-9.]/g, ""))
+    if (Number.isNaN(numeric)) return 0
+    if (normalized.includes("kw")) {
+      return numeric
+    }
+    if (normalized.includes("w")) {
+      return numeric / 1000
+    }
+    return numeric
+  }
+
+  const getTotalSystemKw = () => {
+    if (products.systemType === "both") {
+      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
+      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
+      const dcrKw = toKwValue(dcrSize)
+      const nonDcrKw = toKwValue(nonDcrSize)
+      return dcrKw + nonDcrKw
+    }
+
+    if (products.panelSize && products.panelQuantity) {
+      const total = toKwValue(products.panelSize) * (products.panelQuantity || 0)
+      if (total > 0) {
+        return total
+      }
+    }
+
+    if (products.systemType === "customize" && products.customPanels) {
+      return products.customPanels.reduce((sum, panel) => {
+        const panelKw = toKwValue(panel.size)
+        return sum + panelKw * (panel.quantity || 0)
+      }, 0)
+    }
+
+    if (products.inverterSize) {
+      return toKwValue(products.inverterSize)
+    }
+
+    return 0
+  }
+
+  const getRoundedSystemSizeLabel = () => {
+    const totalKw = getTotalSystemKw()
+    if (!totalKw || Number.isNaN(totalKw)) return null
+    const rounded = Math.max(1, Math.round(totalKw))
+    return `${rounded}kW`
+  }
+
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
     const phase = products.phase // ✅ phase comes from table/selection
@@ -712,6 +819,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     return "Solar Panel System"
   }
   
+  const roundedSystemSizeLabel = getRoundedSystemSizeLabel()
+
 
   return (
     <>
@@ -843,14 +952,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             flex: 1;
             display: grid;
             grid-template-columns: 1fr;
-            gap: 15px;
-            margin-bottom: 15px;
+            gap: 10px;
+            margin-bottom: 12px;
           }
 
           .pdf-product-category {
             background: #f9fafb;
             border-radius: 8px;
-            padding: 12px;
+            padding: 10px;
             border: 1px solid #e5e7eb;
             position: relative;
             overflow: hidden;
@@ -859,22 +968,22 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           .pdf-category-header {
             background: linear-gradient(90deg, #ff8c00, #e67300);
             color: white;
-            padding: 8px 12px;
+            padding: 6px 10px;
             border-radius: 6px;
             font-weight: bold;
-            font-size: 12px;
-            margin-bottom: 10px;
-            padding-bottom: 15px;
+            font-size: 11px;
+            margin-bottom: 8px;
+            padding-bottom: 10px;
             text-align: center;
           }
 
           .pdf-product-item {
             background: transparent;
-            padding: 8px;
+            padding: 6px;
             border-radius: 4px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             border-left: 3px solid #10b981;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            box-shadow: 0 0 0 rgba(0, 0, 0, 0.1);
           }
 
           .pdf-product-name {
@@ -888,12 +997,20 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           .pdf-product-details {
             display: flex;
             justify-content: space-between;
-            align-items: center;
+            align-items: flex-start;
             font-size: 10px;
+            gap: 4px;
           }
 
           .pdf-product-specs {
             color: #6b7280;
+            line-height: 1.2;
+            font-size: 10px;
+          }
+          .pdf-system-size-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #111827;
           }
 
           .pdf-bank-details-section {
@@ -1087,6 +1204,50 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             margin-bottom: 0px;
             line-height: 1.2;
           }
+          .terms-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+          }
+          .terms-table td {
+            border: 1px solid #e5e7eb;
+            padding: 6px 8px;
+            vertical-align: middle;
+            background: #ffffff;
+          }
+          .terms-label {
+            width: 140px;
+            background: #f3f4f6;
+            color: #1f2933;
+            font-weight: 700;
+            text-align: center;
+            font-size: 11px;
+            letter-spacing: 0.05em;
+          }
+          .terms-content strong {
+            font-size: 12px;
+            color: #ff8c00;
+            display: block;
+            margin-bottom: 0;
+          }
+          .terms-content p {
+            margin: 0 0 1px;
+            line-height: 1.2;
+          }
+          .terms-content ul {
+            margin: 0;
+            padding-left: 14px;
+          }
+          .terms-content li {
+            line-height: 1.2;
+          }
+          .structure-sizes {
+            margin-top: 4px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            line-height: 1.2;
+          }
 
           .make-table {
             width: 100%;
@@ -1210,11 +1371,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               <div className="pdf-product-category">
                 <div className="pdf-category-header">📦 SOLAR SETS</div>
                 
+                {/* System size label */}
+                {roundedSystemSizeLabel && (
+                  <div className="pdf-system-size-label mb-2">System Size: {roundedSystemSizeLabel}</div>
+                )}
                 {/* For BOTH system type, show separate DCR and NON DCR panels side by side */}
                 {products.systemType === "both" ? (
                   <>
                     {/* DCR and NON DCR Panels in same row */}
-                    <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
+                    <div style={{ display: "flex", gap: "8px", marginBottom: "6px" }}>
                       {/* DCR Panels - Left side */}
                       {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                         <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
@@ -1260,7 +1425,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <div className="pdf-product-item">
                       <div className="pdf-product-name">Common Components</div>
                       <div className="pdf-product-details">
-                        <div className="pdf-product-specs">
+                    <div className="pdf-product-specs">
+              
                           Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
                           {products.structureType && (
                             <>
@@ -1274,7 +1440,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                               Meter: {products.meterBrand}
                             </>
                           )}
-                          {products.acCableBrand && (
+                          {/* {products.acCableBrand && (
                             <>
                               <br />
                               AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
@@ -1292,7 +1458,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                               <br />
                               Battery: {products.batteryCapacity}
                             </>
-                          )}
+                          )} */}
                         </div>
                       </div>
                     </div>
@@ -1302,21 +1468,23 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <div className="pdf-product-item">
                     <div className="pdf-product-name">{getPdfSystemTitle()}</div>
                     <div className="pdf-product-details">
-                      <div className="pdf-product-specs">
-                        {products.systemType !== "customize"
-                          ? `${products.panelBrand} ${products.panelSize} × ${products.panelQuantity}`
-                          : products.customPanels
-                              ?.map((p) => `${p.brand} ${p.size} × ${p.quantity}`)
-                              .join(", ") || "N/A"}
-                        <br />
+                    <div className="pdf-product-specs">
+                      {products.systemType !== "customize"
+                        ? `${products.panelBrand} ${products.panelSize} × ${products.panelQuantity}`
+                        : products.customPanels
+                            ?.map((p) => `${p.brand} ${p.size} × ${p.quantity}`)
+                            .join(", ") || "N/A"}
+                      <br />
+    
+                      <div>
                         Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                      </div>
                         {products.structureType && (
                           <>
-                            <br />
                             Structure: {products.structureType} ({products.structureSize})
                           </>
                         )}
-                        {products.meterBrand && (
+                        {/* {products.meterBrand && (
                           <>
                             <br />
                             Meter: {products.meterBrand}
@@ -1340,7 +1508,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                             <br />
                             Battery: {products.batteryCapacity}
                           </>
-                        )}
+                        )} */}
                       </div>
                     </div>
                   </div>
@@ -1350,7 +1518,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
             {/* Summary Section */}
             <div className="pdf-summary-section">
-              <div className="pdf-summary-row">
+            <div className="pdf-summary-row price-after-subsidy">
                 <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
                 <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
               </div>
@@ -1374,7 +1542,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <span className="pdf-summary-value"> ₹{discountAmount.toLocaleString()}</span>
                 </div>
               )}
-              <div className="pdf-summary-row price-after-subsidy">
+              <div className="pdf-summary-row">
                 <span className="pdf-summary-label">🎯 Final Price:</span>
                 <span className="pdf-summary-value">₹{finalAmount.toLocaleString()}</span>
               </div>
@@ -1475,248 +1643,172 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 marginTop: "-15px",
               }}
             >
-              <div style={{ fontSize: "10px", lineHeight: "1.2", color: "#374151" }}>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    1. Make:
-                  </strong>
-                  <table className="make-table">
-                    <tbody>
-                      <tr>
-                        <td className="label-cell">• Solar Module</td>
-                        <td>{getUniqueBrands()} Bifacial Panels</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• GTI Inverter</td>
-                        <td>{getInverterDetails()}</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Solar Set Size</td>
-                        <td>{getSystemSizes()}</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• DC Cable</td>
-                        <td>Polycab / KEI (4 sq.mm)</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• AC Cable</td>
-                        <td>Polycab (6 sq.mm), etc.</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Structure</td>
-                        <td>Tata GI Pipes(2mm) like 72*72, 60*40, 40*40</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Lightning Arrester & Earthing</td>
-                        <td>Standard make</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• ACDB & DCDB</td>
-                        <td>Havells, Havells + ELMEX, etc.</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Meter (Solar + Net)</td>
-                        <td>HPL, Genus, Secure, L&T, etc.</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    2. Payment Terms:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>Inverter and Other Items</div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    3. Project Completion:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      15–20 days from the date of receipt of Solar NOC from DISCOM, commercially clear order, and advance
-                      payment.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    4. Validity of Offer:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      5 days from the date of offer. After this period, confirmation must be obtained.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    5. Client Scope:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Cleaning of solar modules is under the client&apos;s scope
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Rooftop to be arranged and provided by the client
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Electricity and water must be provided by the client during construction
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Provide safe storage space for materials used in the solar power plant
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Ensure electricity supply is available to synchronize the inverter during and after
-                      commissioning
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Provide connection space in the LT panel to connect the inverter output
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Internet connection to be provided by the client for remote monitoring of the system
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    6. Transportation:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      All transportation of the above-mentioned Bill of Materials (BOM) up to the installation site is
-                      included.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    7. Net-Metering:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      All government DISCOM fees (file charges, demand charges, testing for net metering, and
-                      arrangement of Electrical Inspector Report) shall be paid directly to DISCOM and will be under
-                      the client&apos;s scope.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    8. Solar System Warranty:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>• 5-year comprehensive system warranty</div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Solar module performance warranty: 25 years
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Solar grid-tie inverter warranty: 10 years (as per manufacturer&apos;s terms & conditions)
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    9. Subsidy Exclusion Policy:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      The quoted price excludes any subsidies, incentives, or rebates. The full package cost will be
-                      charged as per the terms outlined, with subsidies to be applied for separately by the customer.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    10. Payment Terms:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Initial Deposit (Upon Contract Signing): 10-30% of total system cost to secure the contract and
-                      cover initial costs (design, permits, equipment ordering).
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Progress Payment (Upon Equipment Delivery/Installation Start): 40-80% of total system cost when
-                      equipment arrives on-site or installation begins.
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Final Payment (Upon System Commissioning/Grid Connection): 10-20% of total system cost after
-                      system is installed, inspected, and operational with utility approval.
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <table className="terms-table terms-table-tight">
+                <tbody>
+                  <tr>
+                    <td className="terms-label">
+                      <span>MAKE</span>
+                    </td>
+                    <td className="terms-content">
+                      <table className="make-table">
+                        <tbody>
+                          <tr>
+                            <td className="label-cell">• Solar Module</td>
+                            <td>{getUniqueBrands()} Bifacial Panels</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• GTI Inverter</td>
+                            <td>{getInverterDetails()}</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• Solar Set Size</td>
+                            <td>{getSystemSizes()}</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• DC Cable</td>
+                            <td>Polycab(4 sq.mm)</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• AC Cable</td>
+                            <td>Polycab/ KEI (6 sq.mm) etc.</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• Structure</td>
+                            <td>
+                              <div>Tata GI Structure & Tata GI Pipes(2mm)</div>
+                              <div className="structure-sizes">
+                                <span>Leg-72*72</span>
+                                <span>Rafter-60*40</span>
+                                <span>Parlin-40*40</span>
+                              </div>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• Lightning Arrester & Earthing</td>
+                            <td>Standard make/ JMP/ Polycab Green Earthing Wire</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• ACDB & DCDB</td>
+                            <td>Standard make with Havells MCB</td>
+                          </tr>
+                          <tr>
+                            <td className="label-cell">• Meter (Solar + Net)</td>
+                            <td>HPL, Genus, Secure, L&T, etc.</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>PAYMENT</span>
+                    </td>
+                    <td className="terms-content" style={{ marginTop: "-10px" }}>
+                      <p>Inverter and Other Items</p>
+                      <p>100% mobilization advance against Work Order</p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>PROJECT</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>
+                        15–20 days from the date of receipt of Solar NOC from DISCOM, commercially clear order, and advance
+                        payment.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>VALIDITY</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>5 days from the date of offer. After this period, confirmation must be obtained.</p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>CLIENT</span>
+                    </td>
+                    <td className="terms-content">
+                      <ul>
+                        <li>• Cleaning of solar modules is under the client&apos;s scope</li>
+                        <li>• Rooftop to be arranged and provided by the client</li>
+                        <li>• Electricity and water must be provided by the client during construction</li>
+                        <li>• Provide safe storage space for materials used in the solar power plant</li>
+                        <li>• Ensure electricity supply is available to synchronize the inverter during and after commissioning</li>
+                        <li>• Provide connection space in the LT panel to connect the inverter output</li>
+                        <li>• Internet connection to be provided by the client for remote monitoring of the system</li>
+                      </ul>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>TRANSPORT</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>All transportation of the above-mentioned Bill of Materials (BOM) up to the installation site is included.</p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>NET METER</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>
+                        All government DISCOM fees (file charges, demand charges, testing for net metering, and arrangement
+                        of Electrical Inspector Report) shall be paid directly to DISCOM and will be under the client&apos;s scope.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>WARRANTY</span>
+                    </td>
+                    <td className="terms-content">
+                      <ul>
+                        <li>• 5-year comprehensive system warranty</li>
+                        <li>• Solar module performance warranty: 30 years</li>
+                        <li>• Solar grid-tie inverter warranty: 10 years (as per manufacturer&apos;s terms & conditions)</li>
+                      </ul>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>SUBSIDY</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>
+                        The quoted price excludes any subsidies, incentives, or rebates. The full package cost will be charged
+                        as per the terms outlined, with subsidies to be applied for separately by the customer.
+                      </p>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>PAYMENT TERMS</span>
+                    </td>
+                    <td className="terms-content">
+                      <ul>
+                        <li>• Initial Deposit (Upon Contract Signing): 10-30% of total system cost to secure the contract and cover initial costs (design, permits, equipment ordering).</li>
+                        <li>• Progress Payment (Upon Equipment Delivery/Installation Start): 40-80% of total system cost when equipment arrives on-site or installation begins.</li>
+                        <li>• Final Payment (Upon System Commissioning/Grid Connection): 10-20% of total system cost after system is installed, inspected, and operational with utility approval.</li>
+                      </ul>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td className="terms-label">
+                      <span>PANELS</span>
+                    </td>
+                    <td className="terms-content">
+                      <p>
+                        Panels will vary depending on stock availability at the time of order confirmation.
+                      </p>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
 

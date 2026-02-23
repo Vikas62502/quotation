@@ -545,7 +545,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       const canvas = await html2canvas(input, {
         useCORS: true,
         logging: false,
-        background: "#ffffff",
+        backgroundColor: "#ffffff",
         allowTaint: false,
       })
 
@@ -1311,7 +1311,7 @@ const getStructureDetails = (products: ProductSelection) => {
 
             {/* Summary Section */}
             <div className="pdf-summary-section">
-              <div className="pdf-summary-row">
+              <div className="pdf-summary-row price-after-subsidy">
                 <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
                 <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
               </div>
@@ -1333,7 +1333,7 @@ const getStructureDetails = (products: ProductSelection) => {
                   <span className="pdf-summary-value"> ₹{sanitizedDiscountAmount.toLocaleString()}</span>
                 </div>
               )}
-              <div className="pdf-summary-row price-after-subsidy">
+              <div className="pdf-summary-row">
                 <span className="pdf-summary-label">🎯 Final Price:</span>
                 <span className="pdf-summary-value">₹{totalAmount.toLocaleString()}</span>
               </div>
