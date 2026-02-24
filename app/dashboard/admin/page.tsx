@@ -59,6 +59,8 @@ export default function AdminPanelPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [filterDealer, setFilterDealer] = useState("all")
   const [filterMonth, setFilterMonth] = useState("all")
+  const QUOTATIONS_PAGE_SIZE = 10
+  const [currentQuotationPage, setCurrentQuotationPage] = useState(1)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
@@ -148,6 +150,10 @@ export default function AdminPanelPage() {
 
     loadData()
   }, [isAuthenticated, router, dealer])
+
+  useEffect(() => {
+    setCurrentQuotationPage(1)
+  }, [searchTerm, filterDealer, filterMonth])
 
   // Fetch full quotation details when edit dialog opens
   useEffect(() => {
@@ -506,6 +512,20 @@ export default function AdminPanelPage() {
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   )
 
+  const quotationTotalPages = Math.max(1, Math.ceil(sortedQuotations.length / QUOTATIONS_PAGE_SIZE))
+  useEffect(() => {
+    if (currentQuotationPage > quotationTotalPages) {
+      setCurrentQuotationPage(quotationTotalPages)
+    }
+  }, [currentQuotationPage, quotationTotalPages])
+  const paginatedQuotations = sortedQuotations.slice(
+    (currentQuotationPage - 1) * QUOTATIONS_PAGE_SIZE,
+    currentQuotationPage * QUOTATIONS_PAGE_SIZE,
+  )
+  const showingFrom =
+    sortedQuotations.length === 0 ? 0 : (currentQuotationPage - 1) * QUOTATIONS_PAGE_SIZE + 1
+  const showingTo = Math.min(sortedQuotations.length, currentQuotationPage * QUOTATIONS_PAGE_SIZE)
+
   // Get dealer name by ID
   const getDealerName = (dealerId: string) => {
     const dealer = dealers.find((d) => d.id === dealerId)
@@ -820,7 +840,7 @@ export default function AdminPanelPage() {
                   <>
                     {/* Mobile Card View */}
                     <div className="block md:hidden space-y-3">
-                      {sortedQuotations.map((quotation) => (
+                      {paginatedQuotations.map((quotation) => (
                         <div
                           key={quotation.id}
                           className={`p-4 rounded-lg border-2 ${getStatusColor(quotation.status)}`}
@@ -926,7 +946,7 @@ export default function AdminPanelPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedQuotations.map((quotation) => (
+                          {paginatedQuotations.map((quotation) => (
                             <tr
                               key={quotation.id}
                               className={`border-b border-border last:border-0 transition-colors ${getStatusColor(quotation.status)}`}
@@ -1018,6 +1038,32 @@ export default function AdminPanelPage() {
                           ))}
                         </tbody>
                       </table>
+                    </div>
+                    <div className="flex flex-col gap-1 mt-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        Showing {showingFrom}–{showingTo} of {sortedQuotations.length} quotations
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={currentQuotationPage <= 1}
+                          onClick={() => setCurrentQuotationPage((prev) => Math.max(prev - 1, 1))}
+                        >
+                          Previous
+                        </Button>
+                        <span className="text-xs">
+                          Page {currentQuotationPage} of {quotationTotalPages}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={currentQuotationPage >= quotationTotalPages}
+                          onClick={() => setCurrentQuotationPage((prev) => Math.min(prev + 1, quotationTotalPages))}
+                        >
+                          Next
+                        </Button>
+                      </div>
                     </div>
                   </>
                 )}
