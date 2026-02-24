@@ -229,6 +229,7 @@ export default function AdminPanelPage() {
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
             products: q.products || {},
             discount: q.discount || 0,
+            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
@@ -365,6 +366,7 @@ export default function AdminPanelPage() {
         const quotationsWithStatus = allQuotations.map((q: Quotation) => ({
           ...q,
           status: q.status || "pending",
+          subtotal: (q as any).subtotal ?? q.totalAmount ?? 0,
         }))
         setQuotations(quotationsWithStatus)
         // Update localStorage with status if needed
@@ -460,7 +462,8 @@ export default function AdminPanelPage() {
 
   // Calculate statistics
   const totalQuotations = quotations.length
-  const totalRevenue = quotations.reduce((sum, q) => sum + q.finalAmount, 0)
+  const approvedQuotations = quotations.filter((q) => q.status === "approved")
+  const totalRevenue = approvedQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
   const uniqueCustomers = customers.length || new Set(quotations.map((q) => q.customer.mobile)).size
   const activeDealers = new Set(quotations.map((q) => q.dealerId)).size
   const totalVisitors = visitors.length
@@ -468,7 +471,7 @@ export default function AdminPanelPage() {
 
   const currentMonth = new Date().getMonth()
   const currentYear = new Date().getFullYear()
-  const thisMonthQuotations = quotations.filter((q) => {
+  const thisMonthQuotations = approvedQuotations.filter((q) => {
     const date = new Date(q.createdAt)
     return date.getMonth() === currentMonth && date.getFullYear() === currentYear
   })
@@ -513,18 +516,14 @@ export default function AdminPanelPage() {
   )
 
   const quotationTotalPages = Math.max(1, Math.ceil(sortedQuotations.length / QUOTATIONS_PAGE_SIZE))
-  useEffect(() => {
-    if (currentQuotationPage > quotationTotalPages) {
-      setCurrentQuotationPage(quotationTotalPages)
-    }
-  }, [currentQuotationPage, quotationTotalPages])
+  const currentPage = Math.min(Math.max(currentQuotationPage, 1), quotationTotalPages)
   const paginatedQuotations = sortedQuotations.slice(
-    (currentQuotationPage - 1) * QUOTATIONS_PAGE_SIZE,
-    currentQuotationPage * QUOTATIONS_PAGE_SIZE,
+    (currentPage - 1) * QUOTATIONS_PAGE_SIZE,
+    currentPage * QUOTATIONS_PAGE_SIZE,
   )
   const showingFrom =
-    sortedQuotations.length === 0 ? 0 : (currentQuotationPage - 1) * QUOTATIONS_PAGE_SIZE + 1
-  const showingTo = Math.min(sortedQuotations.length, currentQuotationPage * QUOTATIONS_PAGE_SIZE)
+    sortedQuotations.length === 0 ? 0 : (currentPage - 1) * QUOTATIONS_PAGE_SIZE + 1
+  const showingTo = Math.min(sortedQuotations.length, currentPage * QUOTATIONS_PAGE_SIZE)
 
   // Get dealer name by ID
   const getDealerName = (dealerId: string) => {
@@ -1010,17 +1009,7 @@ export default function AdminPanelPage() {
                               </td>
                               <td className="py-3 px-2 text-right">
                                 <div className="flex items-center justify-end gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                      setEditingQuotation(quotation)
-                                      setEditDialogOpen(true)
-                                    }}
-                                    title="Edit Quotation"
-                                  >
-                                    <Edit className="w-4 h-4" />
-                                  </Button>
+                                  
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -1047,18 +1036,18 @@ export default function AdminPanelPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={currentQuotationPage <= 1}
+                          disabled={currentPage <= 1}
                           onClick={() => setCurrentQuotationPage((prev) => Math.max(prev - 1, 1))}
                         >
                           Previous
                         </Button>
                         <span className="text-xs">
-                          Page {currentQuotationPage} of {quotationTotalPages}
+                          Page {currentPage} of {quotationTotalPages}
                         </span>
                         <Button
                           variant="outline"
                           size="sm"
-                          disabled={currentQuotationPage >= quotationTotalPages}
+                          disabled={currentPage >= quotationTotalPages}
                           onClick={() => setCurrentQuotationPage((prev) => Math.min(prev + 1, quotationTotalPages))}
                         >
                           Next
