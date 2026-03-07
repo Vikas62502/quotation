@@ -1709,11 +1709,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           </tr>
                           <tr>
                             <td className="label-cell">• DC Cable</td>
-                            <td>Polycab(4 sq.mm)</td>
+                            <td>
+                              {(products.dcCableBrand || "Polycab") +
+                                (products.dcCableSize ? ` (${products.dcCableSize})` : " (4 sq.mm)")}
+                            </td>
                           </tr>
                           <tr>
                             <td className="label-cell">• AC Cable</td>
-                            <td>Polycab/ KEI (6 sq.mm) etc.</td>
+                            <td>
+                              {(products.acCableBrand || "Polycab") +
+                                (products.acCableSize ? ` (${products.acCableSize})` : " (6 sq.mm)")}
+                            </td>
                           </tr>
                           <tr>
                             <td className="label-cell">• Structure</td>
