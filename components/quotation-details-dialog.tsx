@@ -692,6 +692,45 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     return products.panelBrand || "N/A"
   }
 
+  const parsePanelWatts = (panelSize?: string): number => {
+    if (!panelSize) return 0
+    const normalized = panelSize.toLowerCase().replace(/[^0-9.]/g, "")
+    const value = Number.parseFloat(normalized)
+    return Number.isNaN(value) ? 0 : value
+  }
+
+  const panelSizeValues = () => {
+    const sizes: number[] = []
+    const add = (size?: string) => {
+      const watts = parsePanelWatts(size)
+      if (watts > 0) sizes.push(watts)
+    }
+
+    add(products.panelSize)
+    add(products.dcrPanelSize)
+    add(products.nonDcrPanelSize)
+    if (products.customPanels) {
+      products.customPanels.forEach((panel) => add(panel.size))
+    }
+
+    return sizes
+  }
+
+  const hasPanelBrand = (brandName: string) => {
+    const brands = getUniqueBrands()
+      .split(",")
+      .map((brand) => brand.trim().toLowerCase())
+      .filter(Boolean)
+    return brands.includes(brandName.toLowerCase())
+  }
+
+  const shouldShowTopcon = () => {
+    const sizes = panelSizeValues()
+    if (hasPanelBrand("Waaree") && sizes.some((value) => value >= 580)) return true
+    if (hasPanelBrand("Adani") && sizes.some((value) => value >= 600)) return true
+    return false
+  }
+
   const getInverterDetails = () => {
     return `${products.inverterBrand} - ${products.inverterSize}` || "N/A"
   }
@@ -1654,7 +1693,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         <tbody>
                           <tr>
                             <td className="label-cell">• Solar Module</td>
-                            <td>{getUniqueBrands()} Bifacial Panels</td>
+                            <td>
+                              <div>
+                                {getUniqueBrands()} Bifacial{shouldShowTopcon() ? " Topcon" : ""} Panels
+                              </div>
+                            </td>
                           </tr>
                           <tr>
                             <td className="label-cell">• GTI Inverter</td>
