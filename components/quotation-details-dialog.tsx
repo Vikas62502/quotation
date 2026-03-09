@@ -1763,8 +1763,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     </td>
                     <td className="terms-content">
                       <p>
-                        15–20 days from the date of receipt of Solar NOC from DISCOM, commercially clear order, and advance
-                        payment.
+                        Project installation begins once payment milestones are met, and after installation it takes 15–20 days to complete the metering process.
                       </p>
                     </td>
                   </tr>
@@ -1840,9 +1839,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     </td>
                     <td className="terms-content">
                       <ul>
-                        <li>• Initial Deposit (Upon Contract Signing): 10-30% of total system cost to secure the contract and cover initial costs (design, permits, equipment ordering).</li>
-                        <li>• Progress Payment (Upon Equipment Delivery/Installation Start): 40-80% of total system cost when equipment arrives on-site or installation begins.</li>
-                        <li>• Final Payment (Upon System Commissioning/Grid Connection): 10-20% of total system cost after system is installed, inspected, and operational with utility approval.</li>
+                        <li>• Token Money (Cash/UPI/Netbanking): 10-20% of total system cost to secure the contract and cover initial costs (design, permits, equipment ordering).</li>
+                        <li>• For Loan : 70% of the system cost must be cleared before installation work starts, with the remaining 30% payable after installation.</li>
+                        <li>• Material Delivery: Once 70% is paid, equipment is dispatched to the site and installation must start within 7-10 days.</li>
+                        <li>• Metering & Closure: After successful installation, only 10% remains and rest of the amount must be cleared before metering work and commissioning finalize.</li>
                       </ul>
                     </td>
                   </tr>
