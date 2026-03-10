@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -234,6 +234,7 @@ export default function AdminPanelPage() {
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
             dealerId: q.dealer?.id || q.dealerId,
+            dealer: q.dealer || null,
             status: (q.status || "pending") as QuotationStatus,
           }
         })
@@ -691,13 +692,14 @@ export default function AdminPanelPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-7">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-8">
             <TabsTrigger value="overview" className="text-xs sm:text-sm">Overview</TabsTrigger>
             <TabsTrigger value="quotations" className="text-xs sm:text-sm">Quotations</TabsTrigger>
             <TabsTrigger value="dealers" className="text-xs sm:text-sm">Dealers</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Customers</TabsTrigger>
             <TabsTrigger value="visitors" className="text-xs sm:text-sm">Visitors</TabsTrigger>
             <TabsTrigger value="account-management" className="text-xs sm:text-sm">Account Mgmt</TabsTrigger>
+            <TabsTrigger value="payments" className="text-xs sm:text-sm">Payments</TabsTrigger>
             <TabsTrigger value="products" className="text-xs sm:text-sm">Products</TabsTrigger>
           </TabsList>
 
@@ -1930,6 +1932,26 @@ export default function AdminPanelPage() {
                     </div>
                   )
                 })()}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Payments Tab - Same as Account Management; links to account-management page */}
+          <TabsContent value="payments" className="space-y-6">
+            <Card className="border-border/50">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Wallet className="w-5 h-5 text-primary" />
+                  Payment Management
+                </CardTitle>
+                <CardDescription>
+                  Payment management uses the same Account Management page. Use it when account managers are unavailable.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={() => router.push("/dashboard/account-management")}>
+                  Open Account Management
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>

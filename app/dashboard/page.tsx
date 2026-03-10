@@ -72,6 +72,7 @@ export default function DashboardPage() {
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
             products: q.products || {},
             discount: q.discount || 0,
+            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
@@ -86,7 +87,11 @@ export default function DashboardPage() {
         const all = JSON.parse(localStorage.getItem("quotations") || "[]")
         const dealerQuotations = all
           .filter((q: Quotation) => q.dealerId === dealer.id)
-          .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
+          .map((q: Quotation) => ({
+            ...q,
+            status: q.status || "pending",
+            subtotal: q.subtotal ?? (q as any).pricing?.subtotal ?? q.totalAmount ?? 0,
+          }))
         setQuotations(dealerQuotations)
         // Load visits for all quotations
         await loadVisitsForQuotations(dealerQuotations)
@@ -562,7 +567,7 @@ export default function DashboardPage() {
                           </span>
                         </td>
                         <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                          ₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}
+                          ₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}
                         </td>
                         <td className="py-4 px-3 text-sm">
                           <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>

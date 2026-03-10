@@ -60,6 +60,7 @@ export default function QuotationsPage() {
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
             products: q.products || {},
             discount: q.discount || 0,
+            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
@@ -74,7 +75,11 @@ export default function QuotationsPage() {
         const all = JSON.parse(localStorage.getItem("quotations") || "[]")
         const dealerQuotations = all
           .filter((q: Quotation) => q.dealerId === dealer.id)
-          .map((q: Quotation) => ({ ...q, status: q.status || "pending" }))
+          .map((q: Quotation) => ({
+            ...q,
+            status: q.status || "pending",
+            subtotal: q.subtotal ?? (q as any).pricing?.subtotal ?? q.totalAmount ?? 0,
+          }))
         setQuotations(dealerQuotations)
         // Load visits for all quotations
         await loadVisitsForQuotations(dealerQuotations)
@@ -419,7 +424,7 @@ export default function QuotationsPage() {
                         </td>
                         <td className="py-3 px-2 text-right">
                           <div>
-                            <p className="text-sm font-medium">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                            <p className="text-sm font-medium">₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}</p>
                             {quotation.discount > 0 && (
                               <p className="text-xs text-muted-foreground">{quotation.discount}% off</p>
                             )}

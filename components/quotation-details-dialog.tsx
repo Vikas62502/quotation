@@ -156,7 +156,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const isDealer = dealer && dealer.username !== "admin"
+  const isAdmin = dealer?.username === "admin" || role === "admin"
   const isAccountManagement = role === "account-management"
+  // Admin can manage payments when account managers are unavailable (same as account-management)
+  const canManagePayments = isAccountManagement || isAdmin
 
   // Payment mode options
   const paymentModes = [

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { LogOut, User, Wallet, CheckCircle2, Clock, AlertCircle } from "lucide-react"
+import { ArrowLeft, LogOut, User, Wallet, CheckCircle2, Clock, AlertCircle } from "lucide-react"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -47,7 +47,7 @@ interface CustomerPayment {
 }
 
 export default function AccountManagementPage() {
-  const { isAuthenticated, role, logout, accountManager } = useAuth()
+  const { isAuthenticated, role, logout, accountManager, dealer } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
@@ -261,23 +261,21 @@ export default function AccountManagementPage() {
       return
     }
     
-    if (role !== "account-management") {
-      // Redirect to appropriate page based on role
+    // Allow both account-management and admin (admin uses same page when account managers unavailable)
+    const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
+    if (!canAccess) {
       if (role === "visitor") {
         router.push("/visitor/dashboard")
-      } else if (role === "admin") {
-        router.push("/dashboard/admin")
       } else {
         router.push("/dashboard")
       }
       return
     }
     
-    // Load data only if authenticated as account-management
-    if (isAuthenticated && role === "account-management") {
+    if (isAuthenticated && canAccess) {
       loadApprovedQuotations()
     }
-  }, [isAuthenticated, role, router, isInitialLoad, loadApprovedQuotations])
+  }, [isAuthenticated, role, dealer, router, isInitialLoad, loadApprovedQuotations])
 
   // Initialize payment phases for quotations
   useEffect(() => {
@@ -317,8 +315,9 @@ export default function AccountManagementPage() {
     )
   }
 
-  // Don't render if not authenticated - redirect will happen
-  if (!isAuthenticated || role !== "account-management") {
+  // Don't render if not authenticated or not allowed (account-management or admin)
+  const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
+  if (!isAuthenticated || !canAccess) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -427,9 +426,22 @@ export default function AccountManagementPage() {
       <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 shadow-sm">
         <div className="container mx-auto px-4">
           <div className="flex items-center justify-between h-16">
-            <button onClick={() => router.push("/dashboard/account-management")} className="flex items-center">
-              <SolarLogo size="md" />
-            </button>
+            <div className="flex items-center gap-3">
+              {(role === "admin" || dealer?.username === "admin") && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => router.push("/dashboard/admin")}
+                  className="gap-2 text-muted-foreground hover:text-foreground"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  Back to Admin
+                </Button>
+              )}
+              <button onClick={() => router.push("/dashboard/account-management")} className="flex items-center">
+                <SolarLogo size="md" />
+              </button>
+            </div>
             <div className="flex items-center gap-3">
               {accountManager && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/5 border border-primary/20">

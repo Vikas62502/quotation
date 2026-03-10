@@ -70,10 +70,12 @@ export interface DealerInfo {
 }
 
 export interface Quotation {
+  pricing?: any
   id: string
   customer: Customer
   products: ProductSelection
   discount: number
+  subtotal?: number
   totalAmount: number
   finalAmount: number
   createdAt: string
