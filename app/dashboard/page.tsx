@@ -293,6 +293,13 @@ export default function DashboardPage() {
         compliantAadharFront: null,
         compliantAadharBack: null,
         compliantContactPhone: "",
+        compliantPanNumber: "",
+        compliantPanImage: null,
+        compliantBankAccountNumber: "",
+        compliantBankIfsc: "",
+        compliantBankName: "",
+        compliantBankBranch: "",
+        compliantBankPassbookImage: null,
         panNumber: "",
         panImage: null,
         electricityKno: "",
@@ -338,6 +345,13 @@ export default function DashboardPage() {
     appendIfValue("compliantContactPhone", form.compliantContactPhone)
     appendFile("compliantAadharFront", form.compliantAadharFront)
     appendFile("compliantAadharBack", form.compliantAadharBack)
+    appendIfValue("compliantPanNumber", form.compliantPanNumber)
+    appendFile("compliantPanImage", form.compliantPanImage)
+    appendIfValue("compliantBankAccountNumber", form.compliantBankAccountNumber)
+    appendIfValue("compliantBankIfsc", form.compliantBankIfsc)
+    appendIfValue("compliantBankName", form.compliantBankName)
+    appendIfValue("compliantBankBranch", form.compliantBankBranch)
+    appendFile("compliantBankPassbookImage", form.compliantBankPassbookImage)
 
     appendIfValue("panNumber", form.panNumber)
     appendFile("panImage", form.panImage)
@@ -746,56 +760,145 @@ export default function DashboardPage() {
                     </div>
 
                     {isCompliant && (
-                      <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4 space-y-4">
-                        <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <Label>Compliant Aadhar Number *</Label>
-                            <Input
-                              value={form.compliantAadharNumber}
-                              onChange={(e) =>
-                                updateDocumentsForm(documentsQuotation.id, { compliantAadharNumber: e.target.value })
-                              }
-                              placeholder="Enter compliant Aadhar number"
-                              required
-                            />
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/40 p-4 md:p-5 space-y-4">
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
+                          <p className="text-xs text-amber-800/80">
+                            Fill all compliant Aadhar, PAN, and bank fields to submit.
+                          </p>
+                        </div>
+
+                        <div className="rounded-md border border-amber-200/80 bg-background p-4 space-y-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Aadhar</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Aadhar No *</Label>
+                              <Input
+                                value={form.compliantAadharNumber}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantAadharNumber: e.target.value })
+                                }
+                                placeholder="Enter compliant Aadhar number"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Contact No *</Label>
+                              <Input
+                                value={form.compliantContactPhone}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantContactPhone: e.target.value })
+                                }
+                                placeholder="Enter compliant contact number"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Aadhar Front Image *</Label>
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, {
+                                    compliantAadharFront: e.target.files?.[0] || null,
+                                  })
+                                }
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Aadhar Back Image *</Label>
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, {
+                                    compliantAadharBack: e.target.files?.[0] || null,
+                                  })
+                                }
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <Label>Compliant Contact No *</Label>
-                            <Input
-                              value={form.compliantContactPhone}
-                              onChange={(e) =>
-                                updateDocumentsForm(documentsQuotation.id, { compliantContactPhone: e.target.value })
-                              }
-                              placeholder="Enter compliant contact number"
-                              required
-                            />
+                        </div>
+
+                        <div className="rounded-md border border-amber-200/80 bg-background p-4 space-y-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant PAN</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label className="text-sm font-medium">Compliant PAN Number *</Label>
+                              <Input
+                                value={form.compliantPanNumber}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantPanNumber: e.target.value.toUpperCase() })
+                                }
+                                placeholder="Enter compliant PAN number"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant PAN Image *</Label>
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantPanImage: e.target.files?.[0] || null })
+                                }
+                              />
+                            </div>
                           </div>
-                          <div>
-                            <Label>Compliant Aadhar Front Image *</Label>
-                            <Input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) =>
-                                updateDocumentsForm(documentsQuotation.id, {
-                                  compliantAadharFront: e.target.files?.[0] || null,
-                                })
-                              }
-                              required
-                            />
-                          </div>
-                          <div>
-                            <Label>Compliant Aadhar Back Image *</Label>
-                            <Input
-                              type="file"
-                              accept="image/*"
-                              onChange={(e) =>
-                                updateDocumentsForm(documentsQuotation.id, {
-                                  compliantAadharBack: e.target.files?.[0] || null,
-                                })
-                              }
-                              required
-                            />
+                        </div>
+
+                        <div className="rounded-md border border-amber-200/80 bg-background p-4 space-y-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Bank</p>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Account No *</Label>
+                              <Input
+                                value={form.compliantBankAccountNumber}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantBankAccountNumber: e.target.value })
+                                }
+                                placeholder="Enter compliant bank account number"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant IFSC Code *</Label>
+                              <Input
+                                value={form.compliantBankIfsc}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantBankIfsc: e.target.value.toUpperCase() })
+                                }
+                                placeholder="Enter compliant IFSC code"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Bank Name *</Label>
+                              <Input
+                                value={form.compliantBankName}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantBankName: e.target.value })
+                                }
+                                placeholder="Enter compliant bank name"
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-sm font-medium">Compliant Branch *</Label>
+                              <Input
+                                value={form.compliantBankBranch}
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, { compliantBankBranch: e.target.value })
+                                }
+                                placeholder="Enter compliant branch name"
+                              />
+                            </div>
+                            <div className="md:col-span-2">
+                              <Label className="text-sm font-medium">Compliant Bank Passbook Image *</Label>
+                              <Input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) =>
+                                  updateDocumentsForm(documentsQuotation.id, {
+                                    compliantBankPassbookImage: e.target.files?.[0] || null,
+                                  })
+                                }
+                              />
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -987,15 +1090,31 @@ export default function DashboardPage() {
                         return
                       }
 
+                      if (form.compliantPanNumber && !panPattern.test(form.compliantPanNumber.toUpperCase())) {
+                        toast({
+                          title: "Invalid compliant PAN",
+                          description: "PAN must be in format ABCDE1234F.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
                       const missing =
                         !form.compliantAadharNumber ||
                         !form.compliantContactPhone ||
                         !form.compliantAadharFront ||
-                        !form.compliantAadharBack
+                        !form.compliantAadharBack ||
+                        !form.compliantPanNumber ||
+                        !form.compliantPanImage ||
+                        !form.compliantBankAccountNumber ||
+                        !form.compliantBankIfsc ||
+                        !form.compliantBankName ||
+                        !form.compliantBankBranch ||
+                        !form.compliantBankPassbookImage
                       if (missing) {
                         toast({
                           title: "Missing compliant details",
-                          description: "Please fill compliant Aadhar details and contact number.",
+                          description: "Please fill compliant Aadhar, PAN, and bank details.",
                           variant: "destructive",
                         })
                         return
