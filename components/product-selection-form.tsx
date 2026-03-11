@@ -49,6 +49,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const [dcrConfigDialogOpen, setDcrConfigDialogOpen] = useState(false)
   const [nonDcrConfigDialogOpen, setNonDcrConfigDialogOpen] = useState(false)
   const [bothConfigDialogOpen, setBothConfigDialogOpen] = useState(false)
+  const [hasSelectedDcrConfig, setHasSelectedDcrConfig] = useState(false)
+  const [hasSelectedNonDcrConfig, setHasSelectedNonDcrConfig] = useState(false)
+  const [hasSelectedBothConfig, setHasSelectedBothConfig] = useState(false)
   
   // Use catalog data from API only (no dummy data fallback)
   const panelBrandsList = catalog?.panels?.brands || []
@@ -96,6 +99,26 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       nonDcrPanelQuantity: 0,
     },
   )
+
+  // Reset selection flags when system type changes
+  useEffect(() => {
+    setHasSelectedDcrConfig(false)
+    setHasSelectedNonDcrConfig(false)
+    setHasSelectedBothConfig(false)
+  }, [formData.systemType])
+
+  // When loading initialData (editing), show fields if config is already populated
+  useEffect(() => {
+    if (initialData?.systemType === "non-dcr" && (initialData.panelBrand || initialData.panelSize || initialData.inverterSize)) {
+      setHasSelectedNonDcrConfig(true)
+    }
+    if (initialData?.systemType === "dcr" && (initialData.panelBrand || initialData.panelSize || initialData.inverterSize)) {
+      setHasSelectedDcrConfig(true)
+    }
+    if (initialData?.systemType === "both" && (initialData.dcrPanelBrand || initialData.nonDcrPanelBrand || initialData.inverterSize)) {
+      setHasSelectedBothConfig(true)
+    }
+  }, [initialData?.systemType, initialData?.panelBrand, initialData?.panelSize, initialData?.inverterSize, initialData?.dcrPanelBrand, initialData?.nonDcrPanelBrand])
 
   // Determine phase based on system size and inverter size
   // BOTH systems are always 3-Phase
@@ -246,6 +269,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         console.log("[ProductSelectionForm] System price from config:", config.price)
         return updated
       })
+      setHasSelectedBothConfig(true)
     } else {
       // Fallback to basic calculation if no preset found
       const dcrKw = Number.parseFloat(config.dcrCapacity.replace("kW", ""))
@@ -306,6 +330,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
       }))
+      setHasSelectedBothConfig(true)
     }
   }
 
@@ -344,6 +369,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         console.log("[ProductSelectionForm] System price from config:", config.price)
         return updated
       })
+      setHasSelectedNonDcrConfig(true)
     } else {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
@@ -388,6 +414,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         centralSubsidy: 0,
         stateSubsidy: 0,
       }))
+      setHasSelectedNonDcrConfig(true)
     }
   }
 
@@ -412,13 +439,22 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
       const panelSizeToSet = systemConfig.panelSize || preFilledData.panelSize || ""
+      const panelQuantityToSet = preFilledData.panelQuantity || 0
+      const selectedPanelBrand = (config.panelType || systemConfig.panelBrand || preFilledData.panelBrand || "").trim()
       
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
           phase: config.phase || systemConfig.phase || "",
+          // Keep DCR-specific fields in sync with selected configuration brand/size
+          dcrPanelBrand: selectedPanelBrand,
+          dcrPanelSize: panelSizeToSet,
+          dcrPanelQuantity: panelQuantityToSet,
+          // Preserve legacy panel fields for downstream calculations that still reference them
+          panelBrand: selectedPanelBrand,
           panelSize: panelSizeToSet,
+          panelQuantity: panelQuantityToSet,
           // Ensure ACDB/DCDB are set from config
           acdb: systemConfig.acdb || preFilledData.acdb || "",
           dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
@@ -439,6 +475,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         }
         return updated
       })
+      setHasSelectedDcrConfig(true)
     } else {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
@@ -458,9 +495,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         }
       }
       
-      let panelBrand = "Adani"
-      if (config.panelType === "Tata") panelBrand = "Tata"
-      else if (config.panelType === "Waaree") panelBrand = "Waaree"
+      const panelBrand = (config.panelType || "Adani").trim()
       
       // Determine phase based on system and inverter size
       const systemSizeForPhase = `${systemKw}kW`
@@ -471,6 +506,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       setFormData((prev) => ({
         ...prev,
         phase: fallbackPhase,
+        dcrPanelBrand: panelBrand,
+        dcrPanelSize: `${bestPanelSize}W`,
+        dcrPanelQuantity: bestQuantity,
         panelBrand,
         panelSize: `${bestPanelSize}W`,
         panelQuantity: bestQuantity,
@@ -483,6 +521,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
       }))
+      setHasSelectedDcrConfig(true)
     }
   }
 
@@ -593,6 +632,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const showBothFields = formData.systemType === "both"
   const showCustomizeFields = formData.systemType === "customize"
   const showStandardFields = formData.systemType && !showCustomizeFields && !showBothFields
+  const hasSelectedStandardConfig =
+    (formData.systemType === "non-dcr" && hasSelectedNonDcrConfig) ||
+    (formData.systemType === "dcr" && hasSelectedDcrConfig)
   const showBatteryFields = formData.inverterType === "Hybrid Inverter"
 
   return (
@@ -691,6 +733,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 {/* Quick Select dropdown removed - use Browse button to select configuration */}
               </div>
 
+              {/* DCR Panel, Non-DCR Panel, Inverter - visible only after Browse BOTH selection */}
+              {hasSelectedBothConfig && (
+              <>
               {/* DCR Panel Selection */}
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -930,8 +975,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Meter & Cables for Both */}
+              {hasSelectedBothConfig && (
+              <>
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -1134,6 +1183,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                 </div>
               </div>
+              </>)}
             </>
           )}
 
@@ -1196,7 +1246,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 </div>
               )}
 
-              {/* Panel Selection */}
+              {/* Panel Selection - visible only after Browse selection (DCR or NON DCR) */}
+              {hasSelectedStandardConfig && (
+              <>
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex flex-wrap items-center gap-2 mb-4">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -1360,8 +1412,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                 </div>
               </div>
+              </>
+              )}
 
               {/* Meter & Cables */}
+              {((formData.systemType === "non-dcr" && hasSelectedNonDcrConfig) || (formData.systemType === "dcr" && hasSelectedDcrConfig)) && (
+              <>
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
@@ -1607,6 +1663,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                 </div>
               )}
+              </>)}
             </>
           )}
 
@@ -2002,7 +2059,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             </div>
           )}
 
-          {/* Navigation Buttons */}
+          {/* Navigation Buttons - visible only after Browse selection */}
+          {(hasSelectedBothConfig || hasSelectedDcrConfig || hasSelectedNonDcrConfig) && (
           <div className="flex flex-col sm:flex-row justify-between gap-3 sm:gap-0 pt-4 sm:pt-6 border-t border-border">
             <Button type="button" variant="outline" onClick={onBack} className="w-full sm:w-auto h-11">
               <ArrowLeft className="w-4 h-4 mr-2" />
@@ -2013,6 +2071,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>
+          )}
         </form>
       </CardContent>
     </Card>
