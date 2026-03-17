@@ -177,11 +177,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
   }, [formData.systemType, formData.centralSubsidy, formData.stateSubsidy])
 
-  const updateFormData = <K extends keyof ProductSelection>(field: K, value: ProductSelection[K]) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
-    setError("")
-  }
-
   const normalizeSizeValue = (value: string) => value.trim().toLowerCase()
   const isValueInList = (value: string, list: string[]) => {
     if (!value || list.length === 0) return true
@@ -191,6 +186,32 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const normalizedItem = normalizeSizeValue(item)
       return normalizedItem === normalized || normalizedItem === withUnit
     })
+  }
+  const toPanelSizeNumber = (value: string): number | null => {
+    const cleaned = value.replace(/[^0-9]/g, "")
+    const parsed = Number.parseInt(cleaned, 10)
+    return Number.isNaN(parsed) ? null : parsed
+  }
+  const getClosestPanelSizeFromList = (value: string) => {
+    if (!value || panelSizesList.length === 0) return value
+    if (isValueInList(value, panelSizesList)) {
+      const parsed = toPanelSizeNumber(value)
+      return parsed ? `${parsed}W` : value
+    }
+    const target = toPanelSizeNumber(value)
+    if (!target) return value
+    const numericSizes = panelSizesList
+      .map((size) => ({ num: toPanelSizeNumber(size) }))
+      .filter((item): item is { num: number } => item.num !== null)
+    if (numericSizes.length === 0) return value
+    const closest = numericSizes.reduce((best, current) =>
+      Math.abs(current.num - target) < Math.abs(best.num - target) ? current : best
+    )
+    return `${closest.num}W`
+  }
+  const updateFormData = <K extends keyof ProductSelection>(field: K, value: ProductSelection[K]) => {
+    setFormData((prev) => ({ ...prev, [field]: value }))
+    setError("")
   }
 
   // Quick Select dropdown removed - configurations are now selected via Browse dialogs
@@ -249,10 +270,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           phase: config.phase || systemConfig.phase || "3-Phase",
           // Override panel quantities for BOTH system
           dcrPanelBrand: systemConfig.panelBrand,
-          dcrPanelSize: systemConfig.panelSize,
+          dcrPanelSize: getClosestPanelSizeFromList(systemConfig.panelSize),
           dcrPanelQuantity: dcrQuantity,
           nonDcrPanelBrand: systemConfig.panelBrand,
-          nonDcrPanelSize: systemConfig.panelSize,
+          nonDcrPanelSize: getClosestPanelSizeFromList(systemConfig.panelSize),
           nonDcrPanelQuantity: nonDcrQuantity,
           // Ensure ACDB/DCDB are set from config (BOTH systems are always 3-Phase)
           acdb: systemConfig.acdb || preFilledData.acdb || formatACDBOption("Havells", "3-Phase"),
@@ -279,7 +300,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Include all common panel sizes available in the market
       const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
       
-      let bestDcrPanelSize = 545
+      let bestDcrPanelSize = 550
       let bestDcrQuantity = Math.ceil(dcrW / bestDcrPanelSize)
       for (const size of panelSizesToTry) {
         const qty = Math.ceil(dcrW / size)
@@ -291,7 +312,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         }
       }
       
-      let bestNonDcrPanelSize = 545
+      let bestNonDcrPanelSize = 550
       let bestNonDcrQuantity = Math.ceil(nonDcrW / bestNonDcrPanelSize)
       for (const size of panelSizesToTry) {
         const qty = Math.ceil(nonDcrW / size)
@@ -347,7 +368,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
-      const panelSizeToSet = systemConfig.panelSize || preFilledData.panelSize || ""
+      const panelSizeToSet = getClosestPanelSizeFromList(systemConfig.panelSize || preFilledData.panelSize || "")
       
       setFormData((prev) => {
         const updated = {
@@ -376,7 +397,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const systemW = systemKw * 1000
       // Include all common panel sizes available in the market
       const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
-      let bestPanelSize = 545
+      let bestPanelSize = 550
       let bestQuantity = Math.ceil(systemW / bestPanelSize)
       
       for (const size of panelSizesToTry) {
@@ -438,7 +459,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
-      const panelSizeToSet = systemConfig.panelSize || preFilledData.panelSize || ""
+      const panelSizeToSet = getClosestPanelSizeFromList(systemConfig.panelSize || preFilledData.panelSize || "")
       const panelQuantityToSet = preFilledData.panelQuantity || 0
       const selectedPanelBrand = (config.panelType || systemConfig.panelBrand || preFilledData.panelBrand || "").trim()
       
@@ -482,7 +503,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const systemW = systemKw * 1000
       // Include all common panel sizes available in the market
       const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
-      let bestPanelSize = 545
+      let bestPanelSize = 550
       let bestQuantity = Math.ceil(systemW / bestPanelSize)
       
       for (const size of panelSizesToTry) {
@@ -551,10 +572,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete structure selection")
         return
       }
-      if (!isValueInList(formData.dcrPanelSize, panelSizesList) || !isValueInList(formData.nonDcrPanelSize, panelSizesList)) {
-        setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
-        return
-      }
       if (!formData.meterBrand) {
         setError("Please select a meter brand")
         return
@@ -579,10 +596,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       // Validate other required fields for DCR/NON DCR systems
       if (!formData.structureType || !formData.structureSize) {
         setError("Please complete structure selection")
-        return
-      }
-      if (!isValueInList(formData.panelSize, panelSizesList)) {
-        setError(`Please select a valid panel size from available sizes: ${panelSizesList.join(", ")}`)
         return
       }
       if (!formData.meterBrand) {

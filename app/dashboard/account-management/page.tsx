@@ -480,34 +480,34 @@ export default function AccountManagementPage() {
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-              <FileText className="w-5 h-5 text-primary" />
+      <main className="container mx-auto px-4 py-5">
+        <div className="mb-5">
+          <div className="flex items-center gap-2.5 mb-1.5">
+            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <FileText className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-foreground">
+              <h1 className="text-xl font-semibold text-foreground">
                 Account Management
                 {accountManager && (
-                  <span className="text-lg font-normal text-muted-foreground ml-2">
+                  <span className="text-sm font-normal text-muted-foreground ml-1.5">
                     - Welcome, {accountDisplayName}!
                   </span>
                 )}
               </h1>
-              <p className="text-muted-foreground">Approved quotations from admin panel - ready for processing</p>
+              <p className="text-sm text-muted-foreground">Approved quotations from admin panel - ready for processing</p>
             </div>
           </div>
         </div>
 
         {/* Tabbed Interface */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-6">
-            <TabsTrigger value="approved" className="gap-2">
+          <TabsList className="mb-4 h-9 p-1">
+            <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5">
               <FileText className="w-4 h-4" />
               Approved Quotations
             </TabsTrigger>
-            <TabsTrigger value="payments" className="gap-2">
+            <TabsTrigger value="payments" className="gap-1.5 text-xs px-3 py-1.5">
               <Wallet className="w-4 h-4" />
               Payment Management
             </TabsTrigger>
@@ -675,7 +675,13 @@ export default function AccountManagementPage() {
                               </span>
                             </td>
                             <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                              ₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}
+                              ₹{Math.abs(
+                                quotation.pricing?.subtotal ??
+                                  quotation.subtotal ??
+                                  quotation.totalAmount ??
+                                  quotation.finalAmount ??
+                                  0,
+                              ).toLocaleString()}
                             </td>
                             <td className="py-4 px-3 text-sm">
                               <Badge className="text-xs bg-green-600 text-white">
@@ -710,26 +716,26 @@ export default function AccountManagementPage() {
           </TabsContent>
 
           {/* Payment Management Tab */}
-          <TabsContent value="payments" className="space-y-6">
+          <TabsContent value="payments" className="space-y-4">
             <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
-                    <CardTitle className="text-lg">Payment Management</CardTitle>
+                    <CardTitle className="text-base">Payment Management</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">Manage customer payments phase by phase</p>
                   </div>
-                  <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <div className="relative w-full sm:w-64">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
                       placeholder="Search by customer name, mobile..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 h-10"
+                      className="pl-8 h-9 text-sm"
                     />
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 {isLoading ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
@@ -746,40 +752,55 @@ export default function AccountManagementPage() {
                     <p className="text-sm mt-1">Approved quotations will appear here for payment management</p>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-2.5">
                     {customerPayments
                       .filter((payment) => 
                         payment.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                         payment.customerMobile.includes(searchTerm) ||
                         payment.quotationId.toLowerCase().includes(searchTerm.toLowerCase())
                       )
-                      .map((payment) => (
-                        <Card key={payment.quotationId} className="border-border/50">
-                          <CardHeader>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <CardTitle className="text-base">{payment.customerName}</CardTitle>
-                                <p className="text-sm text-muted-foreground mt-1">
+                      .map((payment) => {
+                        const paidAmount = payment.phases.reduce((sum, p) => sum + p.paidAmount, 0)
+                        const remainingAmount = payment.totalAmount - paidAmount
+
+                        return (
+                          <Card
+                            key={payment.quotationId}
+                            className="border-border/60 bg-card/80 shadow-sm px-3 py-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 md:flex-nowrap">
+                              <div className="min-w-[180px] flex-1">
+                                <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
+                                <p className="text-xs text-muted-foreground mt-0.5">
                                   {payment.customerMobile} • {payment.quotationId}
                                 </p>
                               </div>
-                              <div className="text-right">
-                                <p className="text-sm text-muted-foreground">Subtotal</p>
-                                <p className="text-lg font-bold">₹{payment.totalAmount.toLocaleString()}</p>
+
+                              <div className="min-w-[120px]">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installments</p>
+                                <p className="text-sm font-medium">
+                                  {payment.phases.length === 0
+                                    ? "None"
+                                    : `${payment.phases.length} installment${payment.phases.length > 1 ? "s" : ""}`}
+                                </p>
                               </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between gap-4 rounded-lg border border-border/50 bg-muted/20 px-4 py-3">
-                                <div>
-                                  <p className="text-sm font-medium">Installments</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    {payment.phases.length === 0
-                                      ? "No installments yet"
-                                      : `${payment.phases.length} installment${payment.phases.length > 1 ? "s" : ""}`}
-                                  </p>
-                                </div>
+
+                              <div className="min-w-[110px]">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                                <p className="text-sm font-semibold">₹{payment.totalAmount.toLocaleString()}</p>
+                              </div>
+
+                              <div className="min-w-[100px]">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                                <p className="text-sm font-semibold">₹{paidAmount.toLocaleString()}</p>
+                              </div>
+
+                              <div className="min-w-[120px]">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
+                                <p className="text-sm font-semibold text-amber-600">₹{remainingAmount.toLocaleString()}</p>
+                              </div>
+
+                              <div className="ml-auto">
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -792,30 +813,10 @@ export default function AccountManagementPage() {
                                   Manage
                                 </Button>
                               </div>
-                              
-                              <div className="mt-4 pt-4 border-t border-border">
-                                <div className="flex items-center justify-between">
-                                  <div>
-                                    <p className="text-sm text-muted-foreground">Total Paid</p>
-                                    <p className="text-xl font-bold">
-                                      ₹{payment.phases.reduce((sum, p) => sum + p.paidAmount, 0).toLocaleString()}
-                                    </p>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-sm text-muted-foreground">Remaining</p>
-                                    <p className="text-xl font-bold text-amber-600">
-                                      ₹{(
-                                        payment.totalAmount -
-                                        payment.phases.reduce((sum, p) => sum + p.paidAmount, 0)
-                                      ).toLocaleString()}
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
                             </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                          </Card>
+                        )
+                      })}
                   </div>
                 )}
               </CardContent>

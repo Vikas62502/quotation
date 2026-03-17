@@ -760,6 +760,99 @@ export default function AdminPanelPage() {
     return formData
   }
 
+  const getExistingFileRef = (documents: Record<string, any>, key: string) => {
+    const candidates = [
+      documents[key],
+      documents[`${key}Url`],
+      documents[`${key}_url`],
+      documents[`${key}Path`],
+      documents[`${key}_path`],
+    ]
+    const fileRef = candidates.find((value) => typeof value === "string" && value.trim() !== "")
+    return fileRef || null
+  }
+
+  const mapDocumentsToForm = (documents: Record<string, any>) => ({
+    isCompliantSenior: documents.isCompliantSenior === true || documents.isCompliantSenior === "true",
+    aadharNumber: documents.aadharNumber || "",
+    aadharFront: getExistingFileRef(documents, "aadharFront"),
+    aadharBack: getExistingFileRef(documents, "aadharBack"),
+    compliantAadharNumber: documents.compliantAadharNumber || "",
+    compliantAadharFront: getExistingFileRef(documents, "compliantAadharFront"),
+    compliantAadharBack: getExistingFileRef(documents, "compliantAadharBack"),
+    compliantContactPhone: documents.compliantContactPhone || "",
+    compliantPanNumber: documents.compliantPanNumber || "",
+    compliantPanImage: getExistingFileRef(documents, "compliantPanImage"),
+    compliantBankAccountNumber: documents.compliantBankAccountNumber || "",
+    compliantBankIfsc: documents.compliantBankIfsc || "",
+    compliantBankName: documents.compliantBankName || "",
+    compliantBankBranch: documents.compliantBankBranch || "",
+    compliantBankPassbookImage: getExistingFileRef(documents, "compliantBankPassbookImage"),
+    panNumber: documents.panNumber || "",
+    panImage: getExistingFileRef(documents, "panImage"),
+    electricityKno: documents.electricityKno || "",
+    electricityBillImage: getExistingFileRef(documents, "electricityBillImage"),
+    bankAccountNumber: documents.bankAccountNumber || "",
+    bankIfsc: documents.bankIfsc || "",
+    bankName: documents.bankName || "",
+    bankBranch: documents.bankBranch || "",
+    bankPassbookImage: getExistingFileRef(documents, "bankPassbookImage"),
+    contactPhone: documents.phoneNumber || documents.contactPhone || "",
+    contactEmail: documents.emailId || documents.contactEmail || "",
+  })
+
+  const getUploadedImagePreviews = (form: Record<string, any>) => {
+    const previews = [
+      { label: "Aadhar Front", value: form.aadharFront },
+      { label: "Aadhar Back", value: form.aadharBack },
+      { label: "Compliant Aadhar Front", value: form.compliantAadharFront },
+      { label: "Compliant Aadhar Back", value: form.compliantAadharBack },
+      { label: "PAN Image", value: form.panImage },
+      { label: "Compliant PAN Image", value: form.compliantPanImage },
+      { label: "Electricity Bill Image", value: form.electricityBillImage },
+      { label: "Bank Passbook Image", value: form.bankPassbookImage },
+      { label: "Compliant Bank Passbook", value: form.compliantBankPassbookImage },
+    ]
+
+    return previews.filter((item) => typeof item.value === "string" && item.value.trim() !== "")
+  }
+
+  const openDocumentsDialog = async (quotation: Quotation) => {
+    try {
+      let quotationWithDocuments: any = quotation
+      if (useApi) {
+        const fullQuotation = await api.quotations.getById(quotation.id)
+        quotationWithDocuments = { ...quotation, ...fullQuotation }
+      }
+
+      const documents =
+        quotationWithDocuments?.documents ||
+        quotationWithDocuments?.documentDetails ||
+        quotationWithDocuments?.quotationDocuments ||
+        {}
+
+      setDocumentsFormById((prev) => ({
+        ...prev,
+        [quotation.id]: {
+          ...getDocumentsForm(quotation.id),
+          ...mapDocumentsToForm(documents),
+          ...(prev[quotation.id] || {}),
+        },
+      }))
+      setDocumentsQuotation(quotationWithDocuments)
+      setDocumentsDialogOpen(true)
+    } catch (error) {
+      console.error("Error loading documents:", error)
+      toast({
+        title: "Could not load existing documents",
+        description: "You can still upload new files.",
+        variant: "destructive",
+      })
+      setDocumentsQuotation(quotation)
+      setDocumentsDialogOpen(true)
+    }
+  }
+
   // Get dealer stats
   const dealerStats = dealers.map((d) => {
     const dealerQuotations = quotations.filter((q) => q.dealerId === d.id)
@@ -1002,8 +1095,7 @@ export default function AdminPanelPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => {
-                                  setDocumentsQuotation(quotation)
-                                  setDocumentsDialogOpen(true)
+                                  openDocumentsDialog(quotation)
                                 }}
                                 className="flex-1"
                               >
@@ -1117,8 +1209,7 @@ export default function AdminPanelPage() {
                                     variant="ghost"
                                     size="icon"
                                     onClick={() => {
-                                      setDocumentsQuotation(quotation)
-                                      setDocumentsDialogOpen(true)
+                                      openDocumentsDialog(quotation)
                                     }}
                                     title="Document Submission"
                                   >
@@ -2112,9 +2203,34 @@ export default function AdminPanelPage() {
                 {(() => {
                   const form = getDocumentsForm(documentsQuotation.id)
                   const isCompliant = Boolean(form.isCompliantSenior)
+                  const uploadedImagePreviews = getUploadedImagePreviews(form)
 
                   return (
                     <>
+                      {uploadedImagePreviews.length > 0 && (
+                        <div className="rounded-lg border border-border/60 bg-background p-4 space-y-3">
+                          <p className="text-sm font-semibold">Uploaded Images</p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {uploadedImagePreviews.map((item) => (
+                              <a
+                                key={item.label}
+                                href={String(item.value)}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="rounded-md border border-border/60 p-3 hover:bg-muted/30 transition-colors"
+                              >
+                                <p className="text-xs text-muted-foreground mb-2">{item.label}</p>
+                                <img
+                                  src={String(item.value)}
+                                  alt={item.label}
+                                  className="w-full h-24 object-cover rounded-md border border-border/60"
+                                />
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="rounded-lg border border-border/60 bg-muted/10 p-4 space-y-3">
                         <div className="flex items-start gap-3">
                           <input
