@@ -318,6 +318,398 @@ This may already be implemented. If not, add status filtering to existing endpoi
 
 ---
 
+## 6. Installer + Baldev Confirmation Flow (New)
+
+### Goal
+Implement a two-step post-approval workflow:
+1. **Installer stage**: receives admin-approved quotation, verifies site/spec/customer, approves/rejects, uploads PO + expenses + site completion images.
+2. **Baldev confirmation stage**: verifies documents/warranty/meter readiness, approves final completion.
+
+### 6.1 Roles & Authentication
+
+#### New Roles Required
+- `installer`
+- `baldev` (or `confirmation`, frontend maps this to baldev)
+
+#### Login Behavior
+`POST /api/auth/login` must return:
+- `user.role = "installer"` for installer credentials
+- `user.role = "baldev"` (or `"confirmation"`) for Baldev credentials
+
+#### Authorization Rules
+- `installer` can access only installer endpoints.
+- `baldev` can access only baldev confirmation endpoints.
+- `admin` can view all stages and override if needed.
+- `dealer` cannot perform installer/baldev approvals.
+
+---
+
+### 6.2 Database Changes
+
+#### Quotations Table (new workflow columns)
+- `installationStatus` ENUM/TEXT:
+  - `pending_installer`
+  - `installer_in_progress`
+  - `installer_approved`
+  - `installer_rejected`
+  - `pending_baldev`
+  - `baldev_approved`
+  - `baldev_rejected`
+  - `completed`
+- `installerId` (nullable FK to users table)
+- `installerActionAt` (nullable timestamp)
+- `installerInProgressAt` (nullable timestamp)
+- `installerApprovedAt` (nullable timestamp)
+- `installerRemarks` (nullable text)
+- `baldevId` (nullable FK to users table)
+- `baldevActionAt` (nullable timestamp)
+- `baldevRemarks` (nullable text)
+- `completionAt` (nullable timestamp)
+
+#### Optional Separate Table (recommended for uploads)
+`quotation_installation_docs`:
+- `id`
+- `quotationId`
+- `docType` (`installer_po`, `additional_expense`, `site_completion_image`, `warranty_doc`, `meter_doc`, `other`)
+- `fileUrl`
+- `uploadedByUserId`
+- `uploadedByRole`
+- `uploadedAt`
+- `metadata` JSON (optional)
+
+#### Indexes
+- Index on `installationStatus`
+- Composite index on (`installationStatus`, `createdAt`)
+
+---
+
+### 6.3 Status Transition Rules
+
+Allowed transitions:
+- `approved` (admin) -> `pending_installer`
+- `pending_installer` -> `installer_in_progress` OR `installer_rejected`
+- `installer_in_progress` -> `installer_approved` OR `installer_rejected`
+- `installer_approved` -> `pending_baldev`
+- `pending_baldev` -> `baldev_approved` OR `baldev_rejected`
+- `baldev_approved` -> `completed`
+
+Validation:
+- Transition should fail with `409` if current status is not valid for requested action.
+- On `installer_approved`, require at least one site completion image.
+- On `completed`, require required Baldev docs (warranty + meter as per business rule).
+
+---
+
+### 6.4 New API Endpoints
+
+#### A) Installer Queue
+`GET /api/installer/quotations?status=pending_installer&page=1&limit=20`
+
+Response:
+```json
+{
+  "success": true,
+  "data": {
+    "quotations": [],
+    "pagination": {}
+  }
+}
+```
+
+#### B) Installer Decision / Progress
+`PATCH /api/installer/quotations/{quotationId}/status`
+
+Request:
+```json
+{
+  "action": "start" | "approve" | "reject",
+  "remarks": "string"
+}
+```
+
+Behavior:
+- `start`: set `installationStatus = installer_in_progress`, set `installerInProgressAt`.
+- `approve`: set `installationStatus = installer_approved`, set `installerApprovedAt`, then move to `pending_baldev` (or directly `pending_baldev`).
+- `reject`: set `installationStatus = installer_rejected`.
+
+#### C) Installer Uploads (AWS via backend)
+`POST /api/installer/quotations/{quotationId}/documents`
+
+Multipart fields:
+- `installerCompletionImages[]` (preferred key used by frontend)
+- `files[]` (optional backward compatibility alias)
+- `docType` (`installer_po`, `additional_expense`, `site_completion_image`)
+- `remarks` (optional)
+
+AWS/S3 requirement:
+- Backend must upload received files to AWS S3 (not local disk).
+- Save S3 URL(s) in quotation documents/workflow records.
+- Response should return uploaded file URLs for frontend display.
+- Suggested response payload should include:
+  - `installationStatus`
+  - `installerInProgressAt`
+  - `installerApprovedAt`
+  - `documents.siteCompletionImages[]`
+
+#### D) Baldev Queue
+`GET /api/baldev/quotations?status=pending_baldev&page=1&limit=20`
+
+#### E) Baldev Decision
+`PATCH /api/baldev/quotations/{quotationId}/decision`
+
+Request:
+```json
+{
+  "action": "approve" | "reject",
+  "remarks": "string",
+  "markCompleted": true
+}
+```
+
+Behavior:
+- approve + `markCompleted=true` -> `installationStatus = completed`, set `completionAt`.
+- reject -> `installationStatus = baldev_rejected`.
+
+#### F) Baldev Uploads
+`POST /api/baldev/quotations/{quotationId}/documents`
+
+Multipart fields:
+- `files[]`
+- `docType` (`warranty_doc`, `meter_doc`, `other`)
+- `remarks` (optional)
+
+#### G) Unified Workflow History (optional but useful)
+`GET /api/quotations/{quotationId}/workflow-history`
+
+Returns timeline of status transitions + actor + remarks + docs.
+
+---
+
+### 6.5 Frontend Compatibility Requirements
+
+For all quotation list endpoints used by account-management/installer/baldev, include:
+- `pricing.subtotal` (or ensure flattened `subtotal` is present)
+- `installationStatus`
+- `approvedAt` (admin approval date)
+- `installerApprovedAt` (installer approval date, when available)
+- `documents` grouped by docType (if available)
+- `dealer`, `customer`, `products`, `createdAt`, `validUntil`
+
+For installer listing UI requirements:
+- support oldest-first ordering (`sortBy=approvedAt&sortOrder=asc`) so old approved jobs appear first
+- support search by customer name/mobile/quotation id
+
+---
+
+### 6.6 Error Codes (additions)
+
+| Code | Description | HTTP |
+|------|-------------|------|
+| `WF_001` | Invalid workflow transition | 409 |
+| `WF_002` | Required documents missing for transition | 400 |
+| `AUTH_004` | Insufficient permissions | 403 |
+| `RES_001` | Quotation not found | 404 |
+
+---
+
+### 6.7 Suggested Migration (example)
+
+```sql
+ALTER TABLE quotations
+ADD COLUMN installation_status VARCHAR(40) DEFAULT 'pending_installer',
+ADD COLUMN installer_id UUID NULL,
+ADD COLUMN installer_action_at TIMESTAMP NULL,
+ADD COLUMN installer_in_progress_at TIMESTAMP NULL,
+ADD COLUMN installer_approved_at TIMESTAMP NULL,
+ADD COLUMN installer_remarks TEXT NULL,
+ADD COLUMN baldev_id UUID NULL,
+ADD COLUMN baldev_action_at TIMESTAMP NULL,
+ADD COLUMN baldev_remarks TEXT NULL,
+ADD COLUMN completion_at TIMESTAMP NULL;
+
+CREATE INDEX idx_quotations_installation_status ON quotations(installation_status);
+CREATE INDEX idx_quotations_status_created ON quotations(installation_status, created_at DESC);
+```
+
+---
+
+## 7. HR CSV Calling Data Module (New)
+
+### Goal
+Allow HR users to upload leads via CSV, assign selected leads to selected dealers, and enforce unique assignment so one lead is never re-assigned to multiple dealers.
+
+### 7.1 Roles & Access
+- New role: `hr`
+- HR login must return `user.role = "hr"` (frontend also temporarily supports fallback role names, but backend should return `hr` consistently).
+- Only `hr` and `admin` can upload/assign leads.
+- Dealers can only view and act on leads assigned to themselves.
+
+---
+
+### 7.2 Database Model
+
+#### A) `calling_leads` table
+- `id` (PK)
+- `name`
+- `mobile` (required)
+- `altMobile` (nullable)
+- `city` (nullable)
+- `state` (nullable)
+- `rawPayload` (JSON, optional - original CSV row)
+- `createdAt`
+
+#### B) `dealer_lead_assignments` table
+- `id` (PK)
+- `leadId` (FK -> `calling_leads.id`)
+- `dealerId` (FK -> dealer user id)
+- `assignedBy` (FK -> HR user id)
+- `assignedAt`
+- `status` ENUM/TEXT: `assigned` | `in_progress` | `completed`
+- `action` ENUM/TEXT nullable: `called` | `follow_up` | `not_interested`
+- `actionAt` nullable timestamp
+
+#### Uniqueness constraints (MANDATORY)
+- Unique on `calling_leads.mobile` (normalized 10-digit)
+- Unique on `dealer_lead_assignments.leadId` (single active assignment per lead)
+
+This enforces "not repeatedly assign to others" at DB level.
+
+---
+
+### 7.3 API Endpoints
+
+#### A) HR CSV Upload + Assignment
+`POST /api/hr/leads/upload-csv`
+
+Content-Type: `multipart/form-data`
+- `file` (CSV)
+- `dealerIds[]` (selected checkbox dealers)
+
+Backend behavior:
+1. Parse CSV rows.
+2. Normalize mobile numbers.
+3. Skip duplicates by `mobile` (already existing).
+4. Assign unique leads round-robin across `dealerIds[]`.
+5. Return counts: parsed, created, skippedDuplicate, assigned.
+
+Example response:
+```json
+{
+  "success": true,
+  "data": {
+    "parsed": 120,
+    "created": 98,
+    "skippedDuplicate": 22,
+    "assigned": 98
+  }
+}
+```
+
+#### B) Dealer Calling Queue (single next item)
+`GET /api/dealers/me/calling-queue/next`
+
+Returns only one oldest pending item for that dealer:
+```json
+{
+  "success": true,
+  "data": {
+    "lead": {
+      "id": "lead_xxx",
+      "name": "Rahul",
+      "mobile": "98xxxxxx12",
+      "city": "Jaipur",
+      "state": "Rajasthan",
+      "status": "assigned"
+    }
+  }
+}
+```
+
+If no pending lead:
+```json
+{
+  "success": true,
+  "data": { "lead": null }
+}
+```
+
+#### C) Dealer Lead Action
+`PATCH /api/dealers/me/calling-queue/{leadId}/action`
+
+Request:
+```json
+{
+  "action": "start" | "called" | "follow_up" | "not_interested"
+}
+```
+
+Rules:
+- `start` -> `status = in_progress`
+- `called`/`follow_up`/`not_interested` -> `status = completed`, set `action`, `actionAt`
+- Dealer can only update own assigned lead.
+- On completion, next call to `/next` returns the following lead.
+
+---
+
+### 7.4 Validation Rules
+- CSV must include at least one valid mobile column (`mobile`, `phone`, `contact`, etc.).
+- `dealerIds[]` cannot be empty.
+- Reject invalid dealer ids.
+- Normalize and validate mobile to 10 digits.
+- Duplicate mobile should be skipped, not inserted.
+
+---
+
+### 7.5 Error Codes (additions)
+| Code | Description | HTTP |
+|------|-------------|------|
+| `LEAD_001` | Invalid CSV format | 400 |
+| `LEAD_002` | No valid rows found in CSV | 400 |
+| `LEAD_003` | Duplicate lead (mobile already exists) | 409 |
+| `LEAD_004` | Lead not assigned to dealer | 403 |
+| `LEAD_005` | Invalid lead action transition | 409 |
+
+---
+
+### 7.6 Backend Checklist (HR module)
+- [ ] Create `hr` role and auth support.
+- [ ] Implement CSV upload endpoint with round-robin assignment.
+- [ ] Add uniqueness constraints for non-reassignment.
+- [ ] Implement dealer `/calling-queue/next` endpoint (single lead only).
+- [ ] Implement dealer action endpoint with transition validation.
+- [ ] Add indexes on `(dealerId, status, assignedAt)`.
+- [ ] Return standard response format `{ success, data }`.
+
+---
+
+### 7.7 Assignment Strategy Update (Work Queue Model)
+
+Use dynamic work allocation instead of fixed dealer-wise split:
+
+- Selected `dealerIds[]` from HR upload represent the active worker pool.
+- Do not permanently divide leads by dealer at upload time.
+- Keep leads in a common pending queue (FIFO by created/queued time).
+- Assign lead to a dealer when that dealer becomes free (first available worker).
+- If dealer finishes faster, dealer should receive more leads automatically.
+
+#### Required behavior
+1. On CSV upload:
+   - Parse + deduplicate leads.
+   - Insert all valid leads into queue with status `queued`.
+   - Activate up to `activeLimitPerDealer` per selected dealer initially (if provided).
+2. On dealer action completion (`called`, `follow_up`, `not_interested`, `rescheduled`):
+   - Update current lead status/action.
+   - Immediately allocate next queued lead to the same dealer if eligible.
+3. `/api/dealers/me/calling-queue/next` (or `/current`) must return:
+   - `lead` (next actionable lead for this dealer)
+   - `pendingCount`, `queuedCount`, `scheduledCount`, `completedCount`
+
+#### Notes
+- This is a **Work Queue + Dynamic Reassignment** model (pull-based).
+- It is intentionally not strict round-robin after initial seeding.
+
+---
+
 ## API Response Structure Requirements
 
 ### Standard Response Format

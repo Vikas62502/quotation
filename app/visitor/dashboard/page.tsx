@@ -209,7 +209,7 @@ export default function VisitorDashboardPage() {
 
   const handleLogout = () => {
     logout()
-    router.push("/visitor-login")
+    router.push("/")
   }
 
   const formatDate = (dateString: string) => {

@@ -319,6 +319,36 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
   }
 }
 
+// Multipart helper for file uploads through backend
+async function multipartRequest<T = any>(endpoint: string, method: "POST" | "PATCH", formData: FormData): Promise<T> {
+  const token = getAuthToken()
+  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: token ? `Bearer ${token}` : "",
+    },
+    body: formData,
+  })
+
+  const contentType = response.headers.get("content-type")
+  if (contentType?.includes("application/json")) {
+    const data = await response.json()
+    if (!response.ok || data?.success === false) {
+      const message = data?.error?.message || response.statusText
+      throw new ApiError(message, data?.error?.code || `HTTP_${response.status}`)
+    }
+    return data?.data || data
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText)
+    throw new ApiError(errorText || `HTTP_${response.status}`)
+  }
+
+  return response as any
+}
+
 // API Service Methods
 export const api = {
   // Authentication
@@ -347,8 +377,14 @@ export const api = {
     },
 
     logout: async () => {
+      const token = getAuthToken()
       try {
-        await apiRequest("/auth/logout", { method: "POST" })
+        const url = `${API_BASE_URL}/auth/logout`
+        // Use direct fetch so logout never triggers global auth redirect-to-login logic.
+        await fetch(url, {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        })
       } catch {
         // Ignore errors on logout
       } finally {
@@ -437,6 +473,33 @@ export const api = {
       }
       const query = queryParams.toString()
       return apiRequest(`/dealers/visitors${query ? `?${query}` : ""}`)
+    },
+
+    getCallingQueueNext: async () => {
+      try {
+        return await apiRequest("/dealers/me/calling-queue/next")
+      } catch (error) {
+        // Backward compatibility if backend uses /current instead of /next.
+        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+          return apiRequest("/dealers/me/calling-queue/current")
+        }
+        throw error
+      }
+    },
+
+    updateCallingLeadAction: async (
+      leadId: string,
+      payload: {
+        action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"
+        callRemark?: string
+        nextFollowUpAt?: string
+        actionAt?: string
+      },
+    ) => {
+      return apiRequest(`/dealers/me/calling-queue/${leadId}/action`, {
+        method: "PATCH",
+        body: payload,
+      })
     },
   },
 
@@ -694,6 +757,76 @@ export const api = {
 
     getStatistics: async () => {
       return apiRequest("/visitors/me/statistics")
+    },
+  },
+
+  // Installer APIs
+  installer: {
+    uploadCompletionDocuments: async (quotationId: string, formData: FormData) => {
+      try {
+        // Preferred installer-specific endpoint (backend should upload files to AWS/S3)
+        return await multipartRequest(`/installer/quotations/${quotationId}/documents`, "POST", formData)
+      } catch (error) {
+        // Temporary compatibility fallback to existing quotation documents endpoint
+        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+          return multipartRequest(`/quotations/${quotationId}/documents`, "PATCH", formData)
+        }
+        throw error
+      }
+    },
+  },
+
+  // HR APIs
+  hr: {
+    uploadLeadsCsv: async (file: File, dealerIds: string[], activeLimitPerDealer?: number) => {
+      const buildFormData = (config: {
+        fileKey: "file" | "csvFile"
+        dealerMode: "array-brackets" | "repeat-key" | "json-string"
+        limitKey?: "activeLimitPerDealer" | "activeLeadsLimit"
+      }) => {
+        const formData = new FormData()
+        formData.append(config.fileKey, file)
+
+        if (config.dealerMode === "array-brackets") {
+          dealerIds.forEach((dealerId) => formData.append("dealerIds[]", dealerId))
+        } else if (config.dealerMode === "repeat-key") {
+          dealerIds.forEach((dealerId) => formData.append("dealerIds", dealerId))
+        } else {
+          formData.append("dealerIds", JSON.stringify(dealerIds))
+        }
+
+        if (config.limitKey && activeLimitPerDealer && Number.isFinite(activeLimitPerDealer)) {
+          formData.append(config.limitKey, String(activeLimitPerDealer))
+        }
+
+        return formData
+      }
+
+      const attempts: Array<{
+        fileKey: "file" | "csvFile"
+        dealerMode: "array-brackets" | "repeat-key" | "json-string"
+        limitKey?: "activeLimitPerDealer" | "activeLeadsLimit"
+      }> = [
+        { fileKey: "file", dealerMode: "array-brackets", limitKey: "activeLimitPerDealer" },
+        { fileKey: "file", dealerMode: "repeat-key", limitKey: "activeLeadsLimit" },
+        { fileKey: "csvFile", dealerMode: "json-string", limitKey: "activeLeadsLimit" },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of attempts) {
+        try {
+          const formData = buildFormData(attempt)
+          return await multipartRequest("/hr/leads/upload-csv", "POST", formData)
+        } catch (error) {
+          lastError = error
+          const isValidationError =
+            error instanceof ApiError &&
+            (error.code === "VAL_001" || error.code === "HTTP_400" || error.message.toLowerCase().includes("validation"))
+          if (!isValidationError) throw error
+        }
+      }
+
+      throw lastError
     },
   },
 

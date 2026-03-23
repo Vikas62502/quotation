@@ -8,14 +8,28 @@ import { SolarLogo } from "@/components/solar-logo"
 import { Users, FileText, Shield, Zap, ArrowRight, CheckCircle } from "lucide-react"
 
 export default function HomePage() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, role } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push("/dashboard")
+      if (role === "account-management") {
+        router.push("/dashboard/account-management")
+      } else if (role === "hr") {
+        router.push("/dashboard/hr")
+      } else if (role === "installer") {
+        router.push("/dashboard/installer")
+      } else if (role === "baldev") {
+        router.push("/dashboard/baldev")
+      } else if (role === "visitor") {
+        router.push("/visitor/dashboard")
+      } else if (role === "admin") {
+        router.push("/dashboard/admin")
+      } else {
+        router.push("/dashboard")
+      }
     }
-  }, [isAuthenticated, router])
+  }, [isAuthenticated, role, router])
 
   return (
     <div className="min-h-screen bg-background">
@@ -26,6 +40,21 @@ export default function HomePage() {
           <div className="flex items-center gap-3">
             <Button variant="ghost" onClick={() => router.push("/login")}>
               Login
+            </Button>
+            <Button variant="ghost" onClick={() => router.push("/account-management-login")}>
+              Account Mgmt Login
+            </Button>
+            <Button variant="ghost" onClick={() => router.push("/visitor-login")}>
+              Visitor Login
+            </Button>
+            <Button variant="ghost" onClick={() => router.push("/hr-login")}>
+              HR Login
+            </Button>
+            <Button variant="ghost" onClick={() => router.push("/installer-login")}>
+              Installer Login
+            </Button>
+            <Button variant="ghost" onClick={() => router.push("/baldev-login")}>
+              Baldev Login
             </Button>
             <Button onClick={() => router.push("/register")} className="shadow-lg shadow-primary/25">
               Register

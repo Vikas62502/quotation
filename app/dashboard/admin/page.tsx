@@ -82,6 +82,7 @@ export default function AdminPanelPage() {
   const [accountManagerHistory, setAccountManagerHistory] = useState<any[]>([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [newAccountManager, setNewAccountManager] = useState({
+    role: "",
     username: "",
     password: "",
     firstName: "",
@@ -139,6 +140,20 @@ export default function AdminPanelPage() {
   })
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const getOperationsRoleOverrides = (): Record<string, string> => {
+    try {
+      return JSON.parse(localStorage.getItem("operationsRoleOverrides") || "{}")
+    } catch {
+      return {}
+    }
+  }
+  const saveOperationsRoleOverride = (username: string, roleValue: string) => {
+    const key = username.trim().toLowerCase()
+    if (!key) return
+    const current = getOperationsRoleOverrides()
+    current[key] = roleValue
+    localStorage.setItem("operationsRoleOverrides", JSON.stringify(current))
+  }
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -297,6 +312,7 @@ export default function AdminPanelPage() {
         try {
           const accountManagersResponse = await api.admin.accountManagers.getAll()
           const accountManagersList = accountManagersResponse.accountManagers || accountManagersResponse || []
+          const roleOverrides = getOperationsRoleOverrides()
           setAccountManagers(accountManagersList.map((am: any) => ({
             id: am.id,
             username: am.username || "",
@@ -304,6 +320,7 @@ export default function AdminPanelPage() {
             lastName: am.lastName || "",
             email: am.email || "",
             mobile: am.mobile || "",
+            role: am.role || roleOverrides[String(am.username || "").toLowerCase()] || "account-management",
             isActive: am.isActive ?? true,
             emailVerified: am.emailVerified ?? false,
             createdAt: am.createdAt,
@@ -391,7 +408,16 @@ export default function AdminPanelPage() {
         // Load account managers from localStorage
         try {
           const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-          const accountManagersWithoutPassword = allAccountManagers.map((am: AccountManager & { password?: string }) => {
+          const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+          const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
+          const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
+          const mergedOperationUsers = [
+            ...allAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
+            ...allInstallers.map((u: any) => ({ ...u, role: "installer" })),
+            ...allBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
+            ...allHrUsers.map((u: any) => ({ ...u, role: "hr" })),
+          ]
+          const accountManagersWithoutPassword = mergedOperationUsers.map((am: AccountManager & { password?: string }) => {
             const { password: _, ...accountManagerData } = am
             return accountManagerData
           })
@@ -881,9 +907,9 @@ export default function AdminPanelPage() {
             <TabsTrigger value="dealers" className="text-xs sm:text-sm">Dealers</TabsTrigger>
             <TabsTrigger value="customers" className="text-xs sm:text-sm">Customers</TabsTrigger>
             <TabsTrigger value="visitors" className="text-xs sm:text-sm">Visitors</TabsTrigger>
-            <TabsTrigger value="account-management" className="text-xs sm:text-sm">Account Mgmt</TabsTrigger>
             <TabsTrigger value="payments" className="text-xs sm:text-sm">Payments</TabsTrigger>
             <TabsTrigger value="products" className="text-xs sm:text-sm">Products</TabsTrigger>
+            <TabsTrigger value="account-management" className="text-xs sm:text-sm">Others</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -1855,10 +1881,11 @@ export default function AdminPanelPage() {
             <Card>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                  <CardTitle>Account Management Users ({accountManagers.length})</CardTitle>
+                  <CardTitle>Operations User IDs ({accountManagers.length})</CardTitle>
                   <Button
                     onClick={() => {
                       setNewAccountManager({
+                        role: "",
                         username: "",
                         password: "",
                         firstName: "",
@@ -1872,7 +1899,7 @@ export default function AdminPanelPage() {
                     className="w-full sm:w-auto"
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
-                    Create Account Manager
+                    Create User ID
                   </Button>
                 </div>
                 <div className="mt-4">
@@ -1911,7 +1938,7 @@ export default function AdminPanelPage() {
                           {accountManagerSearchTerm ? "No matching account managers found" : "No account management users found"}
                         </p>
                         {!accountManagerSearchTerm && (
-                          <p className="text-sm mt-1">Click "Create Account Manager" to add a new account management user</p>
+                          <p className="text-sm mt-1">Click "Create User ID" to add account manager, installer, baldev, or HR user</p>
                         )}
                       </div>
                     )
@@ -1941,6 +1968,9 @@ export default function AdminPanelPage() {
                                   {am.emailVerified && (
                                     <Badge variant="outline" className="text-xs border-blue-500 text-blue-700 dark:text-blue-400">Verified</Badge>
                                   )}
+                                  <Badge variant="outline" className="text-xs capitalize">
+                                    {((am as any).role || "account-management").replace("-", " ")}
+                                  </Badge>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                                   <div className="flex items-center gap-2">
@@ -2031,6 +2061,7 @@ export default function AdminPanelPage() {
                                           const fullAccountManager = await api.admin.accountManagers.getById(am.id)
                                           setEditingAccountManager(fullAccountManager || am)
                                           setNewAccountManager({
+                                            role: fullAccountManager?.role || (am as any).role || "account-management",
                                             username: fullAccountManager?.username || am.username,
                                             password: "",
                                             firstName: fullAccountManager?.firstName || am.firstName,
@@ -2043,6 +2074,7 @@ export default function AdminPanelPage() {
                                           console.error("Error loading account manager details:", error)
                                           setEditingAccountManager(am)
                                           setNewAccountManager({
+                                            role: (am as any).role || "account-management",
                                             username: am.username,
                                             password: "",
                                             firstName: am.firstName,
@@ -2055,6 +2087,7 @@ export default function AdminPanelPage() {
                                       } else {
                                         setEditingAccountManager(am)
                                         setNewAccountManager({
+                                          role: (am as any).role || "account-management",
                                           username: am.username,
                                           password: "",
                                           firstName: am.firstName,
@@ -2085,23 +2118,42 @@ export default function AdminPanelPage() {
                                           await loadData()
                                           toast({
                                             title: "Success",
-                                            description: `Account manager ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
+                                            description: `User ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
                                           })
                                         } else {
                                           // Fallback to localStorage
-                                          const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-                                          const updated = allAccountManagers.map((accountManager: AccountManager & { password?: string }) =>
+                                          const roleKey = (am as any).role || "account-management"
+                                          const key =
+                                            roleKey === "installer"
+                                              ? "installers"
+                                              : roleKey === "baldev"
+                                                ? "baldevUsers"
+                                                : roleKey === "hr"
+                                                  ? "hrUsers"
+                                                  : "accountManagers"
+                                          const roleUsers = JSON.parse(localStorage.getItem(key) || "[]")
+                                          const updated = roleUsers.map((accountManager: AccountManager & { password?: string }) =>
                                             accountManager.id === am.id ? { ...accountManager, isActive: am.isActive === false ? true : false } : accountManager
                                           )
-                                          localStorage.setItem("accountManagers", JSON.stringify(updated))
-                                          const accountManagersWithoutPassword = updated.map((am: AccountManager & { password?: string }) => {
+                                          localStorage.setItem(key, JSON.stringify(updated))
+                                          const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+                                          const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                                          const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
+                                          const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
+                                          const mergedUsers = [
+                                            ...allAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
+                                            ...allInstallers.map((u: any) => ({ ...u, role: "installer" })),
+                                            ...allBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
+                                            ...allHrUsers.map((u: any) => ({ ...u, role: "hr" })),
+                                          ]
+                                          const accountManagersWithoutPassword = mergedUsers.map((am: AccountManager & { password?: string }) => {
                                             const { password: _, ...accountManagerData } = am
                                             return accountManagerData
                                           })
                                           setAccountManagers(accountManagersWithoutPassword)
                                           toast({
                                             title: "Success",
-                                            description: `Account manager ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
+                                            description: `User ${am.isActive === false ? "activated" : "deactivated"} successfully!`,
                                           })
                                         }
                                       } catch (error) {
@@ -3933,13 +3985,35 @@ export default function AdminPanelPage() {
         <Dialog open={accountManagerDialogOpen} onOpenChange={setAccountManagerDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingAccountManager ? "Edit Account Manager" : "Create New Account Manager"}</DialogTitle>
+              <DialogTitle>{editingAccountManager ? "Edit User ID" : "Create New User ID"}</DialogTitle>
               <DialogDescription>
-                {editingAccountManager ? "Update account manager information" : "Add a new account manager to the system"}
+                {editingAccountManager ? "Update user information" : "Add a new account manager, installer, baldev, or HR user"}
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="am-role">Role *</Label>
+                <Select
+                  value={newAccountManager.role || undefined}
+                  onValueChange={(value) => setNewAccountManager({ ...newAccountManager, role: value })}
+                  disabled={!!editingAccountManager}
+                >
+                  <SelectTrigger id="am-role">
+                    <SelectValue placeholder="Select role" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="account-management">Account Manager</SelectItem>
+                    <SelectItem value="installer">Installer</SelectItem>
+                    <SelectItem value="baldev">Baldev Confirmation</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
+                  </SelectContent>
+                </Select>
+                {editingAccountManager && (
+                  <p className="text-xs text-muted-foreground">Role cannot be changed during edit</p>
+                )}
+              </div>
+
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="am-firstName">First Name *</Label>
@@ -4018,6 +4092,15 @@ export default function AdminPanelPage() {
                 </Button>
                 <Button
                   onClick={async () => {
+                    if (!newAccountManager.role) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Please select a role (Account Manager, Installer, Baldev, or HR).",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
                     if (!newAccountManager.firstName || !newAccountManager.lastName || !newAccountManager.username || !newAccountManager.email || !newAccountManager.mobile) {
                       toast({
                         title: "Validation Error",
@@ -4050,24 +4133,64 @@ export default function AdminPanelPage() {
                             await api.admin.accountManagers.updatePassword(editingAccountManager.id, newAccountManager.password)
                           }
                         } else {
-                          // Create new account manager
-                          await api.admin.accountManagers.create({
+                          // Create new operational user (with role). Retry without role for older backend compatibility.
+                          const createPayload = {
+                            role: newAccountManager.role,
                             username: newAccountManager.username,
                             password: newAccountManager.password,
                             firstName: newAccountManager.firstName,
                             lastName: newAccountManager.lastName,
                             email: newAccountManager.email,
                             mobile: newAccountManager.mobile,
-                          })
+                          }
+                          try {
+                            await api.admin.accountManagers.create(createPayload)
+                          } catch (createError) {
+                            if (
+                              createError instanceof ApiError &&
+                              (createError.code === "VAL_001" || createError.code === "HTTP_400")
+                            ) {
+                              await api.admin.accountManagers.create({
+                                username: newAccountManager.username,
+                                password: newAccountManager.password,
+                                firstName: newAccountManager.firstName,
+                                lastName: newAccountManager.lastName,
+                                email: newAccountManager.email,
+                                mobile: newAccountManager.mobile,
+                              })
+                              if (newAccountManager.role !== "account-management") {
+                                saveOperationsRoleOverride(newAccountManager.username, newAccountManager.role)
+                                toast({
+                                  title: "Created with compatibility mode",
+                                  description:
+                                    "Backend role validation is not updated yet. User created and role is tracked locally until backend update.",
+                                })
+                              }
+                            } else {
+                              throw createError
+                            }
+                          }
                         }
                         await loadData()
                       } else {
                         // Fallback to localStorage
                         const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+                        const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                        const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
+                        const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
 
                         if (editingAccountManager) {
                           // Update existing account manager
-                          const updated = allAccountManagers.map((am: AccountManager & { password?: string }) => {
+                          const roleKey = (editingAccountManager as any).role || "account-management"
+                          const sourceList =
+                            roleKey === "installer"
+                              ? allInstallers
+                              : roleKey === "baldev"
+                                ? allBaldevUsers
+                                : roleKey === "hr"
+                                  ? allHrUsers
+                                  : allAccountManagers
+                          const updated = sourceList.map((am: AccountManager & { password?: string }) => {
                             if (am.id === editingAccountManager.id) {
                               return {
                                 ...am,
@@ -4080,10 +4203,18 @@ export default function AdminPanelPage() {
                             }
                             return am
                           })
-                          localStorage.setItem("accountManagers", JSON.stringify(updated))
+                          if (roleKey === "installer") {
+                            localStorage.setItem("installers", JSON.stringify(updated))
+                          } else if (roleKey === "baldev") {
+                            localStorage.setItem("baldevUsers", JSON.stringify(updated))
+                          } else if (roleKey === "hr") {
+                            localStorage.setItem("hrUsers", JSON.stringify(updated))
+                          } else {
+                            localStorage.setItem("accountManagers", JSON.stringify(updated))
+                          }
                         } else {
                           // Create new account manager
-                          const newAccountManagerData: AccountManager & { password: string } = {
+                          const newAccountManagerData: (AccountManager & { password: string }) & { role: string } = {
                             id: `account-mgr-${Date.now()}`,
                             username: newAccountManager.username,
                             password: newAccountManager.password,
@@ -4091,14 +4222,16 @@ export default function AdminPanelPage() {
                             lastName: newAccountManager.lastName,
                             email: newAccountManager.email,
                             mobile: newAccountManager.mobile,
+                            role: newAccountManager.role,
                             isActive: true,
                             emailVerified: false,
                             createdAt: new Date().toISOString(),
                           }
 
                           // Check if username or email already exists (for localStorage fallback only)
-                          const usernameExists = allAccountManagers.some((am: AccountManager) => am.username === newAccountManager.username)
-                          const emailExists = allAccountManagers.some((am: AccountManager) => am.email === newAccountManager.email)
+                          const allUsers = [...allAccountManagers, ...allInstallers, ...allBaldevUsers, ...allHrUsers]
+                          const usernameExists = allUsers.some((am: AccountManager) => am.username === newAccountManager.username)
+                          const emailExists = allUsers.some((am: AccountManager) => am.email === newAccountManager.email)
 
                           if (usernameExists) {
                             toast({
@@ -4118,13 +4251,33 @@ export default function AdminPanelPage() {
                             return
                           }
 
-                          allAccountManagers.push(newAccountManagerData)
-                          localStorage.setItem("accountManagers", JSON.stringify(allAccountManagers))
+                          if (newAccountManager.role === "installer") {
+                            allInstallers.push(newAccountManagerData)
+                            localStorage.setItem("installers", JSON.stringify(allInstallers))
+                          } else if (newAccountManager.role === "baldev") {
+                            allBaldevUsers.push(newAccountManagerData)
+                            localStorage.setItem("baldevUsers", JSON.stringify(allBaldevUsers))
+                          } else if (newAccountManager.role === "hr") {
+                            allHrUsers.push(newAccountManagerData)
+                            localStorage.setItem("hrUsers", JSON.stringify(allHrUsers))
+                          } else {
+                            allAccountManagers.push(newAccountManagerData)
+                            localStorage.setItem("accountManagers", JSON.stringify(allAccountManagers))
+                          }
                         }
 
                         // Reload account managers
                         const updatedAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-                        const accountManagersWithoutPassword = updatedAccountManagers.map((am: AccountManager & { password?: string }) => {
+                        const updatedInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                        const updatedBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
+                        const updatedHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
+                        const mergedUpdatedUsers = [
+                          ...updatedAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
+                          ...updatedInstallers.map((u: any) => ({ ...u, role: "installer" })),
+                          ...updatedBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
+                          ...updatedHrUsers.map((u: any) => ({ ...u, role: "hr" })),
+                        ]
+                        const accountManagersWithoutPassword = mergedUpdatedUsers.map((am: AccountManager & { password?: string }) => {
                           const { password: _, ...accountManagerData } = am
                           return accountManagerData
                         })
@@ -4134,6 +4287,7 @@ export default function AdminPanelPage() {
                       setAccountManagerDialogOpen(false)
                       setEditingAccountManager(null)
                       setNewAccountManager({
+                        role: "",
                         username: "",
                         password: "",
                         firstName: "",
@@ -4144,13 +4298,18 @@ export default function AdminPanelPage() {
                       
                       toast({
                         title: "Success",
-                        description: editingAccountManager ? "Account manager updated successfully!" : "Account manager created successfully!",
+                        description: editingAccountManager ? "User ID updated successfully!" : "User ID created successfully!",
                       })
                     } catch (error) {
                       console.error("Error saving account manager:", error)
+                      let detailedMessage = "Failed to save user ID"
+                      if (error instanceof ApiError) {
+                        const firstDetail = error.details?.[0]
+                        detailedMessage = firstDetail?.message || error.message || detailedMessage
+                      }
                       toast({
                         title: "Error",
-                        description: error instanceof ApiError ? error.message : "Failed to save account manager",
+                        description: detailedMessage,
                         variant: "destructive",
                       })
                     }
@@ -4158,7 +4317,7 @@ export default function AdminPanelPage() {
                   className="bg-green-600 hover:bg-green-700"
                 >
                   <Save className="w-4 h-4 mr-2" />
-                  {editingAccountManager ? "Update Account Manager" : "Create Account Manager"}
+                  {editingAccountManager ? "Update User ID" : "Create User ID"}
                 </Button>
               </div>
             </div>

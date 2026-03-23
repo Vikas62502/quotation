@@ -11,14 +11,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SolarLogo } from "@/components/solar-logo"
-import { Menu, X, Home, Users, FileText, PlusCircle, LogOut, User, Shield, Wallet } from "lucide-react"
+import { Menu, X, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall } from "lucide-react"
 import { useState } from "react"
 
 const ADMIN_USERNAME = "admin"
 
 const getNavItems = (isAdmin: boolean, role: string | null) => {
   // Account Management users should not see regular navigation (they have their own header)
-  if (role === "account-management") {
+  if (role === "account-management" || role === "installer" || role === "baldev" || role === "hr") {
     return []
   }
   
@@ -34,6 +34,7 @@ const getNavItems = (isAdmin: boolean, role: string | null) => {
   { href: "/dashboard", label: "Dashboard", icon: Home },
   { href: "/dashboard/customers", label: "Customers", icon: Users },
   { href: "/dashboard/quotations", label: "Quotations", icon: FileText },
+  { href: "/dashboard/calling-data", label: "Calling Data", icon: PhoneCall },
   { href: "/dashboard/new-quotation", label: "New Quotation", icon: PlusCircle },
 ]
 }
@@ -47,7 +48,17 @@ export function DashboardNav() {
   const navItems = getNavItems(isAdmin, role)
   
   // Don't render navigation for account-management users/routes (they have their own header)
-  if (role === "account-management" || accountManager || pathname.startsWith("/dashboard/account-management")) {
+  if (
+    role === "account-management" ||
+    role === "installer" ||
+    role === "baldev" ||
+    role === "hr" ||
+    accountManager ||
+    pathname.startsWith("/dashboard/account-management") ||
+    pathname.startsWith("/dashboard/installer") ||
+    pathname.startsWith("/dashboard/baldev") ||
+    pathname.startsWith("/dashboard/hr")
+  ) {
     return null
   }
 

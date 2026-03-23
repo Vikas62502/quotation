@@ -1,0 +1,466 @@
+"use client"
+
+import { useEffect, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
+import { useAuth } from "@/lib/auth-context"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { SolarLogo } from "@/components/solar-logo"
+import { LogOut, Wrench, CheckCircle2, Clock3, Upload, Search, CalendarDays } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
+import { api } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
+
+type InstallerQuotation = {
+  id: string
+  customer?: { firstName?: string; lastName?: string; mobile?: string }
+  createdAt?: string
+  pricing?: { subtotal?: number; totalAmount?: number; finalAmount?: number }
+  subtotal?: number
+  totalAmount?: number
+  finalAmount?: number
+  installationStatus?: string
+}
+
+type InstallerWorkflowItem = {
+  status: "pending" | "inprogress" | "approved"
+  notes?: string
+  imageNames?: string[]
+  updatedAt: string
+}
+
+export default function InstallerDashboardPage() {
+  const router = useRouter()
+  const { isAuthenticated, role, installer, logout } = useAuth()
+  const { toast } = useToast()
+  const [isLoading, setIsLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState("pending")
+  const [searchTerm, setSearchTerm] = useState("")
+  const [quotations, setQuotations] = useState<InstallerQuotation[]>([])
+  const [expandedQuotationId, setExpandedQuotationId] = useState<string | null>(null)
+  const [uploadNotes, setUploadNotes] = useState<Record<string, string>>({})
+  const [uploadFiles, setUploadFiles] = useState<Record<string, File[]>>({})
+  const [savingId, setSavingId] = useState<string | null>(null)
+  const [workflowMap, setWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
+  const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push("/installer-login")
+      return
+    }
+    if (role !== "installer") {
+      router.push("/login")
+    }
+  }, [isAuthenticated, role, router])
+
+  useEffect(() => {
+    const stored = localStorage.getItem("installerWorkflowMap")
+    if (stored) {
+      try {
+        setWorkflowMap(JSON.parse(stored))
+      } catch {
+        setWorkflowMap({})
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem("installerWorkflowMap", JSON.stringify(workflowMap))
+  }, [workflowMap])
+
+  useEffect(() => {
+    const loadApprovedFromAdmin = async () => {
+      setIsLoading(true)
+      try {
+        if (useApi) {
+          const response = await api.quotations.getAll({ status: "approved", page: 1, limit: 1000 })
+          let list: any[] = []
+          if (Array.isArray(response)) {
+            list = response
+          } else if (Array.isArray(response?.quotations)) {
+            list = response.quotations
+          } else if (Array.isArray(response?.data?.quotations)) {
+            list = response.data.quotations
+          }
+          setQuotations(list)
+        } else {
+          const localQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
+          const approved = localQuotations.filter((q: any) => String(q.status || "").toLowerCase() === "approved")
+          setQuotations(approved)
+        }
+      } catch {
+        toast({
+          title: "Failed to load quotations",
+          description: "Could not load admin-approved quotations for installer workflow.",
+          variant: "destructive",
+        })
+        setQuotations([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+    loadApprovedFromAdmin()
+  }, [toast, useApi])
+
+  const getQuotationAmount = (q: InstallerQuotation) =>
+    Math.abs(q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0)
+
+  const getAdminApprovedDate = (q: InstallerQuotation) =>
+    (q as any).approvedAt || (q as any).approvedDate || (q as any).statusUpdatedAt || q.createdAt
+
+  const toTimestamp = (date?: string) => {
+    if (!date) return 0
+    const parsed = new Date(date).getTime()
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+
+  const getInstallerStatus = (q: InstallerQuotation): "pending" | "inprogress" | "approved" => {
+    const backendStatus = String(q.installationStatus || "").toLowerCase()
+    if (
+      backendStatus === "installer_approved" ||
+      backendStatus === "pending_baldev" ||
+      backendStatus === "baldev_approved" ||
+      backendStatus === "completed"
+    ) {
+      return "approved"
+    }
+    if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
+      return "inprogress"
+    }
+    return workflowMap[q.id]?.status || "pending"
+  }
+
+  const normalizedSearch = searchTerm.trim().toLowerCase()
+
+  const pendingQuotations = useMemo(() => {
+    return quotations
+      .filter((q) => getInstallerStatus(q) !== "approved")
+      .filter((q) => {
+        if (!normalizedSearch) return true
+        const fullName = `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.toLowerCase()
+        return (
+          fullName.includes(normalizedSearch) ||
+          (q.customer?.mobile || "").includes(normalizedSearch) ||
+          q.id.toLowerCase().includes(normalizedSearch)
+        )
+      })
+      .sort((a, b) => toTimestamp(getAdminApprovedDate(a)) - toTimestamp(getAdminApprovedDate(b)))
+  }, [quotations, workflowMap, normalizedSearch])
+
+  const approvedQuotations = useMemo(() => {
+    return quotations
+      .filter((q) => getInstallerStatus(q) === "approved")
+      .filter((q) => {
+        if (!normalizedSearch) return true
+        const fullName = `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.toLowerCase()
+        return (
+          fullName.includes(normalizedSearch) ||
+          (q.customer?.mobile || "").includes(normalizedSearch) ||
+          q.id.toLowerCase().includes(normalizedSearch)
+        )
+      })
+      .sort((a, b) => {
+        const aDate = (a as any).installerApprovedAt || workflowMap[a.id]?.updatedAt || getAdminApprovedDate(a)
+        const bDate = (b as any).installerApprovedAt || workflowMap[b.id]?.updatedAt || getAdminApprovedDate(b)
+        return toTimestamp(aDate) - toTimestamp(bDate)
+      })
+  }, [quotations, workflowMap, normalizedSearch])
+
+  const setInProgress = (quotationId: string) => {
+    setWorkflowMap((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...(prev[quotationId] || {}),
+        status: "inprogress",
+        updatedAt: new Date().toISOString(),
+      },
+    }))
+    setExpandedQuotationId(quotationId)
+  }
+
+  const handleApproveInstallation = async (quotation: InstallerQuotation) => {
+    const files = uploadFiles[quotation.id] || []
+    const notes = uploadNotes[quotation.id] || ""
+
+    if (files.length === 0) {
+      toast({
+        title: "Images required",
+        description: "Please upload at least one installation completion image.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setSavingId(quotation.id)
+    let apiSaved = false
+    try {
+      if (useApi) {
+        const formData = new FormData()
+        files.forEach((file) => formData.append("installerCompletionImages", file))
+        formData.append("installerRemarks", notes)
+        formData.append("installationStatus", "installer_approved")
+        await api.installer.uploadCompletionDocuments(quotation.id, formData)
+        apiSaved = true
+      }
+    } catch {
+      apiSaved = false
+    } finally {
+      setWorkflowMap((prev) => ({
+        ...prev,
+        [quotation.id]: {
+          status: "approved",
+          notes,
+          imageNames: files.map((f) => f.name),
+          updatedAt: new Date().toISOString(),
+        },
+      }))
+      setExpandedQuotationId(null)
+      setSavingId(null)
+      toast({
+        title: apiSaved ? "Marked as approved" : "Saved locally",
+        description: apiSaved
+          ? "Installation approved and moved to Approved by Installer."
+          : "Installation moved to Approved by Installer (backend endpoint not ready).",
+      })
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border bg-card">
+        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+          <button onClick={() => router.push("/")} className="flex items-center">
+            <SolarLogo size="md" />
+          </button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              logout()
+              router.push("/")
+            }}
+            className="gap-2"
+          >
+            <LogOut className="w-4 h-4" />
+            Logout
+          </Button>
+        </div>
+      </header>
+
+      <main className="container mx-auto px-4 py-6 space-y-4">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+            <Wrench className="w-4 h-4 text-primary" />
+          </div>
+          <h1 className="text-xl font-semibold">Installer Dashboard</h1>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Welcome, {installer?.firstName || "Installer"}. Process pending jobs and upload completion proof.
+        </p>
+
+        <Card className="border-border/60 bg-card/90 shadow-sm">
+          <CardContent className="pt-5 space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList className="h-9">
+                  <TabsTrigger value="pending" className="text-xs gap-1.5">
+                    <Clock3 className="w-3.5 h-3.5" />
+                    Pending Installations ({pendingQuotations.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="approved" className="text-xs gap-1.5">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Approved by Installer ({approvedQuotations.length})
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              <div className="relative w-full md:w-80">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search by customer, mobile, quotation id"
+                  className="h-9 pl-8 text-sm"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
+          <TabsList className="hidden">
+            <TabsTrigger value="pending" className="text-xs gap-1.5">
+              <Clock3 className="w-3.5 h-3.5" />
+              Pending Installations ({pendingQuotations.length})
+            </TabsTrigger>
+            <TabsTrigger value="approved" className="text-xs gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Approved by Installer ({approvedQuotations.length})
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="pending" className="space-y-3 pt-2">
+            {isLoading ? (
+              <Card>
+                <CardContent className="py-8 text-sm text-muted-foreground">Loading approved quotations from admin...</CardContent>
+              </Card>
+            ) : pendingQuotations.length === 0 ? (
+              <Card>
+                <CardContent className="py-8 text-sm text-muted-foreground">No pending installation items.</CardContent>
+              </Card>
+            ) : (
+              pendingQuotations.map((q) => (
+                <Card key={q.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
+                  <CardContent className="p-4 space-y-3">
+                    {(() => {
+                      const installerStatus = getInstallerStatus(q)
+                      return (
+                        <>
+                    <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
+                      <div className="min-w-[180px] flex-1">
+                        <p className="text-sm font-semibold leading-tight">{q.customer?.firstName || "N/A"} {q.customer?.lastName || ""}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{q.customer?.mobile || "No mobile"} • {q.id}</p>
+                      </div>
+                      <div className="min-w-[120px]">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved Date</p>
+                        <p className="text-xs font-medium flex items-center gap-1">
+                          <CalendarDays className="w-3 h-3 text-muted-foreground" />
+                          {getAdminApprovedDate(q) ? new Date(getAdminApprovedDate(q) as string).toLocaleDateString("en-IN") : "N/A"}
+                        </p>
+                      </div>
+                      <div className="min-w-[120px]">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                        <p className="text-sm font-semibold">₹{getQuotationAmount(q).toLocaleString()}</p>
+                      </div>
+                      <div className="min-w-[150px]">
+                        {installerStatus === "inprogress" ? (
+                          <Badge className="text-xs bg-amber-600 text-white">In Progress</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Pending Installation</Badge>
+                        )}
+                      </div>
+                      <div className="ml-auto">
+                        {installerStatus === "pending" ? (
+                          <Button variant="outline" size="sm" onClick={() => setInProgress(q.id)}>
+                            <Clock3 className="w-3.5 h-3.5 mr-1" />
+                            Start In Progress
+                          </Button>
+                        ) : (
+                          <Button variant="outline" size="sm" onClick={() => setExpandedQuotationId(expandedQuotationId === q.id ? null : q.id)}>
+                            <Upload className="w-3.5 h-3.5 mr-1" />
+                            In Progress
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+
+                    {expandedQuotationId === q.id && (
+                      <div className="rounded-md border border-border/70 p-3 space-y-3">
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Installation Completion Images *</p>
+                          <Input
+                            type="file"
+                            multiple
+                            accept="image/*"
+                            onChange={(e) => {
+                              const files = Array.from(e.target.files || [])
+                              setUploadFiles((prev) => ({ ...prev, [q.id]: files }))
+                            }}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            {(uploadFiles[q.id] || []).length} file(s) selected
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <p className="text-xs font-medium">Notes (optional)</p>
+                          <Textarea
+                            rows={2}
+                            placeholder="Installation notes, material used, issues, etc."
+                            value={uploadNotes[q.id] || ""}
+                            onChange={(e) => setUploadNotes((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                          />
+                        </div>
+
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setExpandedQuotationId(null)}>
+                            Cancel
+                          </Button>
+                          <Button size="sm" onClick={() => handleApproveInstallation(q)} disabled={savingId === q.id}>
+                            {savingId === q.id ? "Saving..." : "Complete & Mark as Approved"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                        </>
+                      )
+                    })()}
+                  </CardContent>
+                </Card>
+              ))
+            )}
+          </TabsContent>
+
+          <TabsContent value="approved" className="space-y-3 pt-2">
+            {isLoading ? (
+              <Card>
+                <CardContent className="py-8 text-sm text-muted-foreground">Loading approved records...</CardContent>
+              </Card>
+            ) : approvedQuotations.length === 0 ? (
+              <Card>
+                <CardContent className="py-8 text-sm text-muted-foreground">No installer-approved installations yet.</CardContent>
+              </Card>
+            ) : (
+              approvedQuotations.map((q) => {
+                const wf = workflowMap[q.id]
+                const installerApprovedDate =
+                  (q as any).installerApprovedAt || wf?.updatedAt || getAdminApprovedDate(q)
+                return (
+                  <Card key={q.id} className="border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm">
+                    <CardContent className="p-4 space-y-2">
+                      <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
+                        <div className="min-w-[180px] flex-1">
+                          <p className="text-sm font-semibold leading-tight">
+                            {q.customer?.firstName || "N/A"} {q.customer?.lastName || ""}
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {q.customer?.mobile || "No mobile"} • {q.id}
+                          </p>
+                        </div>
+                        <div className="min-w-[120px]">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved Date</p>
+                          <p className="text-xs font-medium flex items-center gap-1">
+                            <CalendarDays className="w-3 h-3 text-muted-foreground" />
+                            {installerApprovedDate ? new Date(installerApprovedDate).toLocaleDateString("en-IN") : "N/A"}
+                          </p>
+                        </div>
+                        <div className="min-w-[120px]">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                          <p className="text-sm font-semibold">₹{getQuotationAmount(q).toLocaleString()}</p>
+                        </div>
+                        <div className="min-w-[180px]">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Images</p>
+                          <p className="text-xs text-foreground">
+                            {wf?.imageNames?.length ? `${wf.imageNames.length} uploaded` : "Saved in backend records"}
+                          </p>
+                        </div>
+                        <div className="ml-auto">
+                          <Badge className="bg-green-600 text-white text-xs">Approved by Installer</Badge>
+                        </div>
+                      </div>
+                      {wf?.notes && <p className="text-xs text-muted-foreground border-t border-border/60 pt-2">Notes: {wf.notes}</p>}
+                    </CardContent>
+                  </Card>
+                )
+              })
+            )}
+          </TabsContent>
+        </Tabs>
+      </main>
+    </div>
+  )
+}

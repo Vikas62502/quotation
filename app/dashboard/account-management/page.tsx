@@ -415,8 +415,8 @@ export default function AccountManagementPage() {
     setQuotations([])
     setSearchTerm("")
     setSelectedQuotation(null)
-    // Navigate to login
-    router.push("/account-management-login")
+    // Navigate to landing page
+    router.push("/")
     router.refresh()
   }
 

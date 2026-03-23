@@ -48,6 +48,10 @@ export default function DashboardPage() {
       router.push("/dashboard/account-management")
       return
     }
+    if (role === "hr") {
+      router.push("/dashboard/hr")
+      return
+    }
     
     // Redirect admin to admin panel
     if (dealer?.username === ADMIN_USERNAME) {
@@ -164,14 +168,14 @@ export default function DashboardPage() {
   }
 
   if (!isAuthenticated) return null
-  if (role === "account-management") {
+  if (role === "account-management" || role === "hr") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
             <FileText className="w-8 h-8 opacity-50" />
           </div>
-          <p className="text-muted-foreground">Redirecting to Account Management...</p>
+          <p className="text-muted-foreground">Redirecting...</p>
         </div>
       </div>
     )

@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useRef, useState } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useQuotation, type Customer, type ProductSelection } from "@/lib/quotation-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -24,7 +24,9 @@ export default function NewQuotationPage() {
   const { isAuthenticated, dealer } = useAuth()
   const { setCurrentCustomer, setCurrentProducts, currentCustomer, currentProducts, clearCurrent } = useQuotation()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [currentStep, setCurrentStep] = useState(1)
+  const appliedPrefillSignatureRef = useRef<string>("")
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -41,6 +43,37 @@ export default function NewQuotationPage() {
     // Only clear data if explicitly starting a new quotation (not on every mount)
     // This allows data to persist when navigating between steps
   }, [isAuthenticated, router, dealer])
+
+  useEffect(() => {
+    const prefillName = searchParams.get("prefillName") || ""
+    const prefillMobile = (searchParams.get("prefillMobile") || "").replace(/\D/g, "").slice(-10)
+    const prefillAddress = searchParams.get("prefillAddress") || ""
+    const prefillCity = searchParams.get("prefillCity") || ""
+    const prefillState = searchParams.get("prefillState") || ""
+
+    if (!prefillName && !prefillMobile && !prefillAddress && !prefillCity && !prefillState) return
+    const signature = `${prefillName}|${prefillMobile}|${prefillAddress}|${prefillCity}|${prefillState}`
+    if (appliedPrefillSignatureRef.current === signature) return
+    appliedPrefillSignatureRef.current = signature
+
+    const words = prefillName.trim().split(/\s+/).filter(Boolean)
+    const firstName = words[0] || ""
+    const lastName = words.slice(1).join(" ") || "Customer"
+
+    setCurrentCustomer({
+      firstName,
+      lastName,
+      mobile: prefillMobile,
+      email: "",
+      address: {
+        street: prefillAddress,
+        city: prefillCity,
+        state: prefillState,
+        pincode: "",
+      },
+    })
+    setCurrentStep(1)
+  }, [searchParams, setCurrentCustomer])
 
   if (!isAuthenticated) return null
 

@@ -56,16 +56,55 @@ export interface AccountManager {
   emailVerified?: boolean
 }
 
-export type UserRole = "dealer" | "visitor" | "admin" | "account-management"
+export interface InstallerUser {
+  id: string
+  username: string
+  firstName: string
+  lastName: string
+  mobile: string
+  email: string
+  isActive?: boolean
+  createdAt?: string
+}
+
+export interface BaldevUser {
+  id: string
+  username: string
+  firstName: string
+  lastName: string
+  mobile: string
+  email: string
+  isActive?: boolean
+  createdAt?: string
+}
+
+export interface HrUser {
+  id: string
+  username: string
+  firstName: string
+  lastName: string
+  mobile: string
+  email: string
+  isActive?: boolean
+  createdAt?: string
+}
+
+export type UserRole = "dealer" | "visitor" | "admin" | "account-management" | "installer" | "baldev" | "hr"
 
 interface AuthContextType {
   dealer: Dealer | null
   visitor: Visitor | null
   accountManager: AccountManager | null
+  installer: InstallerUser | null
+  baldev: BaldevUser | null
+  hrUser: HrUser | null
   role: UserRole | null
   isAuthenticated: boolean
   login: (username: string, password: string) => Promise<boolean>
   loginAccountManagement: (username: string, password: string) => Promise<boolean>
+  loginInstaller: (username: string, password: string) => Promise<boolean>
+  loginBaldev: (username: string, password: string) => Promise<boolean>
+  loginHr: (username: string, password: string) => Promise<boolean>
   logout: () => void
   register: (dealerData: Dealer & { password: string }) => Promise<boolean>
 }
@@ -76,6 +115,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [dealer, setDealer] = useState<Dealer | null>(null)
   const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [accountManager, setAccountManager] = useState<AccountManager | null>(null)
+  const [installer, setInstaller] = useState<InstallerUser | null>(null)
+  const [baldev, setBaldev] = useState<BaldevUser | null>(null)
+  const [hrUser, setHrUser] = useState<HrUser | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
@@ -107,17 +149,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setVisitor(user)
           setRole("visitor")
           setAccountManager(null)
+          setInstaller(null)
+          setBaldev(null)
+          setHrUser(null)
+          setDealer(null)
+        } else if (user.role === "hr" || user.role === "human-resources") {
+          setHrUser(user)
+          setRole("hr")
+          setAccountManager(null)
+          setInstaller(null)
+          setBaldev(null)
+          setVisitor(null)
+          setDealer(null)
+        } else if (user.role === "installer") {
+          setInstaller(user)
+          setRole("installer")
+          setAccountManager(null)
+          setVisitor(null)
+          setBaldev(null)
+          setHrUser(null)
+          setDealer(null)
+        } else if (user.role === "baldev" || user.role === "confirmation") {
+          setBaldev(user)
+          setRole("baldev")
+          setAccountManager(null)
+          setVisitor(null)
+          setInstaller(null)
+          setHrUser(null)
           setDealer(null)
         } else if (user.role === "account-management" || user.role === "accountManager") {
           setAccountManager(user)
           setRole("account-management")
           setVisitor(null)
+          setInstaller(null)
+          setBaldev(null)
+          setHrUser(null)
           setDealer(null)
         } else {
           setDealer(user)
           setRole(user.role === "admin" ? "admin" : "dealer")
           setAccountManager(null)
           setVisitor(null)
+          setInstaller(null)
+          setBaldev(null)
+          setHrUser(null)
         }
         setIsAuthenticated(true)
       } catch {
@@ -127,12 +202,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("user")
         localStorage.removeItem("userRole")
         localStorage.removeItem("accountManager")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
       }
     } else if (!useApi) {
       // Fallback to localStorage for development (only if API is disabled)
       const savedDealer = localStorage.getItem("dealer")
       const savedVisitor = localStorage.getItem("visitor")
       const savedAccountManager = localStorage.getItem("accountManager")
+      const savedInstaller = localStorage.getItem("installerUser")
+      const savedBaldev = localStorage.getItem("baldevUser")
+      const savedHrUser = localStorage.getItem("hrUser")
 
       if (savedAccountManager) {
         setAccountManager(JSON.parse(savedAccountManager))
@@ -140,18 +221,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsAuthenticated(true)
         setDealer(null)
         setVisitor(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
+      } else if (savedHrUser) {
+        setHrUser(JSON.parse(savedHrUser))
+        setRole("hr")
+        setIsAuthenticated(true)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+      } else if (savedInstaller) {
+        setInstaller(JSON.parse(savedInstaller))
+        setRole("installer")
+        setIsAuthenticated(true)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setBaldev(null)
+        setHrUser(null)
+      } else if (savedBaldev) {
+        setBaldev(JSON.parse(savedBaldev))
+        setRole("baldev")
+        setIsAuthenticated(true)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setHrUser(null)
       } else if (savedDealer) {
         setDealer(JSON.parse(savedDealer))
         setRole(savedRole || "dealer")
         setIsAuthenticated(true)
         setAccountManager(null)
         setVisitor(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
       } else if (savedVisitor) {
         setVisitor(JSON.parse(savedVisitor))
         setRole("visitor")
         setIsAuthenticated(true)
         setAccountManager(null)
         setDealer(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
       }
     }
   }, [])
@@ -163,7 +280,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const response = await api.auth.login(username, password)
         const user = response.user
-        const userRole: UserRole = user.role === "admin" ? "admin" : user.role === "visitor" ? "visitor" : "dealer"
+        const backendRole = String(user.role || "").toLowerCase()
+        const userRole: UserRole =
+          backendRole === "admin"
+            ? "admin"
+            : backendRole === "visitor"
+              ? "visitor"
+              : backendRole === "hr" || backendRole === "human-resources"
+                ? "hr"
+                : "dealer"
 
         // Store tokens
         if (response.token) {
@@ -184,6 +309,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             mobile: (user as any).mobile || "",
           })
           setDealer(null)
+          setAccountManager(null)
+          setInstaller(null)
+          setBaldev(null)
+          setHrUser(null)
+        } else if (userRole === "hr") {
+          setHrUser({
+            id: user.id,
+            username: user.username,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            mobile: (user as any).mobile || "",
+            isActive: (user as any).isActive ?? true,
+            createdAt: (user as any).createdAt,
+          })
+          setDealer(null)
+          setVisitor(null)
+          setAccountManager(null)
+          setInstaller(null)
+          setBaldev(null)
         } else {
           setDealer({
             id: user.id,
@@ -209,6 +354,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             createdAt: (user as any).createdAt,
           })
           setVisitor(null)
+          setAccountManager(null)
+          setInstaller(null)
+          setBaldev(null)
+          setHrUser(null)
         }
 
         setRole(userRole)
@@ -234,6 +383,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { password: _, ...dealerData } = foundDealer
         setDealer(dealerData)
         setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
         const userRole: UserRole = username === "admin" ? "admin" : "dealer"
         setRole(userRole)
         setIsAuthenticated(true)
@@ -253,11 +406,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { password: _, ...visitorData } = foundVisitor
         setVisitor(visitorData as Visitor)
         setDealer(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
         setRole("visitor")
         setIsAuthenticated(true)
         localStorage.setItem("visitor", JSON.stringify(visitorData))
         localStorage.setItem("userRole", "visitor")
         localStorage.removeItem("dealer")
+        return true
+      }
+
+      const hrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
+      const foundHrUser = hrUsers.find((u: HrUser & { password?: string }) => u.username === username && u.password === password)
+      if (foundHrUser && foundHrUser.isActive !== false) {
+        const { password: _, ...hrData } = foundHrUser
+        setHrUser(hrData as HrUser)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+        setRole("hr")
+        setIsAuthenticated(true)
+        localStorage.setItem("hrUser", JSON.stringify(hrData))
+        localStorage.setItem("userRole", "hr")
+        localStorage.setItem("user", JSON.stringify({ ...hrData, role: "hr" }))
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
         return true
       }
 
@@ -279,11 +459,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDealer(null)
     setVisitor(null)
     setAccountManager(null)
+    setInstaller(null)
+    setBaldev(null)
+    setHrUser(null)
     setRole(null)
     setIsAuthenticated(false)
     localStorage.removeItem("dealer")
     localStorage.removeItem("visitor")
     localStorage.removeItem("accountManager")
+    localStorage.removeItem("installerUser")
+    localStorage.removeItem("baldevUser")
+    localStorage.removeItem("hrUser")
     localStorage.removeItem("userRole")
     localStorage.removeItem("authToken")
     localStorage.removeItem("refreshToken")
@@ -328,6 +514,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         })
         setDealer(null)
         setVisitor(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
 
         setRole("account-management")
         setIsAuthenticated(true)
@@ -341,6 +530,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: user.email,
           mobile: (user as any).mobile || "",
         }))
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
         return true
       } catch (error) {
         console.error("Account Management login error:", error)
@@ -376,6 +568,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setAccountManager(accountManagerData)
             setDealer(null)
             setVisitor(null)
+            setInstaller(null)
+            setBaldev(null)
+            setHrUser(null)
             setRole("account-management")
             setIsAuthenticated(true)
             localStorage.setItem("accountManager", JSON.stringify(accountManagerData))
@@ -386,6 +581,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }))
             localStorage.removeItem("dealer")
             localStorage.removeItem("visitor")
+            localStorage.removeItem("installerUser")
+            localStorage.removeItem("baldevUser")
+            localStorage.removeItem("hrUser")
             // Note: In localStorage mode, we don't have real tokens, but we keep the structure
             // If API mode is enabled later, user will need to login again
             console.log("Account Management login successful (after seeding):", accountManagerData.username)
@@ -411,6 +609,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccountManager(accountManagerData)
         setDealer(null)
         setVisitor(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
         setRole("account-management")
         setIsAuthenticated(true)
         
@@ -423,6 +624,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }))
         localStorage.removeItem("dealer")
         localStorage.removeItem("visitor")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
         localStorage.removeItem("authToken")
         localStorage.removeItem("refreshToken")
         
@@ -433,6 +637,269 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.error("Account manager not found with username:", username)
       return false
     }
+  }
+
+  const loginInstaller = async (username: string, password: string): Promise<boolean> => {
+    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+    if (useApi) {
+      try {
+        const response = await api.auth.login(username, password)
+        const user = response.user
+
+        const backendRole = String(user.role || "").toLowerCase()
+        // Temporary compatibility: some backends still return account-management for operational users.
+        const allowedInstallerRoles = ["installer", "installation", "installation-team", "account-management", "accountmanager"]
+        if (!allowedInstallerRoles.includes(backendRole)) {
+          console.error("Login rejected: User role is not installer")
+          return false
+        }
+
+        if (response.token) {
+          localStorage.setItem("authToken", response.token)
+        }
+        if (response.refreshToken) {
+          localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        const installerData: InstallerUser = {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          mobile: (user as any).mobile || "",
+          isActive: (user as any).isActive ?? true,
+          createdAt: (user as any).createdAt,
+        }
+
+        setInstaller(installerData)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setBaldev(null)
+        setHrUser(null)
+        setRole("installer")
+        setIsAuthenticated(true)
+
+        localStorage.setItem("user", JSON.stringify({ ...user, role: "installer" }))
+        localStorage.setItem("userRole", "installer")
+        localStorage.setItem("installerUser", JSON.stringify(installerData))
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        return true
+      } catch (error) {
+        console.error("Installer login error:", error)
+        if (error instanceof ApiError) {
+          console.error("API Error Code:", error.code)
+          console.error("API Error Message:", error.message)
+        }
+        return false
+      }
+    }
+
+    const installers = JSON.parse(localStorage.getItem("installers") || "[]")
+    const foundInstaller = installers.find((u: InstallerUser & { password: string }) => u.username === username && u.password === password)
+
+    if (!foundInstaller || foundInstaller.isActive === false) {
+      return false
+    }
+
+    const { password: _, ...installerData } = foundInstaller
+    setInstaller(installerData)
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setBaldev(null)
+    setHrUser(null)
+    setRole("installer")
+    setIsAuthenticated(true)
+    localStorage.setItem("installerUser", JSON.stringify(installerData))
+    localStorage.setItem("userRole", "installer")
+    localStorage.setItem("user", JSON.stringify({ ...installerData, role: "installer" }))
+    localStorage.removeItem("accountManager")
+    localStorage.removeItem("baldevUser")
+    localStorage.removeItem("hrUser")
+    localStorage.removeItem("dealer")
+    localStorage.removeItem("visitor")
+    return true
+  }
+
+  const loginBaldev = async (username: string, password: string): Promise<boolean> => {
+    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+    if (useApi) {
+      try {
+        const response = await api.auth.login(username, password)
+        const user = response.user
+        const backendRole = String(user.role || "").toLowerCase()
+        const allowedBaldevRoles = ["baldev", "confirmation", "account-management", "accountmanager"]
+        if (!allowedBaldevRoles.includes(backendRole)) {
+          console.error("Login rejected: User role is not baldev/confirmation")
+          return false
+        }
+
+        if (response.token) {
+          localStorage.setItem("authToken", response.token)
+        }
+        if (response.refreshToken) {
+          localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        const baldevData: BaldevUser = {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          mobile: (user as any).mobile || "",
+          isActive: (user as any).isActive ?? true,
+          createdAt: (user as any).createdAt,
+        }
+
+        setBaldev(baldevData)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setHrUser(null)
+        setRole("baldev")
+        setIsAuthenticated(true)
+
+        localStorage.setItem("user", JSON.stringify({ ...user, role: "baldev" }))
+        localStorage.setItem("userRole", "baldev")
+        localStorage.setItem("baldevUser", JSON.stringify(baldevData))
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("hrUser")
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        return true
+      } catch (error) {
+        console.error("Baldev login error:", error)
+        if (error instanceof ApiError) {
+          console.error("API Error Code:", error.code)
+          console.error("API Error Message:", error.message)
+        }
+        return false
+      }
+    }
+
+    const baldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
+    const foundBaldev = baldevUsers.find((u: BaldevUser & { password: string }) => u.username === username && u.password === password)
+
+    if (!foundBaldev || foundBaldev.isActive === false) {
+      return false
+    }
+
+    const { password: _, ...baldevData } = foundBaldev
+    setBaldev(baldevData)
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setInstaller(null)
+    setHrUser(null)
+    setRole("baldev")
+    setIsAuthenticated(true)
+    localStorage.setItem("baldevUser", JSON.stringify(baldevData))
+    localStorage.setItem("userRole", "baldev")
+    localStorage.setItem("user", JSON.stringify({ ...baldevData, role: "baldev" }))
+    localStorage.removeItem("accountManager")
+    localStorage.removeItem("installerUser")
+    localStorage.removeItem("hrUser")
+    localStorage.removeItem("dealer")
+    localStorage.removeItem("visitor")
+    return true
+  }
+
+  const loginHr = async (username: string, password: string): Promise<boolean> => {
+    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+    if (useApi) {
+      try {
+        const response = await api.auth.login(username, password)
+        const user = response.user
+        const backendRole = String(user.role || "").toLowerCase()
+        const allowedHrRoles = ["hr", "human-resources"]
+        if (!allowedHrRoles.includes(backendRole)) {
+          console.error("Login rejected: User role is not HR")
+          return false
+        }
+
+        if (response.token) {
+          localStorage.setItem("authToken", response.token)
+        }
+        if (response.refreshToken) {
+          localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        const hrData: HrUser = {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          mobile: (user as any).mobile || "",
+          isActive: (user as any).isActive ?? true,
+          createdAt: (user as any).createdAt,
+        }
+
+        setHrUser(hrData)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+        setRole("hr")
+        setIsAuthenticated(true)
+
+        localStorage.setItem("user", JSON.stringify({ ...user, role: "hr" }))
+        localStorage.setItem("userRole", "hr")
+        localStorage.setItem("hrUser", JSON.stringify(hrData))
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        return true
+      } catch (error) {
+        console.error("HR login error:", error)
+        if (error instanceof ApiError) {
+          console.error("API Error Code:", error.code)
+          console.error("API Error Message:", error.message)
+        }
+        return false
+      }
+    }
+
+    const hrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
+    const foundHr = hrUsers.find((u: HrUser & { password: string }) => u.username === username && u.password === password)
+
+    if (!foundHr || foundHr.isActive === false) {
+      return false
+    }
+
+    const { password: _, ...hrData } = foundHr
+    setHrUser(hrData)
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setInstaller(null)
+    setBaldev(null)
+    setRole("hr")
+    setIsAuthenticated(true)
+    localStorage.setItem("hrUser", JSON.stringify(hrData))
+    localStorage.setItem("userRole", "hr")
+    localStorage.setItem("user", JSON.stringify({ ...hrData, role: "hr" }))
+    localStorage.removeItem("accountManager")
+    localStorage.removeItem("installerUser")
+    localStorage.removeItem("baldevUser")
+    localStorage.removeItem("dealer")
+    localStorage.removeItem("visitor")
+    return true
   }
 
   const register = async (dealerData: Dealer & { password: string }): Promise<boolean> => {
@@ -486,7 +953,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ dealer, visitor, accountManager, role, isAuthenticated, login, loginAccountManagement, logout, register }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider
+      value={{
+        dealer,
+        visitor,
+        accountManager,
+        installer,
+        baldev,
+        hrUser,
+        role,
+        isAuthenticated,
+        login,
+        loginAccountManagement,
+        loginInstaller,
+        loginBaldev,
+        loginHr,
+        logout,
+        register,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
   )
 }
 

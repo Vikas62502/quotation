@@ -31,6 +31,12 @@ function LoginForm() {
       // If redirect parameter is set to account-management, go there
       if (redirectTo === "account-management") {
         router.push("/dashboard/account-management")
+      } else if (role === "hr") {
+        router.push("/dashboard/hr")
+      } else if (role === "installer") {
+        router.push("/dashboard/installer")
+      } else if (role === "baldev") {
+        router.push("/dashboard/baldev")
       } else if (role === "visitor") {
         router.push("/visitor/dashboard")
       } else if (role === "admin") {
@@ -74,6 +80,12 @@ function LoginForm() {
           // If redirect parameter is set to account-management, go there
           if (redirectTo === "account-management") {
             router.push("/dashboard/account-management")
+          } else if (userRole === "hr") {
+            router.push("/dashboard/hr")
+          } else if (userRole === "installer") {
+            router.push("/dashboard/installer")
+          } else if (userRole === "baldev") {
+            router.push("/dashboard/baldev")
           } else if (userRole === "visitor") {
             router.push("/visitor/dashboard")
           } else if (userRole === "admin") {

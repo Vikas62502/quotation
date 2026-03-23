@@ -11,48 +11,38 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { Eye, EyeOff, Check, Wallet } from "lucide-react"
+import { Eye, EyeOff, Wrench } from "lucide-react"
 
-function AccountManagementLoginForm() {
+function InstallerLoginForm() {
   const router = useRouter()
-  const { loginAccountManagement, isAuthenticated, role } = useAuth()
+  const { loginInstaller, isAuthenticated, role } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [showPassword, setShowPassword] = useState(false)
-
-  const [credentials, setCredentials] = useState({
-    username: "",
-    password: "",
-  })
+  const [credentials, setCredentials] = useState({ username: "", password: "" })
 
   useEffect(() => {
-    // Redirect if already logged in as account management
-    if (isAuthenticated && role === "account-management") {
-      // Small delay to ensure state is stable
-      const timer = setTimeout(() => {
+    if (!isAuthenticated) return
+
+    const timer = setTimeout(() => {
+      if (role === "installer") {
+        router.push("/dashboard/installer")
+      } else if (role === "baldev") {
+        router.push("/dashboard/baldev")
+      } else if (role === "account-management") {
         router.push("/dashboard/account-management")
-        router.refresh()
-      }, 100)
-      return () => clearTimeout(timer)
-    } else if (isAuthenticated && role !== "account-management") {
-      // If logged in but not as account management, redirect to appropriate page
-      const timer = setTimeout(() => {
-        if (role === "visitor") {
-          router.push("/visitor/dashboard")
-        } else if (role === "admin") {
-          router.push("/dashboard/admin")
-        } else if (role === "installer") {
-          router.push("/dashboard/installer")
-        } else if (role === "baldev") {
-          router.push("/dashboard/baldev")
-        } else if (role === "hr") {
-          router.push("/dashboard/hr")
-        } else {
-          router.push("/dashboard")
-        }
-      }, 100)
-      return () => clearTimeout(timer)
-    }
+      } else if (role === "hr") {
+        router.push("/dashboard/hr")
+      } else if (role === "visitor") {
+        router.push("/visitor/dashboard")
+      } else if (role === "admin") {
+        router.push("/dashboard/admin")
+      } else {
+        router.push("/dashboard")
+      }
+    }, 100)
+
+    return () => clearTimeout(timer)
   }, [isAuthenticated, role, router])
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -66,33 +56,16 @@ function AccountManagementLoginForm() {
     setError("")
 
     try {
-      const success = await loginAccountManagement(credentials.username, credentials.password)
-      if (success) {
-        // Clear any previous errors
-        setError("")
-        
-        // Wait a moment to ensure state is persisted to localStorage
-        await new Promise(resolve => setTimeout(resolve, 500))
-        
-        // Verify state was saved
-        const savedRole = localStorage.getItem("userRole")
-        const savedAccountManager = localStorage.getItem("accountManager")
-        
-        if (savedRole === "account-management" && savedAccountManager) {
-          // Use window.location for reliable navigation with full page reload
-          window.location.href = "/dashboard/account-management"
-        } else {
-          // State not saved properly, try again
-          console.error("Login state not saved properly. Retrying...")
-          setError("Login succeeded but state was not saved. Please try again.")
-          setIsLoading(false)
-        }
-      } else {
-        setError("Invalid credentials or you don't have access to Account Management.")
+      const success = await loginInstaller(credentials.username, credentials.password)
+      if (!success) {
+        setError("Invalid credentials or you don't have installer access.")
         setIsLoading(false)
+        return
       }
+
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      window.location.href = "/dashboard/installer"
     } catch (err) {
-      console.error("Account Management login error:", err)
       setIsLoading(false)
       if (err instanceof ApiError) {
         setError(err.message || "Login failed. Please check your credentials.")
@@ -106,7 +79,6 @@ function AccountManagementLoginForm() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container mx-auto px-4 py-4">
           <button onClick={() => router.push("/")} className="flex items-center">
@@ -120,18 +92,14 @@ function AccountManagementLoginForm() {
           <Card className="shadow-lg border-border/50">
             <CardHeader className="text-center pb-4">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                <Wallet className="w-8 h-8 text-primary" />
+                <Wrench className="w-8 h-8 text-primary" />
               </div>
-              <CardTitle className="text-2xl">Account Management</CardTitle>
-              <CardDescription>Login to access approved quotations</CardDescription>
+              <CardTitle className="text-2xl">Installer Login</CardTitle>
+              <CardDescription>Login to process pending installation jobs</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleLogin} className="space-y-4">
-                {error && (
-                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">
-                    {error}
-                  </div>
-                )}
+                {error && <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">{error}</div>}
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
                   <Input
@@ -164,45 +132,22 @@ function AccountManagementLoginForm() {
                     </button>
                   </div>
                 </div>
-                <div className="flex items-center justify-between text-sm">
-                  <button
-                    type="button"
-                    onClick={() => router.push("/forgot-password")}
-                    className="text-primary font-medium hover:underline"
-                  >
-                    Forgot Password?
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => router.push("/login")}
-                    className="text-muted-foreground hover:text-primary hover:underline"
-                  >
-                    Regular Login
-                  </button>
-                </div>
                 <Button type="submit" className="w-full h-11 shadow-lg shadow-primary/25" disabled={isLoading}>
-                  {isLoading ? "Logging in..." : "Login to Account Management"}
+                  {isLoading ? "Logging in..." : "Login as Installer"}
                 </Button>
               </form>
             </CardContent>
           </Card>
-
-          <p className="text-center text-sm text-muted-foreground">
-            Need dealer or admin access?{" "}
-            <button onClick={() => router.push("/login")} className="text-primary font-medium hover:underline">
-              Go to regular login
-            </button>
-          </p>
         </div>
       </main>
     </div>
   )
 }
 
-export default function AccountManagementLoginPage() {
+export default function InstallerLoginPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>}>
-      <AccountManagementLoginForm />
+      <InstallerLoginForm />
     </Suspense>
   )
 }
