@@ -778,6 +778,47 @@ export const api = {
 
   // HR APIs
   hr: {
+    callingActions: {
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        dealerId?: string
+        startDate?: string
+        endDate?: string
+        range?: "daily" | "weekly" | "monthly" | "last_month" | "all"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        const querySuffix = query ? `?${query}` : ""
+
+        const endpoints = [
+          `/hr/calling-actions${querySuffix}`,
+          `/hr/calling-queue/actions${querySuffix}`,
+          `/admin/calling-actions${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const isMissingEndpoint =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isMissingEndpoint) throw error
+          }
+        }
+
+        throw lastError
+      },
+    },
+
     uploadLeadsCsv: async (file: File, dealerIds: string[], activeLimitPerDealer?: number) => {
       const buildFormData = (config: {
         fileKey: "file" | "csvFile"
@@ -832,6 +873,47 @@ export const api = {
 
   // Admin APIs
   admin: {
+    callingActions: {
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        dealerId?: string
+        startDate?: string
+        endDate?: string
+        range?: "daily" | "weekly" | "monthly" | "last_month" | "all"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        const querySuffix = query ? `?${query}` : ""
+
+        const endpoints = [
+          `/admin/calling-actions${querySuffix}`,
+          `/admin/calling-queue/actions${querySuffix}`,
+          `/admin/leads/actions${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const isMissingEndpoint =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isMissingEndpoint) throw error
+          }
+        }
+
+        throw lastError
+      },
+    },
+
     quotations: {
       getAll: async (params?: {
         page?: number

@@ -46,6 +46,17 @@ import { useToast } from "@/hooks/use-toast"
 // Admin username check
 const ADMIN_USERNAME = "admin"
 
+type CallingActionRecord = {
+  id: string
+  leadId: string
+  dealerId: string
+  dealerName: string
+  action: string
+  callRemark: string
+  actionAt: string
+  nextFollowUpAt?: string
+}
+
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer } = useAuth()
   const router = useRouter()
@@ -68,6 +79,10 @@ export default function AdminPanelPage() {
   const [documentsFormById, setDocumentsFormById] = useState<Record<string, any>>({})
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
+  const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
+  const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
+  const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
+  const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [isLoadingQuotationDetails, setIsLoadingQuotationDetails] = useState(false)
@@ -153,6 +168,29 @@ export default function AdminPanelPage() {
     const current = getOperationsRoleOverrides()
     current[key] = roleValue
     localStorage.setItem("operationsRoleOverrides", JSON.stringify(current))
+  }
+
+  const normalizeCallingAction = (item: any, fallbackDealers: Dealer[], index: number): CallingActionRecord => {
+    const dealerId = item?.dealerId || item?.assignedDealerId || item?.dealer?.id || ""
+    const fallbackDealer = fallbackDealers.find((d) => d.id === dealerId)
+    const dealerNameFromObject =
+      item?.dealerName ||
+      item?.assignedDealerName ||
+      (item?.dealer ? `${item.dealer.firstName || ""} ${item.dealer.lastName || ""}`.trim() : "")
+    const dealerName =
+      dealerNameFromObject || (fallbackDealer ? `${fallbackDealer.firstName} ${fallbackDealer.lastName}` : "Unknown Employee")
+    const actionAt = item?.actionAt || item?.updatedAt || item?.createdAt || ""
+    const leadId = item?.leadId || item?.lead?.id || item?.id || ""
+    return {
+      id: item?.id || `${leadId || "lead"}-${actionAt || "na"}-${index}`,
+      leadId,
+      dealerId,
+      dealerName,
+      action: item?.action || item?.status || "unknown",
+      callRemark: item?.callRemark || item?.remark || "",
+      actionAt,
+      nextFollowUpAt: item?.nextFollowUpAt,
+    }
   }
 
   useEffect(() => {
@@ -381,6 +419,48 @@ export default function AdminPanelPage() {
           }),
         }))
         setCustomers(customersList)
+
+        try {
+          const callingActionsResponse = await api.admin.callingActions.getAll({ limit: 2000 })
+          const source =
+            callingActionsResponse?.actions ||
+            callingActionsResponse?.callingActions ||
+            callingActionsResponse?.items ||
+            callingActionsResponse?.logs ||
+            callingActionsResponse?.data ||
+            []
+          const normalizedFromApi = Array.isArray(source)
+            ? source
+                .map((item: any, index: number) => normalizeCallingAction(item, dealersList as Dealer[], index))
+                .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+            : []
+          const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
+          const normalizedLocal = Array.isArray(localCallingActions)
+            ? localCallingActions.map((item: any, index: number) =>
+                normalizeCallingAction(item, dealersList as Dealer[], index + normalizedFromApi.length),
+              )
+            : []
+          const mergedById = new Map<string, CallingActionRecord>()
+          ;[...normalizedFromApi, ...normalizedLocal].forEach((item) => {
+            if (!item?.id) return
+            if (!mergedById.has(item.id)) mergedById.set(item.id, item)
+          })
+          const merged = Array.from(mergedById.values()).sort(
+            (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+          )
+          setCallingActions(merged)
+          setCallingActionsUnavailable(false)
+        } catch (error) {
+          console.error("Calling actions endpoint unavailable:", error)
+          const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
+          const normalizedLocal = Array.isArray(localCallingActions)
+            ? localCallingActions
+                .map((item: any, index: number) => normalizeCallingAction(item, dealersList as Dealer[], index))
+                .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+            : []
+          setCallingActions(normalizedLocal)
+          setCallingActionsUnavailable(normalizedLocal.length === 0)
+        }
       } else {
         // Fallback to localStorage
         // Load all quotations and ensure they have status
@@ -483,6 +563,15 @@ export default function AdminPanelPage() {
           }),
         }))
         setCustomers(customersList)
+
+        const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
+        const normalizedLocal = Array.isArray(localCallingActions)
+          ? localCallingActions
+              .map((item: any, index: number) => normalizeCallingAction(item, dealersWithoutPassword as Dealer[], index))
+              .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+          : []
+        setCallingActions(normalizedLocal)
+        setCallingActionsUnavailable(false)
       }
     } catch (error) {
       console.error("Error loading admin data:", error)
@@ -561,6 +650,58 @@ export default function AdminPanelPage() {
     const dealer = dealers.find((d) => d.id === dealerId)
     return dealer ? `${dealer.firstName} ${dealer.lastName}` : "Unknown Dealer"
   }
+
+  const isWithinCallingRange = (actionAt?: string) => {
+    if (callingRange === "all") return true
+    if (!actionAt) return false
+    const actionDate = new Date(actionAt)
+    if (Number.isNaN(actionDate.getTime())) return false
+    const now = new Date()
+
+    if (callingRange === "daily") {
+      return actionDate.toDateString() === now.toDateString()
+    }
+
+    if (callingRange === "weekly") {
+      const startOfWeek = new Date(now)
+      startOfWeek.setDate(now.getDate() - now.getDay())
+      startOfWeek.setHours(0, 0, 0, 0)
+      return actionDate >= startOfWeek && actionDate <= now
+    }
+
+    if (callingRange === "monthly") {
+      return actionDate.getMonth() === now.getMonth() && actionDate.getFullYear() === now.getFullYear()
+    }
+
+    if (callingRange === "last_month") {
+      const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
+      const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
+      return actionDate.getMonth() === prevMonth && actionDate.getFullYear() === prevYear
+    }
+
+    return true
+  }
+
+  const filteredCallingActions = callingActions.filter((item) => {
+    const matchesEmployee =
+      callingActionDealerFilter === "all" ||
+      item.dealerId === callingActionDealerFilter ||
+      item.dealerName === callingActionDealerFilter
+    return matchesEmployee && isWithinCallingRange(item.actionAt)
+  })
+
+  const callingSummary = filteredCallingActions.reduce(
+    (acc, item) => {
+      const remark = item.callRemark || ""
+      if (item.action === "not_interested") acc.notInterested += 1
+      else if (item.action === "follow_up" && remark.includes("[Others]")) acc.others += 1
+      else if (item.action === "follow_up") acc.followUp += 1
+      else if (item.action === "called" && remark.includes("[Interested]")) acc.interested += 1
+      else acc.otherActions += 1
+      return acc
+    },
+    { interested: 0, followUp: 0, notInterested: 0, others: 0, otherActions: 0 },
+  )
 
   // Update quotation status
   const updateQuotationStatus = async (quotationId: string, status: QuotationStatus) => {
@@ -901,15 +1042,16 @@ export default function AdminPanelPage() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-8">
-            <TabsTrigger value="overview" className="text-xs sm:text-sm">Overview</TabsTrigger>
-            <TabsTrigger value="quotations" className="text-xs sm:text-sm">Quotations</TabsTrigger>
-            <TabsTrigger value="dealers" className="text-xs sm:text-sm">Dealers</TabsTrigger>
-            <TabsTrigger value="customers" className="text-xs sm:text-sm">Customers</TabsTrigger>
-            <TabsTrigger value="visitors" className="text-xs sm:text-sm">Visitors</TabsTrigger>
-            <TabsTrigger value="payments" className="text-xs sm:text-sm">Payments</TabsTrigger>
-            <TabsTrigger value="products" className="text-xs sm:text-sm">Products</TabsTrigger>
-            <TabsTrigger value="account-management" className="text-xs sm:text-sm">Others</TabsTrigger>
+          <TabsList className="flex w-full justify-start overflow-x-auto whitespace-nowrap">
+            <TabsTrigger value="overview" className="shrink-0 text-xs sm:text-sm">Overview</TabsTrigger>
+            <TabsTrigger value="calling-reports" className="shrink-0 text-xs sm:text-sm">Calling Reports</TabsTrigger>
+            <TabsTrigger value="quotations" className="shrink-0 text-xs sm:text-sm">Quotations</TabsTrigger>
+            <TabsTrigger value="dealers" className="shrink-0 text-xs sm:text-sm">Dealers</TabsTrigger>
+            <TabsTrigger value="customers" className="shrink-0 text-xs sm:text-sm">Customers</TabsTrigger>
+            <TabsTrigger value="visitors" className="shrink-0 text-xs sm:text-sm">Visitors</TabsTrigger>
+            <TabsTrigger value="payments" className="shrink-0 text-xs sm:text-sm">Payments</TabsTrigger>
+            <TabsTrigger value="products" className="shrink-0 text-xs sm:text-sm">Products</TabsTrigger>
+            <TabsTrigger value="account-management" className="shrink-0 text-xs sm:text-sm">Others</TabsTrigger>
           </TabsList>
 
           {/* Overview Tab */}
@@ -997,6 +1139,108 @@ export default function AdminPanelPage() {
                       </div>
                     ))}
                 </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="calling-reports" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Employee Calling Actions</CardTitle>
+                <CardDescription>
+                  Track which sales employee performed each action with daily, weekly, monthly, and last-month filters.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Select value={callingRange} onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "all") => setCallingRange(value)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select report range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="last_month">Last Month</SelectItem>
+                      <SelectItem value="all">All Time</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={callingActionDealerFilter} onValueChange={setCallingActionDealerFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by employee" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Employees</SelectItem>
+                      {dealers.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.firstName} {d.lastName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Interested</p>
+                      <p className="text-xl font-semibold">{callingSummary.interested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Follow Up</p>
+                      <p className="text-xl font-semibold">{callingSummary.followUp}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Not Interested</p>
+                      <p className="text-xl font-semibold">{callingSummary.notInterested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Others</p>
+                      <p className="text-xl font-semibold">{callingSummary.others}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {callingActionsUnavailable ? (
+                  <p className="text-sm text-muted-foreground">
+                    Calling actions endpoint is not available on backend yet. Once enabled, all employee actions will appear here.
+                  </p>
+                ) : filteredCallingActions.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {filteredCallingActions.slice(0, 300).map((item) => (
+                      <div key={item.id} className="rounded-md border border-border/70 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-sm break-words">{item.dealerName || "Unknown Employee"}</p>
+                            <p className="text-xs text-muted-foreground break-all">Lead: {item.leadId || "N/A"}</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">{item.action || "N/A"}</Badge>
+                            <span className="text-xs text-muted-foreground whitespace-nowrap">
+                              {item.actionAt ? new Date(item.actionAt).toLocaleString() : "N/A"}
+                            </span>
+                          </div>
+                        </div>
+                        {item.callRemark ? <p className="text-sm mt-2 break-words">Remark: {item.callRemark}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

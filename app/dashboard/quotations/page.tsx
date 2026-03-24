@@ -667,7 +667,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Phone Number</Label>
+                          <Label>Phone Number *</Label>
                           <Input
                             value={form.contactPhone}
                             onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactPhone: e.target.value })}
@@ -675,7 +675,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Aadhar Front Image</Label>
+                          <Label>Aadhar Front Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -685,7 +685,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Aadhar Back Image</Label>
+                          <Label>Aadhar Back Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -702,7 +702,7 @@ export default function QuotationsPage() {
                         <div className="space-y-1">
                           <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
                           <p className="text-xs text-amber-800/80">
-                            Fill all compliant Aadhar, PAN, and bank fields to submit.
+                            Compliant contact number and compliant images are required to submit.
                           </p>
                         </div>
 
@@ -854,7 +854,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>PAN Image</Label>
+                          <Label>PAN Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -870,7 +870,7 @@ export default function QuotationsPage() {
                       <p className="text-sm font-semibold">Electricity Bill</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label>Electricity Bill KNO</Label>
+                          <Label>Electricity Bill KNO *</Label>
                           <Input
                             value={form.electricityKno}
                             onChange={(e) =>
@@ -880,7 +880,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Electricity Bill Image</Label>
+                          <Label>Electricity Bill Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -932,7 +932,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div className="md:col-span-2">
-                          <Label>Bank Passbook Image</Label>
+                          <Label>Bank Passbook Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -950,7 +950,7 @@ export default function QuotationsPage() {
                       <p className="text-sm font-semibold">Contact Details</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label>Email ID</Label>
+                          <Label>Email ID *</Label>
                           <Input
                             type="email"
                             value={form.contactEmail}
@@ -1000,7 +1000,16 @@ export default function QuotationsPage() {
                       return
                     }
 
-                    if (form.contactPhone && !phonePattern.test(form.contactPhone)) {
+                    if (!form.contactPhone) {
+                      toast({
+                        title: "Phone number is required",
+                        description: "Please enter a phone number.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (!phonePattern.test(form.contactPhone)) {
                       toast({
                         title: "Invalid phone number",
                         description: "Phone number must be 10 digits.",
@@ -1009,17 +1018,61 @@ export default function QuotationsPage() {
                       return
                     }
 
+                    if (!form.electricityKno) {
+                      toast({
+                        title: "Electricity Bill KNO is required",
+                        description: "Please enter Electricity Bill KNO.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    if (!form.contactEmail) {
+                      toast({
+                        title: "Email ID is required",
+                        description: "Please enter an email address.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+                    if (!emailPattern.test(form.contactEmail)) {
+                      toast({
+                        title: "Invalid email",
+                        description: "Please enter a valid email address.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    const missingBaseImages =
+                      !form.aadharFront ||
+                      !form.aadharBack ||
+                      !form.panImage ||
+                      !form.electricityBillImage ||
+                      !form.bankPassbookImage
+                    if (missingBaseImages) {
+                      toast({
+                        title: "Required images missing",
+                        description:
+                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, and Bank Passbook image.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
                     if (isCompliant) {
-                      if (form.compliantAadharNumber && !aadharPattern.test(form.compliantAadharNumber)) {
+                      if (!form.compliantContactPhone) {
                         toast({
-                          title: "Invalid compliant Aadhar",
-                          description: "Aadhar number must be 12 digits.",
+                          title: "Compliant contact number is required",
+                          description: "Please enter compliant contact number.",
                           variant: "destructive",
                         })
                         return
                       }
 
-                      if (form.compliantContactPhone && !phonePattern.test(form.compliantContactPhone)) {
+                      if (!phonePattern.test(form.compliantContactPhone)) {
                         toast({
                           title: "Invalid compliant phone",
                           description: "Phone number must be 10 digits.",
@@ -1028,31 +1081,16 @@ export default function QuotationsPage() {
                         return
                       }
 
-                      if (form.compliantPanNumber && !panPattern.test(form.compliantPanNumber.toUpperCase())) {
-                        toast({
-                          title: "Invalid compliant PAN",
-                          description: "PAN must be in format ABCDE1234F.",
-                          variant: "destructive",
-                        })
-                        return
-                      }
-
-                      const missing =
-                        !form.compliantAadharNumber ||
-                        !form.compliantContactPhone ||
+                      const missingCompliantImages =
                         !form.compliantAadharFront ||
                         !form.compliantAadharBack ||
-                        !form.compliantPanNumber ||
                         !form.compliantPanImage ||
-                        !form.compliantBankAccountNumber ||
-                        !form.compliantBankIfsc ||
-                        !form.compliantBankName ||
-                        !form.compliantBankBranch ||
                         !form.compliantBankPassbookImage
-                      if (missing) {
+                      if (missingCompliantImages) {
                         toast({
-                          title: "Missing compliant details",
-                          description: "Please fill compliant Aadhar, PAN, and bank details.",
+                          title: "Compliant images missing",
+                          description:
+                            "Please upload compliant Aadhar front/back, PAN image, and Bank Passbook image.",
                           variant: "destructive",
                         })
                         return

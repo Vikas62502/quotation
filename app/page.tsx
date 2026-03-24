@@ -5,7 +5,16 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { SolarLogo } from "@/components/solar-logo"
-import { Users, FileText, Shield, Zap, ArrowRight, CheckCircle } from "lucide-react"
+import { Users, FileText, Shield, Zap, ArrowRight, CheckCircle, Menu } from "lucide-react"
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 
 export default function HomePage() {
   const { isAuthenticated, role } = useAuth()
@@ -31,34 +40,66 @@ export default function HomePage() {
     }
   }, [isAuthenticated, role, router])
 
+  const loginLinks = [
+    { label: "Login", path: "/login" },
+    { label: "Account Mgmt Login", path: "/account-management-login" },
+    { label: "Visitor Login", path: "/visitor-login" },
+    { label: "HR Login", path: "/hr-login" },
+    { label: "Installer Login", path: "/installer-login" },
+    { label: "Baldev Login", path: "/baldev-login" },
+  ]
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b border-border bg-card sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <SolarLogo size="md" />
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" onClick={() => router.push("/login")}>
-              Login
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/account-management-login")}>
-              Account Mgmt Login
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/visitor-login")}>
-              Visitor Login
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/hr-login")}>
-              HR Login
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/installer-login")}>
-              Installer Login
-            </Button>
-            <Button variant="ghost" onClick={() => router.push("/baldev-login")}>
-              Baldev Login
-            </Button>
+          <div className="hidden md:flex items-center gap-3">
+            {loginLinks.map((item) => (
+              <Button key={item.path} variant="ghost" onClick={() => router.push(item.path)}>
+                {item.label}
+              </Button>
+            ))}
             <Button onClick={() => router.push("/register")} className="shadow-lg shadow-primary/25">
               Register
             </Button>
+          </div>
+          <div className="md:hidden">
+            <Sheet>
+              <SheetTrigger asChild>
+                <Button variant="outline" size="icon" aria-label="Open navigation menu">
+                  <Menu className="w-5 h-5" />
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="right" className="w-[85vw] max-w-sm">
+                <SheetHeader>
+                  <SheetTitle>Menu</SheetTitle>
+                  <SheetDescription>Select login type or create account.</SheetDescription>
+                </SheetHeader>
+                <div className="px-4 pb-4 space-y-2">
+                  {loginLinks.map((item) => (
+                    <SheetClose asChild key={item.path}>
+                      <Button
+                        variant="ghost"
+                        className="w-full justify-start"
+                        onClick={() => router.push(item.path)}
+                      >
+                        {item.label}
+                      </Button>
+                    </SheetClose>
+                  ))}
+                  <SheetClose asChild>
+                    <Button
+                      className="w-full mt-2 shadow-lg shadow-primary/25"
+                      onClick={() => router.push("/register")}
+                    >
+                      Register
+                    </Button>
+                  </SheetClose>
+                </div>
+              </SheetContent>
+            </Sheet>
           </div>
         </div>
       </header>
