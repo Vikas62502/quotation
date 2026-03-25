@@ -734,7 +734,11 @@ export function configToProductSelection(
     const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
     const panelW = Number.parseFloat(config.panelSize.replace("W", ""))
     if (!Number.isNaN(systemKw) && !Number.isNaN(panelW) && panelW > 0) {
-      calculatedQuantity = Math.ceil((systemKw * 1000) / panelW)
+      const requiredPanels = (systemKw * 1000) / panelW
+      const floorPanels = Math.floor(requiredPanels)
+      const floorShortfallW = systemKw * 1000 - floorPanels * panelW
+      // Prefer floor when shortfall is practically negligible (e.g. 5kW with 555W => 9 panels).
+      calculatedQuantity = floorPanels > 0 && floorShortfallW <= 10 ? floorPanels : Math.ceil(requiredPanels)
     }
   }
   

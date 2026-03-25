@@ -134,13 +134,14 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   // Calculate prices first (needed for fallback initialization)
   // For DCR, NON DCR, and BOTH: Use SET PRICE (complete package price)
   const systemPrice = getSystemPrice(products)
+  const defaultSubtotal = products.systemPrice && products.systemPrice > 0 ? products.systemPrice : systemPrice > 0 ? systemPrice : 0
   
   // For DCR, NON DCR, and BOTH: Use set price (complete package)
   // Set price includes: panels, inverter, structure, meter, cables, ACDB, DCDB
   // Priority: 1. Editable subtotal (user modified), 2. Stored system price from config selection, 3. Calculated system price
   const subtotal = editableSubtotal !== null && editableSubtotal > 0
     ? editableSubtotal 
-    : (products.systemPrice || systemPrice || 0)
+    : defaultSubtotal
   
   // Initialize editable subtotal with system price when component mounts or system changes
   useEffect(() => {
@@ -1851,25 +1852,29 @@ const getStructureDetails = (products: ProductSelection) => {
                         <span className="text-sm text-muted-foreground">₹</span>
                         <Input
                           id="subtotal-input"
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={editableSubtotal !== null && editableSubtotal > 0 ? editableSubtotal : (subtotal > 0 ? subtotal : "")}
+                          type="text"
+                          inputMode="decimal"
+                          value={editableSubtotal !== null && editableSubtotal > 0 ? editableSubtotal : (defaultSubtotal > 0 ? defaultSubtotal : "")}
                           onChange={(e) => {
                             const inputValue = e.target.value
-                            const newSubtotal = inputValue ? Number.parseFloat(inputValue) : null
+                            const sanitizedValue = inputValue.replace(/[^0-9.]/g, "")
+                            const newSubtotal = sanitizedValue ? Number.parseFloat(sanitizedValue) : null
                             if (newSubtotal !== null && !Number.isNaN(newSubtotal)) {
                               setEditableSubtotal(newSubtotal)
-                            } else if (inputValue === "") {
+                            } else if (sanitizedValue === "") {
                               setEditableSubtotal(null)
                             }
                           }}
                           onBlur={(e) => {
                             // Ensure value is set on blur if it's valid
                             const inputValue = e.target.value
-                            const parsedValue = inputValue ? Number.parseFloat(inputValue) : null
+                            const sanitizedValue = inputValue.replace(/[^0-9.]/g, "")
+                            const parsedValue = sanitizedValue ? Number.parseFloat(sanitizedValue) : null
                             if (parsedValue !== null && !Number.isNaN(parsedValue) && parsedValue > 0) {
                               setEditableSubtotal(parsedValue)
+                            } else if (defaultSubtotal > 0) {
+                              // Restore configured system price when user clears the field.
+                              setEditableSubtotal(defaultSubtotal)
                             }
                           }}
                           className="flex-1"

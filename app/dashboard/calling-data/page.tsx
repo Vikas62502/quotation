@@ -632,7 +632,7 @@ export default function CallingDataPage() {
       <DashboardNav />
       <main className="container mx-auto px-4 py-6 space-y-4">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 border border-orange-200 flex items-center justify-center">
             <PhoneCall className="w-4 h-4 text-primary" />
           </div>
           <h1 className="text-xl font-semibold">Calling Data</h1>
@@ -642,7 +642,7 @@ export default function CallingDataPage() {
         </p>
 
         <Tabs value={activeSubTab} onValueChange={setActiveSubTab}>
-          <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap">
+          <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/70 to-orange-50/70 p-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
             <TabsTrigger value="current" className="shrink-0 text-xs sm:text-sm">Current Lead</TabsTrigger>
             <TabsTrigger value="scheduled" className="shrink-0 text-xs sm:text-sm">Scheduled</TabsTrigger>
             <TabsTrigger value="recent" className="shrink-0 text-xs sm:text-sm">Recent Actions</TabsTrigger>
@@ -657,7 +657,7 @@ export default function CallingDataPage() {
             </CardContent>
           </Card>
         ) : (
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/30 shadow-sm">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-base">Current Lead</CardTitle>
@@ -830,7 +830,7 @@ export default function CallingDataPage() {
                 </div>
               </div>
 
-              <div className="space-y-3 pt-2 border-t border-border/70">
+              <div className="space-y-3 pt-2 border-t border-orange-200/70">
                 {currentLead.status === "assigned" ? (
                   <Button
                     variant="outline"
@@ -853,7 +853,7 @@ export default function CallingDataPage() {
                       onChange={(e) => setCallRemark(e.target.value)}
                       rows={3}
                     />
-                    <div className="rounded-md border border-border/70 p-3 space-y-3">
+                    <div className="rounded-md border border-amber-200/80 bg-amber-50/40 p-3 space-y-3">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="space-y-1.5">
                           <p className="text-xs text-muted-foreground">Status category</p>
@@ -935,6 +935,7 @@ export default function CallingDataPage() {
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
+                          className="bg-orange-500 hover:bg-orange-600 text-white"
                           onClick={() => {
                             if (!finalSelectedStatus) {
                               toast({
@@ -980,7 +981,7 @@ export default function CallingDataPage() {
         </TabsContent>
 
         <TabsContent value="scheduled">
-        <Card className="border-border/60 shadow-sm">
+        <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
           <CardHeader>
             <div className="flex flex-col gap-3">
               <CardTitle className="text-base">Scheduled Follow Ups (Future)</CardTitle>
@@ -1011,7 +1012,7 @@ export default function CallingDataPage() {
             ) : (
               <div className="space-y-2">
                 {filteredScheduledLeads.map((lead) => (
-                  <div key={lead.id} className="rounded-md border border-border/70 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                  <div key={lead.id} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                     <div>
                       <p className="font-medium">{lead.name} • {lead.mobile}</p>
                       <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
@@ -1098,6 +1099,7 @@ export default function CallingDataPage() {
                             <div className="flex flex-wrap gap-2">
                               <Button
                                 size="sm"
+                                className="bg-blue-600 hover:bg-blue-700 text-white"
                                 onClick={() => {
                                   if (!finalStatus) {
                                     toast({
@@ -1127,7 +1129,7 @@ export default function CallingDataPage() {
                               >
                                 Submit Status
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => submitAction(lead.id, { action: "start" })}>
+                              <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => submitAction(lead.id, { action: "start" })}>
                                 Start Call
                               </Button>
                               <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
@@ -1147,7 +1149,7 @@ export default function CallingDataPage() {
         </TabsContent>
 
         <TabsContent value="recent">
-        <Card className="border-border/60 shadow-sm">
+        <Card className="border-violet-200/70 bg-gradient-to-b from-white to-violet-50/30 shadow-sm">
           <CardHeader>
             <div className="flex flex-col gap-3">
               <CardTitle className="text-base">Recent Actions</CardTitle>
@@ -1203,7 +1205,7 @@ export default function CallingDataPage() {
             ) : (
               <div className="space-y-2">
                 {filteredRecentActions.slice(0, 10).map((item) => (
-                  <div key={item.id} className="rounded-md border border-border/70 p-3 text-sm">
+                  <div key={item.id} className="rounded-md border border-violet-200/70 bg-violet-50/30 p-3 text-sm">
                     <p className="font-medium">{item.name} • {item.mobile}</p>
                     <p className="text-xs text-muted-foreground">
                       Action: {item.action || "N/A"} • At: {formatDateTime(item.actionAt)}
@@ -1308,6 +1310,7 @@ export default function CallingDataPage() {
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Button
                               size="sm"
+                              className="bg-violet-600 hover:bg-violet-700 text-white"
                               disabled={!item.leadId}
                               onClick={() => {
                                 if (!finalStatus) {
@@ -1339,6 +1342,7 @@ export default function CallingDataPage() {
                             <Button
                               size="sm"
                               variant="outline"
+                              className="border-violet-300 text-violet-700 hover:bg-violet-50"
                               disabled={!item.leadId}
                               onClick={() => submitAction(item.leadId, { action: "start" })}
                             >
@@ -1380,7 +1384,7 @@ export default function CallingDataPage() {
         </TabsContent>
 
         <TabsContent value="interested">
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-emerald-200/70 bg-gradient-to-b from-white to-emerald-50/30 shadow-sm">
             <CardHeader>
               <div className="flex flex-col gap-3">
                 <CardTitle className="text-base">Interested Data</CardTitle>
@@ -1424,7 +1428,7 @@ export default function CallingDataPage() {
               ) : (
                 <div className="space-y-2">
                   {filteredInterestedActions.map((item) => (
-                    <div key={item.id} className="rounded-md border border-border/70 p-3 text-sm">
+                    <div key={item.id} className="rounded-md border border-emerald-200/70 bg-emerald-50/30 p-3 text-sm">
                       <p className="font-medium">{item.name} • {item.mobile}</p>
                       <p className="text-xs text-muted-foreground">Action at: {formatDateTime(item.actionAt)}</p>
                       {item.callRemark ? <p className="text-xs mt-1">Remark: {item.callRemark}</p> : null}

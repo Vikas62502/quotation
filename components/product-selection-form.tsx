@@ -791,11 +791,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("dcrPanelSize", e.target.value)}
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
-                    {panelSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {panelSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                   <div>
                     <Label>DCR Panel Quantity *</Label>
@@ -865,11 +860,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("nonDcrPanelSize", e.target.value)}
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
-                    {panelSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {panelSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                   <div>
                     <Label>Non-DCR Panel Quantity *</Label>
@@ -940,11 +930,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("inverterSize", e.target.value)}
                       placeholder={`e.g., ${inverterSizesList.join(", ")}`}
                     />
-                    {inverterSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {inverterSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -980,11 +965,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("structureSize", e.target.value)}
                       placeholder={`e.g., ${structureSizesList.join(", ")}`}
                     />
-                    {structureSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {structureSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -1302,11 +1282,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("panelSize", e.target.value)}
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
-                    {panelSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {panelSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                   <div>
                     <Label>Panel Quantity *</Label>
@@ -1377,11 +1352,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("inverterSize", e.target.value)}
                       placeholder={`e.g., ${inverterSizesList.join(", ")}`}
                     />
-                    {inverterSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {inverterSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -1417,11 +1387,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("structureSize", e.target.value)}
                       placeholder={`e.g., ${structureSizesList.join(", ")}`}
                     />
-                    {structureSizesList.length > 0 && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Available sizes: {structureSizesList.join(", ")}
-                      </p>
-                    )}
                   </div>
                 </div>
               </div>
@@ -1827,11 +1792,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                           onChange={(e) => updateFormData("inverterSize", e.target.value)}
                           placeholder={`e.g., ${inverterSizesList.join(", ")}`}
                         />
-                        {inverterSizesList.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Available sizes: {inverterSizesList.join(", ")}
-                          </p>
-                        )}
                       </div>
                     </div>
                   </div>
@@ -1870,11 +1830,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                           onChange={(e) => updateFormData("structureSize", e.target.value)}
                           placeholder={`e.g., ${structureSizesList.join(", ")}`}
                         />
-                        {structureSizesList.length > 0 && (
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Available sizes: {structureSizesList.join(", ")}
-                          </p>
-                        )}
                       </div>
                     </div>
                   </div>
