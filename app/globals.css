@@ -93,6 +93,50 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
+    overflow-x: hidden;
+  }
+}
+
+.mobile-app-shell {
+  min-height: 100dvh;
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Mobile-first app feel */
+@media (max-width: 768px) {
+  html,
+  body {
+    overscroll-behavior-y: contain;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  main {
+    width: 100%;
+    overflow-x: hidden;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 100%;
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+  }
+
+  button,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    touch-action: manipulation;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px; /* Prevent iOS zoom on focus */
   }
 }
 

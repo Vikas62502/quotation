@@ -438,20 +438,20 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <main className="container mx-auto px-4 py-5 sm:py-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
-            <p className="text-muted-foreground">Welcome back, {dealer?.firstName}!</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Dashboard</h1>
+            <p className="text-sm sm:text-base text-muted-foreground">Welcome back, {dealer?.firstName}!</p>
           </div>
-          <Button onClick={() => router.push("/dashboard/new-quotation")} className="shadow-lg shadow-primary/25">
+          <Button onClick={() => router.push("/dashboard/new-quotation")} className="shadow-lg shadow-primary/25 w-full sm:w-auto">
             <PlusCircle className="w-4 h-4 mr-2" />
             New Quotation
           </Button>
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
           <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
@@ -460,7 +460,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{uniqueCustomers}</div>
+              <div className="text-2xl sm:text-3xl font-bold">{uniqueCustomers}</div>
               <p className="text-xs text-muted-foreground mt-1">Unique customers</p>
             </CardContent>
           </Card>
@@ -472,7 +472,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{quotations.length}</div>
+              <div className="text-2xl sm:text-3xl font-bold">{quotations.length}</div>
               <p className="text-xs text-muted-foreground mt-1">All time</p>
             </CardContent>
           </Card>
@@ -484,7 +484,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-bold">{thisMonthQuotations.length}</div>
+              <div className="text-2xl sm:text-3xl font-bold">{thisMonthQuotations.length}</div>
               <p className="text-xs text-muted-foreground mt-1">Quotations created</p>
             </CardContent>
           </Card>
@@ -496,7 +496,7 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">₹{(totalRevenue / 100000).toFixed(1)}L</div>
+              <div className="text-xl sm:text-2xl font-bold">₹{(totalRevenue / 100000).toFixed(1)}L</div>
               <p className="text-xs text-muted-foreground mt-1">Quotation value</p>
             </CardContent>
           </Card>
@@ -506,7 +506,7 @@ export default function DashboardPage() {
         <Card className="border-border/50 shadow-sm">
           <CardHeader>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="text-lg">Recent Quotations</CardTitle>
+              <CardTitle className="text-base sm:text-lg">Recent Quotations</CardTitle>
               <div className="relative w-full sm:w-72">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <Input
@@ -532,120 +532,185 @@ export default function DashboardPage() {
                 </Button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        ID
-                      </th>
-                      <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Customer
-                      </th>
-                      <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">
-                        System
-                      </th>
-                      <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Amount
-                      </th>
-                      <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Status
-                      </th>
-                      <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Visit Status
-                      </th>
-                      <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">
-                        Date
-                      </th>
-                      <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                        Action
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentQuotations.map((quotation) => (
-                      <tr
-                        key={quotation.id}
-                        className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${getStatusColor(
-                          quotation.status,
-                        )}`}
-                      >
-                        <td className="py-4 px-3 text-sm font-mono text-muted-foreground">{quotation.id}</td>
-                        <td className="py-4 px-3">
-                          <div>
-                            <p className="text-sm font-medium text-foreground">
-                              {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
-                            </p>
-                            <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
-                          </div>
-                        </td>
-                        <td className="py-4 px-3 text-sm hidden sm:table-cell">
-                          <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium uppercase">
-                            {getSystemSize(quotation)}
-                          </span>
-                        </td>
-                        <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                          ₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}
-                        </td>
-                        <td className="py-4 px-3 text-sm">
-                          <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>
-                            {(quotation.status || "pending").charAt(0).toUpperCase() +
-                              (quotation.status || "pending").slice(1)}
-                          </Badge>
-                        </td>
-                        <td className="py-4 px-3 text-sm">
-                          <Badge className={`text-xs ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
-                            {getVisitStatus(quotation)}
-                          </Badge>
-                        </td>
-                        <td className="py-4 px-3 text-sm text-right text-muted-foreground hidden md:table-cell">
-                          {new Date(quotation.createdAt).toLocaleDateString("en-IN")}
-                        </td>
-                        <td className="py-4 px-3 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setVisitQuotation(quotation)
-                                setVisitDialogOpen(true)
-                              }}
-                              className="h-8 w-8 p-0"
-                              title="Visit Management"
-                            >
-                              <Calendar className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setDocumentsQuotation(quotation)
-                                setDocumentsDialogOpen(true)
-                              }}
-                              className="h-8 w-8 p-0"
-                              title="Document Submission"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                setSelectedQuotation(quotation)
-                                setDialogOpen(true)
-                              }}
-                              className="h-8 w-8 p-0"
-                              title="View Details"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </td>
+              <>
+                <div className="space-y-3 md:hidden">
+                  {recentQuotations.map((quotation) => (
+                    <div key={quotation.id} className={`rounded-lg border p-3 ${getStatusColor(quotation.status)}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-mono text-muted-foreground break-all">{quotation.id}</p>
+                          <p className="text-sm font-semibold">
+                            {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
+                        </div>
+                        <Badge className={`text-[10px] ${getStatusBadgeColor(quotation.status)}`}>
+                          {(quotation.status || "pending").charAt(0).toUpperCase() + (quotation.status || "pending").slice(1)}
+                        </Badge>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <p className="text-muted-foreground">System: <span className="text-foreground">{getSystemSize(quotation)}</span></p>
+                        <p className="text-muted-foreground text-right">₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
+                          {getVisitStatus(quotation)}
+                        </Badge>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setVisitQuotation(quotation)
+                              setVisitDialogOpen(true)
+                            }}
+                            title="Visit Management"
+                          >
+                            <Calendar className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setDocumentsQuotation(quotation)
+                              setDocumentsDialogOpen(true)
+                            }}
+                            title="Document Submission"
+                          >
+                            <FileText className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSelectedQuotation(quotation)
+                              setDialogOpen(true)
+                            }}
+                            title="View Details"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="hidden md:block overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          ID
+                        </th>
+                        <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Customer
+                        </th>
+                        <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">
+                          System
+                        </th>
+                        <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Amount
+                        </th>
+                        <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Status
+                        </th>
+                        <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Visit Status
+                        </th>
+                        <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">
+                          Date
+                        </th>
+                        <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                          Action
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {recentQuotations.map((quotation) => (
+                        <tr
+                          key={quotation.id}
+                          className={`border-b border-border last:border-0 hover:bg-muted/30 transition-colors ${getStatusColor(
+                            quotation.status,
+                          )}`}
+                        >
+                          <td className="py-4 px-3 text-sm font-mono text-muted-foreground">{quotation.id}</td>
+                          <td className="py-4 px-3">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">
+                                {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                              </p>
+                              <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
+                            </div>
+                          </td>
+                          <td className="py-4 px-3 text-sm hidden sm:table-cell">
+                            <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium uppercase">
+                              {getSystemSize(quotation)}
+                            </span>
+                          </td>
+                          <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
+                            ₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}
+                          </td>
+                          <td className="py-4 px-3 text-sm">
+                            <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>
+                              {(quotation.status || "pending").charAt(0).toUpperCase() +
+                                (quotation.status || "pending").slice(1)}
+                            </Badge>
+                          </td>
+                          <td className="py-4 px-3 text-sm">
+                            <Badge className={`text-xs ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
+                              {getVisitStatus(quotation)}
+                            </Badge>
+                          </td>
+                          <td className="py-4 px-3 text-sm text-right text-muted-foreground hidden md:table-cell">
+                            {new Date(quotation.createdAt).toLocaleDateString("en-IN")}
+                          </td>
+                          <td className="py-4 px-3 text-right">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setVisitQuotation(quotation)
+                                  setVisitDialogOpen(true)
+                                }}
+                                className="h-8 w-8 p-0"
+                                title="Visit Management"
+                              >
+                                <Calendar className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setDocumentsQuotation(quotation)
+                                  setDocumentsDialogOpen(true)
+                                }}
+                                className="h-8 w-8 p-0"
+                                title="Document Submission"
+                              >
+                                <FileText className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  setSelectedQuotation(quotation)
+                                  setDialogOpen(true)
+                                }}
+                                className="h-8 w-8 p-0"
+                                title="View Details"
+                              >
+                                <Eye className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

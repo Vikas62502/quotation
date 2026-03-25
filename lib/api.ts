@@ -595,6 +595,67 @@ export const api = {
       })
     },
 
+    updatePaymentDetails: async (
+      quotationId: string,
+      paymentData: {
+        paymentType?: string
+        paymentMode?: string
+        paymentStatus?: "pending" | "partial" | "completed"
+        phases?: Array<{
+          phaseNumber: number
+          phaseName: string
+          amount: number
+          paidAmount: number
+          status: "pending" | "partial" | "completed"
+          dueDate?: string
+          paymentDate?: string
+          paymentMode?: string
+          transactionId?: string
+        }>
+      },
+    ) => {
+      const attempts: Array<{ endpoint: string; method: "PATCH" | "PUT"; body: Record<string, any> }> = [
+        {
+          endpoint: `/quotations/${quotationId}/payment-details`,
+          method: "PATCH",
+          body: paymentData,
+        },
+        {
+          endpoint: `/quotations/${quotationId}/installments`,
+          method: "PATCH",
+          body: { installments: paymentData.phases, paymentStatus: paymentData.paymentStatus },
+        },
+        {
+          endpoint: `/quotations/${quotationId}/installments`,
+          method: "PUT",
+          body: { installments: paymentData.phases, paymentStatus: paymentData.paymentStatus },
+        },
+        {
+          endpoint: `/quotations/${quotationId}/payment-mode`,
+          method: "PATCH",
+          body: { paymentMode: paymentData.paymentMode },
+        },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of attempts) {
+        try {
+          return await apiRequest(attempt.endpoint, {
+            method: attempt.method,
+            body: attempt.body,
+          })
+        } catch (error) {
+          lastError = error
+          const retryableMissingEndpoint =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryableMissingEndpoint) throw error
+        }
+      }
+
+      throw lastError
+    },
+
     updateProducts: async (quotationId: string, products: any) => {
       return apiRequest(`/quotations/${quotationId}/products`, {
         method: "PATCH",
@@ -934,10 +995,13 @@ export const api = {
         return apiRequest(`/admin/quotations${query ? `?${query}` : ""}`)
       },
 
-      updateStatus: async (quotationId: string, status: string) => {
+      updateStatus: async (quotationId: string, status: string, paymentType?: "loan" | "cash" | "mix") => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
           method: "PATCH",
-          body: { status },
+          body: {
+            status,
+            ...(paymentType ? { paymentType, paymentMode: paymentType } : {}),
+          },
         })
       },
     },

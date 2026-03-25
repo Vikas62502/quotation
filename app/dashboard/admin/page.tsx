@@ -38,6 +38,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { api, ApiError } from "@/lib/api"
+import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { calculateSystemSize } from "@/lib/pricing-tables"
@@ -56,6 +57,8 @@ type CallingActionRecord = {
   actionAt: string
   nextFollowUpAt?: string
 }
+
+type ApprovalPaymentType = "loan" | "cash" | "mix"
 
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer } = useAuth()
@@ -85,6 +88,9 @@ export default function AdminPanelPage() {
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
+  const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
+  const [approvingQuotationId, setApprovingQuotationId] = useState<string | null>(null)
+  const [approvalPaymentType, setApprovalPaymentType] = useState<ApprovalPaymentType>("cash")
   const [isLoadingQuotationDetails, setIsLoadingQuotationDetails] = useState(false)
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
@@ -578,6 +584,33 @@ export default function AdminPanelPage() {
     }
   }
 
+  useEffect(() => {
+    const socket = getRealtime()
+    if (!socket) return
+
+    const refetchAdminData = () => {
+      loadData()
+    }
+
+    const onBackendMutation = (evt: any) => {
+      const domain = String(evt?.domain || "").toLowerCase()
+      const path = String(evt?.path || "").toLowerCase()
+      if (domain === "admin" || domain === "hr" || domain === "dealers" || path.includes("calling")) {
+        refetchAdminData()
+      }
+    }
+
+    socket.on("calling:actions-updated", refetchAdminData)
+    socket.on("dealer:directory-updated", refetchAdminData)
+    socket.on("backend:mutation", onBackendMutation)
+
+    return () => {
+      socket.off("calling:actions-updated", refetchAdminData)
+      socket.off("dealer:directory-updated", refetchAdminData)
+      socket.off("backend:mutation", onBackendMutation)
+    }
+  }, [activeTab])
+
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
   // Calculate statistics
@@ -704,14 +737,26 @@ export default function AdminPanelPage() {
   )
 
   // Update quotation status
-  const updateQuotationStatus = async (quotationId: string, status: QuotationStatus) => {
+  const updateQuotationStatus = async (
+    quotationId: string,
+    status: QuotationStatus,
+    paymentType?: ApprovalPaymentType,
+  ) => {
     try {
       if (useApi) {
-        await api.admin.quotations.updateStatus(quotationId, status)
+        await api.admin.quotations.updateStatus(quotationId, status, paymentType)
         await loadData()
       } else {
         // Fallback to localStorage
-        const updated = quotations.map((q) => (q.id === quotationId ? { ...q, status } : q))
+        const updated = quotations.map((q) =>
+          q.id === quotationId
+            ? {
+                ...q,
+                status,
+                ...(paymentType ? { paymentType, paymentMode: paymentType } : {}),
+              }
+            : q,
+        )
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
       }
@@ -722,6 +767,23 @@ export default function AdminPanelPage() {
       console.error("Error updating quotation status:", error)
       alert(error instanceof ApiError ? error.message : "Failed to update quotation status")
     }
+  }
+
+  const handleQuotationStatusChange = (quotationId: string, status: QuotationStatus) => {
+    if (status === "approved") {
+      setApprovingQuotationId(quotationId)
+      setApprovalPaymentType("cash")
+      setApprovalDialogOpen(true)
+      return
+    }
+    void updateQuotationStatus(quotationId, status)
+  }
+
+  const confirmApprovalWithPaymentType = async () => {
+    if (!approvingQuotationId) return
+    await updateQuotationStatus(approvingQuotationId, "approved", approvalPaymentType)
+    setApprovalDialogOpen(false)
+    setApprovingQuotationId(null)
   }
 
   // Update quotation data
@@ -1035,24 +1097,46 @@ export default function AdminPanelPage() {
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
-      <main className="container mx-auto px-4 py-4 sm:py-8">
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
         <div className="mb-6 sm:mb-8">
           <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Admin Panel</h1>
           <p className="text-sm sm:text-base text-muted-foreground mt-1 sm:mt-2">View and manage all system data</p>
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="flex w-full justify-start overflow-x-auto whitespace-nowrap">
-            <TabsTrigger value="overview" className="shrink-0 text-xs sm:text-sm">Overview</TabsTrigger>
-            <TabsTrigger value="calling-reports" className="shrink-0 text-xs sm:text-sm">Calling Reports</TabsTrigger>
-            <TabsTrigger value="quotations" className="shrink-0 text-xs sm:text-sm">Quotations</TabsTrigger>
-            <TabsTrigger value="dealers" className="shrink-0 text-xs sm:text-sm">Dealers</TabsTrigger>
-            <TabsTrigger value="customers" className="shrink-0 text-xs sm:text-sm">Customers</TabsTrigger>
-            <TabsTrigger value="visitors" className="shrink-0 text-xs sm:text-sm">Visitors</TabsTrigger>
-            <TabsTrigger value="payments" className="shrink-0 text-xs sm:text-sm">Payments</TabsTrigger>
-            <TabsTrigger value="products" className="shrink-0 text-xs sm:text-sm">Products</TabsTrigger>
-            <TabsTrigger value="account-management" className="shrink-0 text-xs sm:text-sm">Others</TabsTrigger>
-          </TabsList>
+          <div className="md:hidden">
+            <div className="text-xs font-medium text-muted-foreground mb-2">Select Section</div>
+            <Select value={activeTab} onValueChange={setActiveTab}>
+              <SelectTrigger className="w-full h-10 rounded-xl border-border/70 bg-card shadow-sm">
+                <SelectValue placeholder="Select section" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="overview">Overview</SelectItem>
+                <SelectItem value="calling-reports">Calling Reports</SelectItem>
+                <SelectItem value="quotations">Quotations</SelectItem>
+                <SelectItem value="dealers">Dealers</SelectItem>
+                <SelectItem value="customers">Customers</SelectItem>
+                <SelectItem value="visitors">Visitors</SelectItem>
+                <SelectItem value="payments">Payments</SelectItem>
+                <SelectItem value="products">Products</SelectItem>
+                <SelectItem value="account-management">Others</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="hidden md:block w-full pb-1">
+            <TabsList className="grid w-full grid-cols-9 h-11 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
+            <TabsTrigger value="quotations">Quotations</TabsTrigger>
+            <TabsTrigger value="dealers">Dealers</TabsTrigger>
+            <TabsTrigger value="customers">Customers</TabsTrigger>
+            <TabsTrigger value="visitors">Visitors</TabsTrigger>
+            <TabsTrigger value="payments">Payments</TabsTrigger>
+            <TabsTrigger value="products">Products</TabsTrigger>
+            <TabsTrigger value="account-management">Others</TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
@@ -1335,7 +1419,7 @@ export default function AdminPanelPage() {
                           <div className="space-y-2">
                             <Select
                               value={quotation.status || "pending"}
-                              onValueChange={(value) => updateQuotationStatus(quotation.id, value as QuotationStatus)}
+                              onValueChange={(value) => handleQuotationStatusChange(quotation.id, value as QuotationStatus)}
                             >
                               <SelectTrigger className="w-full h-9 text-xs">
                                 <SelectValue placeholder="Change Status" />
@@ -1449,7 +1533,7 @@ export default function AdminPanelPage() {
                                 <div className="space-y-2">
                                   <Select
                                     value={quotation.status || "pending"}
-                                    onValueChange={(value) => updateQuotationStatus(quotation.id, value as QuotationStatus)}
+                                    onValueChange={(value) => handleQuotationStatusChange(quotation.id, value as QuotationStatus)}
                                   >
                                     <SelectTrigger className="w-32 h-8 text-xs">
                                       <SelectValue />
@@ -1585,9 +1669,9 @@ export default function AdminPanelPage() {
                           key={d.id}
                           className={`p-4 border rounded-lg ${isPending ? "opacity-75 bg-muted/30 border-orange-200" : ""}`}
                         >
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
+                          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-2 flex-wrap">
                                 <h3 className="font-semibold text-lg">
                                   {d.firstName} {d.lastName}
                                 </h3>
@@ -1600,9 +1684,9 @@ export default function AdminPanelPage() {
                                   <Badge className="bg-green-500">Active</Badge>
                                 )}
                               </div>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground break-words">
                                 <div>
-                                  <span className="font-medium">Email:</span> {d.email}
+                                  <span className="font-medium">Email:</span> <span className="break-all">{d.email}</span>
                                   {d.emailVerified === false && <Badge variant="outline" className="ml-2 text-xs">Unverified</Badge>}
                                 </div>
                                 <div>
@@ -1640,7 +1724,8 @@ export default function AdminPanelPage() {
                                   </div>
                                 )}
                                 <div className="md:col-span-2">
-                                  <span className="font-medium">Address:</span> {d.address.street}, {d.address.city}, {d.address.state} - {d.address.pincode}
+                                  <span className="font-medium">Address:</span>{" "}
+                                  <span className="break-words">{d.address.street}, {d.address.city}, {d.address.state} - {d.address.pincode}</span>
                                 </div>
                                 {d.createdAt && (
                                   <div className="md:col-span-2 text-xs">
@@ -1649,7 +1734,7 @@ export default function AdminPanelPage() {
                                 )}
                               </div>
                             </div>
-                            <div className="text-right ml-4 space-y-2">
+                            <div className="w-full lg:w-auto lg:ml-4 space-y-2 text-left lg:text-right">
                               <div>
                                 <div className="text-lg font-semibold">₹{(dealerRevenue / 100000).toFixed(1)}L</div>
                                 <div className="text-sm text-muted-foreground">{dealerQuotations.length} quotations</div>
@@ -1657,6 +1742,7 @@ export default function AdminPanelPage() {
                               {isPending && (
                                 <Button
                                   size="sm"
+                                  className="w-full sm:w-auto bg-green-600 hover:bg-green-700"
                                   onClick={async () => {
                                     if (!confirm(`Are you sure you want to approve and activate ${d.firstName} ${d.lastName}?`)) return
                                     
@@ -1682,7 +1768,6 @@ export default function AdminPanelPage() {
                                       alert(error instanceof ApiError ? error.message : "Failed to activate dealer")
                                     }
                                   }}
-                                  className="bg-green-600 hover:bg-green-700"
                                 >
                                   <UserCheck className="w-3 h-3 mr-1" />
                                   Approve
@@ -1691,6 +1776,7 @@ export default function AdminPanelPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="w-full sm:w-auto"
                                 onClick={() => {
                                   setSelectedDealer(d)
                                   setDealerDialogOpen(true)
@@ -1702,6 +1788,7 @@ export default function AdminPanelPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
+                                className="w-full sm:w-auto"
                                 onClick={() => {
                                   setEditingDealer(d)
                                   setDealerEditForm({
@@ -1970,9 +2057,9 @@ export default function AdminPanelPage() {
                             key={visitor.id}
                             className={`p-4 border rounded-lg ${visitor.isActive === false ? "opacity-60 bg-muted/30" : ""}`}
                           >
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-2">
+                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
                                   <h3 className="font-semibold text-lg">
                                     {visitor.firstName} {visitor.lastName}
                                   </h3>
@@ -1982,9 +2069,9 @@ export default function AdminPanelPage() {
                                     <Badge className="bg-green-500">Active</Badge>
                                   )}
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground break-words">
                                   <div>
-                                    <span className="font-medium">Email:</span> {visitor.email}
+                                    <span className="font-medium">Email:</span> <span className="break-all">{visitor.email}</span>
                                   </div>
                                   <div>
                                     <span className="font-medium">Mobile:</span> {visitor.mobile}
@@ -1999,13 +2086,14 @@ export default function AdminPanelPage() {
                                   )}
                                 </div>
                               </div>
-                              <div className="text-right ml-4">
+                              <div className="w-full lg:w-auto lg:ml-4 text-left lg:text-right">
                                 <div className="text-lg font-semibold">{visitCount}</div>
                                 <div className="text-sm text-muted-foreground">visits assigned</div>
-                                <div className="flex gap-2 mt-2">
+                                <div className="flex flex-wrap gap-2 mt-2 lg:justify-end">
                                   <Button
                                     variant="outline"
                                     size="sm"
+                                    className="w-full sm:w-auto"
                                     onClick={async () => {
                                       if (useApi) {
                                         // Fetch full visitor details from API
@@ -2063,6 +2151,7 @@ export default function AdminPanelPage() {
                                   <Button
                                     variant="outline"
                                     size="sm"
+                                    className="w-full sm:w-auto"
                                     onClick={async () => {
                                       if (!confirm(`Are you sure you want to ${visitor.isActive === false ? "activate" : "deactivate"} this visitor?`)) return
                                       
@@ -2198,7 +2287,7 @@ export default function AdminPanelPage() {
                             key={am.id}
                             className={`p-4 border rounded-lg transition-colors hover:bg-muted/50 ${am.isActive === false ? "opacity-60 bg-muted/30" : "bg-card"}`}
                           >
-                            <div className="flex items-start justify-between gap-4">
+                            <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                                   <h3 className="font-semibold text-lg text-foreground">
@@ -2219,7 +2308,7 @@ export default function AdminPanelPage() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                                   <div className="flex items-center gap-2">
                                     <span className="font-medium text-muted-foreground">Email:</span>
-                                    <span className="text-foreground truncate">{am.email}</span>
+                                    <span className="text-foreground break-all">{am.email}</span>
                                   </div>
                                   <div className="flex items-center gap-2">
                                     <span className="font-medium text-muted-foreground">Mobile:</span>
@@ -2243,12 +2332,12 @@ export default function AdminPanelPage() {
                                   )}
                                 </div>
                               </div>
-                              <div className="flex flex-col items-end gap-3 shrink-0">
-                                <div className="text-center p-2 bg-primary/10 rounded-lg min-w-[60px]">
+                              <div className="flex flex-col lg:items-end gap-3 w-full lg:w-auto shrink-0">
+                                <div className="text-center p-2 bg-primary/10 rounded-lg min-w-[60px] w-fit">
                                   <div className="text-xl font-bold text-primary">{loginCount}</div>
                                   <div className="text-xs text-muted-foreground mt-1">logins</div>
                                 </div>
-                                <div className="flex gap-2 flex-wrap justify-end">
+                                <div className="flex gap-2 flex-wrap justify-start lg:justify-end">
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -4686,6 +4775,55 @@ export default function AdminPanelPage() {
               }}>
                 Close
               </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={approvalDialogOpen}
+          onOpenChange={(open) => {
+            setApprovalDialogOpen(open)
+            if (!open) {
+              setApprovingQuotationId(null)
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Select Payment Type</DialogTitle>
+              <DialogDescription>
+                Choose payment type before approving this quotation.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2 py-2">
+              <Label htmlFor="approval-payment-type">Payment Type</Label>
+              <Select
+                value={approvalPaymentType}
+                onValueChange={(value) => setApprovalPaymentType(value as ApprovalPaymentType)}
+              >
+                <SelectTrigger id="approval-payment-type">
+                  <SelectValue placeholder="Select payment type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="loan">Loan</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="mix">Mix</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setApprovalDialogOpen(false)
+                  setApprovingQuotationId(null)
+                }}
+              >
+                Cancel
+              </Button>
+              <Button onClick={confirmApprovalWithPaymentType}>Approve Quotation</Button>
             </div>
           </DialogContent>
         </Dialog>

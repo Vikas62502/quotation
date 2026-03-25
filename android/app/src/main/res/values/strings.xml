@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Solar Quotation</string>
+    <string name="title_activity_main">Solar Quotation</string>
+    <string name="package_name">com.hairbord.solarquotation</string>
+    <string name="custom_url_scheme">com.hairbord.solarquotation</string>
+</resources>

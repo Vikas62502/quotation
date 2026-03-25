@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { api, ApiError } from "./api"
+import { disconnectRealtime, initRealtime } from "./realtime"
 
 // asd
 
@@ -133,6 +134,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       })
     }
   }, [])
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      disconnectRealtime()
+      return
+    }
+
+    const token = localStorage.getItem("authToken")
+    if (!token) {
+      disconnectRealtime()
+      return
+    }
+
+    initRealtime(token)
+  }, [isAuthenticated])
 
   useEffect(() => {
     const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -474,6 +490,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("authToken")
     localStorage.removeItem("refreshToken")
     localStorage.removeItem("user")
+    disconnectRealtime()
   }
 
   const loginAccountManagement = async (username: string, password: string): Promise<boolean> => {

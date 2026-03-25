@@ -106,21 +106,21 @@ export default function HomePage() {
 
       {/* Hero Section */}
       <main>
-        <section className="container mx-auto px-4 py-16 md:py-24">
+        <section className="container mx-auto px-4 py-10 sm:py-16 md:py-24">
           <div className="text-center max-w-3xl mx-auto">
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
               <Zap className="w-4 h-4" />
               Streamline Your Solar Business
             </div>
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-6 text-balance leading-tight">
+            <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold text-foreground mb-4 sm:mb-6 text-balance leading-tight">
               Professional Solar
               <span className="text-primary"> Quotation System</span>
             </h1>
-            <p className="text-lg md:text-xl text-muted-foreground mb-8 text-pretty max-w-2xl mx-auto">
+            <p className="text-base sm:text-lg md:text-xl text-muted-foreground mb-6 sm:mb-8 text-pretty max-w-2xl mx-auto">
               Generate accurate quotes for DCR, Non-DCR, and Hybrid systems. Manage customers, calculate subsidies, and
               download professional quotations instantly.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <Button size="lg" onClick={() => router.push("/register")} className="shadow-lg shadow-primary/25 gap-2">
                 Get Started Free
                 <ArrowRight className="w-4 h-4" />
@@ -149,7 +149,7 @@ export default function HomePage() {
         </section>
 
         {/* Features */}
-        <section className="container mx-auto px-4 py-16 border-t border-border">
+        <section className="container mx-auto px-4 py-12 sm:py-16 border-t border-border">
           <div className="text-center mb-12">
             <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-3">Everything You Need</h2>
             <p className="text-muted-foreground">Powerful tools to manage your solar business efficiently</p>

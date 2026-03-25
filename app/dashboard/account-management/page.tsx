@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, LogOut, User, Wallet, CheckCircle2, Clock, AlertCircle } from "lucide-react"
+import { ArrowLeft, LogOut, User, Wallet, CheckCircle2, Clock, AlertCircle, Download } from "lucide-react"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,11 +40,14 @@ interface CustomerPayment {
   customerMobile: string
   totalAmount: number
   finalAmount: number
+  paymentType?: string
   paymentMode?: string
   paymentStatus?: "pending" | "completed" | "partial"
   phases: PaymentPhase[]
   quotation: Quotation
 }
+
+const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 
 export default function AccountManagementPage() {
   const { isAuthenticated, role, logout, accountManager, dealer } = useAuth()
@@ -53,6 +56,9 @@ export default function AccountManagementPage() {
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([])
   const [searchTerm, setSearchTerm] = useState("")
+  const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
+  const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -60,6 +66,7 @@ export default function AccountManagementPage() {
   const [activeTab, setActiveTab] = useState("approved")
   const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
+  const [isSavingInstallments, setIsSavingInstallments] = useState(false)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const accountDisplayName = accountManager
     ? `${accountManager.firstName || ""} ${accountManager.lastName || ""}`.trim() ||
@@ -67,6 +74,23 @@ export default function AccountManagementPage() {
       accountManager.email ||
       "Account Manager"
     : "Account Manager"
+
+  const getStoredPaymentPlans = (): Record<string, any> => {
+    try {
+      const stored = localStorage.getItem(PAYMENT_PLANS_KEY)
+      if (!stored) return {}
+      const parsed = JSON.parse(stored)
+      return parsed && typeof parsed === "object" ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+
+  const saveStoredPaymentPlan = (quotationId: string, payload: any) => {
+    const current = getStoredPaymentPlans()
+    current[quotationId] = payload
+    localStorage.setItem(PAYMENT_PLANS_KEY, JSON.stringify(current))
+  }
 
   const buildInstallments = (total: number, count: number, existing?: PaymentPhase[]) => {
     const safeCount = Math.max(1, count)
@@ -280,10 +304,26 @@ export default function AccountManagementPage() {
   // Initialize payment phases for quotations
   useEffect(() => {
     if (quotations.length > 0) {
+      const storedPlans = getStoredPaymentPlans()
       const payments: CustomerPayment[] = quotations.map((q) => {
         const totalAmount = q.totalAmount || q.finalAmount || 0
-        // Start empty; installments are created when needed
-        const phases: PaymentPhase[] = []
+        const existingPhases = (q as any).installments || (q as any).paymentPhases || []
+        const storedPlan = storedPlans[q.id || ""]
+        const storedPhases = storedPlan?.phases || []
+        const sourcePhases = Array.isArray(existingPhases) && existingPhases.length > 0 ? existingPhases : storedPhases
+        const phases: PaymentPhase[] = Array.isArray(existingPhases)
+          ? sourcePhases.map((phase: any, index: number) => ({
+              phaseNumber: Number(phase.phaseNumber || index + 1),
+              phaseName: phase.phaseName || `Installment ${index + 1}`,
+              amount: Number(phase.amount || 0),
+              dueDate: phase.dueDate,
+              status: (phase.status || "pending") as PaymentPhase["status"],
+              paidAmount: Number(phase.paidAmount || 0),
+              paymentDate: phase.paymentDate,
+              paymentMode: phase.paymentMode,
+              transactionId: phase.transactionId,
+            }))
+          : []
 
         return {
           quotationId: q.id || "",
@@ -291,8 +331,9 @@ export default function AccountManagementPage() {
           customerMobile: q.customer?.mobile || "",
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
-          paymentMode: q.paymentMode || undefined,
-          paymentStatus: q.paymentStatus || "pending",
+          paymentType: (q as any).paymentType || q.paymentMode || storedPlan?.paymentType || storedPlan?.paymentMode || undefined,
+          paymentMode: q.paymentMode || storedPlan?.paymentMode || undefined,
+          paymentStatus: q.paymentStatus || storedPlan?.paymentStatus || "pending",
           phases,
           quotation: q,
         }
@@ -343,6 +384,92 @@ export default function AccountManagementPage() {
   )
 
   const totalApprovedValue = quotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || q.totalAmount || 0), 0)
+
+  const getPaymentTypeValue = (payment: CustomerPayment) => {
+    return String(payment.paymentType || "").toLowerCase()
+  }
+
+  const getPaymentTypeLabel = (paymentType?: string) => {
+    const normalized = String(paymentType || "").toLowerCase()
+    if (normalized === "loan") return "Loan"
+    if (normalized === "cash") return "Cash"
+    if (normalized === "mix") return "Mix"
+    return "N/A"
+  }
+
+  const filteredCustomerPayments = customerPayments.filter((payment) => {
+    const matchesSearch =
+      payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
+      payment.customerMobile.includes(paymentSearchTerm) ||
+      payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
+    const paymentTypeValue = getPaymentTypeValue(payment)
+    const matchesPaymentType =
+      paymentTypeFilter === "all" ||
+      (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
+    const paymentStatusValue = payment.paymentStatus || "pending"
+    const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
+    return matchesSearch && matchesPaymentType && matchesPaymentStatus
+  })
+
+  const downloadFilteredPaymentsExcel = () => {
+    if (filteredCustomerPayments.length === 0) {
+      toast({
+        title: "No data to export",
+        description: "Adjust filters to include at least one payment row.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const escapeCsv = (value: string | number) => {
+      const raw = String(value ?? "")
+      if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
+        return `"${raw.replace(/"/g, "\"\"")}"`
+      }
+      return raw
+    }
+
+    const headers = [
+      "Quotation ID",
+      "Customer Name",
+      "Customer Mobile",
+      "Payment Type",
+      "Payment Status",
+      "Installments",
+      "Subtotal",
+      "Paid Amount",
+      "Remaining Amount",
+    ]
+
+    const rows = filteredCustomerPayments.map((payment) => {
+      const paidAmount = payment.phases.reduce((sum, phase) => sum + (Number(phase.paidAmount) || 0), 0)
+      const remainingAmount = Math.max(payment.totalAmount - paidAmount, 0)
+      return [
+        payment.quotationId,
+        payment.customerName,
+        payment.customerMobile,
+        getPaymentTypeLabel(payment.paymentType),
+        (payment.paymentStatus || "pending").toUpperCase(),
+        payment.phases.length,
+        payment.totalAmount,
+        paidAmount,
+        remainingAmount,
+      ]
+    })
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => escapeCsv(cell)).join(","))
+      .join("\n")
+
+    const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    const stamp = new Date().toISOString().slice(0, 10)
+    link.href = url
+    link.download = `payment-management-${stamp}.csv`
+    link.click()
+    window.URL.revokeObjectURL(url)
+  }
 
   const getSystemSize = (quotation: Quotation): string => {
     const products = quotation.products
@@ -404,6 +531,78 @@ export default function AccountManagementPage() {
     return "N/A"
   }
 
+  const submitInstallments = async () => {
+    if (!activePayment) return
+
+    const totalPaid = activePayment.phases.reduce((sum, phase) => sum + (Number(phase.paidAmount) || 0), 0)
+    const paymentStatus: CustomerPayment["paymentStatus"] =
+      totalPaid <= 0
+        ? "pending"
+        : totalPaid >= activePayment.totalAmount
+          ? "completed"
+          : "partial"
+    const paymentModeFromPhases =
+      activePayment.phases.find((phase) => Boolean(phase.paymentMode))?.paymentMode || activePayment.paymentMode
+
+    const payload = {
+      paymentType: activePayment.paymentType,
+      paymentMode: paymentModeFromPhases,
+      paymentStatus: paymentStatus || "pending",
+      phases: activePayment.phases.map((phase) => ({
+        phaseNumber: phase.phaseNumber,
+        phaseName: phase.phaseName,
+        amount: Number(phase.amount) || 0,
+        paidAmount: Number(phase.paidAmount) || 0,
+        status: phase.status,
+        dueDate: phase.dueDate || undefined,
+        paymentDate: phase.paymentDate || undefined,
+        paymentMode: phase.paymentMode || undefined,
+        transactionId: phase.transactionId || undefined,
+      })),
+    }
+
+    setIsSavingInstallments(true)
+    try {
+      // Persist locally as source-of-truth fallback when backend does not
+      // return installment details in quotation list yet.
+      saveStoredPaymentPlan(activePayment.quotationId, payload)
+
+      if (useApi) {
+        await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
+      }
+
+      setCustomerPayments((prev) =>
+        prev.map((payment) =>
+          payment.quotationId === activePayment.quotationId
+            ? {
+                ...payment,
+                paymentType: payload.paymentType,
+                paymentMode: payload.paymentMode,
+                paymentStatus: payload.paymentStatus,
+                phases: payload.phases,
+              }
+            : payment,
+        ),
+      )
+
+      toast({
+        title: "Payment details saved",
+        description: "Installments updated successfully.",
+      })
+      setInstallmentDialogOpen(false)
+      setActivePaymentId(null)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Failed to save payment details."
+      toast({
+        title: "Save failed",
+        description: message,
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingInstallments(false)
+    }
+  }
+
   const handleLogout = () => {
     // Direct logout without confirmation for better UX
     logout()
@@ -425,24 +624,24 @@ export default function AccountManagementPage() {
       {/* Account Management Header */}
       <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 shadow-sm">
         <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between h-14 sm:h-16 gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
               {(role === "admin" || dealer?.username === "admin") && (
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => router.push("/dashboard/admin")}
-                  className="gap-2 text-muted-foreground hover:text-foreground"
+                  className="gap-2 text-muted-foreground hover:text-foreground px-2 sm:px-3 shrink-0"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  Back to Admin
+                  <span className="hidden sm:inline">Back to Admin</span>
                 </Button>
               )}
               <button onClick={() => router.push("/dashboard/account-management")} className="flex items-center">
                 <SolarLogo size="md" />
               </button>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
               {accountManager && (
                 <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-primary/5 border border-primary/20">
                   <User className="w-4 h-4 text-primary" />
@@ -469,18 +668,18 @@ export default function AccountManagementPage() {
                 variant="outline" 
                 size="sm" 
                 onClick={handleLogout} 
-                className="gap-2 border-border hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors shrink-0 font-medium"
+                className="gap-2 border-border hover:bg-destructive hover:text-destructive-foreground hover:border-destructive transition-colors shrink-0 font-medium px-2 sm:px-3"
                 title="Logout from Account Management"
               >
                 <LogOut className="w-4 h-4" />
-                <span>Logout</span>
+                <span className="hidden sm:inline">Logout</span>
               </Button>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-5">
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-5">
         <div className="mb-5">
           <div className="flex items-center gap-2.5 mb-1.5">
             <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -502,7 +701,7 @@ export default function AccountManagementPage() {
 
         {/* Tabbed Interface */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-4 h-9 p-1">
+          <TabsList className="mb-4 h-auto min-h-9 p-1 w-full justify-start overflow-x-auto whitespace-nowrap">
             <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5">
               <FileText className="w-4 h-4" />
               Approved Quotations
@@ -728,14 +927,55 @@ export default function AccountManagementPage() {
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                     <Input
                       placeholder="Search by customer name, mobile..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
+                      value={paymentSearchTerm}
+                      onChange={(e) => setPaymentSearchTerm(e.target.value)}
                       className="pl-8 h-9 text-sm"
                     />
                   </div>
                 </div>
+                <div className="mt-3 flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full lg:w-auto">
+                    <div className="w-full sm:min-w-44">
+                      <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Filter payment type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Payment Types</SelectItem>
+                          <SelectItem value="loan">Loan</SelectItem>
+                          <SelectItem value="cash">Cash</SelectItem>
+                          <SelectItem value="mix">Mix</SelectItem>
+                          <SelectItem value="unknown">Not Set</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="w-full sm:min-w-44">
+                      <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as typeof paymentStatusFilter)}>
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Filter payment status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Statuses</SelectItem>
+                          <SelectItem value="pending">Pending</SelectItem>
+                          <SelectItem value="partial">Partial</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 w-full sm:w-auto"
+                    onClick={downloadFilteredPaymentsExcel}
+                  >
+                    <Download className="w-4 h-4" />
+                    Download Excel
+                  </Button>
+                </div>
               </CardHeader>
-              <CardContent className="pt-0">
+              <CardContent className="pt-0 px-2 sm:px-6">
                 {isLoading ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
@@ -753,30 +993,34 @@ export default function AccountManagementPage() {
                   </div>
                 ) : (
                   <div className="space-y-2.5">
-                    {customerPayments
-                      .filter((payment) => 
-                        payment.customerName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                        payment.customerMobile.includes(searchTerm) ||
-                        payment.quotationId.toLowerCase().includes(searchTerm.toLowerCase())
-                      )
-                      .map((payment) => {
+                    {filteredCustomerPayments.length === 0 ? (
+                      <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-md">
+                        No rows match current filters.
+                      </div>
+                    ) : (
+                      filteredCustomerPayments.map((payment) => {
                         const paidAmount = payment.phases.reduce((sum, p) => sum + p.paidAmount, 0)
                         const remainingAmount = payment.totalAmount - paidAmount
+                        const isCompletedPayment = remainingAmount <= 0 || payment.paymentStatus === "completed"
 
                         return (
                           <Card
                             key={payment.quotationId}
-                            className="border-border/60 bg-card/80 shadow-sm px-3 py-3"
+                            className={`shadow-sm px-3 py-3 ${
+                              isCompletedPayment
+                                ? "border-green-200 bg-green-50/80 dark:border-green-900 dark:bg-green-950/20"
+                                : "border-border/60 bg-card/80"
+                            }`}
                           >
-                            <div className="flex flex-wrap items-center gap-x-5 gap-y-2 md:flex-nowrap">
-                              <div className="min-w-[180px] flex-1">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-x-4 gap-y-3 items-start lg:items-center">
+                              <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
                                 <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
                                   {payment.customerMobile} • {payment.quotationId}
                                 </p>
                               </div>
 
-                              <div className="min-w-[120px]">
+                              <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installments</p>
                                 <p className="text-sm font-medium">
                                   {payment.phases.length === 0
@@ -785,22 +1029,33 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="min-w-[110px]">
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Payment Type</p>
+                                <p className="text-sm font-semibold">{getPaymentTypeLabel(payment.paymentType)}</p>
+                              </div>
+
+                              <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
                                 <p className="text-sm font-semibold">₹{payment.totalAmount.toLocaleString()}</p>
                               </div>
 
-                              <div className="min-w-[100px]">
+                              <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
                                 <p className="text-sm font-semibold">₹{paidAmount.toLocaleString()}</p>
                               </div>
 
-                              <div className="min-w-[120px]">
+                              <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
-                                <p className="text-sm font-semibold text-amber-600">₹{remainingAmount.toLocaleString()}</p>
+                                <p
+                                  className={`text-sm font-semibold ${
+                                    remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
+                                  }`}
+                                >
+                                  ₹{Math.max(remainingAmount, 0).toLocaleString()}
+                                </p>
                               </div>
 
-                              <div className="ml-auto">
+                              <div className="col-span-2 sm:col-span-3 lg:col-span-1 flex justify-end">
                                 <Button
                                   type="button"
                                   variant="outline"
@@ -816,7 +1071,8 @@ export default function AccountManagementPage() {
                             </div>
                           </Card>
                         )
-                      })}
+                      })
+                    )}
                   </div>
                 )}
               </CardContent>
@@ -1121,6 +1377,22 @@ export default function AccountManagementPage() {
                                 </div>
                 </>
               )}
+              <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setInstallmentDialogOpen(false)
+                    setActivePaymentId(null)
+                  }}
+                  disabled={isSavingInstallments}
+                >
+                  Cancel
+                </Button>
+                <Button type="button" onClick={submitInstallments} disabled={isSavingInstallments}>
+                  {isSavingInstallments ? "Submitting..." : "Submit"}
+                </Button>
+              </div>
                   </div>
                 )}
         </DialogContent>

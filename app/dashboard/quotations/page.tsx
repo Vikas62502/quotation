@@ -421,13 +421,13 @@ export default function QuotationsPage() {
     <div className="min-h-screen bg-background">
       <DashboardNav />
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+      <main className="container mx-auto px-4 py-5 sm:py-8">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Quotations</h1>
-            <p className="text-muted-foreground">View and manage all your quotations</p>
+            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Quotations</h1>
+            <p className="text-sm sm:text-base text-muted-foreground">View and manage all your quotations</p>
           </div>
-          <Button onClick={() => router.push("/dashboard/new-quotation")}>New Quotation</Button>
+          <Button onClick={() => router.push("/dashboard/new-quotation")} className="w-full sm:w-auto">New Quotation</Button>
         </div>
 
         <Card>
@@ -476,7 +476,71 @@ export default function QuotationsPage() {
                 )}
               </div>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+                <div className="space-y-3 md:hidden">
+                {sortedQuotations.map((quotation) => (
+                  <div key={quotation.id} className={`rounded-lg border p-3 ${getStatusColor(quotation.status)}`}>
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-mono text-muted-foreground break-all">{quotation.id}</p>
+                        <p className="text-sm font-semibold">
+                          {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                        </p>
+                        <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
+                      </div>
+                      <Badge className={`text-[10px] ${getStatusBadgeColor(quotation.status)}`}>
+                        {(quotation.status || "pending").charAt(0).toUpperCase() + (quotation.status || "pending").slice(1)}
+                      </Badge>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                      <p className="text-muted-foreground">System: <span className="text-foreground">{getSystemSize(quotation)}</span></p>
+                      <p className="text-muted-foreground text-right">₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}</p>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between gap-2">
+                      <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
+                        {getVisitStatus(quotation)}
+                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setVisitQuotation(quotation)
+                            setVisitDialogOpen(true)
+                          }}
+                          title="Visit Management"
+                        >
+                          <Calendar className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setDocumentsQuotation(quotation)
+                            setDocumentsDialogOpen(true)
+                          }}
+                          title="Document Submission"
+                        >
+                          <FileText className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setSelectedQuotation(quotation)
+                            setDialogOpen(true)
+                          }}
+                          title="View Details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+                <div className="hidden md:block overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-border">
@@ -579,7 +643,8 @@ export default function QuotationsPage() {
                     ))}
                   </tbody>
                 </table>
-              </div>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

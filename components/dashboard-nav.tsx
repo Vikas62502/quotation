@@ -10,9 +10,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet"
 import { SolarLogo } from "@/components/solar-logo"
-import { Menu, X, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall } from "lucide-react"
-import { useState } from "react"
+import { Menu, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall } from "lucide-react"
 
 const ADMIN_USERNAME = "admin"
 
@@ -43,7 +51,6 @@ export function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
   const { dealer, logout, role, accountManager } = useAuth()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const isAdmin = dealer?.username === ADMIN_USERNAME
   const navItems = getNavItems(isAdmin, role)
   
@@ -121,38 +128,47 @@ export function DashboardNav() {
             </DropdownMenu>
 
             {/* Mobile Menu Toggle */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="md:hidden"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            >
-              {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </Button>
+            <div className="md:hidden">
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button variant="ghost" size="icon" aria-label="Open navigation menu">
+                    <Menu className="w-5 h-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="right" className="w-[85vw] max-w-sm">
+                  <SheetHeader>
+                    <SheetTitle>Navigation</SheetTitle>
+                    <SheetDescription>Move quickly across dashboard sections.</SheetDescription>
+                  </SheetHeader>
+                  <div className="px-4 pb-4 space-y-2">
+                    {navItems.map((item) => (
+                      <SheetClose asChild key={item.href}>
+                        <Button
+                          variant={pathname === item.href ? "default" : "ghost"}
+                          className="w-full justify-start gap-2"
+                          onClick={() => router.push(item.href)}
+                        >
+                          <item.icon className="w-4 h-4" />
+                          {item.label}
+                        </Button>
+                      </SheetClose>
+                    ))}
+                    <SheetClose asChild>
+                      <Button
+                        variant="outline"
+                        className="w-full justify-start gap-2 text-destructive border-destructive/30 hover:text-destructive"
+                        onClick={handleLogout}
+                      >
+                        <LogOut className="w-4 h-4" />
+                        Logout
+                      </Button>
+                    </SheetClose>
+                  </div>
+                </SheetContent>
+              </Sheet>
+            </div>
           </div>
         </div>
-
-        {/* Mobile Navigation */}
-        {mobileMenuOpen && (
-          <nav className="md:hidden py-4 border-t border-border">
-            <div className="flex flex-col gap-1">
-              {navItems.map((item) => (
-                <Button
-                  key={item.href}
-                  variant={pathname === item.href ? "default" : "ghost"}
-                  className={`justify-start gap-2 ${pathname === item.href ? "" : "text-muted-foreground"}`}
-                  onClick={() => {
-                    router.push(item.href)
-                    setMobileMenuOpen(false)
-                  }}
-                >
-                  <item.icon className="w-4 h-4" />
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-          </nav>
-        )}
       </div>
     </header>
   )

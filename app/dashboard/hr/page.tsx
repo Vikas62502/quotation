@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
+import { getRealtime } from "@/lib/realtime"
 import { SolarLogo } from "@/components/solar-logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -128,6 +129,7 @@ export default function HrDashboardPage() {
   const [isAssigning, setIsAssigning] = useState(false)
   const [activeLeadsLimit, setActiveLeadsLimit] = useState(DEFAULT_ACTIVE_LIMIT)
   const [activeTab, setActiveTab] = useState("assignment")
+  const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
@@ -277,12 +279,12 @@ export default function HrDashboardPage() {
       }
     }
     loadDealers()
-  }, [toast, useApi])
+  }, [toast, useApi, realtimeTick])
 
   useEffect(() => {
     const savedBatches = JSON.parse(localStorage.getItem("hrUploadedLeadBatches") || "[]")
     setUploadedLeadBatches(Array.isArray(savedBatches) ? savedBatches : [])
-  }, [])
+  }, [realtimeTick])
 
   useEffect(() => {
     const loadCallingActions = async () => {
@@ -329,7 +331,43 @@ export default function HrDashboardPage() {
       }
     }
     loadCallingActions()
-  }, [dealers, useApi])
+  }, [dealers, useApi, realtimeTick])
+
+  useEffect(() => {
+    const socket = getRealtime()
+    if (!socket) return
+
+    const triggerRealtimeRefetch = () => {
+      setRealtimeTick((prev) => prev + 1)
+    }
+
+    const onBackendMutation = (evt: any) => {
+      const domain = String(evt?.domain || "").toLowerCase()
+      const path = String(evt?.path || "").toLowerCase()
+      if (
+        domain === "hr" ||
+        domain === "admin" ||
+        domain === "dealers" ||
+        domain === "dealer" ||
+        path.includes("calling") ||
+        path.includes("leads")
+      ) {
+        triggerRealtimeRefetch()
+      }
+    }
+
+    socket.on("dealer:directory-updated", triggerRealtimeRefetch)
+    socket.on("calling:actions-updated", triggerRealtimeRefetch)
+    socket.on("calling:uploads-updated", triggerRealtimeRefetch)
+    socket.on("backend:mutation", onBackendMutation)
+
+    return () => {
+      socket.off("dealer:directory-updated", triggerRealtimeRefetch)
+      socket.off("calling:actions-updated", triggerRealtimeRefetch)
+      socket.off("calling:uploads-updated", triggerRealtimeRefetch)
+      socket.off("backend:mutation", onBackendMutation)
+    }
+  }, [])
 
   const toggleDealer = (dealerId: string) => {
     setSelectedDealerIds((prev) => (prev.includes(dealerId) ? prev.filter((id) => id !== dealerId) : [...prev, dealerId]))
