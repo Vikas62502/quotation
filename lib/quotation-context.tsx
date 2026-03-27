@@ -75,7 +75,14 @@ export interface Quotation {
   customer: Customer
   products: ProductSelection
   discount: number
+  /** Set-price / package price used as payment cap (align with backend `subtotal`). */
   subtotal?: number
+  /**
+   * Server-computed balance remaining (either field may be present).
+   * Prefer these over recomputing from installment allocation rows when present.
+   */
+  remaining?: number
+  remainingAmount?: number
   totalAmount: number
   finalAmount: number
   createdAt: string

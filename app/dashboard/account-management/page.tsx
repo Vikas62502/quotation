@@ -38,8 +38,12 @@ interface CustomerPayment {
   quotationId: string
   customerName: string
   customerMobile: string
+  /** Payment cap: quotation subtotal / set price (not installment sum). */
+  subtotal: number
   totalAmount: number
   finalAmount: number
+  /** When API sends remaining or remainingAmount, prefer for list/export display. */
+  remainingFromApi?: number
   paymentType?: string
   paymentMode?: string
   paymentStatus?: "pending" | "completed" | "partial"
@@ -48,6 +52,135 @@ interface CustomerPayment {
 }
 
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
+
+const PAYMENT_MODE_SELECT_VALUES = [
+  "cash",
+  "upi",
+  "loan",
+  "netbanking",
+  "bank_transfer",
+  "cheque",
+  "card",
+] as const
+
+type PaymentModeSelectValue = (typeof PAYMENT_MODE_SELECT_VALUES)[number]
+
+/** Map API / human labels to Select values so Radix Select matches and PATCH passes backend validation. */
+function normalizePaymentMode(raw?: string | null): PaymentModeSelectValue | undefined {
+  if (raw == null) return undefined
+  const s = String(raw).trim()
+  if (!s) return undefined
+  const key = s.toLowerCase().replace(/[\s-]+/g, "_")
+  const aliases: Record<string, PaymentModeSelectValue> = {
+    cash: "cash",
+    upi: "upi",
+    loan: "loan",
+    netbanking: "netbanking",
+    net_banking: "netbanking",
+    bank_transfer: "bank_transfer",
+    banktransfer: "bank_transfer",
+    neft: "bank_transfer",
+    rtgs: "bank_transfer",
+    imps: "bank_transfer",
+    cheque: "cheque",
+    check: "cheque",
+    card: "card",
+    debit_card: "card",
+    credit_card: "card",
+  }
+  if (aliases[key]) return aliases[key]
+  const simple = s.toLowerCase()
+  if ((PAYMENT_MODE_SELECT_VALUES as readonly string[]).includes(simple)) return simple as PaymentModeSelectValue
+  return undefined
+}
+
+function pickFirstFiniteNumber(...vals: unknown[]): number {
+  for (const v of vals) {
+    if (v === undefined || v === null || v === "") continue
+    const n = Number(v)
+    if (Number.isFinite(n)) return n
+  }
+  return 0
+}
+
+function optionalFiniteNumber(v: unknown): number | undefined {
+  if (v === undefined || v === null || v === "") return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
+function pickApiRemainingFromPayload(q: Record<string, unknown>): number | undefined {
+  return optionalFiniteNumber(q.remaining) ?? optionalFiniteNumber(q.remainingAmount)
+}
+
+function getTotalPaidPhases(phases: PaymentPhase[]): number {
+  return phases.reduce((sum, phase) => sum + (Number(phase.paidAmount) || 0), 0)
+}
+
+function getComputedRemaining(payment: CustomerPayment): number {
+  return Math.max(payment.subtotal - getTotalPaidPhases(payment.phases), 0)
+}
+
+/** Prefer server remaining; else subtotal − sum(paidAmount). */
+function getDisplayRemaining(payment: CustomerPayment): number {
+  if (payment.remainingFromApi != null && Number.isFinite(payment.remainingFromApi)) {
+    return Math.max(0, payment.remainingFromApi)
+  }
+  return getComputedRemaining(payment)
+}
+
+/**
+ * API rule: paidAmount <= amount per phase. Default equal-split "amount" is often < paidAmount
+ * after real collections. Rebuild each amount as paid + fair share of (subtotal − sum(paid)),
+ * then fix row status from paid vs amount.
+ */
+function normalizePhaseAmountsForApi(phases: PaymentPhase[], subtotal: number): PaymentPhase[] {
+  const n = phases.length
+  if (n === 0) return phases
+  const S = Math.max(0, Math.round(Number(subtotal) || 0))
+  const paidRounded = phases.map((p) => Math.max(0, Math.round(Number(p.paidAmount) || 0)))
+  const sumPaid = paidRounded.reduce((a, b) => a + b, 0)
+
+  if (sumPaid > S) {
+    return phases.map((p, i) => {
+      const paid = paidRounded[i]
+      const amount = Math.max(Math.round(Number(p.amount) || 0), paid)
+      const status: PaymentPhase["status"] =
+        paid >= amount ? "completed" : paid > 0 ? "partial" : "pending"
+      return { ...p, paidAmount: paid, amount, status }
+    })
+  }
+
+  const pool = S - sumPaid
+  const base = Math.floor(pool / n)
+  const extraOnes = pool - base * n
+  return phases.map((p, i) => {
+    const paid = paidRounded[i]
+    const extra = base + (i < extraOnes ? 1 : 0)
+    const amount = paid + extra
+    const status: PaymentPhase["status"] =
+      paid >= amount ? "completed" : paid > 0 ? "partial" : "pending"
+    return { ...p, paidAmount: paid, amount, status }
+  })
+}
+
+function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
+  let last: PaymentModeSelectValue | undefined
+  return phases.map((phase) => {
+    const fromField = normalizePaymentMode(
+      phase.paymentMode || (phase as any).mode || (phase as any).payment_method,
+    )
+    let paymentMode = fromField
+    if (paymentMode) last = paymentMode
+    const paid = Number(phase.paidAmount) || 0
+    const hasPaymentActivity = paid > 0 || phase.status === "partial" || phase.status === "completed"
+    if (hasPaymentActivity && !paymentMode) {
+      paymentMode = last || "cash"
+      last = paymentMode
+    }
+    return { ...phase, paymentMode }
+  })
+}
 
 export default function AccountManagementPage() {
   const { isAuthenticated, role, logout, accountManager, dealer } = useAuth()
@@ -110,7 +243,9 @@ export default function AccountManagementPage() {
         paidAmount,
         dueDate: existingPhase?.dueDate,
         paymentDate: existingPhase?.paymentDate,
-        paymentMode: existingPhase?.paymentMode,
+        paymentMode: normalizePaymentMode(
+          existingPhase?.paymentMode || (existingPhase as any)?.mode || (existingPhase as any)?.payment_method,
+        ),
         transactionId: existingPhase?.transactionId,
       }
     })
@@ -173,21 +308,44 @@ export default function AccountManagementPage() {
         // Backend should return only approved quotations, but filter again as safety measure
         const approvedQuotations = quotationsList
           .filter((q: any) => String(q.status || "").toLowerCase() === "approved")  // Double-check on frontend for security
-          .map((q: any) => ({
-            id: q.id,
-            customer: q.customer || {},
-            products: q.products || {},
-            discount: q.discount || 0,
-            totalAmount: q.pricing?.subtotal ?? q.pricing?.totalAmount ?? q.totalAmount ?? q.finalAmount ?? 0,
-            finalAmount: q.pricing?.finalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0,
-            createdAt: q.createdAt,
-            dealerId: q.dealerId,
-            dealer: q.dealer || null, // NEW: Include dealer/admin information
-            status: "approved" as const,  // Ensure status is always approved
-            paymentMode: q.paymentMode,
-            paymentStatus: q.paymentStatus,
-            validUntil: q.validUntil,
-          }))
+          .map((q: any) => {
+            const phasesFromApi =
+              q.installments ||
+              q.paymentPhases ||
+              q.quotationPaymentPhases ||
+              q.payment_phases ||
+              q.quotation_payment_phases ||
+              []
+            const subtotalVal = pickFirstFiniteNumber(
+              q.subtotal,
+              q.pricing?.subtotal,
+              q.pricing?.totalAmount,
+              q.totalAmount,
+              q.finalAmount,
+            )
+            const rem = optionalFiniteNumber(q.remaining)
+            const remAmt = optionalFiniteNumber(q.remainingAmount)
+            return {
+              id: q.id,
+              customer: q.customer || {},
+              products: q.products || {},
+              discount: q.discount || 0,
+              subtotal: subtotalVal,
+              totalAmount: q.pricing?.subtotal ?? q.pricing?.totalAmount ?? q.totalAmount ?? q.finalAmount ?? 0,
+              finalAmount: q.pricing?.finalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0,
+              createdAt: q.createdAt,
+              dealerId: q.dealerId,
+              dealer: q.dealer || null, // NEW: Include dealer/admin information
+              status: "approved" as const,  // Ensure status is always approved
+              paymentMode: q.paymentMode,
+              paymentStatus: q.paymentStatus,
+              ...(rem !== undefined ? { remaining: rem } : {}),
+              ...(remAmt !== undefined ? { remainingAmount: remAmt } : {}),
+              installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
+              paymentPhases: Array.isArray(phasesFromApi) ? phasesFromApi : [],
+              validUntil: q.validUntil,
+            }
+          })
         setQuotations(approvedQuotations)
       } else {
         // Fallback to localStorage for development
@@ -304,43 +462,72 @@ export default function AccountManagementPage() {
   // Initialize payment phases for quotations
   useEffect(() => {
     if (quotations.length > 0) {
-      const storedPlans = getStoredPaymentPlans()
       const payments: CustomerPayment[] = quotations.map((q) => {
-        const totalAmount = q.totalAmount || q.finalAmount || 0
-        const existingPhases = (q as any).installments || (q as any).paymentPhases || []
+        const qx = q as Quotation & { remaining?: number; remainingAmount?: number }
+        const subtotal = pickFirstFiniteNumber(
+          qx.subtotal,
+          qx.pricing?.subtotal,
+          qx.pricing?.totalAmount,
+          qx.totalAmount,
+          qx.finalAmount,
+        )
+        const totalAmount = q.totalAmount || q.finalAmount || subtotal || 0
+        const existingPhases =
+          (q as any).installments ||
+          (q as any).paymentPhases ||
+          (q as any).quotationPaymentPhases ||
+          (q as any).payment_phases ||
+          (q as any).quotation_payment_phases ||
+          []
+        // When backend is enabled, treat backend response as source-of-truth.
+        // Local storage fallback is only used when API mode is off.
+        const storedPlans = useApi ? {} : getStoredPaymentPlans()
         const storedPlan = storedPlans[q.id || ""]
         const storedPhases = storedPlan?.phases || []
-        const sourcePhases = Array.isArray(existingPhases) && existingPhases.length > 0 ? existingPhases : storedPhases
-        const phases: PaymentPhase[] = Array.isArray(existingPhases)
-          ? sourcePhases.map((phase: any, index: number) => ({
-              phaseNumber: Number(phase.phaseNumber || index + 1),
-              phaseName: phase.phaseName || `Installment ${index + 1}`,
-              amount: Number(phase.amount || 0),
-              dueDate: phase.dueDate,
-              status: (phase.status || "pending") as PaymentPhase["status"],
-              paidAmount: Number(phase.paidAmount || 0),
-              paymentDate: phase.paymentDate,
-              paymentMode: phase.paymentMode,
-              transactionId: phase.transactionId,
-            }))
+        const sourcePhases = useApi
+          ? existingPhases
+          : Array.isArray(existingPhases) && existingPhases.length > 0
+            ? existingPhases
+            : storedPhases
+        const phases: PaymentPhase[] = Array.isArray(sourcePhases)
+          ? coercePhasesPaymentModes(
+              sourcePhases.map((phase: any, index: number) => ({
+                phaseNumber: Number(phase.phaseNumber || index + 1),
+                phaseName: phase.phaseName || `Installment ${index + 1}`,
+                amount: Number(phase.amount || 0),
+                dueDate: phase.dueDate,
+                status: (phase.status || "pending") as PaymentPhase["status"],
+                paidAmount: Number(phase.paidAmount || 0),
+                paymentDate: phase.paymentDate,
+                paymentMode: normalizePaymentMode(
+                  phase.paymentMode || phase.mode || phase.payment_method,
+                ),
+                transactionId: phase.transactionId,
+              })),
+            )
           : []
 
         return {
           quotationId: q.id || "",
           customerName: `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.trim() || "Unknown",
           customerMobile: q.customer?.mobile || "",
+          subtotal,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
-          paymentType: (q as any).paymentType || q.paymentMode || storedPlan?.paymentType || storedPlan?.paymentMode || undefined,
-          paymentMode: q.paymentMode || storedPlan?.paymentMode || undefined,
-          paymentStatus: q.paymentStatus || storedPlan?.paymentStatus || "pending",
+          remainingFromApi: pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>),
+          paymentType: (q as any).paymentType || (useApi ? q.paymentMode : q.paymentMode || storedPlan?.paymentMode) || undefined,
+          paymentMode: normalizePaymentMode(q.paymentMode) || (!useApi ? normalizePaymentMode(storedPlan?.paymentMode) : undefined) || undefined,
+          paymentStatus:
+            q.paymentStatus ??
+            (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
+            "pending",
           phases,
           quotation: q,
         }
       })
       setCustomerPayments(payments)
     }
-  }, [quotations])
+  }, [quotations, useApi])
 
   // Show loading state while checking authentication
   if (isInitialLoad) {
@@ -442,8 +629,8 @@ export default function AccountManagementPage() {
     ]
 
     const rows = filteredCustomerPayments.map((payment) => {
-      const paidAmount = payment.phases.reduce((sum, phase) => sum + (Number(phase.paidAmount) || 0), 0)
-      const remainingAmount = Math.max(payment.totalAmount - paidAmount, 0)
+      const paidAmount = getTotalPaidPhases(payment.phases)
+      const remainingAmount = getDisplayRemaining(payment)
       return [
         payment.quotationId,
         payment.customerName,
@@ -451,7 +638,7 @@ export default function AccountManagementPage() {
         getPaymentTypeLabel(payment.paymentType),
         (payment.paymentStatus || "pending").toUpperCase(),
         payment.phases.length,
-        payment.totalAmount,
+        payment.subtotal,
         paidAmount,
         remainingAmount,
       ]
@@ -534,56 +721,79 @@ export default function AccountManagementPage() {
   const submitInstallments = async () => {
     if (!activePayment) return
 
-    const totalPaid = activePayment.phases.reduce((sum, phase) => sum + (Number(phase.paidAmount) || 0), 0)
+    const totalPaid = getTotalPaidPhases(activePayment.phases)
+    const paymentCap = activePayment.subtotal
+    if (totalPaid > paymentCap + 0.5) {
+      toast({
+        title: "Cannot save",
+        description: `Total paid (₹${Math.round(totalPaid).toLocaleString()}) cannot exceed subtotal (₹${Math.round(paymentCap).toLocaleString()}).`,
+        variant: "destructive",
+      })
+      return
+    }
     const paymentStatus: CustomerPayment["paymentStatus"] =
       totalPaid <= 0
         ? "pending"
-        : totalPaid >= activePayment.totalAmount
+        : totalPaid >= paymentCap
           ? "completed"
           : "partial"
+    const coercedPhases = coercePhasesPaymentModes(activePayment.phases)
+    const phasesForApi = normalizePhaseAmountsForApi(coercedPhases, paymentCap)
     const paymentModeFromPhases =
-      activePayment.phases.find((phase) => Boolean(phase.paymentMode))?.paymentMode || activePayment.paymentMode
+      phasesForApi.map((p) => normalizePaymentMode(p.paymentMode)).find(Boolean) ||
+      normalizePaymentMode(activePayment.paymentMode) ||
+      "cash"
 
     const payload = {
       paymentType: activePayment.paymentType,
       paymentMode: paymentModeFromPhases,
       paymentStatus: paymentStatus || "pending",
-      phases: activePayment.phases.map((phase) => ({
-        phaseNumber: phase.phaseNumber,
-        phaseName: phase.phaseName,
-        amount: Number(phase.amount) || 0,
-        paidAmount: Number(phase.paidAmount) || 0,
-        status: phase.status,
-        dueDate: phase.dueDate || undefined,
-        paymentDate: phase.paymentDate || undefined,
-        paymentMode: phase.paymentMode || undefined,
-        transactionId: phase.transactionId || undefined,
-      })),
+      phases: phasesForApi.map((phase) => {
+        const modeNorm = normalizePaymentMode(phase.paymentMode)
+        const needsMode =
+          (Number(phase.paidAmount) || 0) > 0 ||
+          phase.status === "partial" ||
+          phase.status === "completed"
+        return {
+          phaseNumber: phase.phaseNumber,
+          phaseName: phase.phaseName,
+          amount: Number(phase.amount) || 0,
+          paidAmount: Number(phase.paidAmount) || 0,
+          status: phase.status,
+          dueDate: phase.dueDate || undefined,
+          paymentDate: phase.paymentDate || undefined,
+          paymentMode: modeNorm || (needsMode ? paymentModeFromPhases : undefined),
+          transactionId: phase.transactionId || undefined,
+        }
+      }),
     }
 
     setIsSavingInstallments(true)
     try {
-      // Persist locally as source-of-truth fallback when backend does not
-      // return installment details in quotation list yet.
-      saveStoredPaymentPlan(activePayment.quotationId, payload)
-
-      if (useApi) {
+      if (!useApi) {
+        // Local fallback only when backend API mode is disabled.
+        saveStoredPaymentPlan(activePayment.quotationId, payload)
+      } else {
         await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
+        // Refresh from backend so paidAmount comes from DB response.
+        await loadApprovedQuotations()
       }
 
-      setCustomerPayments((prev) =>
-        prev.map((payment) =>
-          payment.quotationId === activePayment.quotationId
-            ? {
-                ...payment,
-                paymentType: payload.paymentType,
-                paymentMode: payload.paymentMode,
-                paymentStatus: payload.paymentStatus,
-                phases: payload.phases,
-              }
-            : payment,
-        ),
-      )
+      if (!useApi) {
+        setCustomerPayments((prev) =>
+          prev.map((payment) =>
+            payment.quotationId === activePayment.quotationId
+              ? {
+                  ...payment,
+                  paymentType: payload.paymentType,
+                  paymentMode: payload.paymentMode,
+                  paymentStatus: payload.paymentStatus,
+                  phases: payload.phases,
+                }
+              : payment,
+          ),
+        )
+      }
 
       toast({
         title: "Payment details saved",
@@ -999,9 +1209,10 @@ export default function AccountManagementPage() {
                       </div>
                     ) : (
                       filteredCustomerPayments.map((payment) => {
-                        const paidAmount = payment.phases.reduce((sum, p) => sum + p.paidAmount, 0)
-                        const remainingAmount = payment.totalAmount - paidAmount
-                        const isCompletedPayment = remainingAmount <= 0 || payment.paymentStatus === "completed"
+                        const paidAmount = getTotalPaidPhases(payment.phases)
+                        const remainingAmount = getDisplayRemaining(payment)
+                        const isCompletedPayment =
+                          payment.paymentStatus === "completed" || remainingAmount <= 0
 
                         return (
                           <Card
@@ -1036,7 +1247,7 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                <p className="text-sm font-semibold">₹{payment.totalAmount.toLocaleString()}</p>
+                                <p className="text-sm font-semibold">₹{payment.subtotal.toLocaleString()}</p>
                               </div>
 
                               <div className="min-w-0">
@@ -1060,7 +1271,10 @@ export default function AccountManagementPage() {
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
+                                  onClick={async () => {
+                                    if (useApi) {
+                                      await loadApprovedQuotations()
+                                    }
                                     setActivePaymentId(payment.quotationId)
                                     setInstallmentDialogOpen(true)
                                   }}
@@ -1114,7 +1328,7 @@ export default function AccountManagementPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Subtotal</p>
-                  <p className="text-base font-semibold">₹{activePayment.totalAmount.toLocaleString()}</p>
+                  <p className="text-base font-semibold">₹{activePayment.subtotal.toLocaleString()}</p>
                 </div>
               </div>
 
@@ -1126,7 +1340,7 @@ export default function AccountManagementPage() {
                     onClick={() => {
                                     const updated = customerPayments.map((p) =>
                         p.quotationId === activePayment.quotationId
-                          ? { ...p, phases: buildInstallments(p.totalAmount, 1) }
+                          ? { ...p, phases: buildInstallments(p.subtotal, 1) }
                                         : p
                                     )
                                     setCustomerPayments(updated)
@@ -1147,7 +1361,7 @@ export default function AccountManagementPage() {
                         onClick={() => {
                           const updated = customerPayments.map((p) =>
                             p.quotationId === activePayment.quotationId
-                              ? { ...p, phases: buildInstallments(p.totalAmount, p.phases.length + 1, p.phases) }
+                              ? { ...p, phases: buildInstallments(p.subtotal, p.phases.length + 1, p.phases) }
                               : p
                           )
                           setCustomerPayments(updated)
@@ -1166,7 +1380,7 @@ export default function AccountManagementPage() {
                       const paidBefore = activePayment.phases
                         .filter((p) => p.phaseNumber < phase.phaseNumber)
                         .reduce((sum, p) => sum + p.paidAmount, 0)
-                      const remainingBefore = Math.max(activePayment.totalAmount - paidBefore, 0)
+                      const remainingBefore = Math.max(activePayment.subtotal - paidBefore, 0)
                                   
                                   return (
                                     <div
@@ -1233,25 +1447,32 @@ export default function AccountManagementPage() {
                                             onChange={(e) => {
                                               const paid = Number.parseFloat(e.target.value) || 0
                                               const updated = customerPayments.map((p) =>
-                                    p.quotationId === activePayment.quotationId
+                                                p.quotationId === activePayment.quotationId
                                                   ? {
                                                       ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                              ? (() => {
-                                                  const nextStatus: PaymentPhase["status"] =
-                                                    paid >= ph.amount ? "completed" : paid > 0 ? "partial" : "pending"
-                                                  return {
-                                                              ...ph,
-                                                              paidAmount: paid,
-                                                    status: nextStatus,
-                                                              paymentDate: paid > 0 ? new Date().toISOString() : undefined,
-                                                            }
-                                                })()
-                                                          : ph
+                                                      phases: coercePhasesPaymentModes(
+                                                        p.phases.map((ph) =>
+                                                          ph.phaseNumber === phase.phaseNumber
+                                                            ? (() => {
+                                                                const nextStatus: PaymentPhase["status"] =
+                                                                  paid >= ph.amount
+                                                                    ? "completed"
+                                                                    : paid > 0
+                                                                      ? "partial"
+                                                                      : "pending"
+                                                                return {
+                                                                  ...ph,
+                                                                  paidAmount: paid,
+                                                                  status: nextStatus,
+                                                                  paymentDate:
+                                                                    paid > 0 ? new Date().toISOString() : undefined,
+                                                                }
+                                                              })()
+                                                            : ph,
+                                                        ),
                                                       ),
                                                     }
-                                                  : p
+                                                  : p,
                                               )
                                               setCustomerPayments(updated)
                                             }}
@@ -1356,7 +1577,7 @@ export default function AccountManagementPage() {
                                     ? {
                                         ...p,
                                         phases: buildInstallments(
-                                          p.totalAmount,
+                                          p.subtotal,
                                           p.phases.length - 1,
                                           p.phases.filter((ph) => ph.phaseNumber !== phase.phaseNumber)
                                         ),

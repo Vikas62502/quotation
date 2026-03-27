@@ -54,11 +54,13 @@ type ActionLogItem = {
   customerNote?: string
 }
 
+/** Four consolidated sections; every original status point is listed under one part. */
 const STATUS_GROUPS = [
   {
-    key: "call_connectivity",
-    label: "Call Connectivity Status",
+    key: "part_1_call_and_lead",
+    label: "Part 1 — Call & lead quality",
     options: [
+      // Call connectivity
       "Call Unanswered",
       "Switched Off",
       "Not Reachable",
@@ -67,12 +69,7 @@ const STATUS_GROUPS = [
       "Wrong Number",
       "Invalid Number",
       "Number Does Not Exist",
-    ],
-  },
-  {
-    key: "lead_validity",
-    label: "Lead Validity Status",
-    options: [
+      // Lead validity
       "Valid Lead",
       "Invalid Lead",
       "Duplicate Lead",
@@ -83,9 +80,10 @@ const STATUS_GROUPS = [
     ],
   },
   {
-    key: "interest_level",
-    label: "Interest Level Status",
+    key: "part_2_interest_qualification",
+    label: "Part 2 — Interest & qualification",
     options: [
+      // Interest level
       "Interested",
       "Highly Interested",
       "Need More Information",
@@ -94,23 +92,7 @@ const STATUS_GROUPS = [
       "Not Interested",
       "Already Installed Solar",
       "Already in Discussion with Another Vendor",
-    ],
-  },
-  {
-    key: "follow_up",
-    label: "Follow-up Status",
-    options: [
-      "Callback Scheduled",
-      "Follow-up Done",
-      "Follow-up Pending",
-      "Not Picking on Follow-up",
-      "Rescheduled",
-    ],
-  },
-  {
-    key: "qualification",
-    label: "Qualification Status (Solar Specific)",
-    options: [
+      // Solar qualification
       "Own House",
       "Rented Property",
       "Suitable Roof Available",
@@ -122,9 +104,16 @@ const STATUS_GROUPS = [
     ],
   },
   {
-    key: "conversion",
-    label: "Conversion / Sales Status",
+    key: "part_3_followup_sales",
+    label: "Part 3 — Follow-up & sales",
     options: [
+      // Follow-up
+      "Callback Scheduled",
+      "Follow-up Done",
+      "Follow-up Pending",
+      "Not Picking on Follow-up",
+      "Rescheduled",
+      // Conversion / sales
       "Site Visit Scheduled",
       "Site Visit Done",
       "Quotation Shared",
@@ -137,8 +126,8 @@ const STATUS_GROUPS = [
     ],
   },
   {
-    key: "rejection",
-    label: "Rejection / Lost Reasons",
+    key: "part_4_rejection",
+    label: "Part 4 — Rejection / lost",
     options: [
       "Price Too High",
       "Not Interested Currently",

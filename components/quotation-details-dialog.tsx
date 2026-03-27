@@ -37,7 +37,19 @@ interface QuotationDetailsDialogProps {
 const companyInfo = {
   name: "ChairBord Pvt. Ltd.",
   tagline: "Base of Innovation",
+  /** Jaipur — head office */
   address: "Plot No. 10, Ground Floor, Shri Shyam Vihar, Kalwar Road, Jhotwara, Jaipur, Rajasthan, India - 302012",
+  branches: [
+    {
+      label: "Ajmer",
+      address:
+        "2nd Floor, Miraj Cinema Mall, Gaurav Path, Apna Nagar, Vaishali Nagar, Ajmer, Rajasthan 305001",
+    },
+    {
+      label: "Chomu",
+      address: "Radha Swami Bagh, Jaipur Rd, behind MRF Showroom, Chomu, Rajasthan 303702",
+    },
+  ] as const,
   phone: "+91 9251666646",
   email: "info@chairbord.com",
   website: "www.chairbord.com",
@@ -213,10 +225,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 customerId: fullData.customerId || (customerData.id ? customerData.id : undefined),
                 products: fullData.products || quotation.products,
                 discount: fullData.discount ?? quotation.discount,
+                subtotal: fullData.subtotal ?? fullData.pricing?.subtotal ?? quotation.subtotal,
                 totalAmount: fullData.pricing?.totalAmount ?? quotation.totalAmount,
                 finalAmount: fullData.pricing?.finalAmount ?? fullData.finalAmount ?? quotation.finalAmount,
+                remaining: fullData.remaining ?? (quotation as Quotation & { remaining?: number }).remaining,
+                remainingAmount:
+                  fullData.remainingAmount ??
+                  (quotation as Quotation & { remainingAmount?: number }).remainingAmount,
                 paymentMode: fullData.paymentMode || quotation.paymentMode,
-                paymentStatus: fullData.paymentStatus || quotation.paymentStatus,
+                paymentStatus: fullData.paymentStatus ?? quotation.paymentStatus,
                 dealer: fullData.dealer || quotation.dealer || null, // NEW: Include dealer information
                 validUntil: fullData.validUntil || quotation.validUntil, // NEW: Include validity date
                 // Store backend pricing for use in calculations
@@ -519,69 +536,26 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   const generatePDF = async () => {
     setIsGeneratingPDF(true)
-    
-    // Wait a bit to ensure the hidden content is rendered
+
     await new Promise((resolve) => setTimeout(resolve, 200))
 
-    let input = document.getElementById(`quotation-content-${displayQuotation.id}`)
-
-    // If element not found, wait a bit more and try again
-    if (!input) {
+    const rootId = `quotation-content-${displayQuotation.id}`
+    let root = document.getElementById(rootId)
+    if (!root) {
       await new Promise((resolve) => setTimeout(resolve, 300))
-      input = document.getElementById(`quotation-content-${quotation.id}`)
+      root = document.getElementById(`quotation-content-${quotation.id}`)
     }
 
-    if (!input) {
+    if (!root) {
       console.error("Quotation content element not found.")
       alert("Error: Could not find quotation content. Please try again.")
       setIsGeneratingPDF(false)
       return
     }
 
-    // Create a temporary container to isolate the PDF content
-    // This prevents LAB color issues by isolating from parent styles
-    const tempContainer = document.createElement("div")
-    tempContainer.style.cssText = `
-      position: fixed !important;
-      left: 0px !important;
-      top: 0px !important;
-      width: 210mm !important;
-      height: auto !important;
-      background-color: #ffffff !important;
-      z-index: 9999 !important;
-      visibility: visible !important;
-      opacity: 1 !important;
-      overflow: hidden !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      border: none !important;
-    `
-    
-    // Clone the content to avoid affecting the original
-    const clonedInput = input.cloneNode(true) as HTMLElement
-    clonedInput.id = `quotation-content-temp-${quotation.id}`
-    clonedInput.style.cssText = `
-      position: relative !important;
-      left: 0 !important;
-      top: 0 !important;
-      visibility: visible !important;
-      opacity: 1 !important;
-      width: 210mm !important;
-      background-color: #ffffff !important;
-    `
-    
-    // Remove any problematic classes and ensure clean styles
-    clonedInput.className = ""
-    clonedInput.removeAttribute("class")
-    
-    tempContainer.appendChild(clonedInput)
-    document.body.appendChild(tempContainer)
-
-    try {
-      // Wait for images to load
-      const images = clonedInput.querySelectorAll("img")
-      await Promise.all(
-        Array.from(images).map(
+    const waitImages = (container: HTMLElement) =>
+      Promise.all(
+        Array.from(container.querySelectorAll("img")).map(
           (img) =>
             new Promise((resolve, reject) => {
               if (img.complete) {
@@ -589,100 +563,109 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               } else {
                 img.onload = () => resolve(true)
                 img.onerror = () => reject(new Error("Image failed to load"))
-                // Timeout after 5 seconds
                 setTimeout(() => reject(new Error("Image load timeout")), 5000)
               }
             }),
         ),
       )
 
-      // Wait a bit for styles to apply
-      await new Promise((resolve) => setTimeout(resolve, 100))
-
-      const canvas = await html2canvas(tempContainer, {
-        scale: 2,
-        useCORS: true,
-        logging: true, // Enable logging to see what's happening
-        backgroundColor: "#ffffff",
-        allowTaint: false,
-        foreignObjectRendering: false,
-        proxy: undefined, // Don't use proxy
-        onclone: (clonedDoc, element) => {
-          // Fix any LAB color functions in the cloned document
-          try {
-            const allElements = clonedDoc.querySelectorAll("*")
-            allElements.forEach((el) => {
-              const htmlEl = el as HTMLElement
-              if (htmlEl && htmlEl.style) {
-                // Get computed styles and replace LAB colors
+    /** Capture one logical sheet so jsPDF page breaks never slice through mid-content. */
+    const capturePdfSheet = async (keepSheet: "1" | "2") => {
+      const temp = root!.cloneNode(true) as HTMLElement
+      temp.removeAttribute("id")
+      temp.style.cssText = [
+        "position:fixed!important",
+        "left:0!important",
+        "top:0!important",
+        "width:210mm!important",
+        "background:#ffffff!important",
+        "visibility:visible!important",
+        "z-index:2147483647!important",
+        "margin:0!important",
+        "padding:0!important",
+        "box-shadow:none!important",
+        "border-radius:0!important",
+      ].join(";")
+      const drop = keepSheet === "1" ? "2" : "1"
+      temp.querySelector(`[data-pdf-sheet="${drop}"]`)?.remove()
+      document.body.appendChild(temp)
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        await waitImages(temp)
+        await new Promise((resolve) => setTimeout(resolve, 80))
+        return await html2canvas(temp, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: "#ffffff",
+          allowTaint: false,
+          foreignObjectRendering: false,
+          onclone: (clonedDoc) => {
+            try {
+              clonedDoc.querySelectorAll("*").forEach((el) => {
+                const htmlEl = el as HTMLElement
+                if (!htmlEl?.style) return
                 try {
-                  // Force all background colors to hex
-                  const bgColor = htmlEl.style.backgroundColor || window.getComputedStyle(el).backgroundColor
-                  if (bgColor && (bgColor.includes("lab(") || bgColor.includes("oklab(") || bgColor.includes("color("))) {
+                  const bg = htmlEl.style.backgroundColor || window.getComputedStyle(el).backgroundColor
+                  if (bg && (bg.includes("lab(") || bg.includes("oklab(") || bg.includes("color("))) {
                     htmlEl.style.backgroundColor = "#ffffff"
                   }
-                  
-                  // Force all text colors to hex
-                  const textColor = htmlEl.style.color || window.getComputedStyle(el).color
-                  if (textColor && (textColor.includes("lab(") || textColor.includes("oklab(") || textColor.includes("color("))) {
+                  const col = htmlEl.style.color || window.getComputedStyle(el).color
+                  if (col && (col.includes("lab(") || col.includes("oklab(") || col.includes("color("))) {
                     htmlEl.style.color = "#000000"
                   }
-                  
-                  // Force all border colors to hex
-                  const borderColor = htmlEl.style.borderColor || window.getComputedStyle(el).borderColor
-                  if (borderColor && (borderColor.includes("lab(") || borderColor.includes("oklab(") || borderColor.includes("color("))) {
+                  const b = htmlEl.style.borderColor || window.getComputedStyle(el).borderColor
+                  if (b && (b.includes("lab(") || b.includes("oklab(") || b.includes("color("))) {
                     htmlEl.style.borderColor = "#000000"
                   }
-                } catch (e) {
-                  // Ignore errors for individual elements
+                } catch {
+                  /* ignore */
                 }
-              }
-            })
-          } catch (e) {
-            console.warn("Error fixing colors in cloned document:", e)
-          }
-        },
-      })
+              })
+            } catch (e) {
+              console.warn("PDF onclone color fix:", e)
+            }
+          },
+        })
+      } finally {
+        temp.remove()
+      }
+    }
 
-      const imgWidth = 210 // A4 width in mm
-      const pageHeight = 297 // A4 height in mm
+    const addCanvasToPdf = (pdf: InstanceType<typeof jsPDF>, canvas: HTMLCanvasElement, addPageFirst: boolean) => {
+      const imgData = canvas.toDataURL("image/jpeg", 0.95)
+      const imgWidth = 210
+      const pageHeight = 297
       const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-      const pdf = new jsPDF("p", "mm", "a4")
-
       let heightLeft = imgHeight
       let position = 0
-
-      // Add first page
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, position, imgWidth, imgHeight)
+      if (addPageFirst) {
+        pdf.addPage()
+      }
+      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight)
       heightLeft -= pageHeight
-
-      // Add additional pages only if there's significant content left (more than 10mm)
-      // This prevents blank pages
       while (heightLeft > 10) {
         position = heightLeft - imgHeight
         pdf.addPage()
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, position, imgWidth, imgHeight)
+        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight)
         heightLeft -= pageHeight
       }
+    }
 
-      // Generate filename
+    try {
+      const canvas1 = await capturePdfSheet("1")
+      const canvas2 = await capturePdfSheet("2")
+      const pdf = new jsPDF("p", "mm", "a4")
+      addCanvasToPdf(pdf, canvas1, false)
+      addCanvasToPdf(pdf, canvas2, true)
+
       const customerName = `${customer?.firstName || ""}_${customer?.lastName || ""}`.replace(/\s/g, "_")
       const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
-      
-      // Use displayQuotation for PDF generation
-      const pdfQuotation = displayQuotation
-
-      // Save
       pdf.save(filename)
     } catch (error) {
       console.error("Error generating PDF:", error)
       alert(`Error generating PDF: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`)
     } finally {
-      // Clean up temporary container
-      if (tempContainer && tempContainer.parentNode) {
-        tempContainer.parentNode.removeChild(tempContainer)
-      }
       setIsGeneratingPDF(false)
     }
   }
@@ -869,7 +852,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       {/* Hidden PDF Content - Always rendered for PDF generation */}
       <div
         id={`quotation-content-${displayQuotation.id}`}
-        className="bg-white p-4 sm:p-6 rounded-lg shadow-md"
+        className="quotation-pdf-root bg-white p-4 sm:p-6 rounded-lg shadow-md"
         style={{ 
           position: "fixed", 
           left: "-9999px", 
@@ -880,13 +863,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
         }}
       >
         <style jsx>{`
-          #quotation-content-${quotation.id} {
+          div.quotation-pdf-root {
             font-family: Arial, sans-serif;
             line-height: 1.4;
             color: #000;
             font-size: 12px;
             width: 210mm;
-            min-height: 297mm;
+            min-height: auto;
             padding: 0;
             box-sizing: border-box;
             display: flex;
@@ -896,28 +879,38 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             margin: 0;
           }
 
-          .pdf-page-content {
+          div.quotation-pdf-root .pdf-page-content {
             position: relative;
             z-index: 1;
             background-color: #ffffff;
             padding: 15mm;
             box-sizing: border-box;
             width: 210mm;
-            min-height: 297mm;
+            min-height: auto;
             display: flex;
             flex-direction: column;
-            page-break-after: always;
             margin: 0;
           }
 
-          .pdf-page-content:last-of-type {
-            page-break-after: avoid;
-          }
-
-          .pdf-page-content .pdf-footer {
+          div.quotation-pdf-root .pdf-page-content .pdf-footer {
             margin-top: auto;
             position: relative;
             bottom: 0;
+          }
+
+          div.quotation-pdf-root .pdf-page-inner {
+            display: flex;
+            flex-direction: column;
+            flex: 0 1 auto;
+            min-height: min-content;
+            width: 100%;
+          }
+
+          div.quotation-pdf-root [data-pdf-sheet] {
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
           }
 
           .pdf-header {
@@ -991,7 +984,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           }
 
           .pdf-products-section {
-            flex: 1;
+            flex: 0 1 auto;
             display: grid;
             grid-template-columns: 1fr;
             gap: 10px;
@@ -1350,11 +1343,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           }
         `}</style>
 
+        {/* Sheet 1 + 2 are captured separately for PDF so page breaks never cut through footer text */}
+        <div data-pdf-sheet="1">
         {/* Page 1: Main Quotation Content */}
         <div className="pdf-page-content">
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+          <div className="pdf-page-inner">
             {/* Header */}
-            <div className="pdf-header" style={{ marginTop: "-15px" }}>
+            <div className="pdf-header" style={{ marginTop: "-31px" }}>
               <div className="pdf-company-logo">
                 <img
                   src={companyInfo.logoUrl || "/placeholder.svg"}
@@ -1402,8 +1397,18 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 <div className="pdf-info-item">
                   <strong>Email:</strong> {companyInfo.email}
                 </div>
-                <div className="pdf-info-item">
-                  <strong>Address:</strong> {companyInfo.address}
+                <div className="pdf-info-item" style={{ flexDirection: "column", alignItems: "flex-start", gap: "6px" }}>
+                  <strong>Offices:</strong>
+                  <div style={{ lineHeight: 1.35 }}>
+                    <div style={{ marginBottom: "4px" }}>
+                      <strong>Jaipur (Head Office):</strong> {companyInfo.address}
+                    </div>
+                    {companyInfo.branches.map((b) => (
+                      <div key={b.label} style={{ marginBottom: "4px" }}>
+                        <strong>{b.label}:</strong> {b.address}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1413,98 +1418,93 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               <div className="pdf-product-category">
                 <div className="pdf-category-header">📦 SOLAR SETS</div>
                 
-                {/* System size label */}
-                {roundedSystemSizeLabel && (
+                {/* System size label (BOTH shows size inside the two-column row below) */}
+                {products.systemType !== "both" && roundedSystemSizeLabel && (
                   <div className="pdf-system-size-label mb-2">System Size: {roundedSystemSizeLabel}</div>
                 )}
-                {/* For BOTH system type, show separate DCR and NON DCR panels side by side */}
+                {/* BOTH: left = system size + DCR, then Non-DCR below; right = common components */}
                 {products.systemType === "both" ? (
-                  <>
-                    {/* DCR and NON DCR Panels in same row */}
-                    <div style={{ display: "flex", gap: "8px", marginBottom: "6px" }}>
-                      {/* DCR Panels - Left side */}
-                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
-                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
-                          <div className="pdf-product-name">DCR Panels (With Subsidy)</div>
-                          <div className="pdf-product-details">
-                            <div className="pdf-product-specs">
-                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
-                              {products.dcrPanelSize && products.dcrPanelQuantity && (
-                                <>
-                                  <br />
-                                  <span style={{ fontSize: "10px", color: "#666" }}>
-                                    Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <div style={{ flex: "1 1 52%", minWidth: 0 }}>
+                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
+                        Solar panels (DCR + Non-DCR)
+                      </div>
+                      {roundedSystemSizeLabel && (
+                        <div className="pdf-system-size-label" style={{ marginBottom: "6px" }}>
+                          System Size: {roundedSystemSizeLabel}
                         </div>
                       )}
-                      
-                      {/* NON DCR Panels - Right side */}
-                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
-                          <div className="pdf-product-name">Non-DCR Panels (Without Subsidy)</div>
-                          <div className="pdf-product-details">
-                            <div className="pdf-product-specs">
-                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
-                              {products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                                <>
-                                  <br />
-                                  <span style={{ fontSize: "10px", color: "#666" }}>
-                                    Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW
-                                  </span>
-                                </>
-                              )}
-                            </div>
+                      <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
+                        {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                          <div>
+                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand} {products.dcrPanelSize} ×{" "}
+                            {products.dcrPanelQuantity}
+                            <span style={{ fontSize: "10px", color: "#666" }}>
+                              {" "}
+                              (
+                              {(
+                                (Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) /
+                                1000
+                              ).toFixed(2)}
+                              kW)
+                            </span>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Common Components */}
-                    <div className="pdf-product-item">
-                      <div className="pdf-product-name">Common Components</div>
-                      <div className="pdf-product-details">
-                    <div className="pdf-product-specs">
-              
-                          Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                          {products.structureType && (
-                            <>
-                              <br />
-                              Structure: {products.structureType} ({products.structureSize})
-                            </>
-                          )}
-                          {products.meterBrand && (
-                            <>
-                              <br />
-                              Meter: {products.meterBrand}
-                            </>
-                          )}
-                          {/* {products.acCableBrand && (
-                            <>
-                              <br />
-                              AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                              {products.dcCableSize}
-                            </>
-                          )}
-                          {(products.acdb || products.dcdb) && (
-                            <>
-                              <br />
-                              ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                            </>
-                          )}
-                          {products.batteryCapacity && (
-                            <>
-                              <br />
-                              Battery: {products.batteryCapacity}
-                            </>
-                          )} */}
-                        </div>
+                        )}
+                        {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                          <div style={{ marginTop: "4px" }}>
+                            <strong>Non-DCR (without subsidy):</strong> {products.nonDcrPanelBrand}{" "}
+                            {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                            <span style={{ fontSize: "10px", color: "#666" }}>
+                              {" "}
+                              (
+                              {(
+                                (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                  products.nonDcrPanelQuantity) /
+                                1000
+                              ).toFixed(2)}
+                              kW)
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </>
+                    <div
+                      style={{
+                        flex: "1 1 44%",
+                        minWidth: 0,
+                        borderLeft: "1px solid #e5e7eb",
+                        paddingLeft: "10px",
+                      }}
+                    >
+                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
+                        Common Components
+                      </div>
+                      <div className="pdf-product-specs">
+                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {products.structureType && (
+                          <>
+                            <br />
+                            Structure: {products.structureType} ({products.structureSize})
+                          </>
+                        )}
+                        {products.meterBrand && (
+                          <>
+                            <br />
+                            Meter: {products.meterBrand}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   /* For DCR, NON DCR, or CUSTOMIZE system types */
                   <div className="pdf-product-item">
@@ -1641,18 +1641,25 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             </div>
             <div className="contact-info">
               <p>
-                <strong>OFFICE:</strong> {companyInfo.address}
+                <strong>Jaipur (Head Office):</strong> {companyInfo.address}
               </p>
+              {companyInfo.branches.map((b) => (
+                <p key={b.label}>
+                  <strong>{b.label}:</strong> {b.address}
+                </p>
+              ))}
               <p>
                 <strong>Mobile:</strong> {companyInfo.phone} | <strong>GSTIN:</strong> {companyInfo.gst}
               </p>
             </div>
           </div>
         </div>
+        </div>
 
+        <div data-pdf-sheet="2">
         {/* Page 2: Terms & Conditions */}
-        <div className="pdf-page-content" style={{ pageBreakBefore: "always" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        <div className="pdf-page-content">
+          <div className="pdf-page-inner">
             {/* Header for Page 2 */}
             <div className="pdf-header" style={{ marginTop: "-15px" }}>
               <div className="pdf-company-logo">
@@ -1678,10 +1685,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             <div
               className="pdf-terms-section"
               style={{
-                flex: 1,
                 marginBottom: 0,
-                maxHeight: "203mm",
-                overflow: "hidden",
+                maxHeight: "none",
+                overflow: "visible",
                 marginTop: "-15px",
               }}
             >
@@ -1879,13 +1885,19 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
             </div>
             <div className="contact-info">
               <p>
-                <strong>OFFICE:</strong> {companyInfo.address}
+                <strong>Jaipur (Head Office):</strong> {companyInfo.address}
               </p>
+              {companyInfo.branches.map((b) => (
+                <p key={b.label}>
+                  <strong>{b.label}:</strong> {b.address}
+                </p>
+              ))}
               <p>
                 <strong>Mobile:</strong> {companyInfo.phone} | <strong>GSTIN:</strong> {companyInfo.gst}
               </p>
             </div>
           </div>
+        </div>
         </div>
       </div>
 
@@ -2005,26 +2017,63 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <span className="uppercase">{products.systemType}</span>
                   </div>
                     {products.systemType === "both" ? (
-                      <>
-                        {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                        <div className="min-w-0 flex-1 space-y-1 text-sm">
+                          <span className="font-semibold block">Panels (BOTH)</span>
+                          {roundedSystemSizeLabel && (
+                            <p className="text-sm text-muted-foreground">System Size: {roundedSystemSizeLabel}</p>
+                          )}
+                          {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                            <p className="font-medium">
+                              <span className="text-muted-foreground">DCR (subsidy)</span>{" "}
+                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                              <span className="text-xs text-muted-foreground ml-1">
+                                (
+                                {(
+                                  (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
+                                    products.dcrPanelQuantity) /
+                                  1000
+                                ).toFixed(2)}
+                                kW)
+                              </span>
+                            </p>
+                          )}
+                          {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                            <p className="font-medium">
+                              <span className="text-muted-foreground">Non-DCR</span>{" "}
+                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                              <span className="text-xs text-muted-foreground ml-1">
+                                (
+                                {(
+                                  (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                    products.nonDcrPanelQuantity) /
+                                  1000
+                                ).toFixed(2)}
+                                kW)
+                              </span>
+                            </p>
+                          )}
+                        </div>
+                        <div className="sm:border-l sm:border-border sm:pl-4 min-w-0 sm:max-w-[55%] space-y-1 text-sm">
+                          <span className="font-semibold block">Common components</span>
                           <div>
-                            <span className="font-semibold">DCR Panels (With Subsidy): </span>
-                            {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
-                            <span className="text-xs text-muted-foreground ml-1">
-                              (Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW)
-                            </span>
+                            <span className="font-semibold">Inverter: </span>
+                            {products.inverterBrand} {products.inverterType} ({products.inverterSize})
                           </div>
-                        )}
-                        {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                          <div>
-                            <span className="font-semibold">Non-DCR Panels (Without Subsidy): </span>
-                            {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
-                            <span className="text-xs text-muted-foreground ml-1">
-                              (Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW)
-                            </span>
-                          </div>
-                        )}
-                      </>
+                          {products.structureType && (
+                            <div>
+                              <span className="font-semibold">Structure: </span>
+                              {products.structureType} ({products.structureSize})
+                            </div>
+                          )}
+                          {products.meterBrand && (
+                            <div>
+                              <span className="font-semibold">Meter: </span>
+                              {products.meterBrand}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     ) : products.systemType !== "customize" ? (
                       <div>
                         <span className="font-semibold">Panels: </span>
@@ -2038,21 +2087,25 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         </div>
                       ))
                     )}
-                    <div>
-                      <span className="font-semibold">Inverter: </span>
-                      {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                    </div>
-                    {products.structureType && (
-                      <div>
-                        <span className="font-semibold">Structure: </span>
-                        {products.structureType} ({products.structureSize})
-                      </div>
-                    )}
-                    {products.meterBrand && (
-                      <div>
-                        <span className="font-semibold">Meter: </span>
-                        {products.meterBrand}
-                      </div>
+                    {products.systemType !== "both" && (
+                      <>
+                        <div>
+                          <span className="font-semibold">Inverter: </span>
+                          {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        </div>
+                        {products.structureType && (
+                          <div>
+                            <span className="font-semibold">Structure: </span>
+                            {products.structureType} ({products.structureSize})
+                          </div>
+                        )}
+                        {products.meterBrand && (
+                          <div>
+                            <span className="font-semibold">Meter: </span>
+                            {products.meterBrand}
+                          </div>
+                        )}
+                      </>
                     )}
                     {products.batteryCapacity && (
                       <div>
@@ -2525,6 +2578,34 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 </CardContent>
               </Card>
             )}
+
+            <Card className="border-muted">
+              <CardHeader className="py-3 px-4 sm:px-6">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-primary shrink-0" />
+                  Office locations
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm pt-0 px-4 sm:px-6 pb-4">
+                <p className="text-muted-foreground leading-relaxed">
+                  <span className="font-semibold text-foreground">Jaipur (Head Office): </span>
+                  {companyInfo.address}
+                </p>
+                {companyInfo.branches.map((b) => (
+                  <p key={b.label} className="text-muted-foreground leading-relaxed">
+                    <span className="font-semibold text-foreground">{b.label}: </span>
+                    {b.address}
+                  </p>
+                ))}
+                <p className="text-xs text-muted-foreground pt-1">
+                  <span className="font-medium">Phone: </span>
+                  {companyInfo.phone}
+                  {" · "}
+                  <span className="font-medium">GSTIN: </span>
+                  {companyInfo.gst}
+                </p>
+              </CardContent>
+            </Card>
 
             <div className="flex flex-col sm:flex-row justify-end gap-2 mt-4">
             <Button 

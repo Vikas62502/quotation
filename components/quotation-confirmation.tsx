@@ -616,6 +616,59 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
     return `${products.panelSize}W` || "As per selection"
   }
 
+  const toKwValue = (value?: string) => {
+    if (!value) return 0
+    const normalized = value.toLowerCase().trim()
+    const numeric = Number.parseFloat(normalized.replace(/[^0-9.]/g, ""))
+    if (Number.isNaN(numeric)) return 0
+    if (normalized.includes("kw")) {
+      return numeric
+    }
+    if (normalized.includes("w")) {
+      return numeric / 1000
+    }
+    return numeric
+  }
+
+  const getTotalSystemKw = () => {
+    if (products.systemType === "both") {
+      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
+      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
+      const dcrKw = toKwValue(dcrSize)
+      const nonDcrKw = toKwValue(nonDcrSize)
+      return dcrKw + nonDcrKw
+    }
+
+    if (products.panelSize && products.panelQuantity) {
+      const total = toKwValue(products.panelSize) * (products.panelQuantity || 0)
+      if (total > 0) {
+        return total
+      }
+    }
+
+    if (products.systemType === "customize" && products.customPanels) {
+      return products.customPanels.reduce((sum, panel) => {
+        const panelKw = toKwValue(panel.size)
+        return sum + panelKw * (panel.quantity || 0)
+      }, 0)
+    }
+
+    if (products.inverterSize) {
+      return toKwValue(products.inverterSize)
+    }
+
+    return 0
+  }
+
+  const getRoundedSystemSizeLabel = () => {
+    const totalKw = getTotalSystemKw()
+    if (!totalKw || Number.isNaN(totalKw)) return null
+    const rounded = Math.max(1, Math.round(totalKw))
+    return `${rounded}kW`
+  }
+
+  const roundedSystemSizeLabel = getRoundedSystemSizeLabel()
+
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
   const phase = products.phase // ✅ phase comes from table/selection
@@ -1176,93 +1229,108 @@ const getStructureDetails = (products: ProductSelection) => {
               <div className="pdf-product-category">
                 <div className="pdf-category-header">📦 SOLAR SETS</div>
                 
-                {/* For BOTH system type, show separate DCR and NON DCR panels side by side */}
+                {/* BOTH: left = system size + DCR, Non-DCR below; right = common components */}
                 {products.systemType === "both" ? (
-                  <>
-                    {/* DCR and NON DCR Panels in same row */}
-                    <div style={{ display: "flex", gap: "12px", marginBottom: "8px" }}>
-                      {/* DCR Panels - Left side */}
-                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
-                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
-                          <div className="pdf-product-name">DCR Panels (With Subsidy)</div>
-                          <div className="pdf-product-details">
-                            <div className="pdf-product-specs">
-                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
-                              {products.dcrPanelSize && products.dcrPanelQuantity && (
-                                <>
-                                  <br />
-                                  <span style={{ fontSize: "10px", color: "#666" }}>
-                                    Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW
-                                  </span>
-                                </>
-                              )}
-                            </div>
-                          </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      marginBottom: "8px",
+                    }}
+                  >
+                    <div style={{ flex: "1 1 52%", minWidth: 0 }}>
+                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
+                        Solar panels (DCR + Non-DCR)
+                      </div>
+                      {roundedSystemSizeLabel && (
+                        <div className="pdf-system-size-label" style={{ marginBottom: "6px" }}>
+                          System Size: {roundedSystemSizeLabel}
                         </div>
                       )}
-                      
-                      {/* NON DCR Panels - Right side */}
-                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                        <div className="pdf-product-item" style={{ flex: "1", marginBottom: "0" }}>
-                          <div className="pdf-product-name">Non-DCR Panels (Without Subsidy)</div>
-                          <div className="pdf-product-details">
-                            <div className="pdf-product-specs">
-                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
-                              {products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                                <>
-                                  <br />
-                                  <span style={{ fontSize: "10px", color: "#666" }}>
-                                    Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW
-                                  </span>
-                                </>
-                              )}
-                            </div>
+                      <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
+                        {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                          <div>
+                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand} {products.dcrPanelSize} ×{" "}
+                            {products.dcrPanelQuantity}
+                            <span style={{ fontSize: "10px", color: "#666" }}>
+                              {" "}
+                              (
+                              {(
+                                (Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) /
+                                1000
+                              ).toFixed(2)}
+                              kW)
+                            </span>
                           </div>
-                        </div>
-                      )}
-                    </div>
-                    
-                    {/* Common Components */}
-                    <div className="pdf-product-item">
-                      <div className="pdf-product-name">Common Components</div>
-                      <div className="pdf-product-details">
-                        <div className="pdf-product-specs">
-                          Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                          {products.structureType && (
-                            <>
-                              <br />
-                              Structure: {products.structureType} ({products.structureSize})
-                            </>
-                          )}
-                          {products.meterBrand && (
-                            <>
-                              <br />
-                              Meter: {products.meterBrand}
-                            </>
-                          )}
-                          {products.acCableBrand && (
-                            <>
-                              <br />
-                              AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                              {products.dcCableSize}
-                            </>
-                          )}
-                          {(products.acdb || products.dcdb) && (
-                            <>
-                              <br />
-                              ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                            </>
-                          )}
-                          {products.batteryCapacity && (
-                            <>
-                              <br />
-                              Battery: {products.batteryCapacity}
-                            </>
-                          )}
-                        </div>
+                        )}
+                        {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                          <div style={{ marginTop: "4px" }}>
+                            <strong>Non-DCR (without subsidy):</strong> {products.nonDcrPanelBrand}{" "}
+                            {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                            <span style={{ fontSize: "10px", color: "#666" }}>
+                              {" "}
+                              (
+                              {(
+                                (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                  products.nonDcrPanelQuantity) /
+                                1000
+                              ).toFixed(2)}
+                              kW)
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </>
+                    <div
+                      style={{
+                        flex: "1 1 44%",
+                        minWidth: 0,
+                        borderLeft: "1px solid #e5e7eb",
+                        paddingLeft: "10px",
+                      }}
+                    >
+                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
+                        Common Components
+                      </div>
+                      <div className="pdf-product-specs">
+                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {products.structureType && (
+                          <>
+                            <br />
+                            Structure: {products.structureType} ({products.structureSize})
+                          </>
+                        )}
+                        {products.meterBrand && (
+                          <>
+                            <br />
+                            Meter: {products.meterBrand}
+                          </>
+                        )}
+                        {products.acCableBrand && (
+                          <>
+                            <br />
+                            AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
+                            {products.dcCableSize}
+                          </>
+                        )}
+                        {(products.acdb || products.dcdb) && (
+                          <>
+                            <br />
+                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
+                          </>
+                        )}
+                        {products.batteryCapacity && (
+                          <>
+                            <br />
+                            Battery: {products.batteryCapacity}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 ) : (
                   /* For DCR, NON DCR, or CUSTOMIZE system types */
                   <div className="pdf-product-item">
@@ -1772,32 +1840,67 @@ const getStructureDetails = (products: ProductSelection) => {
                     {products.systemType}
                   </span>
                 </div>
-                {/* For BOTH system type, show DCR and NON-DCR panels separately */}
                 {products.systemType === "both" ? (
-                  <>
-                    {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">DCR Panels (With Subsidy)</span>
-                        <span className="text-sm font-medium">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                    <div className="min-w-0 flex-1 space-y-1 text-sm">
+                      <span className="text-sm font-semibold text-foreground block">Panels (BOTH)</span>
+                      {roundedSystemSizeLabel && (
+                        <p className="text-xs text-muted-foreground">System Size: {roundedSystemSizeLabel}</p>
+                      )}
+                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                        <p className="text-sm font-medium text-foreground">
+                          <span className="text-muted-foreground">DCR (subsidy)</span>{" "}
                           {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
                           <span className="text-xs text-muted-foreground ml-1">
-                            (Total: {((Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) / 1000).toFixed(2)}kW)
+                            (
+                            {(
+                              (Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) /
+                              1000
+                            ).toFixed(2)}
+                            kW)
                           </span>
-                        </span>
-                      </div>
-                    )}
-                    {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                      <div className="flex justify-between">
-                        <span className="text-sm text-muted-foreground">Non-DCR Panels (Without Subsidy)</span>
-                        <span className="text-sm font-medium">
+                        </p>
+                      )}
+                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                        <p className="text-sm font-medium text-foreground">
+                          <span className="text-muted-foreground">Non-DCR</span>{" "}
                           {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
                           <span className="text-xs text-muted-foreground ml-1">
-                            (Total: {((Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) * products.nonDcrPanelQuantity) / 1000).toFixed(2)}kW)
+                            (
+                            {(
+                              (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                products.nonDcrPanelQuantity) /
+                              1000
+                            ).toFixed(2)}
+                            kW)
                           </span>
+                        </p>
+                      )}
+                    </div>
+                    <div className="sm:border-l sm:border-border sm:pl-4 min-w-0 sm:max-w-[55%] space-y-2 text-sm">
+                      <span className="text-sm font-semibold text-foreground block">Common components</span>
+                      <div className="flex justify-between gap-2">
+                        <span className="text-muted-foreground shrink-0">Inverter</span>
+                        <span className="text-sm font-medium text-right">
+                          {products.inverterBrand} {products.inverterType} ({products.inverterSize})
                         </span>
                       </div>
-                    )}
-                  </>
+                      {products.structureType && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Structure</span>
+                          <span className="text-sm font-medium text-right">
+                            {products.structureType} ({products.structureSize})
+                          </span>
+                        </div>
+                      )}
+                      {products.meterBrand && (
+                        <div className="flex justify-between gap-2">
+                          <span className="text-muted-foreground shrink-0">Meter</span>
+                          <span className="text-sm font-medium text-right">{products.meterBrand}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Panels</span>
@@ -1806,25 +1909,29 @@ const getStructureDetails = (products: ProductSelection) => {
                     </span>
                   </div>
                 )}
-                <div className="flex justify-between">
-                  <span className="text-sm text-muted-foreground">Inverter</span>
-                  <span className="text-sm font-medium">
-                    {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                  </span>
-                </div>
-                {products.structureType && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Structure</span>
-                    <span className="text-sm font-medium">
-                      {products.structureType} ({products.structureSize})
-                    </span>
-                  </div>
-                )}
-                {products.meterBrand && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Meter</span>
-                    <span className="text-sm font-medium">{products.meterBrand}</span>
-                  </div>
+                {products.systemType !== "both" && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-sm text-muted-foreground">Inverter</span>
+                      <span className="text-sm font-medium">
+                        {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                      </span>
+                    </div>
+                    {products.structureType && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">Structure</span>
+                        <span className="text-sm font-medium">
+                          {products.structureType} ({products.structureSize})
+                        </span>
+                      </div>
+                    )}
+                    {products.meterBrand && (
+                      <div className="flex justify-between">
+                        <span className="text-sm text-muted-foreground">Meter</span>
+                        <span className="text-sm font-medium">{products.meterBrand}</span>
+                      </div>
+                    )}
+                  </>
                 )}
                 {products.systemType === "hybrid" && products.batteryCapacity && (
                   <div className="flex justify-between">
