@@ -17,6 +17,9 @@
 /build
 /dist
 
+# Local APK output (run: npm run android:apk)
+/output/
+
 # misc
 .DS_Store
 *.pem

@@ -995,12 +995,27 @@ export const api = {
         return apiRequest(`/admin/quotations${query ? `?${query}` : ""}`)
       },
 
-      updateStatus: async (quotationId: string, status: string, paymentType?: "loan" | "cash" | "mix") => {
+      updateStatus: async (
+        quotationId: string,
+        status: string,
+        approval?: {
+          paymentType: "loan" | "cash" | "mix"
+          bankName?: string
+          bankIfsc?: string
+        },
+      ) => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
           method: "PATCH",
           body: {
             status,
-            ...(paymentType ? { paymentType, paymentMode: paymentType } : {}),
+            ...(approval
+              ? {
+                  paymentType: approval.paymentType,
+                  paymentMode: approval.paymentType,
+                  ...(approval.bankName ? { bankName: approval.bankName } : {}),
+                  ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc } : {}),
+                }
+              : {}),
           },
         })
       },

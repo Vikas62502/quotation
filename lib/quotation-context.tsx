@@ -90,6 +90,9 @@ export interface Quotation {
   dealer?: DealerInfo | null // NEW: Dealer/admin information from backend
   status?: QuotationStatus
   paymentMode?: string
+  /** Set when admin approves with loan / mix */
+  bankName?: string
+  bankIfsc?: string
   paymentStatus?: "pending" | "completed" | "partial"
   validUntil?: string // Optional: quotation validity date
 }

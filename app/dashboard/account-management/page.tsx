@@ -46,6 +46,8 @@ interface CustomerPayment {
   remainingFromApi?: number
   paymentType?: string
   paymentMode?: string
+  bankName?: string
+  bankIfsc?: string
   paymentStatus?: "pending" | "completed" | "partial"
   phases: PaymentPhase[]
   quotation: Quotation
@@ -337,8 +339,11 @@ export default function AccountManagementPage() {
               dealerId: q.dealerId,
               dealer: q.dealer || null, // NEW: Include dealer/admin information
               status: "approved" as const,  // Ensure status is always approved
-              paymentMode: q.paymentMode,
+              paymentMode: q.paymentMode ?? q.payment_mode,
+              paymentType: q.paymentType ?? q.payment_type,
               paymentStatus: q.paymentStatus,
+              bankName: q.bankName ?? q.bank_name,
+              bankIfsc: q.bankIfsc ?? q.bank_ifsc,
               ...(rem !== undefined ? { remaining: rem } : {}),
               ...(remAmt !== undefined ? { remainingAmount: remAmt } : {}),
               installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
@@ -515,8 +520,13 @@ export default function AccountManagementPage() {
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
           remainingFromApi: pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>),
-          paymentType: (q as any).paymentType || (useApi ? q.paymentMode : q.paymentMode || storedPlan?.paymentMode) || undefined,
+          paymentType:
+            (q as any).paymentType ||
+            (useApi ? q.paymentMode : q.paymentMode || storedPlan?.paymentMode) ||
+            undefined,
           paymentMode: normalizePaymentMode(q.paymentMode) || (!useApi ? normalizePaymentMode(storedPlan?.paymentMode) : undefined) || undefined,
+          bankName: String((qx as any).bankName ?? (qx as any).bank_name ?? "").trim() || undefined,
+          bankIfsc: String((qx as any).bankIfsc ?? (qx as any).bank_ifsc ?? "").trim() || undefined,
           paymentStatus:
             q.paymentStatus ??
             (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
@@ -573,7 +583,17 @@ export default function AccountManagementPage() {
   const totalApprovedValue = quotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || q.totalAmount || 0), 0)
 
   const getPaymentTypeValue = (payment: CustomerPayment) => {
-    return String(payment.paymentType || "").toLowerCase()
+    return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+  }
+
+  const getFinancingBankDisplay = (payment: CustomerPayment): string => {
+    const t = getPaymentTypeValue(payment)
+    if (t !== "loan" && t !== "mix") return "—"
+    const bank = String(payment.bankName || "").trim()
+    const ifsc = String(payment.bankIfsc || "").trim().toUpperCase()
+    if (!bank && !ifsc) return "—"
+    if (bank && ifsc) return `${bank} · ${ifsc}`
+    return bank || ifsc
   }
 
   const getPaymentTypeLabel = (paymentType?: string) => {
@@ -621,6 +641,7 @@ export default function AccountManagementPage() {
       "Customer Name",
       "Customer Mobile",
       "Payment Type",
+      "Bank & IFSC",
       "Payment Status",
       "Installments",
       "Subtotal",
@@ -631,11 +652,13 @@ export default function AccountManagementPage() {
     const rows = filteredCustomerPayments.map((payment) => {
       const paidAmount = getTotalPaidPhases(payment.phases)
       const remainingAmount = getDisplayRemaining(payment)
+      const bankCell = getFinancingBankDisplay(payment)
       return [
         payment.quotationId,
         payment.customerName,
         payment.customerMobile,
-        getPaymentTypeLabel(payment.paymentType),
+        getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
+        bankCell === "—" ? "" : bankCell,
         (payment.paymentStatus || "pending").toUpperCase(),
         payment.phases.length,
         payment.subtotal,
@@ -1223,7 +1246,7 @@ export default function AccountManagementPage() {
                                 : "border-border/60 bg-card/80"
                             }`}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-x-4 gap-y-3 items-start lg:items-center">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-x-4 gap-y-3 items-start lg:items-center">
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
                                 <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -1242,7 +1265,16 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Payment Type</p>
-                                <p className="text-sm font-semibold">{getPaymentTypeLabel(payment.paymentType)}</p>
+                                <p className="text-sm font-semibold">
+                                  {getPaymentTypeLabel(payment.paymentType || payment.paymentMode)}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0 col-span-2 sm:col-span-3 lg:col-span-1">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
+                                <p className="text-sm font-medium break-words leading-snug">
+                                  {getFinancingBankDisplay(payment)}
+                                </p>
                               </div>
 
                               <div className="min-w-0">
@@ -1331,6 +1363,12 @@ export default function AccountManagementPage() {
                   <p className="text-base font-semibold">₹{activePayment.subtotal.toLocaleString()}</p>
                 </div>
               </div>
+              {["loan", "mix"].includes(getPaymentTypeValue(activePayment)) && (
+                <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm">
+                  <span className="text-muted-foreground">Bank · IFSC </span>
+                  <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
+                </div>
+              )}
 
               {activePayment.phases.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-muted/10 py-8">

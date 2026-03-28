@@ -91,6 +91,8 @@ export default function AdminPanelPage() {
   const [approvalDialogOpen, setApprovalDialogOpen] = useState(false)
   const [approvingQuotationId, setApprovingQuotationId] = useState<string | null>(null)
   const [approvalPaymentType, setApprovalPaymentType] = useState<ApprovalPaymentType>("cash")
+  const [approvalBankName, setApprovalBankName] = useState("")
+  const [approvalBankIfsc, setApprovalBankIfsc] = useState("")
   const [isLoadingQuotationDetails, setIsLoadingQuotationDetails] = useState(false)
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
@@ -740,11 +742,15 @@ export default function AdminPanelPage() {
   const updateQuotationStatus = async (
     quotationId: string,
     status: QuotationStatus,
-    paymentType?: ApprovalPaymentType,
+    approval?: { paymentType: ApprovalPaymentType; bankName?: string; bankIfsc?: string },
   ) => {
     try {
       if (useApi) {
-        await api.admin.quotations.updateStatus(quotationId, status, paymentType)
+        if (status === "approved" && approval) {
+          await api.admin.quotations.updateStatus(quotationId, status, approval)
+        } else {
+          await api.admin.quotations.updateStatus(quotationId, status)
+        }
         await loadData()
       } else {
         // Fallback to localStorage
@@ -753,7 +759,13 @@ export default function AdminPanelPage() {
             ? {
                 ...q,
                 status,
-                ...(paymentType ? { paymentType, paymentMode: paymentType } : {}),
+                ...(approval
+                  ? {
+                      paymentMode: approval.paymentType,
+                      bankName: approval.bankName,
+                      bankIfsc: approval.bankIfsc,
+                    }
+                  : {}),
               }
             : q,
         )
@@ -773,6 +785,8 @@ export default function AdminPanelPage() {
     if (status === "approved") {
       setApprovingQuotationId(quotationId)
       setApprovalPaymentType("cash")
+      setApprovalBankName("")
+      setApprovalBankIfsc("")
       setApprovalDialogOpen(true)
       return
     }
@@ -781,9 +795,40 @@ export default function AdminPanelPage() {
 
   const confirmApprovalWithPaymentType = async () => {
     if (!approvingQuotationId) return
-    await updateQuotationStatus(approvingQuotationId, "approved", approvalPaymentType)
+    const needsBank = approvalPaymentType === "loan" || approvalPaymentType === "mix"
+    if (needsBank) {
+      const bankName = approvalBankName.trim()
+      const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+      if (!bankName) {
+        toast({
+          title: "Bank name required",
+          description: "Enter the customer’s bank for loan or mix approval.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscRaw)) {
+        toast({
+          title: "Invalid IFSC",
+          description: "Use 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).",
+          variant: "destructive",
+        })
+        return
+      }
+      await updateQuotationStatus(approvingQuotationId, "approved", {
+        paymentType: approvalPaymentType,
+        bankName,
+        bankIfsc: ifscRaw,
+      })
+    } else {
+      await updateQuotationStatus(approvingQuotationId, "approved", {
+        paymentType: approvalPaymentType,
+      })
+    }
     setApprovalDialogOpen(false)
     setApprovingQuotationId(null)
+    setApprovalBankName("")
+    setApprovalBankIfsc("")
   }
 
   // Update quotation data
@@ -4785,6 +4830,8 @@ export default function AdminPanelPage() {
             setApprovalDialogOpen(open)
             if (!open) {
               setApprovingQuotationId(null)
+              setApprovalBankName("")
+              setApprovalBankIfsc("")
             }
           }}
         >
@@ -4792,25 +4839,62 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>Select Payment Type</DialogTitle>
               <DialogDescription>
-                Choose payment type before approving this quotation.
+                For Loan or Mix, enter the customer&apos;s bank and IFSC. The same details appear in Payment Management after approval.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-2 py-2">
-              <Label htmlFor="approval-payment-type">Payment Type</Label>
-              <Select
-                value={approvalPaymentType}
-                onValueChange={(value) => setApprovalPaymentType(value as ApprovalPaymentType)}
-              >
-                <SelectTrigger id="approval-payment-type">
-                  <SelectValue placeholder="Select payment type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="loan">Loan</SelectItem>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="mix">Mix</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="approval-payment-type">Payment Type</Label>
+                <Select
+                  value={approvalPaymentType}
+                  onValueChange={(value) => {
+                    const v = value as ApprovalPaymentType
+                    setApprovalPaymentType(v)
+                    if (v === "cash") {
+                      setApprovalBankName("")
+                      setApprovalBankIfsc("")
+                    }
+                  }}
+                >
+                  <SelectTrigger id="approval-payment-type">
+                    <SelectValue placeholder="Select payment type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="loan">Loan</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="mix">Mix</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {(approvalPaymentType === "loan" || approvalPaymentType === "mix") && (
+                <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Customer financing bank (required)</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="approval-bank-name">Bank name</Label>
+                    <Input
+                      id="approval-bank-name"
+                      value={approvalBankName}
+                      onChange={(e) => setApprovalBankName(e.target.value)}
+                      placeholder="e.g. State Bank of India"
+                      autoComplete="organization"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="approval-bank-ifsc">IFSC code</Label>
+                    <Input
+                      id="approval-bank-ifsc"
+                      value={approvalBankIfsc}
+                      onChange={(e) => setApprovalBankIfsc(e.target.value.toUpperCase())}
+                      placeholder="e.g. SBIN0001234"
+                      maxLength={11}
+                      className="font-mono uppercase"
+                      autoComplete="off"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -4819,6 +4903,8 @@ export default function AdminPanelPage() {
                 onClick={() => {
                   setApprovalDialogOpen(false)
                   setApprovingQuotationId(null)
+                  setApprovalBankName("")
+                  setApprovalBankIfsc("")
                 }}
               >
                 Cancel

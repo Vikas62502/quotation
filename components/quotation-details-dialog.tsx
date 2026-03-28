@@ -232,8 +232,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 remainingAmount:
                   fullData.remainingAmount ??
                   (quotation as Quotation & { remainingAmount?: number }).remainingAmount,
-                paymentMode: fullData.paymentMode || quotation.paymentMode,
+                paymentMode: fullData.paymentMode || fullData.payment_mode || quotation.paymentMode,
                 paymentStatus: fullData.paymentStatus ?? quotation.paymentStatus,
+                bankName: fullData.bankName ?? fullData.bank_name ?? quotation.bankName,
+                bankIfsc: fullData.bankIfsc ?? fullData.bank_ifsc ?? quotation.bankIfsc,
                 dealer: fullData.dealer || quotation.dealer || null, // NEW: Include dealer information
                 validUntil: fullData.validUntil || quotation.validUntil, // NEW: Include validity date
                 // Store backend pricing for use in calculations
@@ -2485,6 +2487,30 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <p className="text-sm font-semibold uppercase">{quotation.status || "Pending"}</p>
                     </div>
                   </div>
+                  {String(displayQuotation.status || "").toLowerCase() === "approved" &&
+                    displayQuotation.paymentMode && (
+                      <div className="flex items-start gap-3 md:col-span-2">
+                        <CreditCard className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-1">Approved payment type</p>
+                            <p className="text-sm font-semibold capitalize">{displayQuotation.paymentMode}</p>
+                          </div>
+                          {["loan", "mix"].includes(String(displayQuotation.paymentMode).toLowerCase()) && (
+                            <>
+                              <div>
+                                <p className="text-xs text-muted-foreground mb-1">Customer bank</p>
+                                <p className="text-sm font-medium">{displayQuotation.bankName || "—"}</p>
+                              </div>
+                              <div>
+                                <p className="text-xs text-muted-foreground mb-1">IFSC</p>
+                                <p className="text-sm font-mono font-medium">{displayQuotation.bankIfsc || "—"}</p>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
                 </div>
               </CardContent>
             </Card>
