@@ -220,13 +220,16 @@ export function quotationToApiJson(row) {
  *   state
  *   customer_note
  *   assigned_dealer_id (nullable)
- *   status (queued|active|called|follow_up|not_interested|closed)
+ *   status (queued|assigned|in_progress|rescheduled|completed)
  *   created_at / updated_at
  *
  * Assignment rule required by frontend:
  *   activeLimitPerDealer = 1
- *   -> every selected dealer can hold only one "active" lead at a time.
- *   -> remaining rows stay queued and are assigned when dealer frees up.
+ *   -> every selected dealer can hold only one lead in visible state at a time.
+ *   -> When you set `assigned_dealer_id`, you MUST also set `status` to:
+ *        - `assigned` (dealer sees it in Current Lead tab)
+ *        - (or `in_progress` if you want it immediately started)
+ *      NEVER leave it as `queued` if the dealer should see it as "Current Lead".
  */
 
 function asArray(value) {
@@ -318,7 +321,8 @@ export async function postHrLeadsUploadCsv(req, res, db) {
     let assigned = 0
     const activeCountByDealer = new Map()
     for (const dealerId of dealerIds) {
-      const activeCount = await db.hrLeads.count({ assignedDealerId: dealerId, status: "active" })
+      // Count only leads that are visible/claimable by dealer right now.
+      const activeCount = await db.hrLeads.count({ assignedDealerId: dealerId, status: "assigned" })
       activeCountByDealer.set(dealerId, activeCount)
     }
 
@@ -330,7 +334,9 @@ export async function postHrLeadsUploadCsv(req, res, db) {
         const dealerId = dealerIds[idx]
         const currentActive = activeCountByDealer.get(dealerId) || 0
         if (currentActive < activeLimitPerDealer) {
-          await db.hrLeads.updateById(leadId, { assignedDealerId: dealerId, status: "active" })
+          // Important: frontend "Current Lead" hides status=queued/completed.
+          // So assigned leads must be marked `assigned` (or `in_progress`).
+          await db.hrLeads.updateById(leadId, { assignedDealerId: dealerId, status: "assigned" })
           activeCountByDealer.set(dealerId, currentActive + 1)
           dealerCursor = (idx + 1) % dealerIds.length
           assigned += 1
@@ -688,4 +694,52 @@ export async function patchDealerCallingQueueAction(req, res, db) {
  *   }
  *
  * This removes false LEAD_005 failures from Recent Actions status edits.
+ */
+
+/**
+ * -----------------------------------------------------------------------------
+ * DEALER QUEUE REFRESH RULES (fix: HR uploaded leads not appearing for dealer)
+ * -----------------------------------------------------------------------------
+ *
+ * Symptom:
+ * - HR uploads new leads and assigns dealer pool.
+ * - Dealer has completed previous leads.
+ * - Dealer page still shows no new lead until hard refresh.
+ *
+ * Backend requirements:
+ * 1) `/api/dealers/me/calling-queue/next` must always compute latest assignable lead
+ *    from DB state (do not rely on stale in-memory cache).
+ *
+ * 2) Allocation on HR upload:
+ *    - If dealer has active count < activeLimitPerDealer, assign immediately.
+ *    - Newly assigned lead must have deterministic status visible to dealer:
+ *        status in ('assigned','in_progress') for immediate pickup.
+ *      Do NOT leave it as status='queued', because dealer "Current Lead"
+ *      UI hides queued/completed items and depends on assigned/in_progress/rescheduled.
+ *
+ * 3) Completion flow:
+ *    - On dealer action completion, allocator should attempt to attach next queued lead
+ *      to same dealer (work-queue model) in same transaction if possible.
+ *
+ * 4) Socket events after assignment changes (recommended):
+ *    Emit at least one of:
+ *      - `calling:uploads-updated`
+ *      - `calling:actions-updated`
+ *      - `backend:mutation` with domain/path containing leads/calling
+ *    so clients can refresh without manual reload.
+ *
+ * 5) Query consistency:
+ *    - Ensure `/next` query filters by authenticated dealer id and valid statuses.
+ *    - Recommended ordering: assignedAt ASC, createdAt ASC.
+ *    - Recommended indexes:
+ *        (assigned_dealer_id, status, assigned_at)
+ *        (status, created_at)
+ *
+ * Example selection logic:
+ *   SELECT * FROM calling_leads
+ *   WHERE assigned_dealer_id = :dealerId
+ *     AND status IN ('assigned','in_progress','rescheduled')
+ *     AND (next_follow_up_at IS NULL OR next_follow_up_at <= NOW())
+ *   ORDER BY COALESCE(assigned_at, created_at) ASC
+ *   LIMIT 1;
  */

@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin, CreditCard } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
+import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { useQuotation } from "@/lib/quotation-context"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
@@ -663,7 +664,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
       const customerName = `${customer?.firstName || ""}_${customer?.lastName || ""}`.replace(/\s/g, "_")
       const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
-      pdf.save(filename)
+      await savePdfForDevice(pdf, filename)
     } catch (error) {
       console.error("Error generating PDF:", error)
       alert(`Error generating PDF: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`)

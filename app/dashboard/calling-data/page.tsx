@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
+import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -493,6 +494,69 @@ export default function CallingDataPage() {
 
   useEffect(() => {
     loadLeads()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useApi])
+
+  useEffect(() => {
+    if (!useApi) return
+
+    const refresh = () => {
+      loadLeads()
+    }
+
+    // Keep queue fresh for newly uploaded/assigned leads.
+    const interval = window.setInterval(refresh, 15000)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refresh()
+    }
+    const onWindowFocus = () => refresh()
+
+    document.addEventListener("visibilitychange", onVisibilityChange)
+    window.addEventListener("focus", onWindowFocus)
+
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener("visibilitychange", onVisibilityChange)
+      window.removeEventListener("focus", onWindowFocus)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useApi])
+
+  useEffect(() => {
+    if (!useApi) return
+    const socket = getRealtime()
+    if (!socket) return
+
+    const refresh = () => {
+      loadLeads()
+    }
+
+    const onBackendMutation = (evt: any) => {
+      const domain = String(evt?.domain || "").toLowerCase()
+      const path = String(evt?.path || "").toLowerCase()
+      if (
+        domain === "hr" ||
+        domain === "dealer" ||
+        domain === "dealers" ||
+        path.includes("leads") ||
+        path.includes("calling")
+      ) {
+        refresh()
+      }
+    }
+
+    socket.on("calling:uploads-updated", refresh)
+    socket.on("calling:actions-updated", refresh)
+    socket.on("dealer:directory-updated", refresh)
+    socket.on("backend:mutation", onBackendMutation)
+
+    return () => {
+      socket.off("calling:uploads-updated", refresh)
+      socket.off("calling:actions-updated", refresh)
+      socket.off("dealer:directory-updated", refresh)
+      socket.off("backend:mutation", onBackendMutation)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useApi])
 

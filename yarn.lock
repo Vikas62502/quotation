@@ -54,6 +54,11 @@
   dependencies:
     "@capacitor/synapse" "^1.0.4"
 
+"@capacitor/share@^8.0.1":
+  version "8.0.1"
+  resolved "https://registry.npmjs.org/@capacitor/share/-/share-8.0.1.tgz"
+  integrity sha512-3cSBKBCJVon54rKDROP2rqGyeGks4pBh9TbaEk9S375Kbek/ZHe72N50zIa0Vn9Eac/SuhwgehO/mmA4CsUOiw==
+
 "@capacitor/synapse@^1.0.4":
   version "1.0.4"
   resolved "https://registry.npmjs.org/@capacitor/synapse/-/synapse-1.0.4.tgz"

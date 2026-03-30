@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ArrowLeft, Check, FileText, Download, Edit, AlertCircle } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
+import { savePdfForDevice } from "@/lib/mobile-pdf"
 
 interface Props {
   customer: Customer
@@ -577,8 +578,8 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       const customerName = `${customer.firstName}_${customer.lastName}`.replace(/\s/g, "_")
       const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
 
-      // Save
-      pdf.save(filename)
+      // Save (native Android/iOS writes file and opens share sheet)
+      await savePdfForDevice(pdf, filename)
     } catch (error) {
       console.error("Error generating PDF:", error)
     } finally {
