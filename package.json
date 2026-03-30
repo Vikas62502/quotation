@@ -12,7 +12,8 @@
     "android:add": "npx cap add android",
     "android:sync": "npx cap sync android",
     "android:copy": "npx cap copy android",
-    "android:open": "npx cap open android"
+    "android:open": "npx cap open android",
+    "android:apk": "bash scripts/build-apk.sh"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

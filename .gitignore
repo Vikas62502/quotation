@@ -17,8 +17,8 @@
 /build
 /dist
 
-# Local APK output (run: npm run android:apk)
-/output/
+# Built Android packages (run: npm run android:apk — file appears under apk/)
+apk/*.apk
 
 # misc
 .DS_Store

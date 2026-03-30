@@ -59,7 +59,14 @@ type UploadedLeadBatch = {
   rows: ParsedCsvRow[]
 }
 
-const DEFAULT_ACTIVE_LIMIT = 8
+const DEFAULT_ACTIVE_LIMIT = 1
+
+const ACTION_LABEL_MAP: Record<string, string> = {
+  called: "Called",
+  follow_up: "Follow Up",
+  not_interested: "Not Interested",
+  interested: "Interested",
+}
 
 const normalizeHeaderKey = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "")
 
@@ -116,6 +123,24 @@ const splitCityState = (value: string) => {
   return { city: parts[0], state: parts[parts.length - 1] }
 }
 
+const parseCallRemarkParts = (remark: string) => {
+  const text = (remark || "").trim()
+  if (!text) {
+    return { statusCategory: "", status: "", remark: "" }
+  }
+
+  const categoryMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
+  if (categoryMatch) {
+    return {
+      statusCategory: categoryMatch[1]?.trim() || "",
+      status: categoryMatch[2]?.trim() || "",
+      remark: "",
+    }
+  }
+
+  return { statusCategory: "", status: "", remark: text }
+}
+
 export default function HrDashboardPage() {
   const router = useRouter()
   const { isAuthenticated, role, logout } = useAuth()
@@ -127,7 +152,6 @@ export default function HrDashboardPage() {
   const [csvFileName, setCsvFileName] = useState("")
   const [isLoadingDealers, setIsLoadingDealers] = useState(false)
   const [isAssigning, setIsAssigning] = useState(false)
-  const [activeLeadsLimit, setActiveLeadsLimit] = useState(DEFAULT_ACTIVE_LIMIT)
   const [activeTab, setActiveTab] = useState("assignment")
   const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
@@ -229,6 +253,60 @@ export default function HrDashboardPage() {
     }
   }
 
+  const normalizeBatchRows = (rows: any[]): ParsedCsvRow[] => {
+    if (!Array.isArray(rows)) return []
+    return rows.map((row: any) => {
+      const raw = row?.raw && typeof row.raw === "object" ? row.raw : {}
+      return {
+        name: row?.name || row?.customerName || "",
+        mobile: normalizeMobile(String(row?.mobile || row?.customerMobile || "")),
+        altMobile: normalizeMobile(String(row?.altMobile || row?.alternateMobile || "")),
+        kNumber: row?.kNumber || row?.kno || "",
+        address: row?.address || row?.customerAddress || "",
+        customerNote: row?.customerNote || row?.note || "",
+        city: row?.city || "",
+        state: row?.state || "",
+        raw,
+      }
+    })
+  }
+
+  const normalizeUploadedLeadBatch = (item: any, fallbackDealers: DealerOption[], index: number): UploadedLeadBatch => {
+    const rows = normalizeBatchRows(item?.rows || item?.leads || item?.items || [])
+    const dealerValues: string[] = Array.isArray(item?.dealers)
+      ? item.dealers
+      : Array.isArray(item?.dealerIds)
+        ? item.dealerIds
+        : item?.dealerId
+          ? [item.dealerId]
+          : []
+
+    const normalizedDealers = dealerValues
+      .map((value: any) => {
+        if (typeof value === "string") {
+          const dealer = fallbackDealers.find((d) => d.id === value)
+          return dealer ? `${dealer.firstName} ${dealer.lastName}`.trim() : value
+        }
+        if (value && typeof value === "object") {
+          const fullName = `${value.firstName || ""} ${value.lastName || ""}`.trim()
+          return fullName || value.name || value.id || ""
+        }
+        return ""
+      })
+      .filter(Boolean)
+
+    const rowCountFromApi = Number(item?.rowCount || item?.totalRows || item?.count || 0)
+
+    return {
+      id: item?.id || item?.batchId || item?.uploadId || `batch-${index}`,
+      uploadedAt: item?.uploadedAt || item?.createdAt || item?.updatedAt || new Date().toISOString(),
+      fileName: item?.fileName || item?.originalFileName || item?.csvFileName || "uploaded.csv",
+      rowCount: rowCountFromApi > 0 ? rowCountFromApi : rows.length,
+      dealers: normalizedDealers,
+      rows,
+    }
+  }
+
   useEffect(() => {
     if (!isAuthenticated) {
       router.push("/hr-login")
@@ -258,11 +336,6 @@ export default function HrDashboardPage() {
             loadedDealers = await getDealersFromQuotations()
           }
 
-          // Final fallback: localStorage cache
-          if (loadedDealers.length === 0) {
-            loadedDealers = getLocalDealers()
-          }
-
           setDealers(loadedDealers)
         } else {
           setDealers(getLocalDealers())
@@ -282,9 +355,32 @@ export default function HrDashboardPage() {
   }, [toast, useApi, realtimeTick])
 
   useEffect(() => {
-    const savedBatches = JSON.parse(localStorage.getItem("hrUploadedLeadBatches") || "[]")
-    setUploadedLeadBatches(Array.isArray(savedBatches) ? savedBatches : [])
-  }, [realtimeTick])
+    const loadUploadedLeadBatches = async () => {
+      if (!useApi) {
+        setUploadedLeadBatches([])
+        return
+      }
+      try {
+        const response = await api.hr.uploadedLeads.getAll({ limit: 200 })
+        const source =
+          response?.uploads ||
+          response?.batches ||
+          response?.items ||
+          response?.data ||
+          []
+        const normalized = Array.isArray(source)
+          ? source.map((item: any, index: number) => normalizeUploadedLeadBatch(item, dealers, index))
+          : []
+        const sorted = normalized.sort(
+          (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime(),
+        )
+        setUploadedLeadBatches(sorted)
+      } catch {
+        setUploadedLeadBatches([])
+      }
+    }
+    loadUploadedLeadBatches()
+  }, [dealers, useApi, realtimeTick])
 
   useEffect(() => {
     const loadCallingActions = async () => {
@@ -471,35 +567,17 @@ export default function HrDashboardPage() {
         return
       }
 
-      const result = await api.hr.uploadLeadsCsv(csvFile, selectedDealerIds, activeLeadsLimit)
+      const result = await api.hr.uploadLeadsCsv(csvFile, selectedDealerIds, DEFAULT_ACTIVE_LIMIT)
       const parsed = Number(result?.parsed || result?.total || csvRows.length)
       const created = Number(result?.created || result?.inserted || 0)
       const skippedDuplicate = Number(result?.skippedDuplicate || result?.skipped || 0)
       const assigned = Number(result?.assigned || created || 0)
       const queued = Number(result?.queued || 0)
 
-      const selectedDealerNames = selectedDealerIds
-        .map((id) => {
-          const dealer = dealers.find((d) => d.id === id)
-          return dealer ? `${dealer.firstName} ${dealer.lastName}`.trim() : id
-        })
-        .filter(Boolean)
-      const savedBatches = JSON.parse(localStorage.getItem("hrUploadedLeadBatches") || "[]")
-      const nextBatch: UploadedLeadBatch = {
-        id: `batch-${Date.now()}`,
-        uploadedAt: new Date().toISOString(),
-        fileName: csvFileName || csvFile.name || "uploaded.csv",
-        rowCount: csvRows.length,
-        dealers: selectedDealerNames,
-        rows: csvRows.slice(0, 1000),
-      }
-      const nextBatches = [nextBatch, ...(Array.isArray(savedBatches) ? savedBatches : [])].slice(0, 20)
-      localStorage.setItem("hrUploadedLeadBatches", JSON.stringify(nextBatches))
-      setUploadedLeadBatches(nextBatches)
-
       setCsvRows([])
       setCsvFile(null)
       setCsvFileName("")
+      setRealtimeTick((prev) => prev + 1)
       toast({
         title: "Saved to database",
         description: `Parsed ${parsed}, created ${created}, assigned ${assigned}, queued ${queued}, duplicates ${skippedDuplicate}.`,
@@ -665,29 +743,6 @@ export default function HrDashboardPage() {
 
             <Card className="border-border/60">
               <CardHeader>
-                <CardTitle className="text-base">Assignment Controls</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="max-w-xs space-y-2">
-                  <label className="text-sm font-medium">Active leads per dealer</label>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={activeLeadsLimit}
-                    onChange={(e) => {
-                      const value = Number(e.target.value)
-                      if (Number.isNaN(value)) return
-                      setActiveLeadsLimit(Math.min(20, Math.max(1, value)))
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground">Use 7 or 8 for controlled daily calling queue.</p>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="border-border/60">
-              <CardHeader>
                 <CardTitle className="text-base">Select Dealers</CardTitle>
               </CardHeader>
               <CardContent>
@@ -758,7 +813,7 @@ export default function HrDashboardPage() {
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-1">
-                            {batch.dealers.slice(0, 4).map((name) => (
+                            {batch.dealers.map((name) => (
                               <Badge key={`${batch.id}-${name}`} variant="outline">
                                 {name}
                               </Badge>
@@ -776,7 +831,7 @@ export default function HrDashboardPage() {
                               </tr>
                             </thead>
                             <tbody>
-                              {batch.rows.slice(0, 10).map((row, idx) => (
+                              {batch.rows.map((row, idx) => (
                                 <tr key={`${batch.id}-${row.mobile}-${idx}`} className="border-t border-border/40">
                                   <td className="py-1 pr-3">{row.name || "N/A"}</td>
                                   <td className="py-1 pr-3">{row.mobile || "N/A"}</td>
@@ -787,9 +842,6 @@ export default function HrDashboardPage() {
                             </tbody>
                           </table>
                         </div>
-                        {batch.rows.length > 10 ? (
-                          <p className="text-xs text-muted-foreground">Showing first 10 rows of this upload.</p>
-                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -846,8 +898,11 @@ export default function HrDashboardPage() {
                   <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
                 ) : (
                   <div className="space-y-2">
-                    {filteredCallingActions.slice(0, 300).map((item) => (
-                      <div key={item.id} className="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                    {filteredCallingActions.slice(0, 300).map((item) => {
+                      const parsedRemark = parseCallRemarkParts(item.callRemark || "")
+                      const statusLabel = ACTION_LABEL_MAP[item.action] || item.action || "N/A"
+                      return (
+                        <div key={item.id} className="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-sm break-words">{item.dealerName || "Unknown Employee"}</p>
@@ -876,9 +931,23 @@ export default function HrDashboardPage() {
                             </span>
                           </div>
                         </div>
-                        {item.callRemark ? <p className="text-sm mt-2 break-words">Remark: {item.callRemark}</p> : null}
+                        <div className="mt-2 space-y-1 text-sm">
+                          {parsedRemark.statusCategory ? (
+                            <p className="break-words">
+                              <span className="font-medium">Status Category:</span> {parsedRemark.statusCategory}
+                            </p>
+                          ) : null}
+                          <p className="break-words">
+                            <span className="font-medium">Status:</span> {parsedRemark.status || statusLabel}
+                          </p>
+                          {parsedRemark.remark ? (
+                            <p className="break-words">
+                              <span className="font-medium">Remark:</span> {parsedRemark.remark}
+                            </p>
+                          ) : null}
+                        </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )}
               </CardContent>

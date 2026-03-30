@@ -56,6 +56,29 @@ The CI/CD workflow automatically uses the API URL. You can customize it:
 2. Add a secret named `NEXT_PUBLIC_API_URL` with your API URL
 3. If not set, it defaults to `http://api.inventory.chairbordsolar.com/api`
 
+## Android app (Capacitor)
+
+The APK is a **WebView shell**. By default it loads production: **[https://quotation.chairbordsolar.com/](https://quotation.chairbordsolar.com/)** (see `capacitor.config.ts`).
+
+To **override** (e.g. staging or local dev), set:
+
+```env
+CAPACITOR_LIVE_URL=https://your-other-url.example.com
+```
+
+in `.env` or `.env.local`, then:
+
+```bash
+npx cap sync android
+npm run android:apk
+```
+
+- **Production:** default is already `https://quotation.chairbordsolar.com`; sync + build is enough.
+- **Android emulator + local `npm run dev`:** use `CAPACITOR_LIVE_URL=http://10.0.2.2:3000` (emulator → your computer’s port 3000).
+- **Physical device + same Wi‑Fi:** use your PC’s LAN IP, e.g. `http://192.168.1.x:3000`.
+
+`android:usesCleartextTraffic` is enabled so `http://` dev URLs work.
+
 ## Important Notes
 
 - `NEXT_PUBLIC_*` variables are embedded at **build time** in Next.js

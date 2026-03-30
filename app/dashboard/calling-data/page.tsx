@@ -323,6 +323,20 @@ export default function CallingDataPage() {
     return match?.[1] || ""
   }
 
+  const parseTaggedRemark = (remark?: string) => {
+    const raw = (remark || "").trim()
+    if (!raw) return { category: "", status: "", remark: "" }
+
+    const match = raw.match(/^\[([^\]]+)\]\s*([^|]*?)\s*(?:\|\s*(.*))?$/)
+    if (!match) return { category: "", status: "", remark: raw }
+
+    return {
+      category: (match[1] || "").trim(),
+      status: (match[2] || "").trim(),
+      remark: (match[3] || "").trim(),
+    }
+  }
+
   const matchesDateRange = (value: string | undefined, range: "all" | "today" | "week" | "month") => {
     if (range === "all") return true
     if (!value) return false
@@ -567,31 +581,6 @@ export default function CallingDataPage() {
     try {
       const actionAt = payload.actionAt || new Date().toISOString()
       const response = await api.dealers.updateCallingLeadAction(leadId, payload)
-      const actionLead = dealerAssignedQueue.find((lead) => lead.id === leadId) || currentLead
-      if (payload.action !== "start" && actionLead) {
-        const localActionHistory = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
-        const nextHistory = [
-          {
-            id: `${leadId}-${actionAt}`,
-            leadId,
-            dealerId: dealer?.id || "",
-            dealerName: `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim() || dealer?.username || "Unknown Employee",
-            action: payload.action,
-            callRemark: payload.callRemark || "",
-            actionAt,
-            nextFollowUpAt: payload.nextFollowUpAt,
-            name: actionLead.name || "",
-            mobile: actionLead.mobile || "",
-            kNumber: actionLead.kNumber || "",
-            address: actionLead.address || "",
-            city: actionLead.city || "",
-            state: actionLead.state || "",
-            customerNote: actionLead.customerNote || "",
-          },
-          ...localActionHistory,
-        ].slice(0, 5000)
-        localStorage.setItem("callingActionHistory", JSON.stringify(nextHistory))
-      }
       setCallRemark("")
       setRescheduleAt("")
       setManualOtherReason("")
@@ -1193,7 +1182,9 @@ export default function CallingDataPage() {
               <p className="text-sm text-muted-foreground">No action history available.</p>
             ) : (
               <div className="space-y-2">
-                {filteredRecentActions.slice(0, 10).map((item) => (
+                {filteredRecentActions.map((item) => {
+                  const parsed = parseTaggedRemark(item.callRemark)
+                  return (
                   <div key={item.id} className="rounded-md border border-violet-200/70 bg-violet-50/30 p-3 text-sm">
                     <p className="font-medium">{item.name} • {item.mobile}</p>
                     <p className="text-xs text-muted-foreground">
@@ -1202,7 +1193,13 @@ export default function CallingDataPage() {
                     {item.nextFollowUpAt ? (
                       <p className="text-xs text-muted-foreground">Next follow-up: {formatDateTime(item.nextFollowUpAt)}</p>
                     ) : null}
-                    {item.callRemark ? <p className="text-xs mt-1">Remark: {item.callRemark}</p> : null}
+                    {(parsed.category || parsed.status || parsed.remark) ? (
+                      <div className="mt-1 space-y-1 text-xs">
+                        {parsed.category ? <p><span className="font-medium">Status Category:</span> {parsed.category}</p> : null}
+                        {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
+                        {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
+                      </div>
+                    ) : null}
                     <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                       <Textarea
                         rows={2}
@@ -1365,7 +1362,7 @@ export default function CallingDataPage() {
                       )
                     })()}
                   </div>
-                ))}
+                )})}
               </div>
             )}
           </CardContent>
@@ -1416,13 +1413,21 @@ export default function CallingDataPage() {
                 <p className="text-sm text-muted-foreground">No interested records available.</p>
               ) : (
                 <div className="space-y-2">
-                  {filteredInterestedActions.map((item) => (
+                  {filteredInterestedActions.map((item) => {
+                    const parsed = parseTaggedRemark(item.callRemark)
+                    return (
                     <div key={item.id} className="rounded-md border border-emerald-200/70 bg-emerald-50/30 p-3 text-sm">
                       <p className="font-medium">{item.name} • {item.mobile}</p>
                       <p className="text-xs text-muted-foreground">Action at: {formatDateTime(item.actionAt)}</p>
-                      {item.callRemark ? <p className="text-xs mt-1">Remark: {item.callRemark}</p> : null}
+                      {(parsed.category || parsed.status || parsed.remark) ? (
+                        <div className="mt-1 space-y-1 text-xs">
+                          {parsed.category ? <p><span className="font-medium">Status Category:</span> {parsed.category}</p> : null}
+                          {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
+                          {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
+                        </div>
+                      ) : null}
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </CardContent>
