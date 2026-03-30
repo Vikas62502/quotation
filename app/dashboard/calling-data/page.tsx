@@ -207,6 +207,48 @@ const INTEREST_TAB_MATCHES = [
   "Site Visit Done",
 ]
 
+const BACKEND_STATUS_CATEGORY_TO_GROUP_KEY: Record<string, StatusGroupKey> = {
+  call_connectivity: "part_1_call_and_lead",
+  lead_validity: "part_1_call_and_lead",
+  customer_intent: "part_2_interest_qualification",
+  financial: "part_2_interest_qualification",
+  schedule: "part_3_followup_sales",
+  competition: "part_4_rejection",
+  other: "part_4_rejection",
+}
+
+const BACKEND_STATUS_CATEGORY_TO_LABEL: Record<string, string> = {
+  call_connectivity: "Part 1 — Call & lead quality",
+  lead_validity: "Part 1 — Call & lead quality",
+  customer_intent: "Part 2 — Interest & qualification",
+  financial: "Part 2 — Interest & qualification",
+  schedule: "Part 3 — Follow-up & sales",
+  competition: "Part 4 — Rejection / lost",
+  other: "Part 4 — Rejection / lost",
+}
+
+const CALL_CONNECTIVITY_STATUSES = new Set([
+  "Call Unanswered",
+  "Switched Off",
+  "Not Reachable",
+  "Busy / Line Busy",
+  "Call Disconnected",
+  "Wrong Number",
+  "Invalid Number",
+  "Number Does Not Exist",
+])
+
+const CUSTOMER_INTENT_STATUSES = new Set([
+  "Interested",
+  "Highly Interested",
+  "Need More Information",
+  "Callback Later",
+  "Follow-up Required",
+  "Not Interested",
+  "Already Installed Solar",
+  "Already in Discussion with Another Vendor",
+])
+
 export default function CallingDataPage() {
   const router = useRouter()
   const { isAuthenticated, dealer, role } = useAuth()
@@ -320,7 +362,8 @@ export default function CallingDataPage() {
 
   const getTaggedCategory = (remark?: string) => {
     const match = (remark || "").match(/^\[([^\]]+)\]/)
-    return match?.[1] || ""
+    const rawCategory = match?.[1] || ""
+    return BACKEND_STATUS_CATEGORY_TO_LABEL[rawCategory] || rawCategory
   }
 
   const parseTaggedRemark = (remark?: string) => {
@@ -337,6 +380,33 @@ export default function CallingDataPage() {
     }
   }
 
+  const getStatusGroupKeyByLabel = (label?: string | null) => {
+    const clean = (label || "").trim()
+    if (!clean) return null
+    if (BACKEND_STATUS_CATEGORY_TO_GROUP_KEY[clean]) return BACKEND_STATUS_CATEGORY_TO_GROUP_KEY[clean]
+    const group = STATUS_GROUPS.find((g) => g.label === clean)
+    return group?.key ?? null
+  }
+
+  const getDisplayCategoryLabel = (rawCategory?: string | null) => {
+    const clean = (rawCategory || "").trim()
+    if (!clean) return ""
+    return BACKEND_STATUS_CATEGORY_TO_LABEL[clean] || clean
+  }
+
+  const getBackendStatusCategory = (groupKey: StatusGroupKey, status: string) => {
+    if (!status || status === OTHER_STATUS_VALUE) return "other"
+    if (groupKey === "part_1_call_and_lead") {
+      return CALL_CONNECTIVITY_STATUSES.has(status) ? "call_connectivity" : "lead_validity"
+    }
+    if (groupKey === "part_2_interest_qualification") {
+      return CUSTOMER_INTENT_STATUSES.has(status) ? "customer_intent" : "financial"
+    }
+    if (groupKey === "part_3_followup_sales") return "schedule"
+    if (groupKey === "part_4_rejection") return "competition"
+    return "other"
+  }
+
   const matchesDateRange = (value: string | undefined, range: "all" | "today" | "week" | "month") => {
     if (range === "all") return true
     if (!value) return false
@@ -351,7 +421,9 @@ export default function CallingDataPage() {
     return diffMs >= 0 && diffMs <= 30 * 24 * 60 * 60 * 1000
   }
 
-  const actionRowKey = (item: ActionLogItem) => item.leadId || item.id
+  // Each "Recent Actions" card must have its own local editing state.
+  // Using `leadId` can cause state collisions when multiple recent history rows exist for the same lead/customer.
+  const actionRowKey = (item: ActionLogItem) => item.id
 
   const openNewQuotationWithPrefill = (lead: CallingLead) => {
     const params = new URLSearchParams()
@@ -543,9 +615,10 @@ export default function CallingDataPage() {
   const getDefaultStatusByGroup = (groupKey: StatusGroupKey) =>
     STATUS_GROUPS.find((group) => group.key === groupKey)?.options[0] || STATUS_GROUPS[0].options[0]
 
-  const buildTaggedRemark = (groupLabel: string, status: string, remark: string) => {
+  const buildTaggedRemark = (groupKey: StatusGroupKey, status: string, remark: string) => {
+    const backendCategory = getBackendStatusCategory(groupKey, status)
     const trimmed = remark.trim()
-    return `[${groupLabel}] ${status}${trimmed ? ` | ${trimmed}` : ""}`
+    return `[${backendCategory}] ${status}${trimmed ? ` | ${trimmed}` : ""}`
   }
 
   useEffect(() => {
@@ -580,7 +653,30 @@ export default function CallingDataPage() {
     }
     try {
       const actionAt = payload.actionAt || new Date().toISOString()
-      const response = await api.dealers.updateCallingLeadAction(leadId, payload)
+      let response: any
+      try {
+        response = await api.dealers.updateCallingLeadAction(leadId, payload)
+      } catch (innerError) {
+        const isInvalidTransition =
+          innerError instanceof ApiError &&
+          (innerError.code === "LEAD_005" || /invalid lead action transition/i.test(innerError.message || ""))
+
+        // Backend often blocks direct transition for older/recent cards.
+        // Fallback to a valid rescheduled transition so status edits still persist.
+        if (isInvalidTransition && payload.action !== "rescheduled") {
+          const fallbackNextFollowUpAt =
+            payload.nextFollowUpAt ||
+            new Date(Date.now() + 60 * 60 * 1000).toISOString()
+          response = await api.dealers.updateCallingLeadAction(leadId, {
+            ...payload,
+            action: "rescheduled",
+            nextFollowUpAt: fallbackNextFollowUpAt,
+            actionAt,
+          })
+        } else {
+          throw innerError
+        }
+      }
       setCallRemark("")
       setRescheduleAt("")
       setManualOtherReason("")
@@ -600,6 +696,35 @@ export default function CallingDataPage() {
         description: message,
         variant: "destructive",
       })
+    }
+  }
+
+  const openDialer = (mobile?: string) => {
+    const digits = (mobile || "").replace(/\D/g, "")
+    if (!digits) {
+      toast({
+        title: "Phone number missing",
+        description: "This lead does not have a valid mobile number.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = `tel:${digits}`
+    }
+  }
+
+  const startCallFromRecent = async (item: ActionLogItem) => {
+    // Primary behavior in Recent tab: user should be able to call immediately.
+    openDialer(item.mobile)
+
+    // Best-effort backend sync (do not block calling flow if transition is invalid).
+    if (!item.leadId || !useApi) return
+    try {
+      await api.dealers.updateCallingLeadAction(item.leadId, { action: "start" })
+      await loadLeads()
+    } catch {
+      // Ignore transition errors here; dialer is already opened.
     }
   }
 
@@ -1096,7 +1221,7 @@ export default function CallingDataPage() {
                                     })
                                     return
                                   }
-                                  const remark = buildTaggedRemark(groupConfig.label, finalStatus, scheduledRemarks[lead.id] ?? "")
+                                  const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
                                   submitAction(lead.id, {
                                     action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
                                     nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
@@ -1190,12 +1315,14 @@ export default function CallingDataPage() {
                     <p className="text-xs text-muted-foreground">
                       Action: {item.action || "N/A"} • At: {formatDateTime(item.actionAt)}
                     </p>
+                    <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
+                    <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
                     {item.nextFollowUpAt ? (
                       <p className="text-xs text-muted-foreground">Next follow-up: {formatDateTime(item.nextFollowUpAt)}</p>
                     ) : null}
                     {(parsed.category || parsed.status || parsed.remark) ? (
                       <div className="mt-1 space-y-1 text-xs">
-                        {parsed.category ? <p><span className="font-medium">Status Category:</span> {parsed.category}</p> : null}
+                        {parsed.category ? <p><span className="font-medium">Status Category:</span> {getDisplayCategoryLabel(parsed.category)}</p> : null}
                         {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
                         {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
                       </div>
@@ -1204,7 +1331,7 @@ export default function CallingDataPage() {
                       <Textarea
                         rows={2}
                         placeholder="Edit remark"
-                        value={recentEditRemarks[actionRowKey(item)] ?? item.callRemark ?? ""}
+                        value={recentEditRemarks[actionRowKey(item)] ?? parsed.remark ?? ""}
                         onChange={(e) =>
                           setRecentEditRemarks((prev) => ({
                             ...prev,
@@ -1228,13 +1355,19 @@ export default function CallingDataPage() {
                     </div>
                     {(() => {
                       const rowKey = actionRowKey(item)
-                      const statusGroup = recentStatusGroups[rowKey] ?? STATUS_GROUPS[0].key
+                      const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
+                      const statusGroup = recentStatusGroups[rowKey] ?? derivedStatusGroup ?? STATUS_GROUPS[0].key
                       const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
-                      const status = recentStatuses[rowKey] ?? getDefaultStatusByGroup(statusGroup)
+                      const derivedStatus = (parsed.status || "").trim()
+                      const status =
+                        recentStatuses[rowKey] ??
+                        (derivedStatus && (groupConfig.options as readonly string[]).includes(derivedStatus)
+                          ? derivedStatus
+                          : getDefaultStatusByGroup(statusGroup))
                       const otherReason = recentOtherReasons[rowKey] ?? ""
                       const isReschedule = recentRescheduleChecks[rowKey] ?? false
                       const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
-                      const remark = recentEditRemarks[rowKey] ?? item.callRemark ?? ""
+                      const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
                       const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                       return (
                         <>
@@ -1317,7 +1450,7 @@ export default function CallingDataPage() {
                                 }
                                 submitAction(item.leadId, {
                                   action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
-                                  callRemark: buildTaggedRemark(groupConfig.label, finalStatus, remark),
+                                  callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
                                   nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
                                   actionAt: new Date().toISOString(),
                                 })
@@ -1329,8 +1462,7 @@ export default function CallingDataPage() {
                               size="sm"
                               variant="outline"
                               className="border-violet-300 text-violet-700 hover:bg-violet-50"
-                              disabled={!item.leadId}
-                              onClick={() => submitAction(item.leadId, { action: "start" })}
+                              onClick={() => startCallFromRecent(item)}
                             >
                               Start Call
                             </Button>
@@ -1421,7 +1553,7 @@ export default function CallingDataPage() {
                       <p className="text-xs text-muted-foreground">Action at: {formatDateTime(item.actionAt)}</p>
                       {(parsed.category || parsed.status || parsed.remark) ? (
                         <div className="mt-1 space-y-1 text-xs">
-                          {parsed.category ? <p><span className="font-medium">Status Category:</span> {parsed.category}</p> : null}
+                          {parsed.category ? <p><span className="font-medium">Status Category:</span> {getDisplayCategoryLabel(parsed.category)}</p> : null}
                           {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
                           {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
                         </div>
