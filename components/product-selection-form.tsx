@@ -120,11 +120,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
   }, [initialData?.systemType, initialData?.panelBrand, initialData?.panelSize, initialData?.inverterSize, initialData?.dcrPanelBrand, initialData?.nonDcrPanelBrand])
 
-  // Determine phase based on system size and inverter size
-  // BOTH systems are always 3-Phase
+  // Determine phase based on system size and inverter size (BOTH: user-selectable, default 3-Phase)
   let systemSizeForPhase = ""
   if (formData.systemType === "both") {
-    // BOTH systems are always 3-Phase, but we still calculate system size for pricing lookup
     const dcrKw = formData.dcrPanelSize && formData.dcrPanelQuantity 
       ? (Number.parseFloat(formData.dcrPanelSize.replace("W", "")) * formData.dcrPanelQuantity) / 1000
       : 0
@@ -138,19 +136,15 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     systemSizeForPhase = calculateSystemSize(formData.dcrPanelSize, formData.dcrPanelQuantity)
   }
   
-  // Determine phase - pass pricing tables to get accurate phase from pricing data
   const currentPhase = formData.phase
     ? (formData.phase as "1-Phase" | "3-Phase")
     : formData.systemType === "both"
-    ? "3-Phase" as "1-Phase" | "3-Phase" // BOTH systems are always 3-Phase
+    ? ("3-Phase" as "1-Phase" | "3-Phase")
     : formData.inverterSize && systemSizeForPhase
     ? determinePhase(systemSizeForPhase, formData.inverterSize, pricingTables || undefined)
     : formData.inverterSize
     ? (() => {
-        // If we only have inverter size, check if it's >= 7kW or if it's a common 3-phase size
         const inverterKw = Number.parseFloat(formData.inverterSize.replace("kW", ""))
-        // Common 3-phase inverter sizes: 5kW (for 3-4kW systems), 8kW, 10kW, 12kW, 15kW, 20kW, 25kW, 30kW
-        // Common 1-phase inverter sizes: 3kW, 4kW, 5kW (when system matches), 6kW
         if (inverterKw >= 7 || (inverterKw === 5 && !systemSizeForPhase)) {
           return "3-Phase" as "1-Phase" | "3-Phase"
         }
@@ -262,12 +256,23 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       
       const dcrQuantity = Math.ceil(dcrW / panelSize)
       const nonDcrQuantity = Math.ceil(nonDcrW / panelSize)
+
+      const effPhase: "1-Phase" | "3-Phase" =
+        config.phase === "1-Phase" || config.phase === "3-Phase"
+          ? config.phase
+          : systemConfig.phase === "1-Phase" || systemConfig.phase === "3-Phase"
+            ? (systemConfig.phase as "1-Phase" | "3-Phase")
+            : "3-Phase"
+      const baseAcdb = systemConfig.acdb || preFilledData.acdb || formatACDBOption("Havells", effPhase)
+      const baseDcdb = systemConfig.dcdb || preFilledData.dcdb || formatDCDBOption("Havells", effPhase)
+      const acdbForPhase = baseAcdb.replace(/\((1-Phase|3-Phase)\)/, `(${effPhase})`)
+      const dcdbForPhase = baseDcdb.replace(/\((1-Phase|3-Phase)\)/, `(${effPhase})`)
       
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
-          phase: config.phase || systemConfig.phase || "3-Phase",
+          phase: effPhase,
           // Override panel quantities for BOTH system
           dcrPanelBrand: systemConfig.panelBrand,
           dcrPanelSize: getClosestPanelSizeFromList(systemConfig.panelSize),
@@ -275,9 +280,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           nonDcrPanelBrand: systemConfig.panelBrand,
           nonDcrPanelSize: getClosestPanelSizeFromList(systemConfig.panelSize),
           nonDcrPanelQuantity: nonDcrQuantity,
-          // Ensure ACDB/DCDB are set from config (BOTH systems are always 3-Phase)
-          acdb: systemConfig.acdb || preFilledData.acdb || formatACDBOption("Havells", "3-Phase"),
-          dcdb: systemConfig.dcdb || preFilledData.dcdb || formatDCDBOption("Havells", "3-Phase"),
+          acdb: acdbForPhase,
+          dcdb: dcdbForPhase,
           // BOTH systems require central subsidy (default: 78000) - mandatory
           centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000),
           // State subsidy can be set or preserved if it exists
@@ -328,8 +332,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       if (config.panelType === "Tata") panelBrand = "Tata"
       else if (config.panelType === "Waaree") panelBrand = "Waaree"
       
-      // Determine phase for BOTH system (always 3-Phase)
-      const bothPhase = "3-Phase" as "1-Phase" | "3-Phase"
+      const bothPhase: "1-Phase" | "3-Phase" =
+        config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : "3-Phase"
       const defaultAcdb = formatACDBOption("Havells", bothPhase)
       const defaultDcdb = formatDCDBOption("Havells", bothPhase)
       
@@ -689,10 +693,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   setFormData((prev) => ({
                     ...prev,
                     systemType: v,
-                    // Set central subsidy to default 78000 if not already set
                     centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
-                    // Preserve state subsidy if it exists, otherwise keep it as is (user can set later)
                     stateSubsidy: prev.stateSubsidy || 0,
+                    ...(v === "both" && prev.phase !== "1-Phase" && prev.phase !== "3-Phase"
+                      ? { phase: "3-Phase" as const }
+                      : {}),
                   }))
                 } else {
                   // For other transitions, preserve existing subsidies
@@ -892,7 +897,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <h3 className="text-sm font-medium">Inverter Configuration</h3>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                   <div>
                     <Label>Inverter Type *</Label>
                     <Select value={formData.inverterType} onValueChange={(v) => updateFormData("inverterType", v)}>
@@ -930,6 +935,37 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       onChange={(e) => updateFormData("inverterSize", e.target.value)}
                       placeholder={`e.g., ${inverterSizesList.join(", ")}`}
                     />
+                  </div>
+                  <div>
+                    <Label>Electrical phase *</Label>
+                    <Select
+                      value={
+                        formData.phase === "1-Phase" || formData.phase === "3-Phase"
+                          ? formData.phase
+                          : "3-Phase"
+                      }
+                      onValueChange={(v) => {
+                        const p = v as "1-Phase" | "3-Phase"
+                        setFormData((prev) => {
+                          const swap = (s: string | undefined) =>
+                            s ? s.replace(/\((1-Phase|3-Phase)\)/, `(${p})`) : s
+                          return {
+                            ...prev,
+                            phase: p,
+                            acdb: swap(prev.acdb) || formatACDBOption("Havells", p),
+                            dcdb: swap(prev.dcdb) || formatDCDBOption("Havells", p),
+                          }
+                        })
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select phase" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1-Phase">Single phase (1-Phase)</SelectItem>
+                        <SelectItem value="3-Phase">Three phase (3-Phase)</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>

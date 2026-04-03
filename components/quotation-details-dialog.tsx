@@ -88,6 +88,7 @@ import {
   getCablePrice,
   getACDBPrice,
   getDCDBPrice,
+  formatQuotationPhaseLabel,
 } from "@/lib/pricing-tables"
 
 // Price calculation helpers are now imported from pricing-tables.ts
@@ -411,6 +412,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   }
 
   const resolvedPhase = resolveProductPhase()
+  const pdfPhaseLabel = formatQuotationPhaseLabel(resolvedPhase)
   const customer = displayQuotation.customer
 
   // Use backend pricing if available (aligned with backend changes)
@@ -797,7 +799,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
-    const phase = products.phase // ✅ phase comes from table/selection
+    const phase = resolvedPhase
   
     if (products.systemType === "both") {
       const dcrSize = calculateSystemSize(
@@ -840,7 +842,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   
       if (systemSize !== "0kW") {
         const panelBrand = products.panelBrand || "Solar"
-        return `${systemSize} (${products.phase}) Solar System - ${panelBrand} Panels`
+        return `${systemSize} (${phase}) Solar System - ${panelBrand} Panels`
       }
     }
   
@@ -1493,6 +1495,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       </div>
                       <div className="pdf-product-specs">
                         Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        <br />
+                        Phase: {pdfPhaseLabel}
                         {products.structureType && (
                           <>
                             <br />
@@ -1523,12 +1527,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     
                       <div>
                         Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
-                      </div>
+                        <br />
+                        Phase: {pdfPhaseLabel}
                         {products.structureType && (
                           <>
+                            <br />
                             Structure: {products.structureType} ({products.structureSize})
                           </>
                         )}
+                      </div>
                         {/* {products.meterBrand && (
                           <>
                             <br />

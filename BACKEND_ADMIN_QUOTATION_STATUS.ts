@@ -743,3 +743,110 @@ export async function patchDealerCallingQueueAction(req, res, db) {
  *   ORDER BY COALESCE(assigned_at, created_at) ASC
  *   LIMIT 1;
  */
+
+/**
+ * -----------------------------------------------------------------------------
+ * DEALER CALLING FLOW CONTRACT (Current Lead -> Dialled -> Connected/Not Connected)
+ * -----------------------------------------------------------------------------
+ *
+ * Frontend UI flow now expects these stages and editable data tabs:
+ *   1) Current Lead
+ *   2) Dialled
+ *   3) Connected
+ *   4) Not Connected
+ *
+ * Backend MUST support:
+ * - One active current lead per dealer from `/dealers/me/calling-queue/next`.
+ * - Full editable history rows in dialled/connected/not-connected tabs.
+ * - Update of existing rows from any tab (not only current queue step).
+ *
+ * -----------------------------------------------------------------------------
+ * A) Canonical stage classification
+ * -----------------------------------------------------------------------------
+ *
+ * Derive stage primarily from `status_text` (or parsed call_remark):
+ *
+ * NOT_CONNECTED:
+ *   "Call Unanswered", "Switched Off", "Not Reachable", "Busy / Line Busy",
+ *   "Call Disconnected", "Wrong Number", "Invalid Number", "Number Does Not Exist"
+ *
+ * CONNECTED:
+ *   all other valid status_text values
+ *
+ * DIALLED:
+ *   any row with action in ('called','follow_up','not_interested','rescheduled')
+ *
+ * CURRENT_LEAD:
+ *   row from queue selector (assigned/in_progress/rescheduled due)
+ *
+ * -----------------------------------------------------------------------------
+ * B) Required fields in action/list payload
+ * -----------------------------------------------------------------------------
+ *
+ * For every action row returned in recentActions/actionHistory/completedActions:
+ *   id, leadId, action, actionAt, nextFollowUpAt,
+ *   statusCategory, status, remark, callRemark,
+ *   name, mobile, kNumber, address, city, state
+ *
+ * Note:
+ * - `statusCategory` must be backend enum key (normalized):
+ *     call_connectivity | lead_validity | customer_intent | financial |
+ *     competition | schedule | other
+ * - `status` maps to displayed status text (e.g. "Interested", "Call Unanswered")
+ * - `remark` is free text only
+ *
+ * -----------------------------------------------------------------------------
+ * C) PATCH update behavior from all tabs
+ * -----------------------------------------------------------------------------
+ *
+ * Endpoint:
+ *   PATCH /api/dealers/me/calling-queue/:leadId/action
+ *
+ * Must allow updates from:
+ * - Current lead step
+ * - Dialled tab edit
+ * - Connected tab edit
+ * - Not Connected tab edit
+ *
+ * Implementation rule:
+ * - If lead belongs to dealer, UPDATE latest row/state for that lead.
+ * - Do not reject valid tab edits with transition-only guard.
+ * - Preserve strict transition only for first-time queue movement if needed.
+ *
+ * -----------------------------------------------------------------------------
+ * D) Flow action mapping (recommended)
+ * -----------------------------------------------------------------------------
+ *
+ * Not Connected path:
+ * - statusCategory: call_connectivity
+ * - action: not_interested
+ * - outcome: closed
+ *
+ * Connected -> Interested:
+ * - statusCategory: customer_intent (or schedule when moved to visit/sales step)
+ * - action: called
+ *
+ * Connected -> Not Interested:
+ * - statusCategory: competition
+ * - action: not_interested
+ *
+ * Connected -> Decision Pending (hold + reschedule):
+ * - statusCategory: schedule
+ * - action: rescheduled (preferred) OR follow_up
+ * - nextFollowUpAt required
+ *
+ * -----------------------------------------------------------------------------
+ * E) Optional grouped response helper
+ * -----------------------------------------------------------------------------
+ *
+ * To reduce frontend filtering, backend may return:
+ * {
+ *   currentLead: {...},
+ *   dialledActions: [...],
+ *   connectedActions: [...],
+ *   notConnectedActions: [...],
+ *   recentActions: [...]
+ * }
+ *
+ * If not provided, frontend can still derive from recentActions.
+ */

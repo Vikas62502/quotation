@@ -888,6 +888,26 @@ export const bothPricing: BothSystemPricing[] = [
   { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Waaree", price: 988800 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Adani", price: 1184500 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Waaree", price: 1184500 },
+
+  // 1-Phase BOTH — same package prices as 3-Phase unless backend overrides via API
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Adani", price: 270000 },
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Waaree", price: 270000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Adani", price: 310000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Waaree", price: 310000 },
+  { systemSize: "8kW", phase: "1-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Adani", price: 371000 },
+  { systemSize: "8kW", phase: "1-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Waaree", price: 371000 },
+  { systemSize: "10kW", phase: "1-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Adani", price: 421000 },
+  { systemSize: "10kW", phase: "1-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Waaree", price: 421000 },
+  { systemSize: "12kW", phase: "1-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Adani", price: 485000 },
+  { systemSize: "12kW", phase: "1-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Waaree", price: 485000 },
+  { systemSize: "15kW", phase: "1-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Adani", price: 580000 },
+  { systemSize: "15kW", phase: "1-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Waaree", price: 580000 },
+  { systemSize: "20kW", phase: "1-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Adani", price: 793100 },
+  { systemSize: "20kW", phase: "1-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Waaree", price: 793100 },
+  { systemSize: "25kW", phase: "1-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Adani", price: 988800 },
+  { systemSize: "25kW", phase: "1-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Waaree", price: 988800 },
+  { systemSize: "30kW", phase: "1-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Adani", price: 1184500 },
+  { systemSize: "30kW", phase: "1-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Waaree", price: 1184500 },
 ]
 
 // Helper function to get DCR pricing
@@ -1024,12 +1044,15 @@ export function determinePhase(
       return nonDcrMatch.phase
     }
     
-    // Check BOTH pricing (BOTH systems are always 3-Phase)
-    const bothMatch = pricingData.both?.find(
+    const bothMatches = pricingData.both?.filter(
       (p) => p.systemSize === systemSize && p.inverterSize === inverterSize
     )
-    if (bothMatch) {
-      return "3-Phase" // BOTH systems are always 3-Phase
+    if (bothMatches && bothMatches.length === 1) {
+      return bothMatches[0].phase
+    }
+    if (bothMatches && bothMatches.length > 1) {
+      const three = bothMatches.find((p) => p.phase === "3-Phase")
+      return three ? "3-Phase" : bothMatches[0].phase
     }
   }
   
@@ -1078,6 +1101,73 @@ export function calculateSystemSize(
     console.error("Error calculating system size:", error)
     return "0kW"
   }
+}
+
+export type QuotationProductsPhaseInput = {
+  phase?: string
+  systemType?: string
+  panelSize?: string
+  panelQuantity?: number
+  inverterSize?: string
+  dcrPanelSize?: string
+  dcrPanelQuantity?: number
+  nonDcrPanelSize?: string
+  nonDcrPanelQuantity?: number
+  customPanels?: Array<{ brand: string; size: string; quantity: number; type?: string }>
+}
+
+/** 1-Phase vs 3-Phase for PDF/display when `products.phase` is empty or legacy. */
+export function resolveQuotationPhase(products: QuotationProductsPhaseInput): "1-Phase" | "3-Phase" {
+  const explicit = products.phase
+  if (explicit === "1-Phase" || explicit === "3-Phase") {
+    return explicit
+  }
+
+  let systemSizeForPhase = ""
+
+  if (products.systemType === "both") {
+    const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
+    const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
+    if (dcrSize !== "0kW" && nonDcrSize !== "0kW") {
+      const dcrKw = Number.parseFloat(dcrSize.replace("kW", "")) || 0
+      const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", "")) || 0
+      const totalKw = dcrKw + nonDcrKw
+      if (!Number.isNaN(totalKw) && totalKw > 0) {
+        systemSizeForPhase = `${totalKw}kW`
+      }
+    }
+  } else if (products.panelSize && products.panelQuantity) {
+    systemSizeForPhase = calculateSystemSize(products.panelSize, products.panelQuantity)
+  } else if (products.dcrPanelSize && products.dcrPanelQuantity) {
+    systemSizeForPhase = calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
+  } else if (products.nonDcrPanelSize && products.nonDcrPanelQuantity) {
+    systemSizeForPhase = calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
+  } else if (products.customPanels && products.customPanels.length > 0) {
+    const totalKw = products.customPanels.reduce((sum, panel) => {
+      const kw = Number.parseFloat(panel.size.replace("W", "")) / 1000
+      return sum + (Number.isNaN(kw) ? 0 : kw * (panel.quantity || 0))
+    }, 0)
+    if (!Number.isNaN(totalKw) && totalKw > 0) {
+      systemSizeForPhase = `${totalKw}kW`
+    }
+  }
+
+  if (products.inverterSize && systemSizeForPhase && systemSizeForPhase !== "0kW") {
+    return determinePhase(systemSizeForPhase, products.inverterSize)
+  }
+
+  if (products.inverterSize) {
+    const inverterKw = Number.parseFloat(products.inverterSize.replace("kW", ""))
+    if (!Number.isNaN(inverterKw) && inverterKw >= 7) {
+      return "3-Phase"
+    }
+  }
+
+  return "1-Phase"
+}
+
+export function formatQuotationPhaseLabel(phase: "1-Phase" | "3-Phase"): string {
+  return phase === "1-Phase" ? "Single phase (1-Phase)" : "Three phase (3-Phase)"
 }
 
 // Component Pricing Helper Functions

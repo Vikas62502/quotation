@@ -55,6 +55,8 @@ import {
   getBothPrice,
   determinePhase,
   calculateSystemSize,
+  resolveQuotationPhase,
+  formatQuotationPhaseLabel,
 } from "@/lib/pricing-tables"
 
 // Get system price based on system type
@@ -669,10 +671,12 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   }
 
   const roundedSystemSizeLabel = getRoundedSystemSizeLabel()
+  const pdfResolvedPhase = resolveQuotationPhase(products)
+  const pdfPhaseLabel = formatQuotationPhaseLabel(pdfResolvedPhase)
 
   // Generate dynamic PDF title: "{systemSize}kW ({phase}) Solar System - {panelBrand} Panels"
   const getPdfSystemTitle = () => {
-  const phase = products.phase // ✅ phase comes from table/selection
+  const phase = pdfResolvedPhase
 
   if (products.systemType === "both") {
     const dcrSize = calculateSystemSize(
@@ -715,7 +719,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
 
     if (systemSize !== "0kW") {
       const panelBrand = products.panelBrand || "Solar"
-      return `${systemSize} (${products.phase}) Solar System - ${panelBrand} Panels`
+      return `${systemSize} (${phase}) Solar System - ${panelBrand} Panels`
     }
   }
 
@@ -1298,6 +1302,8 @@ const getStructureDetails = (products: ProductSelection) => {
                       </div>
                       <div className="pdf-product-specs">
                         Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        <br />
+                        Phase: {pdfPhaseLabel}
                         {products.structureType && (
                           <>
                             <br />
@@ -1341,6 +1347,8 @@ const getStructureDetails = (products: ProductSelection) => {
                         {`${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`}
                         <br />
                         Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        <br />
+                        Phase: {pdfPhaseLabel}
                         {products.structureType && (
                           <>
                             <br />

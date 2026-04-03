@@ -159,6 +159,12 @@ const NOT_INTERESTED_STATUSES = new Set([
   "Not Interested Currently",
   "Already Installed Solar",
   "Already in Discussion with Another Vendor",
+  // Diagram "Not Connected" reasons -> close the lead
+  "Call Unanswered",
+  "Switched Off",
+  "Not Reachable",
+  "Busy / Line Busy",
+  "Call Disconnected",
   "Wrong Number",
   "Invalid Number",
   "Number Does Not Exist",
@@ -181,11 +187,7 @@ const NOT_INTERESTED_STATUSES = new Set([
 ])
 
 const FOLLOW_UP_STATUSES = new Set([
-  "Call Unanswered",
-  "Switched Off",
-  "Not Reachable",
-  "Busy / Line Busy",
-  "Call Disconnected",
+  // Diagram "Decision Pending" -> hold & reschedule/follow-up
   "Callback Later",
   "Follow-up Required",
   "Callback Scheduled",
@@ -250,6 +252,36 @@ const CUSTOMER_INTENT_STATUSES = new Set([
   "Already in Discussion with Another Vendor",
 ])
 
+const NOT_CONNECTED_REASONS = [
+  "Call Unanswered",
+  "Switched Off",
+  "Not Reachable",
+  "Busy / Line Busy",
+  "Call Disconnected",
+  "Wrong Number",
+  "Invalid Number",
+  "Number Does Not Exist",
+]
+
+const LOST_REASONS = [
+  "Not Interested Currently",
+  "Price Too High",
+  "Budget Issue",
+  "Trust Issue",
+  "Location Not Serviceable",
+  "Chose Competitor",
+  "No Requirement",
+]
+
+const DECISION_PENDING_REASONS = [
+  "Callback Scheduled",
+  "Follow-up Pending",
+  "Callback Later",
+  "Follow-up Required",
+  "Need More Information",
+  "Not Picking on Follow-up",
+]
+
 export default function CallingDataPage() {
   const router = useRouter()
   const { isAuthenticated, dealer, role } = useAuth()
@@ -274,6 +306,13 @@ export default function CallingDataPage() {
   const [selectedStatus, setSelectedStatus] = useState<string>(STATUS_GROUPS[0].options[0])
   const [manualOtherReason, setManualOtherReason] = useState("")
   const [isRescheduleChecked, setIsRescheduleChecked] = useState(false)
+  const [callConnection, setCallConnection] = useState<"" | "connected" | "not_connected">("")
+  const [connectedOutcome, setConnectedOutcome] = useState<"" | "interested" | "not_interested" | "decision_pending">("")
+  const [notConnectedReason, setNotConnectedReason] = useState<string>(NOT_CONNECTED_REASONS[0])
+  const [lostReason, setLostReason] = useState<string>(LOST_REASONS[0])
+  const [decisionReason, setDecisionReason] = useState<string>(DECISION_PENDING_REASONS[0])
+  const [decisionOverride, setDecisionOverride] = useState<"pending" | "interested" | "not_interested">("pending")
+  const [dealClosed, setDealClosed] = useState(false)
   const [scheduledEditTimes, setScheduledEditTimes] = useState<Record<string, string>>({})
   const [scheduledStatusGroups, setScheduledStatusGroups] = useState<Record<string, StatusGroupKey>>({})
   const [scheduledStatuses, setScheduledStatuses] = useState<Record<string, string>>({})
@@ -288,7 +327,24 @@ export default function CallingDataPage() {
   const [recentRescheduleChecks, setRecentRescheduleChecks] = useState<Record<string, boolean>>({})
   const [editableLeadDetails, setEditableLeadDetails] = useState<EditableLeadDetails | null>(null)
   const [isEditingLead, setIsEditingLead] = useState(false)
+  const [flowTab, setFlowTab] = useState<"current_lead" | "dialled" | "connected" | "not_connected">("current_lead")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+  const syncRescheduleForStatus = (nextStatus: string) => {
+    const shouldReschedule = FOLLOW_UP_STATUSES.has(nextStatus)
+    if (shouldReschedule) {
+      setIsRescheduleChecked(true)
+      setRescheduleAt((prev) => {
+        if (prev) return prev
+        // Default follow-up 1 hour from now for decision-pending flow
+        const defaultIso = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+        return formatForDatetimeLocal(defaultIso)
+      })
+    } else {
+      setIsRescheduleChecked(false)
+      setRescheduleAt("")
+    }
+  }
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -504,8 +560,8 @@ export default function CallingDataPage() {
       loadLeads()
     }
 
-    // Keep queue fresh for newly uploaded/assigned leads.
-    const interval = window.setInterval(refresh, 15000)
+    // Auto-refresh queue every 5 minutes; tab focus / visibility still refreshes immediately.
+    const interval = window.setInterval(refresh, 5 * 60 * 1000)
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") refresh()
@@ -657,6 +713,39 @@ export default function CallingDataPage() {
   }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter])
 
   const currentLead = dealerAssignedQueue[0] || null
+  const currentFlowStage: "current_lead" | "dialled" | "connected" | "not_connected" = !currentLead
+    ? "current_lead"
+    : !callConnection
+      ? "current_lead"
+      : callConnection === "connected"
+        ? "connected"
+        : "not_connected"
+
+  const flowDialledActions = useMemo(
+    () =>
+      recentActions.filter((item) =>
+        ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase()),
+      ),
+    [recentActions],
+  )
+
+  const flowConnectedActions = useMemo(
+    () =>
+      recentActions.filter((item) => {
+        const parsed = parseTaggedRemark(item.callRemark)
+        return !!parsed.status && !NOT_CONNECTED_REASONS.includes(parsed.status)
+      }),
+    [recentActions],
+  )
+
+  const flowNotConnectedActions = useMemo(
+    () =>
+      recentActions.filter((item) => {
+        const parsed = parseTaggedRemark(item.callRemark)
+        return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
+      }),
+    [recentActions],
+  )
   const leadForView = editableLeadDetails || {
     name: currentLead?.name || "",
     mobile: currentLead?.mobile || "",
@@ -701,6 +790,13 @@ export default function CallingDataPage() {
       customerNote: currentLead.customerNote || "",
     })
     setIsEditingLead(false)
+    setCallConnection("")
+    setConnectedOutcome("")
+    setNotConnectedReason(NOT_CONNECTED_REASONS[0])
+    setLostReason(LOST_REASONS[0])
+    setDecisionReason(DECISION_PENDING_REASONS[0])
+    setDecisionOverride("pending")
+    setDealClosed(false)
   }, [currentLead])
 
   const submitAction = async (
@@ -747,10 +843,15 @@ export default function CallingDataPage() {
       setIsRescheduleChecked(false)
       setSelectedStatusGroup(STATUS_GROUPS[0].key)
       setSelectedStatus(STATUS_GROUPS[0].options[0])
+      const wasCurrentQueueHead = dealerAssignedQueue[0]?.id === leadId
       if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
         applyQueueResponse(response)
-      } else {
-        await loadLeads()
+      }
+      // GET is authoritative: always refetch so the next queued lead appears after submit
+      // even when PATCH returns a minimal body or field names we do not map.
+      await loadLeads()
+      if (wasCurrentQueueHead) {
+        setFlowTab("current_lead")
       }
     } catch (error) {
       const message =
@@ -805,11 +906,12 @@ export default function CallingDataPage() {
           <h1 className="text-xl font-semibold">Calling Data</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          One lead visible at a time. Submit call result to unlock next queued lead automatically.
+          One lead visible at a time. Submit call result to unlock next queued lead automatically. The queue
+          refreshes in the background every 5 minutes (and when you return to this tab).
         </p>
 
         <Tabs value={activeSubTab} onValueChange={setActiveSubTab}>
-          <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/70 to-orange-50/70 p-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
+          <TabsList className="hidden">
             <TabsTrigger value="current" className="shrink-0 text-xs sm:text-sm">Current Lead</TabsTrigger>
             <TabsTrigger value="scheduled" className="shrink-0 text-xs sm:text-sm">Scheduled</TabsTrigger>
             <TabsTrigger value="recent" className="shrink-0 text-xs sm:text-sm">Recent Actions</TabsTrigger>
@@ -817,7 +919,325 @@ export default function CallingDataPage() {
           </TabsList>
 
         <TabsContent value="current">
-        {!currentLead ? (
+        <div className="mb-3">
+          <Tabs
+            value={flowTab}
+            onValueChange={(value) =>
+              setFlowTab(value as "current_lead" | "dialled" | "connected" | "not_connected")
+            }
+          >
+            <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/70 to-orange-50/70 p-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
+              <TabsTrigger value="current_lead" className="shrink-0 text-xs sm:text-sm">Current Lead</TabsTrigger>
+              <TabsTrigger value="dialled" className="shrink-0 text-xs sm:text-sm">Dialled</TabsTrigger>
+              <TabsTrigger value="connected" className="shrink-0 text-xs sm:text-sm">Connected</TabsTrigger>
+              <TabsTrigger value="not_connected" className="shrink-0 text-xs sm:text-sm">Not Connected</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+
+        {flowTab === "dialled" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Dialled Data</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {flowDialledActions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No dialled data found.</p>
+              ) : (
+                <div className="space-y-2">
+                  {flowDialledActions.map((item) => {
+                    const parsed = parseTaggedRemark(item.callRemark)
+                    const rowKey = actionRowKey(item)
+                    const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
+                    const statusGroup = recentStatusGroups[rowKey] ?? derivedStatusGroup ?? STATUS_GROUPS[0].key
+                    const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
+                    const derivedStatus = (parsed.status || "").trim()
+                    const status =
+                      recentStatuses[rowKey] ??
+                      (derivedStatus && (groupConfig.options as readonly string[]).includes(derivedStatus)
+                        ? derivedStatus
+                        : getDefaultStatusByGroup(statusGroup))
+                    const otherReason = recentOtherReasons[rowKey] ?? ""
+                    const isReschedule = recentRescheduleChecks[rowKey] ?? false
+                    const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
+                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
+                    return (
+                      <div key={`dialled-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
+                        <p className="font-medium">{item.name} • {item.mobile}</p>
+                        <p className="text-xs text-muted-foreground">Action: {item.action || "N/A"} • At: {formatDateTime(item.actionAt)}</p>
+                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
+                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
+                        <Textarea
+                          rows={2}
+                          placeholder="Edit remark"
+                          value={remark}
+                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <Select
+                            value={statusGroup}
+                            onValueChange={(value) => {
+                              const nextKey = value as StatusGroupKey
+                              setRecentStatusGroups((prev) => ({ ...prev, [rowKey]: nextKey }))
+                              setRecentStatuses((prev) => ({ ...prev, [rowKey]: getDefaultStatusByGroup(nextKey) }))
+                              setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: "" }))
+                            }}
+                          >
+                            <SelectTrigger className="h-8"><SelectValue placeholder="Status category" /></SelectTrigger>
+                            <SelectContent>
+                              {STATUS_GROUPS.map((group) => (
+                                <SelectItem key={group.key} value={group.key}>{group.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select value={status} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
+                            <SelectTrigger className="h-8"><SelectValue placeholder="Status" /></SelectTrigger>
+                            <SelectContent>
+                              {groupConfig.options.map((option) => (
+                                <SelectItem key={option} value={option}>{option}</SelectItem>
+                              ))}
+                              <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {status === OTHER_STATUS_VALUE ? (
+                          <Input
+                            className="h-8"
+                            placeholder="Enter other reason"
+                            value={otherReason}
+                            onChange={(e) => setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
+                        ) : null}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id={`dialled-reschedule-${rowKey}`}
+                              checked={isReschedule}
+                              onCheckedChange={(checked) =>
+                                setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                              }
+                            />
+                            <label htmlFor={`dialled-reschedule-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
+                              Reschedule
+                            </label>
+                          </div>
+                          <Input
+                            type="datetime-local"
+                            value={editedTime}
+                            onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          className="bg-violet-600 hover:bg-violet-700 text-white"
+                          disabled={!item.leadId}
+                          onClick={() => {
+                            if (!finalStatus) return
+                            if (isReschedule && !editedTime) return
+                            submitAction(item.leadId, {
+                              action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                              callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
+                              nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
+                              actionAt: new Date().toISOString(),
+                            })
+                          }}
+                        >
+                          Update
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : flowTab === "connected" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Connected Data</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {flowConnectedActions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No connected data found.</p>
+              ) : (
+                <div className="space-y-2">
+                  {flowConnectedActions.map((item) => {
+                    const parsed = parseTaggedRemark(item.callRemark)
+                    const rowKey = actionRowKey(item)
+                    const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
+                    const statusGroup = recentStatusGroups[rowKey] ?? derivedStatusGroup ?? STATUS_GROUPS[0].key
+                    const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
+                    const derivedStatus = (parsed.status || "").trim()
+                    const status =
+                      recentStatuses[rowKey] ??
+                      (derivedStatus && (groupConfig.options as readonly string[]).includes(derivedStatus)
+                        ? derivedStatus
+                        : getDefaultStatusByGroup(statusGroup))
+                    const otherReason = recentOtherReasons[rowKey] ?? ""
+                    const isReschedule = recentRescheduleChecks[rowKey] ?? false
+                    const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
+                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
+                    return (
+                      <div key={`connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
+                        <p className="font-medium">{item.name} • {item.mobile}</p>
+                        <p className="text-xs text-muted-foreground">Status: {parsed.status || "N/A"} • At: {formatDateTime(item.actionAt)}</p>
+                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
+                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
+                        <Textarea
+                          rows={2}
+                          placeholder="Edit remark"
+                          value={remark}
+                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <Select
+                            value={statusGroup}
+                            onValueChange={(value) => {
+                              const nextKey = value as StatusGroupKey
+                              setRecentStatusGroups((prev) => ({ ...prev, [rowKey]: nextKey }))
+                              setRecentStatuses((prev) => ({ ...prev, [rowKey]: getDefaultStatusByGroup(nextKey) }))
+                              setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: "" }))
+                            }}
+                          >
+                            <SelectTrigger className="h-8"><SelectValue placeholder="Status category" /></SelectTrigger>
+                            <SelectContent>
+                              {STATUS_GROUPS.map((group) => (
+                                <SelectItem key={group.key} value={group.key}>{group.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Select value={status} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
+                            <SelectTrigger className="h-8"><SelectValue placeholder="Status" /></SelectTrigger>
+                            <SelectContent>
+                              {groupConfig.options.map((option) => (
+                                <SelectItem key={option} value={option}>{option}</SelectItem>
+                              ))}
+                              <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        {status === OTHER_STATUS_VALUE ? (
+                          <Input
+                            className="h-8"
+                            placeholder="Enter other reason"
+                            value={otherReason}
+                            onChange={(e) => setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
+                        ) : null}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id={`connected-reschedule-${rowKey}`}
+                              checked={isReschedule}
+                              onCheckedChange={(checked) =>
+                                setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                              }
+                            />
+                            <label htmlFor={`connected-reschedule-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
+                              Reschedule
+                            </label>
+                          </div>
+                          <Input
+                            type="datetime-local"
+                            value={editedTime}
+                            onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
+                        </div>
+                        <Button
+                          size="sm"
+                          className="bg-violet-600 hover:bg-violet-700 text-white"
+                          disabled={!item.leadId}
+                          onClick={() => {
+                            if (!finalStatus) return
+                            if (isReschedule && !editedTime) return
+                            submitAction(item.leadId, {
+                              action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                              callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
+                              nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
+                              actionAt: new Date().toISOString(),
+                            })
+                          }}
+                        >
+                          Update
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : flowTab === "not_connected" ? (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Not Connected Data</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {flowNotConnectedActions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No not-connected data found.</p>
+              ) : (
+                <div className="space-y-2">
+                  {flowNotConnectedActions.map((item) => {
+                    const parsed = parseTaggedRemark(item.callRemark)
+                    const rowKey = actionRowKey(item)
+                    const derivedReason = NOT_CONNECTED_REASONS.includes(parsed.status) ? parsed.status : NOT_CONNECTED_REASONS[0]
+                    const selectedReasonRaw = recentStatuses[rowKey] ?? derivedReason
+                    const selectedReason = NOT_CONNECTED_REASONS.includes(selectedReasonRaw) ? selectedReasonRaw : derivedReason
+                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    return (
+                      <div key={`not-connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
+                        <p className="font-medium">{item.name} • {item.mobile}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Reason: {selectedReason || "N/A"} • At: {formatDateTime(item.actionAt)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
+                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
+                        <Textarea
+                          rows={2}
+                          placeholder="Edit remark"
+                          value={remark}
+                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                        />
+                        <div className="space-y-1.5">
+                          <p className="text-xs text-muted-foreground">Reason of not connected</p>
+                          <Select value={selectedReason} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
+                            <SelectTrigger className="h-8">
+                              <SelectValue placeholder="Select reason" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {NOT_CONNECTED_REASONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <Button
+                          size="sm"
+                          className="bg-violet-600 hover:bg-violet-700 text-white"
+                          disabled={!item.leadId}
+                          onClick={() => {
+                            if (!selectedReason) return
+                            submitAction(item.leadId, {
+                              action: "not_interested",
+                              callRemark: buildTaggedRemark("part_1_call_and_lead", selectedReason, remark),
+                              actionAt: new Date().toISOString(),
+                            })
+                          }}
+                        >
+                          Update
+                        </Button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : !currentLead ? (
           <Card>
             <CardContent className="py-10 text-center text-muted-foreground">
               No calling data pending for you.
@@ -1015,122 +1435,227 @@ export default function CallingDataPage() {
                 ) : (
                   <>
                     <Textarea
-                      placeholder="Call report / remarks"
+                      placeholder="Remarks"
                       value={callRemark}
                       onChange={(e) => setCallRemark(e.target.value)}
                       rows={3}
                     />
                     <div className="rounded-md border border-amber-200/80 bg-amber-50/40 p-3 space-y-3">
+                      <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
+                        <span>Current Lead</span>
+                        <span>&rarr; Dialled</span>
+                        <span>&rarr; {callConnection ? (callConnection === "connected" ? "Connected" : "Not Connected") : "Choose Connection"}</span>
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Status category</p>
+                          <p className="text-xs text-muted-foreground">Connection</p>
                           <Select
-                            value={selectedStatusGroup}
-                            onValueChange={(value) => {
-                              const group = STATUS_GROUPS.find((item) => item.key === value)
-                              if (!group) return
-                              setSelectedStatusGroup(group.key)
-                              setSelectedStatus(group.options[0])
-                              setManualOtherReason("")
+                            value={callConnection}
+                            onValueChange={(value: "connected" | "not_connected") => {
+                              setCallConnection(value)
+                              setConnectedOutcome("")
+                              setDecisionOverride("pending")
+                              setDealClosed(false)
+                              if (value === "not_connected") {
+                                setIsRescheduleChecked(false)
+                                setRescheduleAt("")
+                              }
                             }}
                           >
                             <SelectTrigger>
-                              <SelectValue placeholder="Select category" />
+                              <SelectValue placeholder="Connected / Not Connected" />
                             </SelectTrigger>
                             <SelectContent>
-                              {STATUS_GROUPS.map((group) => (
-                                <SelectItem key={group.key} value={group.key}>
-                                  {group.label}
-                                </SelectItem>
-                              ))}
+                              <SelectItem value="connected">Connected</SelectItem>
+                              <SelectItem value="not_connected">Not Connected</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
+
+                        {callConnection === "connected" ? (
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground">Connected Outcome</p>
+                            <Select
+                              value={connectedOutcome}
+                              onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
+                                setConnectedOutcome(value)
+                                if (value === "decision_pending") {
+                                  setIsRescheduleChecked(true)
+                                  setRescheduleAt((prev) => prev || formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()))
+                                } else {
+                                  setIsRescheduleChecked(false)
+                                  setRescheduleAt("")
+                                }
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="interested">Interested</SelectItem>
+                                <SelectItem value="not_interested">Not Interested</SelectItem>
+                                <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {callConnection === "not_connected" ? (
                         <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Status</p>
-                          <Select value={selectedStatus} onValueChange={setSelectedStatus}>
+                          <p className="text-xs text-muted-foreground">Reason of not connected</p>
+                          <Select value={notConnectedReason} onValueChange={setNotConnectedReason}>
                             <SelectTrigger>
-                              <SelectValue placeholder="Select status" />
+                              <SelectValue placeholder="Select reason" />
                             </SelectTrigger>
                             <SelectContent>
-                              {selectedStatusGroupConfig.options.map((option) => (
+                              {NOT_CONNECTED_REASONS.map((option) => (
                                 <SelectItem key={option} value={option}>
                                   {option}
                                 </SelectItem>
                               ))}
-                              <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
-                      </div>
+                      ) : null}
 
-                      {selectedStatus === OTHER_STATUS_VALUE && (
+                      {callConnection === "connected" && connectedOutcome === "not_interested" ? (
                         <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Other reason</p>
-                          <Input
-                            value={manualOtherReason}
-                            onChange={(e) => setManualOtherReason(e.target.value)}
-                            placeholder="Enter custom reason"
+                          <p className="text-xs text-muted-foreground">Lost Reason</p>
+                          <Select value={lostReason} onValueChange={setLostReason}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select lost reason" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {LOST_REASONS.map((option) => (
+                                <SelectItem key={option} value={option}>
+                                  {option}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+
+                      {callConnection === "connected" && connectedOutcome === "interested" ? (
+                        <div className="flex items-center gap-2">
+                          <Checkbox
+                            id="deal-closed-checkbox"
+                            checked={dealClosed}
+                            onCheckedChange={(checked) => setDealClosed(checked === true)}
                           />
+                          <label htmlFor="deal-closed-checkbox" className="text-sm cursor-pointer select-none">
+                            Quotation shared and deal closed
+                          </label>
                         </div>
-                      )}
+                      ) : null}
 
-                      <div className="flex items-center gap-2">
-                        <Checkbox
-                          id="reschedule-checkbox"
-                          checked={isRescheduleChecked}
-                          onCheckedChange={(checked) => {
-                            const isChecked = checked === true
-                            setIsRescheduleChecked(isChecked)
-                            if (!isChecked) {
-                              setRescheduleAt("")
-                            }
-                          }}
-                        />
-                        <label htmlFor="reschedule-checkbox" className="text-sm cursor-pointer select-none">
-                          Reschedule follow-up
-                        </label>
-                      </div>
-
-                      {isRescheduleChecked && (
-                        <div className="w-full md:w-72 space-y-1">
-                          <p className="text-xs text-muted-foreground">Reschedule date and time</p>
-                          <Input type="datetime-local" value={rescheduleAt} onChange={(e) => setRescheduleAt(e.target.value)} />
+                      {callConnection === "connected" && connectedOutcome === "decision_pending" ? (
+                        <div className="space-y-3">
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground">Hold Reason</p>
+                            <Select value={decisionReason} onValueChange={setDecisionReason}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select hold reason" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {DECISION_PENDING_REASONS.map((option) => (
+                                  <SelectItem key={option} value={option}>
+                                    {option}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="w-full md:w-72 space-y-1">
+                            <p className="text-xs text-muted-foreground">Reschedule date and time</p>
+                            <Input type="datetime-local" value={rescheduleAt} onChange={(e) => setRescheduleAt(e.target.value)} />
+                          </div>
+                          <div className="space-y-1.5">
+                            <p className="text-xs text-muted-foreground">Update final decision now (optional)</p>
+                            <Select value={decisionOverride} onValueChange={(value: "pending" | "interested" | "not_interested") => setDecisionOverride(value)}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Keep pending / Interested / Not Interested" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="pending">Keep Pending</SelectItem>
+                                <SelectItem value="interested">Interested</SelectItem>
+                                <SelectItem value="not_interested">Not Interested</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
-                      )}
+                      ) : null}
 
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
                           className="bg-orange-500 hover:bg-orange-600 text-white"
                           onClick={() => {
-                            if (!finalSelectedStatus) {
+                            if (!callConnection) {
                               toast({
-                                title: "Reason required",
-                                description: "Please select a status or enter other reason.",
+                                title: "Select connection",
+                                description: "Choose Connected or Not Connected.",
                                 variant: "destructive",
                               })
                               return
                             }
-                            if (isRescheduleChecked && !rescheduleAt) {
+
+                            let groupKey: StatusGroupKey = "part_1_call_and_lead"
+                            let finalStatus = ""
+                            let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                            let nextFollowUpAt: string | undefined
+
+                            if (callConnection === "not_connected") {
+                              groupKey = "part_1_call_and_lead"
+                              finalStatus = notConnectedReason
+                              nextAction = "not_interested"
+                            } else if (connectedOutcome === "interested") {
+                              groupKey = "part_2_interest_qualification"
+                              finalStatus = dealClosed ? "Converted (Deal Closed)" : "Interested"
+                              nextAction = "called"
+                            } else if (connectedOutcome === "not_interested") {
+                              groupKey = "part_4_rejection"
+                              finalStatus = lostReason
+                              nextAction = "not_interested"
+                            } else if (connectedOutcome === "decision_pending") {
+                              if (decisionOverride === "interested") {
+                                groupKey = "part_2_interest_qualification"
+                                finalStatus = dealClosed ? "Converted (Deal Closed)" : "Interested"
+                                nextAction = "called"
+                              } else if (decisionOverride === "not_interested") {
+                                groupKey = "part_4_rejection"
+                                finalStatus = lostReason
+                                nextAction = "not_interested"
+                              } else {
+                                if (!rescheduleAt) {
+                                  toast({
+                                    title: "Select reschedule time",
+                                    description: "Please choose date and time for decision pending.",
+                                    variant: "destructive",
+                                  })
+                                  return
+                                }
+                                groupKey = "part_3_followup_sales"
+                                finalStatus = decisionReason
+                                nextAction = "rescheduled"
+                                nextFollowUpAt = new Date(rescheduleAt).toISOString()
+                              }
+                            } else {
                               toast({
-                                title: "Select reschedule time",
-                                description: "Please choose date and time before rescheduling.",
+                                title: "Select connected outcome",
+                                description: "Choose Interested, Not Interested, or Decision Pending.",
                                 variant: "destructive",
                               })
                               return
                             }
-                            const nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = isRescheduleChecked
-                              ? "rescheduled"
-                              : getActionFromStatus(finalSelectedStatus)
-                            const trimmedRemark = callRemark.trim()
-                            const taggedRemark = `[${selectedStatusGroupConfig.label}] ${finalSelectedStatus}${
-                              trimmedRemark ? ` | ${trimmedRemark}` : ""
-                            }`
+
+                            const taggedRemark = buildTaggedRemark(groupKey, finalStatus, callRemark)
                             submitAction(currentLead.id, {
                               action: nextAction,
                               callRemark: taggedRemark,
-                              nextFollowUpAt: isRescheduleChecked ? new Date(rescheduleAt).toISOString() : undefined,
+                              nextFollowUpAt,
                               actionAt: new Date().toISOString(),
                             })
                           }}

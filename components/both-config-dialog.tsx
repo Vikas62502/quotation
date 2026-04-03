@@ -100,7 +100,10 @@ export function BothConfigDialog({ open, onOpenChange, onSelect }: BothConfigDia
                   </TableRow>
                 ) : (
                   filteredConfigs.map((config, index) => (
-                    <TableRow key={index} className="hover:bg-muted/50 border-b transition-colors">
+                    <TableRow
+                      key={`${config.systemSize}-${config.inverterSize}-${config.phase}-${config.panelType}-${config.dcrCapacity}-${config.nonDcrCapacity}-${index}`}
+                      className="hover:bg-muted/50 border-b transition-colors"
+                    >
                       <TableCell className="text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap">
                         <span className="font-medium">{config.systemSize}</span>
                         <span className="text-muted-foreground ml-1.5">({config.phase})</span>
