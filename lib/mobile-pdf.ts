@@ -20,8 +20,10 @@ const blobToBase64 = async (blob: Blob): Promise<string> => {
 export const savePdfForDevice = async (pdf: jsPDF, filename: string) => {
   const blob = pdf.output("blob")
   const isNative = Capacitor.isNativePlatform()
+  const hasFilesystem = Capacitor.isPluginAvailable("Filesystem")
+  const hasShare = Capacitor.isPluginAvailable("Share")
 
-  if (!isNative) {
+  if (!isNative || !hasFilesystem) {
     pdf.save(filename)
     return
   }
@@ -59,16 +61,18 @@ export const savePdfForDevice = async (pdf: jsPDF, filename: string) => {
 
   const result = await writeWithFallback()
 
-  try {
-    await Share.share({
-      title: "Quotation PDF",
-      text: "Quotation downloaded successfully.",
-      files: [result.uri],
-      url: result.uri,
-      dialogTitle: "Save or share quotation",
-    })
-  } catch {
-    // Share dialog cancellation is non-fatal; file is already saved.
+  if (hasShare) {
+    try {
+      await Share.share({
+        title: "Quotation PDF",
+        text: "Quotation downloaded successfully.",
+        files: [result.uri],
+        url: result.uri,
+        dialogTitle: "Save or share quotation",
+      })
+    } catch {
+      // Share dialog cancellation is non-fatal; file is already saved.
+    }
   }
 }
 

@@ -664,8 +664,15 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       addCanvasToPdf(pdf, canvas1, false)
       addCanvasToPdf(pdf, canvas2, true)
 
-      const customerName = `${customer?.firstName || ""}_${customer?.lastName || ""}`.replace(/\s/g, "_")
-      const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
+      const sanitizeSegment = (value: string) =>
+        value
+          .trim()
+          .replace(/\s+/g, "_")
+          .replace(/[^a-zA-Z0-9_-]/g, "")
+          .replace(/_+/g, "_")
+      const customerName = sanitizeSegment(`${customer?.firstName || ""}_${customer?.lastName || ""}`) || "Customer"
+      const safeQuotationId = sanitizeSegment(displayQuotation.id || quotationId) || "Quotation"
+      const filename = `Quotation_${customerName}_${safeQuotationId}.pdf`
       await savePdfForDevice(pdf, filename)
     } catch (error) {
       console.error("Error generating PDF:", error)

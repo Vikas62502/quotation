@@ -325,6 +325,17 @@ export default function CallingDataPage() {
   const [recentStatuses, setRecentStatuses] = useState<Record<string, string>>({})
   const [recentOtherReasons, setRecentOtherReasons] = useState<Record<string, string>>({})
   const [recentRescheduleChecks, setRecentRescheduleChecks] = useState<Record<string, boolean>>({})
+  const [notConnectedTransferChecks, setNotConnectedTransferChecks] = useState<Record<string, boolean>>({})
+  const [notConnectedTransferReasons, setNotConnectedTransferReasons] = useState<Record<string, string>>({})
+  const [notConnectedTransferOutcomes, setNotConnectedTransferOutcomes] = useState<
+    Record<string, "interested" | "not_interested" | "decision_pending">
+  >({})
+  const [connectedCardOutcomes, setConnectedCardOutcomes] = useState<
+    Record<string, "interested" | "not_interested" | "decision_pending">
+  >({})
+  const [connectedOutcomeFilter, setConnectedOutcomeFilter] = useState<
+    "all" | "interested" | "not_interested" | "decision_pending"
+  >("all")
   const [editableLeadDetails, setEditableLeadDetails] = useState<EditableLeadDetails | null>(null)
   const [isEditingLead, setIsEditingLead] = useState(false)
   const [flowTab, setFlowTab] = useState<"current_lead" | "dialled" | "connected" | "not_connected">("current_lead")
@@ -435,6 +446,13 @@ export default function CallingDataPage() {
       status: (match[2] || "").trim(),
       remark: (match[3] || "").trim(),
     }
+  }
+
+  const extractTransferReason = (remark?: string) => {
+    const text = (remark || "").trim()
+    if (!text) return ""
+    const match = text.match(/(?:^|\|\s*)Transfer Reason:\s*([^|]+)/i)
+    return (match?.[1] || "").trim()
   }
 
   const getStatusGroupKeyByLabel = (label?: string | null) => {
@@ -737,6 +755,26 @@ export default function CallingDataPage() {
       }),
     [recentActions],
   )
+
+  const getConnectedOutcomeForStatus = (status: string): "interested" | "not_interested" | "decision_pending" => {
+    if (LOST_REASONS.includes(status) || status === "Not Interested" || status === "Not Interested Currently") {
+      return "not_interested"
+    }
+    if (DECISION_PENDING_REASONS.includes(status) || FOLLOW_UP_STATUSES.has(status) || status === "Rescheduled") {
+      return "decision_pending"
+    }
+    return "interested"
+  }
+
+  const filteredFlowConnectedActions = useMemo(() => {
+    if (connectedOutcomeFilter === "all") return flowConnectedActions
+    return flowConnectedActions.filter((item) => {
+      const parsed = parseTaggedRemark(item.callRemark)
+      const status = (parsed.status || "").trim()
+      if (!status) return false
+      return getConnectedOutcomeForStatus(status) === connectedOutcomeFilter
+    })
+  }, [flowConnectedActions, connectedOutcomeFilter])
 
   const flowNotConnectedActions = useMemo(
     () =>
@@ -1055,34 +1093,51 @@ export default function CallingDataPage() {
         ) : flowTab === "connected" ? (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Connected Data</CardTitle>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="text-base">Connected Data</CardTitle>
+                <div className="w-full sm:w-64">
+                  <Select
+                    value={connectedOutcomeFilter}
+                    onValueChange={(value: "all" | "interested" | "not_interested" | "decision_pending") =>
+                      setConnectedOutcomeFilter(value)
+                    }
+                  >
+                    <SelectTrigger className="h-8">
+                      <SelectValue placeholder="Filter connected outcome" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="interested">Interested</SelectItem>
+                      <SelectItem value="not_interested">Not Interested</SelectItem>
+                      <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {flowConnectedActions.length === 0 ? (
+              {filteredFlowConnectedActions.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No connected data found.</p>
               ) : (
                 <div className="space-y-2">
-                  {flowConnectedActions.map((item) => {
+                  {filteredFlowConnectedActions.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
+                    const transferReasonText = extractTransferReason(parsed.remark)
                     const rowKey = actionRowKey(item)
-                    const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
-                    const statusGroup = recentStatusGroups[rowKey] ?? derivedStatusGroup ?? STATUS_GROUPS[0].key
-                    const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
-                    const derivedStatus = (parsed.status || "").trim()
-                    const status =
-                      recentStatuses[rowKey] ??
-                      (derivedStatus && (groupConfig.options as readonly string[]).includes(derivedStatus)
-                        ? derivedStatus
-                        : getDefaultStatusByGroup(statusGroup))
-                    const otherReason = recentOtherReasons[rowKey] ?? ""
+                    const derivedOutcome = getConnectedOutcomeForStatus((parsed.status || "").trim())
+                    const connectedOutcome = connectedCardOutcomes[rowKey] ?? derivedOutcome
                     const isReschedule = recentRescheduleChecks[rowKey] ?? false
-                    const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
                     const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     return (
                       <div key={`connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
                         <p className="font-medium">{item.name} • {item.mobile}</p>
                         <p className="text-xs text-muted-foreground">Status: {parsed.status || "N/A"} • At: {formatDateTime(item.actionAt)}</p>
+                        {transferReasonText ? (
+                          <p className="text-xs text-emerald-700">
+                            <span className="font-medium">Transfer Reason:</span> {transferReasonText}
+                          </p>
+                        ) : null}
                         <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
                         <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
                         <Textarea
@@ -1091,41 +1146,21 @@ export default function CallingDataPage() {
                           value={remark}
                           onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
                         />
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          <Select
-                            value={statusGroup}
-                            onValueChange={(value) => {
-                              const nextKey = value as StatusGroupKey
-                              setRecentStatusGroups((prev) => ({ ...prev, [rowKey]: nextKey }))
-                              setRecentStatuses((prev) => ({ ...prev, [rowKey]: getDefaultStatusByGroup(nextKey) }))
-                              setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: "" }))
-                            }}
-                          >
-                            <SelectTrigger className="h-8"><SelectValue placeholder="Status category" /></SelectTrigger>
-                            <SelectContent>
-                              {STATUS_GROUPS.map((group) => (
-                                <SelectItem key={group.key} value={group.key}>{group.label}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <Select value={status} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
-                            <SelectTrigger className="h-8"><SelectValue placeholder="Status" /></SelectTrigger>
-                            <SelectContent>
-                              {groupConfig.options.map((option) => (
-                                <SelectItem key={option} value={option}>{option}</SelectItem>
-                              ))}
-                              <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {status === OTHER_STATUS_VALUE ? (
-                          <Input
-                            className="h-8"
-                            placeholder="Enter other reason"
-                            value={otherReason}
-                            onChange={(e) => setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                          />
-                        ) : null}
+                        <Select
+                          value={connectedOutcome}
+                          onValueChange={(value: "interested" | "not_interested" | "decision_pending") =>
+                            setConnectedCardOutcomes((prev) => ({ ...prev, [rowKey]: value }))
+                          }
+                        >
+                          <SelectTrigger className="h-8">
+                            <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="interested">Interested</SelectItem>
+                            <SelectItem value="not_interested">Not Interested</SelectItem>
+                            <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                          </SelectContent>
+                        </Select>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                           <div className="flex items-center gap-2">
                             <Checkbox
@@ -1143,6 +1178,7 @@ export default function CallingDataPage() {
                             type="datetime-local"
                             value={editedTime}
                             onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                            disabled={!isReschedule}
                           />
                         </div>
                         <Button
@@ -1150,12 +1186,25 @@ export default function CallingDataPage() {
                           className="bg-violet-600 hover:bg-violet-700 text-white"
                           disabled={!item.leadId}
                           onClick={() => {
-                            if (!finalStatus) return
+                            let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                            let finalStatus = "Interested"
+                            let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                            let nextFollowUpAt: string | undefined
+                            if (connectedOutcome === "not_interested") {
+                              groupKey = "part_4_rejection"
+                              finalStatus = "Not Interested Currently"
+                              nextAction = "not_interested"
+                            } else if (connectedOutcome === "decision_pending") {
+                              groupKey = "part_3_followup_sales"
+                              finalStatus = "Follow-up Pending"
+                              nextAction = isReschedule ? "rescheduled" : "follow_up"
+                              nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
+                            }
                             if (isReschedule && !editedTime) return
                             submitAction(item.leadId, {
-                              action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
-                              callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
-                              nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
+                              action: nextAction,
+                              callRemark: buildTaggedRemark(groupKey, finalStatus, remark),
+                              nextFollowUpAt,
                               actionAt: new Date().toISOString(),
                             })
                           }}
@@ -1181,17 +1230,28 @@ export default function CallingDataPage() {
                 <div className="space-y-2">
                   {flowNotConnectedActions.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
+                    const transferReasonText = extractTransferReason(parsed.remark)
                     const rowKey = actionRowKey(item)
                     const derivedReason = NOT_CONNECTED_REASONS.includes(parsed.status) ? parsed.status : NOT_CONNECTED_REASONS[0]
                     const selectedReasonRaw = recentStatuses[rowKey] ?? derivedReason
                     const selectedReason = NOT_CONNECTED_REASONS.includes(selectedReasonRaw) ? selectedReasonRaw : derivedReason
                     const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const transferToConnected = notConnectedTransferChecks[rowKey] ?? false
+                    const transferReason = notConnectedTransferReasons[rowKey] ?? ""
+                    const transferOutcome = notConnectedTransferOutcomes[rowKey] ?? "interested"
+                    const isReschedule = recentRescheduleChecks[rowKey] ?? transferOutcome === "decision_pending"
+                    const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     return (
                       <div key={`not-connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
                         <p className="font-medium">{item.name} • {item.mobile}</p>
                         <p className="text-xs text-muted-foreground">
                           Reason: {selectedReason || "N/A"} • At: {formatDateTime(item.actionAt)}
                         </p>
+                        {transferReasonText ? (
+                          <p className="text-xs text-emerald-700">
+                            <span className="font-medium">Transfer Reason:</span> {transferReasonText}
+                          </p>
+                        ) : null}
                         <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
                         <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
                         <Textarea
@@ -1215,11 +1275,122 @@ export default function CallingDataPage() {
                             </SelectContent>
                           </Select>
                         </div>
+                        <div className="space-y-2 rounded-md border border-dashed p-2">
+                          <div className="flex items-center gap-2">
+                            <Checkbox
+                              id={`transfer-connected-${rowKey}`}
+                              checked={transferToConnected}
+                              onCheckedChange={(checked) =>
+                                setNotConnectedTransferChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                              }
+                            />
+                            <label htmlFor={`transfer-connected-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
+                              Move this lead to Connected flow
+                            </label>
+                          </div>
+                          {transferToConnected ? (
+                            <div className="space-y-2">
+                              <Input
+                                className="h-8"
+                                placeholder="Reason of transfer (required)"
+                                value={transferReason}
+                                onChange={(e) =>
+                                  setNotConnectedTransferReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))
+                                }
+                              />
+                              <Select
+                                value={transferOutcome}
+                                onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
+                                  setNotConnectedTransferOutcomes((prev) => ({ ...prev, [rowKey]: value }))
+                                  if (value === "decision_pending") {
+                                    setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: true }))
+                                    setRecentEditTimes((prev) => ({
+                                      ...prev,
+                                      [rowKey]:
+                                        prev[rowKey] || formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+                                    }))
+                                  } else {
+                                    setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                  }
+                                }}
+                              >
+                                <SelectTrigger className="h-8">
+                                  <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="interested">Interested</SelectItem>
+                                  <SelectItem value="not_interested">Not Interested</SelectItem>
+                                  <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <div className="flex items-center gap-2">
+                                  <Checkbox
+                                    id={`not-connected-reschedule-${rowKey}`}
+                                    checked={isReschedule}
+                                    onCheckedChange={(checked) =>
+                                      setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                                    }
+                                  />
+                                  <label
+                                    htmlFor={`not-connected-reschedule-${rowKey}`}
+                                    className="text-xs text-muted-foreground cursor-pointer"
+                                  >
+                                    Reschedule
+                                  </label>
+                                </div>
+                                <Input
+                                  type="datetime-local"
+                                  value={editedTime}
+                                  onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                                  disabled={!isReschedule}
+                                />
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
                         <Button
                           size="sm"
                           className="bg-violet-600 hover:bg-violet-700 text-white"
                           disabled={!item.leadId}
                           onClick={() => {
+                            if (transferToConnected) {
+                              if (!transferReason.trim()) {
+                                toast({
+                                  title: "Transfer reason required",
+                                  description: "Please enter reason of transfer before moving to Connected.",
+                                  variant: "destructive",
+                                })
+                                return
+                              }
+                              let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                              let finalConnectedStatus = "Interested"
+                              let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                              let nextFollowUpAt: string | undefined
+                              if (transferOutcome === "not_interested") {
+                                groupKey = "part_4_rejection"
+                                finalConnectedStatus = "Not Interested Currently"
+                                nextAction = "not_interested"
+                              } else if (transferOutcome === "decision_pending") {
+                                if (isReschedule && !editedTime) return
+                                groupKey = "part_3_followup_sales"
+                                finalConnectedStatus = "Follow-up Pending"
+                                nextAction = isReschedule ? "rescheduled" : "follow_up"
+                                nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
+                              }
+                              if (isReschedule && !editedTime) return
+                              const combinedRemark = [remark, `Transfer Reason: ${transferReason.trim()}`]
+                                .map((part) => part.trim())
+                                .filter(Boolean)
+                                .join(" | ")
+                              submitAction(item.leadId, {
+                                action: nextAction,
+                                callRemark: buildTaggedRemark(groupKey, finalConnectedStatus, combinedRemark),
+                                nextFollowUpAt,
+                                actionAt: new Date().toISOString(),
+                              })
+                              return
+                            }
                             if (!selectedReason) return
                             submitAction(item.leadId, {
                               action: "not_interested",
@@ -1228,7 +1399,7 @@ export default function CallingDataPage() {
                             })
                           }}
                         >
-                          Update
+                          {transferToConnected ? "Move to Connected" : "Update"}
                         </Button>
                       </div>
                     )

@@ -576,9 +576,16 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
         heightLeft -= pageHeight
       }
 
-      // Generate filename
-      const customerName = `${customer.firstName}_${customer.lastName}`.replace(/\s/g, "_")
-      const filename = `Quotation_${customerName}_${formatDate(quotationDate)}.pdf`
+      // Generate filename for mobile/web download using customer + quotation id.
+      const sanitizeSegment = (value: string) =>
+        value
+          .trim()
+          .replace(/\s+/g, "_")
+          .replace(/[^a-zA-Z0-9_-]/g, "")
+          .replace(/_+/g, "_")
+      const customerName = sanitizeSegment(`${customer.firstName}_${customer.lastName}`) || "Customer"
+      const safeQuotationId = sanitizeSegment(quotationId) || "Quotation"
+      const filename = `Quotation_${customerName}_${safeQuotationId}.pdf`
 
       // Save (native Android/iOS writes file and opens share sheet)
       await savePdfForDevice(pdf, filename)

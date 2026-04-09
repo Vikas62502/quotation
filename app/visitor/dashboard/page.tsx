@@ -326,17 +326,22 @@ export default function VisitorDashboardPage() {
     }
   }
 
-  const handleApproveOutcomeClick = (outcome: "completed" | "incomplete" | "rescheduled") => {
-    if (!selectedVisit) return
+  const handleApproveOutcomeClick = (
+    outcome: "completed" | "incomplete" | "rescheduled",
+    visit?: VisitWithQuotation,
+  ) => {
+    const targetVisit = visit ?? selectedVisit
+    if (!targetVisit) return
+    setSelectedVisit(targetVisit)
     setApproveOutcome(outcome)
     if (outcome === "completed") {
       // Open complete dialog with dimensions and images
-      setLength(selectedVisit.length?.toString() || "")
-      setWidth(selectedVisit.width?.toString() || "")
-      setHeight(selectedVisit.height?.toString() || "")
+      setLength(targetVisit.length?.toString() || "")
+      setWidth(targetVisit.width?.toString() || "")
+      setHeight(targetVisit.height?.toString() || "")
       setImages([])
-      setImagePreviews(selectedVisit.images || [])
-      setCompleteNotes(selectedVisit.notes || "")
+      setImagePreviews(targetVisit.images || [])
+      setCompleteNotes(targetVisit.notes || "")
       setCompleteDialogOpen(true)
     } else {
       // Open incomplete/reschedule dialog with reason
@@ -961,8 +966,7 @@ export default function VisitorDashboardPage() {
                                 <Button
                                   size="sm"
                                   onClick={() => {
-                                    setSelectedVisit(visit)
-                                    handleApproveOutcomeClick("completed")
+                                    handleApproveOutcomeClick("completed", visit)
                                   }}
                                   className="flex-1 bg-blue-600 hover:bg-blue-700"
                                 >
@@ -972,8 +976,7 @@ export default function VisitorDashboardPage() {
                                 <Button
                                   size="sm"
                                   onClick={() => {
-                                    setSelectedVisit(visit)
-                                    handleApproveOutcomeClick("incomplete")
+                                    handleApproveOutcomeClick("incomplete", visit)
                                   }}
                                   className="flex-1 bg-orange-600 hover:bg-orange-700"
                                 >
@@ -983,8 +986,7 @@ export default function VisitorDashboardPage() {
                                 <Button
                                   size="sm"
                                   onClick={() => {
-                                    setSelectedVisit(visit)
-                                    handleApproveOutcomeClick("rescheduled")
+                                    handleApproveOutcomeClick("rescheduled", visit)
                                   }}
                                   className="flex-1 bg-purple-600 hover:bg-purple-700"
                                 >
@@ -1012,8 +1014,7 @@ export default function VisitorDashboardPage() {
                             <Button
                               size="sm"
                               onClick={() => {
-                                setSelectedVisit(visit)
-                                handleApproveOutcomeClick("completed")
+                                handleApproveOutcomeClick("completed", visit)
                               }}
                               className="flex-1 bg-blue-600 hover:bg-blue-700"
                             >
@@ -1023,8 +1024,7 @@ export default function VisitorDashboardPage() {
                             <Button
                               size="sm"
                               onClick={() => {
-                                setSelectedVisit(visit)
-                                handleApproveOutcomeClick("incomplete")
+                                handleApproveOutcomeClick("incomplete", visit)
                               }}
                               className="flex-1 bg-orange-600 hover:bg-orange-700"
                             >
@@ -1034,8 +1034,7 @@ export default function VisitorDashboardPage() {
                             <Button
                               size="sm"
                               onClick={() => {
-                                setSelectedVisit(visit)
-                                handleApproveOutcomeClick("rescheduled")
+                                handleApproveOutcomeClick("rescheduled", visit)
                               }}
                               className="flex-1 bg-purple-600 hover:bg-purple-700"
                             >
