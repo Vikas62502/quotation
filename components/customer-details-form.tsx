@@ -18,21 +18,40 @@ interface Props {
 }
 
 export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
-  const [error, setError] = useState("")
-  const [formData, setFormData] = useState<Customer>(
-    initialData || {
-      firstName: "",
-      lastName: "",
-      mobile: "",
-      email: "",
+  const normalizeInitialCustomer = (data?: Customer): Customer => {
+    if (!data) {
+      return {
+        firstName: "",
+        lastName: "",
+        mobile: "",
+        email: "",
+        address: {
+          street: "",
+          city: "",
+          state: "",
+          pincode: "",
+        },
+      }
+    }
+
+    const cleanedLastName = (data.lastName || "").trim()
+    const cleanedEmail = (data.email || "").trim()
+
+    return {
+      ...data,
+      lastName: cleanedLastName.toLowerCase() === "na" ? "" : cleanedLastName,
+      email: cleanedEmail.toLowerCase() === "na@chairbord.com" ? "" : cleanedEmail,
       address: {
-        street: "",
-        city: "",
-        state: "",
-        pincode: "",
+        street: data.address?.street || "",
+        city: data.address?.city || "",
+        state: data.address?.state || "",
+        pincode: data.address?.pincode || "",
       },
-    },
-  )
+    }
+  }
+
+  const [error, setError] = useState("")
+  const [formData, setFormData] = useState<Customer>(normalizeInitialCustomer(initialData))
 
   const updateFormData = (field: string, value: string) => {
     if (field.startsWith("address.")) {
@@ -50,8 +69,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.firstName || !formData.lastName || !formData.mobile) {
-      setError("Please fill in all required fields")
+    if (!formData.firstName?.trim() || !formData.mobile?.trim()) {
+      setError("Please enter first name and mobile number")
       return
     }
 
@@ -75,7 +94,19 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
       return
     }
 
-    onSubmit(formData)
+    onSubmit({
+      ...formData,
+      firstName: formData.firstName.trim(),
+      lastName: formData.lastName.trim(),
+      email: formData.email.trim(),
+      mobile: formData.mobile.trim(),
+      address: {
+        street: formData.address.street.trim(),
+        city: formData.address.city.trim(),
+        state: formData.address.state.trim(),
+        pincode: formData.address.pincode.trim(),
+      },
+    })
   }
 
   return (
@@ -103,7 +134,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
               />
             </div>
             <div>
-              <Label htmlFor="lastName">Last Name *</Label>
+              <Label htmlFor="lastName">Last Name (optional)</Label>
               <Input
                 id="lastName"
                 value={formData.lastName}
@@ -126,7 +157,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
               />
             </div>
             <div>
-              <Label htmlFor="email">Email Address</Label>
+              <Label htmlFor="email">Email Address (optional)</Label>
               <Input
                 id="email"
                 type="email"

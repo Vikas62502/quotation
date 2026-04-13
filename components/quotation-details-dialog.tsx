@@ -414,6 +414,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const resolvedPhase = resolveProductPhase()
   const pdfPhaseLabel = formatQuotationPhaseLabel(resolvedPhase)
   const customer = displayQuotation.customer
+  const displayLastName = (customer?.lastName || "").trim()
+  const normalizedLastName = displayLastName.toLowerCase()
+  const safeLastName = normalizedLastName === "na" ? "" : displayLastName
+  const displayEmail = (customer?.email || "").trim()
+  const normalizedEmail = displayEmail.toLowerCase()
+  const safeEmail = normalizedEmail === "na@chairbord.com" ? "" : displayEmail
+  const safeFullName = `${customer?.firstName || ""} ${safeLastName}`.trim()
 
   // Use backend pricing if available (aligned with backend changes)
   let panelPrice = 0
@@ -1960,7 +1967,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <div>
                         <p className="text-xs text-muted-foreground mb-1">Full Name</p>
                         <p className="text-sm font-semibold">
-                          {customer?.firstName || ""} {customer?.lastName || ""}
+                          {safeFullName}
                         </p>
                       </div>
                     </div>
@@ -1981,13 +1988,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <Mail className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div>
                         <p className="text-xs text-muted-foreground mb-1">Email Address</p>
-                        <a
-                          href={`mailto:${customer?.email || ""}`}
-                          className="text-sm font-semibold text-primary hover:underline"
-                          title="Click to send email"
-                        >
-                          {customer?.email || ""}
-                        </a>
+                        {safeEmail ? (
+                          <a
+                            href={`mailto:${safeEmail}`}
+                            className="text-sm font-semibold text-primary hover:underline"
+                            title="Click to send email"
+                          >
+                            {safeEmail}
+                          </a>
+                        ) : (
+                          <p className="text-sm font-semibold text-muted-foreground">-</p>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-start gap-3">
@@ -2699,17 +2710,31 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               onSubmit={async (updatedCustomer: Customer) => {
                 setIsSavingCustomer(true)
                 try {
+                  const normalizedCustomer: Customer = {
+                    ...updatedCustomer,
+                    firstName: (updatedCustomer.firstName || "").trim(),
+                    // Backend currently validates non-empty strings for these fields.
+                    lastName: (updatedCustomer.lastName || "").trim() || "NA",
+                    email: (updatedCustomer.email || "").trim() || "na@chairbord.com",
+                    mobile: (updatedCustomer.mobile || "").trim(),
+                    address: {
+                      street: (updatedCustomer.address?.street || "").trim(),
+                      city: (updatedCustomer.address?.city || "").trim(),
+                      state: (updatedCustomer.address?.state || "").trim(),
+                      pincode: (updatedCustomer.address?.pincode || "").trim(),
+                    },
+                  }
                   // Get customer ID from quotation
                   const customerId = (displayQuotation as any).customerId || (displayQuotation.customer as any)?.id || (customer as any)?.id
                   
                   if (useApi && customerId) {
                     // Update via API
-                    await api.customers.update(customerId, updatedCustomer)
+                    await api.customers.update(customerId, normalizedCustomer)
                     
                     // Update local state
                     setFullQuotation({
                       ...displayQuotation,
-                      customer: updatedCustomer,
+                      customer: normalizedCustomer,
                     })
                     
                     toast({
@@ -2720,7 +2745,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     // Fallback to local state update
                     setFullQuotation({
                       ...displayQuotation,
-                      customer: updatedCustomer,
+                      customer: normalizedCustomer,
                     })
                     
                     toast({

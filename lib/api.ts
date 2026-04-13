@@ -612,6 +612,14 @@ export const api = {
           paymentMode?: string
           transactionId?: string
         }>
+        /** Account Management subsidy cheque audit (optional; backend should persist JSON). */
+        subsidyCheques?: Array<{
+          id: string
+          details: string
+          amount: number
+          status: "pending" | "cleared"
+          clearedAt?: string
+        }>
       },
     ) => {
       const attempts: Array<{ endpoint: string; method: "PATCH" | "PUT"; body: Record<string, any> }> = [
@@ -623,12 +631,20 @@ export const api = {
         {
           endpoint: `/quotations/${quotationId}/installments`,
           method: "PATCH",
-          body: { installments: paymentData.phases, paymentStatus: paymentData.paymentStatus },
+          body: {
+            installments: paymentData.phases,
+            paymentStatus: paymentData.paymentStatus,
+            ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
+          },
         },
         {
           endpoint: `/quotations/${quotationId}/installments`,
           method: "PUT",
-          body: { installments: paymentData.phases, paymentStatus: paymentData.paymentStatus },
+          body: {
+            installments: paymentData.phases,
+            paymentStatus: paymentData.paymentStatus,
+            ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
+          },
         },
         {
           endpoint: `/quotations/${quotationId}/payment-mode`,
@@ -777,10 +793,33 @@ export const api = {
       })
     },
 
-    reschedule: async (visitId: string, reason: string) => {
+    reschedule: async (
+      visitId: string,
+      rescheduleData:
+        | string
+        | {
+            reason: string
+            visitDate?: string
+            visitTime?: string
+            visitStartTime?: string
+            visitEndTime?: string
+            visitTimeRange?: string
+          },
+    ) => {
+      const payload =
+        typeof rescheduleData === "string"
+          ? { reason: rescheduleData }
+          : {
+              reason: rescheduleData.reason,
+              ...(rescheduleData.visitDate ? { visitDate: rescheduleData.visitDate } : {}),
+              ...(rescheduleData.visitTime ? { visitTime: rescheduleData.visitTime } : {}),
+              ...(rescheduleData.visitStartTime ? { visitStartTime: rescheduleData.visitStartTime } : {}),
+              ...(rescheduleData.visitEndTime ? { visitEndTime: rescheduleData.visitEndTime } : {}),
+              ...(rescheduleData.visitTimeRange ? { visitTimeRange: rescheduleData.visitTimeRange } : {}),
+            }
       return apiRequest(`/visits/${visitId}/reschedule`, {
         method: "PATCH",
-        body: { reason },
+        body: payload,
       })
     },
 
@@ -1037,6 +1076,8 @@ export const api = {
           paymentType: "loan" | "cash" | "mix"
           bankName?: string
           bankIfsc?: string
+          /** Subsidy cheque (cash or cash + loan) */
+          subsidyChequeDetails?: string
         },
       ) => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
@@ -1049,9 +1090,57 @@ export const api = {
                   paymentMode: approval.paymentType,
                   ...(approval.bankName ? { bankName: approval.bankName } : {}),
                   ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc } : {}),
+                  ...(approval.subsidyChequeDetails?.trim()
+                    ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
+                    : {}),
                 }
               : {}),
           },
+        })
+      },
+
+      /**
+       * Persist file-login workflow (portal filing). Backend should store fileLoginAt, file payment type,
+       * optional bank + subsidy cheque, and return these fields on quotation GET/list.
+       * Send `{ reset: true }` to clear file-login fields (backend should interpret `resetFileLogin: true` in body).
+       */
+      updateFileLogin: async (
+        quotationId: string,
+        payload:
+          | { reset: true }
+          | {
+              fileLoginStatus: "already_login" | "login_now"
+              filePaymentType: "loan" | "cash" | "mix"
+              bankName?: string
+              bankIfsc?: string
+              fileSubsidyChequeDetails?: string
+            },
+      ) => {
+        let body: Record<string, unknown>
+        if ("reset" in payload && payload.reset) {
+          body = { resetFileLogin: true }
+        } else {
+          const p = payload as {
+            fileLoginStatus: "already_login" | "login_now"
+            filePaymentType: "loan" | "cash" | "mix"
+            bankName?: string
+            bankIfsc?: string
+            fileSubsidyChequeDetails?: string
+          }
+          body = {
+            fileLoginStatus: p.fileLoginStatus,
+            filePaymentType: p.filePaymentType,
+            paymentMode: p.filePaymentType,
+            ...(p.bankName ? { fileBankName: p.bankName, bankName: p.bankName } : {}),
+            ...(p.bankIfsc ? { fileBankIfsc: p.bankIfsc, bankIfsc: p.bankIfsc } : {}),
+            ...(p.fileSubsidyChequeDetails?.trim()
+              ? { fileSubsidyChequeDetails: p.fileSubsidyChequeDetails.trim() }
+              : {}),
+          }
+        }
+        return apiRequest(`/admin/quotations/${quotationId}/file-login`, {
+          method: "PATCH",
+          body,
         })
       },
     },

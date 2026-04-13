@@ -356,7 +356,7 @@ export default function CustomersPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="customer-lastName">Last Name *</Label>
+                  <Label htmlFor="customer-lastName">Last Name (optional)</Label>
                   <Input
                     id="customer-lastName"
                     value={customerEditForm.lastName || ""}
@@ -368,7 +368,7 @@ export default function CustomersPage() {
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="customer-email">Email *</Label>
+                  <Label htmlFor="customer-email">Email (optional)</Label>
                   <Input
                     id="customer-email"
                     type="email"
@@ -466,11 +466,16 @@ export default function CustomersPage() {
                 <Button
                   onClick={async () => {
                     // Validation
-                    if (!customerEditForm.firstName || !customerEditForm.lastName || !customerEditForm.email ||
-                        !customerEditForm.mobile || !customerEditForm.address.street ||
+                    if (!customerEditForm.firstName?.trim() || !customerEditForm.mobile?.trim() ||
+                        !customerEditForm.address.street ||
                         !customerEditForm.address.city || !customerEditForm.address.state ||
                         !customerEditForm.address.pincode) {
-                      alert("Please fill in all required fields")
+                      alert("Please fill in first name, mobile, and complete address")
+                      return
+                    }
+
+                    if (customerEditForm.email?.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerEditForm.email.trim())) {
+                      alert("Please enter a valid email address or leave email empty")
                       return
                     }
 
@@ -493,8 +498,8 @@ export default function CustomersPage() {
                       if (useApi) {
                         await api.customers.update(editingCustomer.id, {
                           firstName: customerEditForm.firstName.trim(),
-                          lastName: customerEditForm.lastName.trim(),
-                          email: customerEditForm.email.trim(),
+                          lastName: (customerEditForm.lastName || "").trim() || "NA",
+                          email: (customerEditForm.email || "").trim() || "na@chairbord.com",
                           mobile: customerEditForm.mobile,
                           address: {
                             street: customerEditForm.address.street.trim(),

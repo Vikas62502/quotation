@@ -261,7 +261,12 @@ const NOT_CONNECTED_REASONS = [
   "Wrong Number",
   "Invalid Number",
   "Number Does Not Exist",
+  "Duplicate Lead",
+  "Invalid Lead",
+  "Out of Service Area",
+  "Incoming Not Available",
 ]
+
 
 const LOST_REASONS = [
   "Not Interested Currently",
@@ -271,6 +276,11 @@ const LOST_REASONS = [
   "Location Not Serviceable",
   "Chose Competitor",
   "No Requirement",
+  "Already Installed Solar",
+  "Low Electricity Bill",
+  "Flat Issue",
+  "Apartment Issue",
+  "Low Space Issue",
 ]
 
 const DECISION_PENDING_REASONS = [

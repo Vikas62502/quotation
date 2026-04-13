@@ -31,7 +31,7 @@ import {
   Wallet,
   History,
 } from "lucide-react"
-import type { Quotation, QuotationStatus } from "@/lib/quotation-context"
+import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -93,6 +93,17 @@ export default function AdminPanelPage() {
   const [approvalPaymentType, setApprovalPaymentType] = useState<ApprovalPaymentType>("cash")
   const [approvalBankName, setApprovalBankName] = useState("")
   const [approvalBankIfsc, setApprovalBankIfsc] = useState("")
+  const [approvalSubsidyCheque, setApprovalSubsidyCheque] = useState("")
+  const [fileLoginDialogOpen, setFileLoginDialogOpen] = useState(false)
+  const [fileLoginQuotationId, setFileLoginQuotationId] = useState<string | null>(null)
+  const [fileLoginStatusChoice, setFileLoginStatusChoice] = useState<FileLoginStatus>("login_now")
+  const [fileLoginPaymentType, setFileLoginPaymentType] = useState<ApprovalPaymentType>("cash")
+  const [fileLoginBankName, setFileLoginBankName] = useState("")
+  const [fileLoginBankIfsc, setFileLoginBankIfsc] = useState("")
+  const [fileLoginSubsidyCheque, setFileLoginSubsidyCheque] = useState("")
+  const [optimisticFileLoginSelect, setOptimisticFileLoginSelect] = useState<Record<string, string>>({})
+  const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
+  const [statusHistoryQuotation, setStatusHistoryQuotation] = useState<Quotation | null>(null)
   const [isLoadingQuotationDetails, setIsLoadingQuotationDetails] = useState(false)
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
@@ -270,13 +281,41 @@ export default function AdminPanelPage() {
     }
   }, [editingQuotation, editDialogOpen, useApi])
 
+  const normalizeStatusHistoryFromApi = (raw: unknown): StatusHistoryEntry[] => {
+    if (!Array.isArray(raw)) return []
+    return raw
+      .map((e: any) => ({
+        status: String(e.status ?? e.to ?? e.newStatus ?? "").trim(),
+        at: String(e.at ?? e.changedAt ?? e.timestamp ?? e.createdAt ?? "").trim(),
+      }))
+      .filter((e) => e.status && e.at)
+  }
+
+  const paymentTypeUiLabel = (t: string | undefined) => {
+    const x = String(t || "").toLowerCase()
+    if (x === "loan") return "Loan"
+    if (x === "cash") return "Cash"
+    if (x === "mix") return "Cash + loan"
+    return t ? String(t) : "—"
+  }
+
+  const fileLoginRowSummary = (q: Quotation) => {
+    if (!q.fileLoginStatus) return "Not set"
+    const pt = paymentTypeUiLabel(q.filePaymentType)
+    return q.fileLoginStatus === "already_login" ? `Already logged in · ${pt}` : `Login now · ${pt}`
+  }
+
   const loadData = async () => {
     try {
       if (useApi) {
         // Load quotations
         const quotationsResponse = await api.admin.quotations.getAll()
+        setOptimisticFileLoginSelect({})
         const quotationsList = (quotationsResponse.quotations || []).map((q: any) => {
           const customerData = q.customer || {}
+          const rawFileLogin = q.fileLoginStatus ?? q.file_login_status
+          const fileLoginStatusNorm =
+            rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
           return {
             id: q.id,
             customer: {
@@ -301,6 +340,18 @@ export default function AdminPanelPage() {
             dealerId: q.dealer?.id || q.dealerId,
             dealer: q.dealer || null,
             status: (q.status || "pending") as QuotationStatus,
+            paymentMode: q.paymentMode ?? q.payment_mode,
+            bankName: q.bankName ?? q.bank_name,
+            bankIfsc: q.bankIfsc ?? q.bank_ifsc,
+            subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details,
+            fileLoginStatus: fileLoginStatusNorm as FileLoginStatus | undefined,
+            filePaymentType: (q.filePaymentType ?? q.file_payment_type) as ApprovalPaymentType | undefined,
+            fileBankName: q.fileBankName ?? q.file_bank_name,
+            fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc,
+            fileSubsidyChequeDetails: q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details,
+            fileLoginAt: q.fileLoginAt ?? q.file_login_at,
+            statusApprovedAt: q.statusApprovedAt ?? q.status_approved_at ?? q.approvedAt,
+            statusHistory: normalizeStatusHistoryFromApi(q.statusHistory ?? q.status_history ?? q.statusChanges),
           }
         })
         setQuotations(quotationsList)
@@ -742,7 +793,12 @@ export default function AdminPanelPage() {
   const updateQuotationStatus = async (
     quotationId: string,
     status: QuotationStatus,
-    approval?: { paymentType: ApprovalPaymentType; bankName?: string; bankIfsc?: string },
+    approval?: {
+      paymentType: ApprovalPaymentType
+      bankName?: string
+      bankIfsc?: string
+      subsidyChequeDetails?: string
+    },
   ) => {
     try {
       if (useApi) {
@@ -754,21 +810,30 @@ export default function AdminPanelPage() {
         await loadData()
       } else {
         // Fallback to localStorage
-        const updated = quotations.map((q) =>
-          q.id === quotationId
-            ? {
-                ...q,
-                status,
-                ...(approval
-                  ? {
-                      paymentMode: approval.paymentType,
-                      bankName: approval.bankName,
-                      bankIfsc: approval.bankIfsc,
-                    }
-                  : {}),
-              }
-            : q,
-        )
+        const at = new Date().toISOString()
+        const updated = quotations.map((q) => {
+          if (q.id !== quotationId) return q
+          const nextHistory: StatusHistoryEntry[] = [
+            ...(q.statusHistory || []),
+            { status, at },
+          ]
+          return {
+            ...q,
+            status,
+            statusHistory: nextHistory,
+            ...(status === "approved" ? { statusApprovedAt: at } : {}),
+            ...(approval
+              ? {
+                  paymentMode: approval.paymentType,
+                  bankName: approval.bankName,
+                  bankIfsc: approval.bankIfsc,
+                  ...(approval.subsidyChequeDetails?.trim()
+                    ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
+                    : {}),
+                }
+              : {}),
+          }
+        })
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
       }
@@ -787,6 +852,7 @@ export default function AdminPanelPage() {
       setApprovalPaymentType("cash")
       setApprovalBankName("")
       setApprovalBankIfsc("")
+      setApprovalSubsidyCheque("")
       setApprovalDialogOpen(true)
       return
     }
@@ -796,13 +862,18 @@ export default function AdminPanelPage() {
   const confirmApprovalWithPaymentType = async () => {
     if (!approvingQuotationId) return
     const needsBank = approvalPaymentType === "loan" || approvalPaymentType === "mix"
+    const subsidyTrim = approvalSubsidyCheque.trim()
+    const subsidyPayload =
+      (approvalPaymentType === "cash" || approvalPaymentType === "mix") && subsidyTrim
+        ? { subsidyChequeDetails: subsidyTrim }
+        : {}
     if (needsBank) {
       const bankName = approvalBankName.trim()
       const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
       if (!bankName) {
         toast({
           title: "Bank name required",
-          description: "Enter the customer’s bank for loan or mix approval.",
+          description: "Enter the customer’s bank for loan or cash + loan approval.",
           variant: "destructive",
         })
         return
@@ -819,16 +890,156 @@ export default function AdminPanelPage() {
         paymentType: approvalPaymentType,
         bankName,
         bankIfsc: ifscRaw,
+        ...subsidyPayload,
       })
     } else {
       await updateQuotationStatus(approvingQuotationId, "approved", {
         paymentType: approvalPaymentType,
+        ...subsidyPayload,
       })
     }
     setApprovalDialogOpen(false)
     setApprovingQuotationId(null)
     setApprovalBankName("")
     setApprovalBankIfsc("")
+    setApprovalSubsidyCheque("")
+  }
+
+  const resetFileLoginFormFields = () => {
+    setFileLoginBankName("")
+    setFileLoginBankIfsc("")
+    setFileLoginSubsidyCheque("")
+  }
+
+  const openFileLoginDialog = (q: Quotation, status: FileLoginStatus) => {
+    setFileLoginQuotationId(q.id)
+    setFileLoginStatusChoice(status)
+    setFileLoginPaymentType((q.filePaymentType as ApprovalPaymentType) || "cash")
+    setFileLoginBankName(q.fileBankName || "")
+    setFileLoginBankIfsc(q.fileBankIfsc || "")
+    setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
+    setFileLoginDialogOpen(true)
+  }
+
+  const handleFileLoginSelectChange = async (quotation: Quotation, value: string) => {
+    if (value === "unset") {
+      setOptimisticFileLoginSelect((prev) => {
+        const next = { ...prev }
+        delete next[quotation.id]
+        return next
+      })
+      try {
+        if (useApi) {
+          await api.admin.quotations.updateFileLogin(quotation.id, { reset: true })
+          await loadData()
+        } else {
+          const updated = quotations.map((q) =>
+            q.id === quotation.id
+              ? {
+                  ...q,
+                  fileLoginStatus: undefined,
+                  filePaymentType: undefined,
+                  fileBankName: undefined,
+                  fileBankIfsc: undefined,
+                  fileSubsidyChequeDetails: undefined,
+                  fileLoginAt: undefined,
+                }
+              : q,
+          )
+          setQuotations(updated)
+          localStorage.setItem("quotations", JSON.stringify(updated))
+        }
+      } catch (error) {
+        console.error(error)
+        toast({
+          title: "Could not clear file login",
+          description: error instanceof ApiError ? error.message : "Try again or update the backend endpoint.",
+          variant: "destructive",
+        })
+      }
+      return
+    }
+    if (value === "already_login" || value === "login_now") {
+      setOptimisticFileLoginSelect((prev) => ({ ...prev, [quotation.id]: value }))
+      openFileLoginDialog(quotation, value as FileLoginStatus)
+    }
+  }
+
+  const confirmSaveFileLogin = async () => {
+    if (!fileLoginQuotationId) return
+    const needsBank = fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix"
+    const subsidyTrim = fileLoginSubsidyCheque.trim()
+    if (needsBank) {
+      const bankName = fileLoginBankName.trim()
+      const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+      if (!bankName) {
+        toast({
+          title: "Bank name required",
+          description: "Enter the customer’s bank for loan or cash + loan file login.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscRaw)) {
+        toast({
+          title: "Invalid IFSC",
+          description: "Use 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+    setIsSavingFileLogin(true)
+    try {
+      const at = new Date().toISOString()
+      if (useApi) {
+        const bankName = fileLoginBankName.trim()
+        const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+        await api.admin.quotations.updateFileLogin(fileLoginQuotationId, {
+          fileLoginStatus: fileLoginStatusChoice,
+          filePaymentType: fileLoginPaymentType,
+          ...(needsBank ? { bankName, bankIfsc: ifscRaw } : {}),
+          ...(subsidyTrim ? { fileSubsidyChequeDetails: subsidyTrim } : {}),
+        })
+        await loadData()
+      } else {
+        const bankName = fileLoginBankName.trim()
+        const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+        const updated = quotations.map((q) =>
+          q.id === fileLoginQuotationId
+            ? {
+                ...q,
+                fileLoginStatus: fileLoginStatusChoice,
+                filePaymentType: fileLoginPaymentType,
+                fileBankName: needsBank ? bankName : undefined,
+                fileBankIfsc: needsBank ? ifscRaw : undefined,
+                fileSubsidyChequeDetails: subsidyTrim || undefined,
+                fileLoginAt: at,
+              }
+            : q,
+        )
+        setQuotations(updated)
+        localStorage.setItem("quotations", JSON.stringify(updated))
+      }
+      setOptimisticFileLoginSelect((prev) => {
+        const next = { ...prev }
+        delete next[fileLoginQuotationId]
+        return next
+      })
+      setFileLoginDialogOpen(false)
+      setFileLoginQuotationId(null)
+      resetFileLoginFormFields()
+      toast({ title: "File login saved" })
+    } catch (error) {
+      console.error(error)
+      toast({
+        title: "Save failed",
+        description: error instanceof ApiError ? error.message : "Could not save file login.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingFileLogin(false)
+    }
   }
 
   // Update quotation data
@@ -975,6 +1186,9 @@ export default function AdminPanelPage() {
         bankName: "",
         bankBranch: "",
         bankPassbookImage: null,
+        geotagRoofPhoto: null,
+        customerWithHousePhoto: null,
+        propertyDocumentPdf: null,
         contactPhone: "",
         contactEmail: "",
       }
@@ -1029,6 +1243,9 @@ export default function AdminPanelPage() {
     appendIfValue("bankName", form.bankName)
     appendIfValue("bankBranch", form.bankBranch)
     appendFile("bankPassbookImage", form.bankPassbookImage)
+    appendFile("geotagRoofPhoto", form.geotagRoofPhoto)
+    appendFile("customerWithHousePhoto", form.customerWithHousePhoto)
+    appendFile("propertyDocumentPdf", form.propertyDocumentPdf)
 
     appendIfValue("emailId", form.contactEmail)
     return formData
@@ -1071,6 +1288,9 @@ export default function AdminPanelPage() {
     bankName: documents.bankName || "",
     bankBranch: documents.bankBranch || "",
     bankPassbookImage: getExistingFileRef(documents, "bankPassbookImage"),
+    geotagRoofPhoto: getExistingFileRef(documents, "geotagRoofPhoto"),
+    customerWithHousePhoto: getExistingFileRef(documents, "customerWithHousePhoto"),
+    propertyDocumentPdf: getExistingFileRef(documents, "propertyDocumentPdf"),
     contactPhone: documents.phoneNumber || documents.contactPhone || "",
     contactEmail: documents.emailId || documents.contactEmail || "",
   })
@@ -1085,6 +1305,9 @@ export default function AdminPanelPage() {
       { label: "Compliant PAN Image", value: form.compliantPanImage },
       { label: "Electricity Bill Image", value: form.electricityBillImage },
       { label: "Bank Passbook Image", value: form.bankPassbookImage },
+      { label: "Geotag Roof Photo", value: form.geotagRoofPhoto },
+      { label: "Customer Photo with House", value: form.customerWithHousePhoto },
+      { label: "Property Documents (PDF)", value: form.propertyDocumentPdf },
       { label: "Compliant Bank Passbook", value: form.compliantBankPassbookImage },
     ]
 
@@ -1456,9 +1679,43 @@ export default function AdminPanelPage() {
                               <Badge variant="outline" className="text-xs">{getSystemSize(quotation)}</Badge>
                             </div>
                             <div className="flex justify-between text-sm">
-                              <span className="text-muted-foreground">Date:</span>
-                              <span className="text-xs">{new Date(quotation.createdAt).toLocaleDateString()}</span>
+                              <span className="text-muted-foreground">Created:</span>
+                              <span className="text-xs">{new Date(quotation.createdAt).toLocaleString()}</span>
                             </div>
+                            {quotation.fileLoginAt ? (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">File login:</span>
+                                <span className="text-xs">{new Date(quotation.fileLoginAt).toLocaleString()}</span>
+                              </div>
+                            ) : null}
+                            {quotation.statusApprovedAt ? (
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Approved:</span>
+                                <span className="text-xs">{new Date(quotation.statusApprovedAt).toLocaleString()}</span>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground">File login</p>
+                            <Select
+                              value={
+                                optimisticFileLoginSelect[quotation.id] ??
+                                quotation.fileLoginStatus ??
+                                "unset"
+                              }
+                              onValueChange={(value) => void handleFileLoginSelectChange(quotation, value)}
+                            >
+                              <SelectTrigger className="w-full h-9 text-xs">
+                                <SelectValue placeholder="File login" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="unset">Not set</SelectItem>
+                                <SelectItem value="already_login">Already logged in</SelectItem>
+                                <SelectItem value="login_now">Login now</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground leading-snug">{fileLoginRowSummary(quotation)}</p>
                           </div>
 
                           <div className="space-y-2">
@@ -1513,6 +1770,16 @@ export default function AdminPanelPage() {
                                 <Eye className="w-3 h-3 mr-1" />
                                 View
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setStatusHistoryQuotation(quotation)}
+                                className="flex-1"
+                                title="Status timeline"
+                              >
+                                <History className="w-3 h-3 mr-1" />
+                                Timeline
+                              </Button>
                             </div>
                           </div>
                         </div>
@@ -1533,8 +1800,11 @@ export default function AdminPanelPage() {
                             </th>
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
-                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">
-                              Date
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground min-w-[9rem]">
+                              File login
+                            </th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground min-w-[10rem]">
+                              Dates
                             </th>
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Actions</th>
                           </tr>
@@ -1599,11 +1869,60 @@ export default function AdminPanelPage() {
                                   </Badge>
                                 </div>
                               </td>
-                              <td className="py-3 px-2 text-right text-sm text-muted-foreground">
-                                {new Date(quotation.createdAt).toLocaleDateString()}
+                              <td className="py-3 px-2 align-top">
+                                <div className="space-y-1 max-w-[11rem]">
+                                  <Select
+                                    value={
+                                      optimisticFileLoginSelect[quotation.id] ??
+                                      quotation.fileLoginStatus ??
+                                      "unset"
+                                    }
+                                    onValueChange={(value) => void handleFileLoginSelectChange(quotation, value)}
+                                  >
+                                    <SelectTrigger className="h-8 text-xs">
+                                      <SelectValue placeholder="File login" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="unset">Not set</SelectItem>
+                                      <SelectItem value="already_login">Already logged in</SelectItem>
+                                      <SelectItem value="login_now">Login now</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <p className="text-[10px] text-muted-foreground leading-snug">
+                                    {fileLoginRowSummary(quotation)}
+                                  </p>
+                                </div>
+                              </td>
+                              <td className="py-3 px-2 text-right text-xs text-muted-foreground align-top">
+                                <div className="space-y-1">
+                                  <div>
+                                    <span className="font-medium text-foreground/80">Created </span>
+                                    {new Date(quotation.createdAt).toLocaleString()}
+                                  </div>
+                                  {quotation.fileLoginAt ? (
+                                    <div>
+                                      <span className="font-medium text-foreground/80">File login </span>
+                                      {new Date(quotation.fileLoginAt).toLocaleString()}
+                                    </div>
+                                  ) : null}
+                                  {quotation.statusApprovedAt ? (
+                                    <div>
+                                      <span className="font-medium text-foreground/80">Approved </span>
+                                      {new Date(quotation.statusApprovedAt).toLocaleString()}
+                                    </div>
+                                  ) : null}
+                                </div>
                               </td>
                               <td className="py-3 px-2 text-right">
                                 <div className="flex items-center justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => setStatusHistoryQuotation(quotation)}
+                                    title="Status timeline"
+                                  >
+                                    <History className="w-4 h-4" />
+                                  </Button>
                                   <Button
                                     variant="ghost"
                                     size="icon"
@@ -2677,7 +2996,7 @@ export default function AdminPanelPage() {
                               Compliant (age &gt; 60)
                             </Label>
                             <p className="text-xs text-muted-foreground">
-                              When checked, compliant Aadhar front/back and contact number are mandatory.
+                              When checked, compliant contact number, Aadhar front/back images, PAN image, and bank passbook image are required.
                             </p>
                           </div>
                         </div>
@@ -2695,7 +3014,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Phone Number</Label>
+                            <Label>Phone Number *</Label>
                             <Input
                               value={form.contactPhone}
                               onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactPhone: e.target.value })}
@@ -2703,7 +3022,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Aadhar Front Image</Label>
+                            <Label>Aadhar Front Image *</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -2713,7 +3032,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Aadhar Back Image</Label>
+                            <Label>Aadhar Back Image *</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -2730,7 +3049,7 @@ export default function AdminPanelPage() {
                           <div className="space-y-1">
                             <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
                             <p className="text-xs text-amber-800/80">
-                              Fill all compliant Aadhar, PAN, and bank fields to submit.
+                              Only the fields marked with * are required to submit.
                             </p>
                           </div>
 
@@ -2738,7 +3057,7 @@ export default function AdminPanelPage() {
                             <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Aadhar</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div>
-                                <Label className="text-sm font-medium">Compliant Aadhar No *</Label>
+                                <Label className="text-sm font-medium">Compliant Aadhar No</Label>
                                 <Input
                                   value={form.compliantAadharNumber}
                                   onChange={(e) =>
@@ -2788,7 +3107,7 @@ export default function AdminPanelPage() {
                             <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant PAN</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div>
-                                <Label className="text-sm font-medium">Compliant PAN Number *</Label>
+                                <Label className="text-sm font-medium">Compliant PAN Number</Label>
                                 <Input
                                   value={form.compliantPanNumber}
                                   onChange={(e) =>
@@ -2814,7 +3133,7 @@ export default function AdminPanelPage() {
                             <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Bank</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div>
-                                <Label className="text-sm font-medium">Compliant Account No *</Label>
+                                <Label className="text-sm font-medium">Compliant Account No</Label>
                                 <Input
                                   value={form.compliantBankAccountNumber}
                                   onChange={(e) =>
@@ -2824,7 +3143,7 @@ export default function AdminPanelPage() {
                                 />
                               </div>
                               <div>
-                                <Label className="text-sm font-medium">Compliant IFSC Code *</Label>
+                                <Label className="text-sm font-medium">Compliant IFSC Code</Label>
                                 <Input
                                   value={form.compliantBankIfsc}
                                   onChange={(e) =>
@@ -2834,7 +3153,7 @@ export default function AdminPanelPage() {
                                 />
                               </div>
                               <div>
-                                <Label className="text-sm font-medium">Compliant Bank Name *</Label>
+                                <Label className="text-sm font-medium">Compliant Bank Name</Label>
                                 <Input
                                   value={form.compliantBankName}
                                   onChange={(e) =>
@@ -2844,7 +3163,7 @@ export default function AdminPanelPage() {
                                 />
                               </div>
                               <div>
-                                <Label className="text-sm font-medium">Compliant Branch *</Label>
+                                <Label className="text-sm font-medium">Compliant Branch</Label>
                                 <Input
                                   value={form.compliantBankBranch}
                                   onChange={(e) =>
@@ -2882,7 +3201,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>PAN Image</Label>
+                            <Label>PAN Image *</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -2898,7 +3217,7 @@ export default function AdminPanelPage() {
                         <p className="text-sm font-semibold">Electricity Bill</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <Label>Electricity Bill KNO</Label>
+                            <Label>Electricity Bill KNO *</Label>
                             <Input
                               value={form.electricityKno}
                               onChange={(e) =>
@@ -2908,7 +3227,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Electricity Bill Image</Label>
+                            <Label>Electricity Bill Image *</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -2960,7 +3279,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div className="md:col-span-2">
-                            <Label>Bank Passbook Image</Label>
+                            <Label>Bank Passbook Image *</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -2978,12 +3297,54 @@ export default function AdminPanelPage() {
                         <p className="text-sm font-semibold">Contact Details</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <Label>Email ID</Label>
+                            <Label>Email ID *</Label>
                             <Input
                               type="email"
                               value={form.contactEmail}
                               onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactEmail: e.target.value })}
                               placeholder="Enter email"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                        <p className="text-sm font-semibold">Additional Documents</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label>Geotag Roof Photo *</Label>
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, {
+                                  geotagRoofPhoto: e.target.files?.[0] || null,
+                                })
+                              }
+                            />
+                          </div>
+                          <div>
+                            <Label>Customer Photo with House *</Label>
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, {
+                                  customerWithHousePhoto: e.target.files?.[0] || null,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="md:col-span-2">
+                            <Label>Property Documents (PDF) *</Label>
+                            <Input
+                              type="file"
+                              accept="application/pdf,.pdf"
+                              onChange={(e) =>
+                                updateDocumentsForm(documentsQuotation.id, {
+                                  propertyDocumentPdf: e.target.files?.[0] || null,
+                                })
+                              }
                             />
                           </div>
                         </div>
@@ -3032,6 +3393,20 @@ export default function AdminPanelPage() {
                         toast({
                           title: "Invalid phone number",
                           description: "Phone number must be 10 digits.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      const missingRequiredDocuments =
+                        !form.geotagRoofPhoto ||
+                        !form.customerWithHousePhoto ||
+                        !form.propertyDocumentPdf
+                      if (missingRequiredDocuments) {
+                        toast({
+                          title: "Required documents missing",
+                          description:
+                            "Please upload Geotag Roof photo, Customer photo with house, and Property documents PDF.",
                           variant: "destructive",
                         })
                         return
@@ -4832,6 +5207,7 @@ export default function AdminPanelPage() {
               setApprovingQuotationId(null)
               setApprovalBankName("")
               setApprovalBankIfsc("")
+              setApprovalSubsidyCheque("")
             }
           }}
         >
@@ -4839,7 +5215,7 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>Select Payment Type</DialogTitle>
               <DialogDescription>
-                For Loan or Mix, enter the customer&apos;s bank and IFSC. The same details appear in Payment Management after approval.
+                For Loan or Cash + loan, enter the customer&apos;s bank and IFSC. For Cash or Cash + loan, you can record subsidy cheque details. The same details appear in Payment Management after approval.
               </DialogDescription>
             </DialogHeader>
 
@@ -4863,7 +5239,7 @@ export default function AdminPanelPage() {
                   <SelectContent>
                     <SelectItem value="loan">Loan</SelectItem>
                     <SelectItem value="cash">Cash</SelectItem>
-                    <SelectItem value="mix">Mix</SelectItem>
+                    <SelectItem value="mix">Cash + loan</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -4895,6 +5271,20 @@ export default function AdminPanelPage() {
                   </div>
                 </div>
               )}
+
+              {(approvalPaymentType === "cash" || approvalPaymentType === "mix") && (
+                <div className="space-y-2">
+                  <Label htmlFor="approval-subsidy-cheque">Subsidy cheque details</Label>
+                  <Textarea
+                    id="approval-subsidy-cheque"
+                    value={approvalSubsidyCheque}
+                    onChange={(e) => setApprovalSubsidyCheque(e.target.value)}
+                    placeholder="Cheque number, bank, amount, date (if provided by customer)"
+                    rows={3}
+                    className="resize-y min-h-[72px]"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -4905,11 +5295,198 @@ export default function AdminPanelPage() {
                   setApprovingQuotationId(null)
                   setApprovalBankName("")
                   setApprovalBankIfsc("")
+                  setApprovalSubsidyCheque("")
                 }}
               >
                 Cancel
               </Button>
               <Button onClick={confirmApprovalWithPaymentType}>Approve Quotation</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={fileLoginDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              const qid = fileLoginQuotationId
+              if (qid) {
+                setOptimisticFileLoginSelect((prev) => {
+                  const next = { ...prev }
+                  delete next[qid]
+                  return next
+                })
+              }
+              setFileLoginQuotationId(null)
+              resetFileLoginFormFields()
+            }
+            setFileLoginDialogOpen(open)
+          }}
+        >
+          <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>File login</DialogTitle>
+              <DialogDescription>
+                Choose how the file is logged on the subsidy portal. Payment type matches the Approve flow. Cash + loan uses the same rules as Loan for bank details.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label>File login status</Label>
+                <Select
+                  value={fileLoginStatusChoice}
+                  onValueChange={(v) => setFileLoginStatusChoice(v as FileLoginStatus)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="already_login">Already logged in</SelectItem>
+                    <SelectItem value="login_now">Login now</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="file-login-payment-type">File payment type</Label>
+                <Select
+                  value={fileLoginPaymentType}
+                  onValueChange={(v) => {
+                    const val = v as ApprovalPaymentType
+                    setFileLoginPaymentType(val)
+                    if (val === "cash") {
+                      setFileLoginBankName("")
+                      setFileLoginBankIfsc("")
+                    }
+                  }}
+                >
+                  <SelectTrigger id="file-login-payment-type">
+                    <SelectValue placeholder="Select payment type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="loan">Loan</SelectItem>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="mix">Cash + loan</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {(fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix") && (
+                <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+                  <p className="text-xs font-medium text-muted-foreground">Customer financing bank (required)</p>
+                  <div className="space-y-2">
+                    <Label htmlFor="file-login-bank-name">Bank name</Label>
+                    <Input
+                      id="file-login-bank-name"
+                      value={fileLoginBankName}
+                      onChange={(e) => setFileLoginBankName(e.target.value)}
+                      placeholder="e.g. State Bank of India"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="file-login-bank-ifsc">IFSC code</Label>
+                    <Input
+                      id="file-login-bank-ifsc"
+                      value={fileLoginBankIfsc}
+                      onChange={(e) => setFileLoginBankIfsc(e.target.value.toUpperCase())}
+                      placeholder="e.g. SBIN0001234"
+                      maxLength={11}
+                      className="font-mono uppercase"
+                    />
+                  </div>
+                </div>
+              )}
+              {(fileLoginPaymentType === "cash" || fileLoginPaymentType === "mix") && (
+                <div className="space-y-2">
+                  <Label htmlFor="file-login-subsidy-cheque">Subsidy cheque details</Label>
+                  <Textarea
+                    id="file-login-subsidy-cheque"
+                    value={fileLoginSubsidyCheque}
+                    onChange={(e) => setFileLoginSubsidyCheque(e.target.value)}
+                    placeholder="Cheque number, bank, amount, date (if provided by customer)"
+                    rows={3}
+                    className="resize-y min-h-[72px]"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                variant="outline"
+                onClick={() => setFileLoginDialogOpen(false)}
+                disabled={isSavingFileLogin}
+              >
+                Cancel
+              </Button>
+              <Button onClick={() => void confirmSaveFileLogin()} disabled={isSavingFileLogin}>
+                {isSavingFileLogin ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!statusHistoryQuotation} onOpenChange={(open) => !open && setStatusHistoryQuotation(null)}>
+          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Status timeline</DialogTitle>
+              <DialogDescription>
+                {statusHistoryQuotation ? (
+                  <>
+                    Quotation <span className="font-mono">{statusHistoryQuotation.id}</span> — each status change with
+                    date and time (from server when available).
+                  </>
+                ) : null}
+              </DialogDescription>
+            </DialogHeader>
+            {statusHistoryQuotation ? (
+              <div className="space-y-3 text-sm">
+                <div className="rounded-md border border-border/70 bg-muted/20 p-3 space-y-1 text-xs">
+                  <p>
+                    <span className="font-medium text-foreground">Created: </span>
+                    {statusHistoryQuotation.createdAt
+                      ? new Date(statusHistoryQuotation.createdAt).toLocaleString()
+                      : "—"}
+                  </p>
+                  {statusHistoryQuotation.fileLoginAt ? (
+                    <p>
+                      <span className="font-medium text-foreground">File login: </span>
+                      {new Date(statusHistoryQuotation.fileLoginAt).toLocaleString()}
+                    </p>
+                  ) : null}
+                  {statusHistoryQuotation.statusApprovedAt ? (
+                    <p>
+                      <span className="font-medium text-foreground">Last approved: </span>
+                      {new Date(statusHistoryQuotation.statusApprovedAt).toLocaleString()}
+                    </p>
+                  ) : null}
+                </div>
+                {statusHistoryQuotation.statusHistory && statusHistoryQuotation.statusHistory.length > 0 ? (
+                  <ul className="space-y-2">
+                    {statusHistoryQuotation.statusHistory.map((entry, idx) => (
+                      <li
+                        key={`${entry.at}-${entry.status}-${idx}`}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 rounded-md border border-border/60 px-3 py-2"
+                      >
+                        <Badge variant="outline" className="w-fit capitalize">
+                          {entry.status}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground whitespace-nowrap">
+                          {entry.at ? new Date(entry.at).toLocaleString() : "—"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    No status history from the server yet. After backend stores transitions on each status change,
+                    they will appear here. Current status:{" "}
+                    <span className="font-medium capitalize">{statusHistoryQuotation.status || "pending"}</span>.
+                  </p>
+                )}
+              </div>
+            ) : null}
+            <div className="flex justify-end pt-2">
+              <Button variant="outline" onClick={() => setStatusHistoryQuotation(null)}>
+                Close
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

@@ -161,10 +161,22 @@ export default function QuotationsPage() {
 
   if (!isAuthenticated) return null
 
+  const getSafeLastName = (lastName?: string) => {
+    const cleaned = (lastName || "").trim()
+    return cleaned.toLowerCase() === "na" ? "" : cleaned
+  }
+
+  const getCustomerDisplayName = (customer?: Quotation["customer"]) => {
+    const firstName = (customer?.firstName || "").trim()
+    const safeLastName = getSafeLastName(customer?.lastName)
+    return `${firstName} ${safeLastName}`.trim()
+  }
+
   const filteredQuotations = quotations.filter((q) => {
+    const safeLastName = getSafeLastName(q.customer?.lastName)
     const matchesSearch =
       (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+      safeLastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (q.customer?.mobile || "").includes(searchTerm) ||
       (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())
 
@@ -294,6 +306,9 @@ export default function QuotationsPage() {
         bankName: "",
         bankBranch: "",
         bankPassbookImage: null,
+        geotagRoofPhoto: null,
+        customerWithHousePhoto: null,
+        propertyDocumentPdf: null,
         contactPhone: "",
         contactEmail: "",
       }
@@ -348,6 +363,9 @@ export default function QuotationsPage() {
     appendIfValue("bankName", form.bankName)
     appendIfValue("bankBranch", form.bankBranch)
     appendFile("bankPassbookImage", form.bankPassbookImage)
+    appendFile("geotagRoofPhoto", form.geotagRoofPhoto)
+    appendFile("customerWithHousePhoto", form.customerWithHousePhoto)
+    appendFile("propertyDocumentPdf", form.propertyDocumentPdf)
 
     appendIfValue("emailId", form.contactEmail)
     return formData
@@ -484,7 +502,7 @@ export default function QuotationsPage() {
                       <div className="min-w-0">
                         <p className="text-[11px] font-mono text-muted-foreground break-all">{quotation.id}</p>
                         <p className="text-sm font-semibold">
-                          {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                          {getCustomerDisplayName(quotation.customer)}
                         </p>
                         <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                       </div>
@@ -570,7 +588,7 @@ export default function QuotationsPage() {
                         <td className="py-3 px-2">
                           <div>
                             <p className="text-sm font-medium">
-                              {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                              {getCustomerDisplayName(quotation.customer)}
                             </p>
                             <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                           </div>
@@ -685,7 +703,7 @@ export default function QuotationsPage() {
             <div className="space-y-6">
               <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <p className="text-sm font-semibold">
-                  {documentsQuotation.customer?.firstName || ""} {documentsQuotation.customer?.lastName || ""}
+                  {getCustomerDisplayName(documentsQuotation.customer)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {documentsQuotation.customer?.mobile || ""} • {documentsQuotation.id}
@@ -714,7 +732,7 @@ export default function QuotationsPage() {
                             Compliant (age &gt; 60)
                           </Label>
                           <p className="text-xs text-muted-foreground">
-                            When checked, compliant Aadhar front/back and contact number are mandatory.
+                            When checked, compliant contact number, Aadhar front/back images, PAN image, and bank passbook image are required.
                           </p>
                         </div>
                       </div>
@@ -767,7 +785,7 @@ export default function QuotationsPage() {
                         <div className="space-y-1">
                           <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
                           <p className="text-xs text-amber-800/80">
-                            Compliant contact number and compliant images are required to submit.
+                            Only the fields marked with * are required to submit.
                           </p>
                         </div>
 
@@ -775,7 +793,7 @@ export default function QuotationsPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Aadhar</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant Aadhar No *</Label>
+                              <Label className="text-sm font-medium">Compliant Aadhar No</Label>
                               <Input
                                 value={form.compliantAadharNumber}
                                 onChange={(e) =>
@@ -825,7 +843,7 @@ export default function QuotationsPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant PAN</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant PAN Number *</Label>
+                              <Label className="text-sm font-medium">Compliant PAN Number</Label>
                               <Input
                                 value={form.compliantPanNumber}
                                 onChange={(e) =>
@@ -851,7 +869,7 @@ export default function QuotationsPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Bank</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant Account No *</Label>
+                              <Label className="text-sm font-medium">Compliant Account No</Label>
                               <Input
                                 value={form.compliantBankAccountNumber}
                                 onChange={(e) =>
@@ -861,7 +879,7 @@ export default function QuotationsPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant IFSC Code *</Label>
+                              <Label className="text-sm font-medium">Compliant IFSC Code</Label>
                               <Input
                                 value={form.compliantBankIfsc}
                                 onChange={(e) =>
@@ -871,7 +889,7 @@ export default function QuotationsPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant Bank Name *</Label>
+                              <Label className="text-sm font-medium">Compliant Bank Name</Label>
                               <Input
                                 value={form.compliantBankName}
                                 onChange={(e) =>
@@ -881,7 +899,7 @@ export default function QuotationsPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant Branch *</Label>
+                              <Label className="text-sm font-medium">Compliant Branch</Label>
                               <Input
                                 value={form.compliantBankBranch}
                                 onChange={(e) =>
@@ -1025,6 +1043,48 @@ export default function QuotationsPage() {
                         </div>
                       </div>
                     </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Additional Documents</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Geotag Roof Photo *</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                geotagRoofPhoto: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label>Customer Photo with House *</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                customerWithHousePhoto: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <Label>Property Documents (PDF) *</Label>
+                          <Input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                propertyDocumentPdf: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
                   </>
                 )
               })()}
@@ -1116,12 +1176,15 @@ export default function QuotationsPage() {
                       !form.aadharBack ||
                       !form.panImage ||
                       !form.electricityBillImage ||
-                      !form.bankPassbookImage
+                      !form.bankPassbookImage ||
+                      !form.geotagRoofPhoto ||
+                      !form.customerWithHousePhoto ||
+                      !form.propertyDocumentPdf
                     if (missingBaseImages) {
                       toast({
                         title: "Required images missing",
                         description:
-                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, and Bank Passbook image.",
+                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, Bank Passbook image, Geotag Roof photo, Customer photo with house, and Property documents PDF.",
                         variant: "destructive",
                       })
                       return
@@ -1146,16 +1209,37 @@ export default function QuotationsPage() {
                         return
                       }
 
-                      const missingCompliantImages =
-                        !form.compliantAadharFront ||
-                        !form.compliantAadharBack ||
-                        !form.compliantPanImage ||
-                        !form.compliantBankPassbookImage
-                      if (missingCompliantImages) {
+                      if (!form.compliantAadharFront) {
                         toast({
-                          title: "Compliant images missing",
-                          description:
-                            "Please upload compliant Aadhar front/back, PAN image, and Bank Passbook image.",
+                          title: "Compliant Aadhar front image is required",
+                          description: "Please upload compliant Aadhar front image.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      if (!form.compliantAadharBack) {
+                        toast({
+                          title: "Compliant Aadhar back image is required",
+                          description: "Please upload compliant Aadhar back image.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      if (!form.compliantPanImage) {
+                        toast({
+                          title: "Compliant PAN image is required",
+                          description: "Please upload compliant PAN image.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      if (!form.compliantBankPassbookImage) {
+                        toast({
+                          title: "Compliant Bank Passbook image is required",
+                          description: "Please upload compliant Bank Passbook image.",
                           variant: "destructive",
                         })
                         return

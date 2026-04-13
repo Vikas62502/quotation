@@ -19,6 +19,7 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Textarea } from "@/components/ui/textarea"
 
 
 // Payment Phase Interface
@@ -32,6 +33,14 @@ interface PaymentPhase {
   paymentDate?: string
   paymentMode?: string
   transactionId?: string
+}
+
+interface SubsidyChequeRecord {
+  id: string
+  details: string
+  amount: number
+  status: "pending" | "cleared"
+  clearedAt?: string
 }
 
 interface CustomerPayment {
@@ -51,9 +60,15 @@ interface CustomerPayment {
   paymentStatus?: "pending" | "completed" | "partial"
   phases: PaymentPhase[]
   quotation: Quotation
+  statusApprovedAt?: string
+  fileLoginAt?: string
+  fileLoginStatus?: string
+  /** Subsidy cheques (cash / cash + loan); cleared amounts are applied into installment paidAmounts. */
+  subsidyCheques: SubsidyChequeRecord[]
 }
 
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
+const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -125,10 +140,197 @@ function getComputedRemaining(payment: CustomerPayment): number {
 
 /** Prefer server remaining; else subtotal − sum(paidAmount). */
 function getDisplayRemaining(payment: CustomerPayment): number {
+  const phasePaid = getTotalPaidPhases(payment.phases)
+  const computed = Math.max(0, payment.subtotal - phasePaid)
+  if ((payment.subsidyCheques?.length ?? 0) > 0) {
+    return computed
+  }
   if (payment.remainingFromApi != null && Number.isFinite(payment.remainingFromApi)) {
     return Math.max(0, payment.remainingFromApi)
   }
-  return getComputedRemaining(payment)
+  return computed
+}
+
+function getStoredSubsidyChequesMap(): Record<string, SubsidyChequeRecord[]> {
+  try {
+    const raw = localStorage.getItem(SUBSIDY_CHEQUES_KEY)
+    if (!raw) return {}
+    const p = JSON.parse(raw)
+    return p && typeof p === "object" ? p : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveSubsidyChequesMap(map: Record<string, SubsidyChequeRecord[]>) {
+  localStorage.setItem(SUBSIDY_CHEQUES_KEY, JSON.stringify(map))
+}
+
+function persistSubsidyChequesForQuotation(quotationId: string, cheques: SubsidyChequeRecord[]) {
+  const map = getStoredSubsidyChequesMap()
+  map[quotationId] = cheques
+  saveSubsidyChequesMap(map)
+}
+
+/** Apply cleared subsidy amount across installments in order (does not exceed phase caps). */
+function applySubsidyAmountToPhases(phases: PaymentPhase[], amountToApply: number): PaymentPhase[] {
+  let left = Math.round(Number(amountToApply) || 0)
+  if (left <= 0) return phases
+  const sorted = [...phases].sort((a, b) => a.phaseNumber - b.phaseNumber)
+  return sorted.map((ph) => {
+    const amountCap = Math.max(Math.round(Number(ph.amount) || 0), Math.round(Number(ph.paidAmount) || 0))
+    const paidNow = Math.round(Number(ph.paidAmount) || 0)
+    const room = Math.max(0, amountCap - paidNow)
+    const add = Math.min(room, left)
+    left -= add
+    const paid = paidNow + add
+    const amount = Math.max(amountCap, paid)
+    const status: PaymentPhase["status"] =
+      paid >= amount ? "completed" : paid > 0 ? "partial" : "pending"
+    return { ...ph, paidAmount: paid, amount, status }
+  })
+}
+
+/** Parse API / DB date strings that are not always ISO-8601 (e.g. MySQL `YYYY-MM-DD HH:mm:ss`). */
+function parseFlexibleAdminDate(input: string): Date | null {
+  const s = input.trim()
+  if (!s) return null
+  let d = new Date(s)
+  if (!Number.isNaN(d.getTime())) return d
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) {
+    d = new Date(s.replace(" ", "T"))
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    d = new Date(`${s}T00:00:00`)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  return null
+}
+
+function formatAdminDate(iso?: string | null) {
+  if (!iso) return "—"
+  const d = parseFlexibleAdminDate(String(iso))
+  return d ? d.toLocaleString("en-IN") : "—"
+}
+
+/** Normalize API date / epoch / Date for display pipeline. */
+function pickIsoOrString(v: unknown): string | undefined {
+  if (v == null) return undefined
+  if (typeof v === "object" && v !== null && "$date" in (v as object)) {
+    return pickIsoOrString((v as { $date?: unknown }).$date)
+  }
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? undefined : v.toISOString()
+  if (typeof v === "number" && Number.isFinite(v)) {
+    const ms = v < 1e12 ? v * 1000 : v
+    const d = new Date(ms)
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+  }
+  const s = String(v).trim()
+  return s || undefined
+}
+
+/** Flatten list rows like `{ quotation: {...} }` or Sequelize `{ attributes: {...} }`. */
+function quotationListRowToFlatRecord(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object") return {}
+  const r = raw as Record<string, unknown>
+  let base: Record<string, unknown> = { ...r }
+  const nested = r.quotation
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    base = { ...(nested as Record<string, unknown>), ...r }
+  }
+  const attrs = base.attributes
+  if (attrs && typeof attrs === "object" && !Array.isArray(attrs)) {
+    base = { ...(attrs as Record<string, unknown>), ...base }
+  }
+  return base
+}
+
+/**
+ * Approve date: explicit fields first, then last "approved" entry in status history
+ * (statusHistory / status_history / statusChanges), matching admin dashboard shapes.
+ */
+function pickApprovalTimestampFromQuotation(q: Record<string, unknown>): string | undefined {
+  const direct = pickIsoOrString(
+    q.statusApprovedAt ?? q.status_approved_at ?? q.approvedAt ?? q.approved_at,
+  )
+  if (direct) return direct
+  const rawHist = q.statusHistory ?? q.status_history ?? q.statusChanges
+  if (!Array.isArray(rawHist)) return undefined
+  for (let i = rawHist.length - 1; i >= 0; i--) {
+    const e = rawHist[i] as Record<string, unknown> | null
+    if (!e || typeof e !== "object") continue
+    const st = String(e.status ?? e.to ?? e.newStatus ?? "")
+      .trim()
+      .toLowerCase()
+    if (st !== "approved") continue
+    const at = pickIsoOrString(e.at ?? e.changedAt ?? e.timestamp ?? e.createdAt)
+    if (at) return at
+  }
+  return undefined
+}
+
+function pickFileLoginTimestampFromQuotation(q: Record<string, unknown>): string | undefined {
+  const direct = pickIsoOrString(
+    q.fileLoginAt ??
+      q.file_login_at ??
+      q.fileLoggedInAt ??
+      q.file_logged_in_at ??
+      q.fileLoginDate ??
+      q.file_login_date,
+  )
+  if (direct) return direct
+
+  const nested = q.fileLogin
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const n = nested as Record<string, unknown>
+    const fromNested = pickIsoOrString(n.at ?? n.loggedAt ?? n.logged_at ?? n.date ?? n.timestamp)
+    if (fromNested) return fromNested
+  }
+
+  const rawHist = q.statusHistory ?? q.status_history ?? q.statusChanges
+  if (Array.isArray(rawHist)) {
+    for (let i = rawHist.length - 1; i >= 0; i--) {
+      const e = rawHist[i] as Record<string, unknown> | null
+      if (!e || typeof e !== "object") continue
+      const st = String(e.status ?? e.to ?? e.newStatus ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_")
+      const isFileLogin =
+        st === "file_login" ||
+        st === "filelogin" ||
+        st === "portal_login" ||
+        st === "login_filed" ||
+        st.includes("file_login")
+      if (!isFileLogin) continue
+      const at = pickIsoOrString(e.at ?? e.changedAt ?? e.timestamp ?? e.createdAt)
+      if (at) return at
+    }
+  }
+
+  return undefined
+}
+
+function fileLoginStatusLabel(raw?: string | null) {
+  if (!raw) return ""
+  const s = String(raw).toLowerCase()
+  if (s === "already_login") return "Already logged in"
+  if (s === "login_now") return "Login now"
+  return raw
+}
+
+function normalizeSubsidyChequesFromApi(raw: unknown): SubsidyChequeRecord[] {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter(Boolean)
+    .map((c: any) => ({
+      id: String(c.id || `sc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`),
+      details: String(c.details || c.chequeDetails || ""),
+      amount: Math.max(0, Math.round(Number(c.amount) || 0)),
+      status: c.status === "cleared" ? ("cleared" as const) : ("pending" as const),
+      clearedAt: c.clearedAt || c.cleared_at,
+    }))
 }
 
 /**
@@ -202,6 +404,8 @@ export default function AccountManagementPage() {
   const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
   const [isSavingInstallments, setIsSavingInstallments] = useState(false)
+  const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
+  const [subsidyDraftAmount, setSubsidyDraftAmount] = useState("")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const accountDisplayName = accountManager
     ? `${accountManager.firstName || ""} ${accountManager.lastName || ""}`.trim() ||
@@ -258,6 +462,13 @@ export default function AccountManagementPage() {
     : null
 
   useEffect(() => {
+    if (installmentDialogOpen) {
+      setSubsidyDraftDetails("")
+      setSubsidyDraftAmount("")
+    }
+  }, [installmentDialogOpen])
+
+  useEffect(() => {
     // Initialize on mount - wait for auth state
     const timer = setTimeout(() => {
       setIsInitialLoad(false)
@@ -305,53 +516,78 @@ export default function AccountManagementPage() {
           quotationsList = response.quotations
         } else if (response?.data?.quotations && Array.isArray(response.data.quotations)) {
           quotationsList = response.data.quotations
+        } else if (response?.items && Array.isArray(response.items)) {
+          quotationsList = response.items
+        } else if (response?.results && Array.isArray(response.results)) {
+          quotationsList = response.results
         }
         
         // Backend should return only approved quotations, but filter again as safety measure
         const approvedQuotations = quotationsList
-          .filter((q: any) => String(q.status || "").toLowerCase() === "approved")  // Double-check on frontend for security
+          .filter((q: any) => {
+            const flat = quotationListRowToFlatRecord(q)
+            return String(flat.status || "").toLowerCase() === "approved"
+          })
           .map((q: any) => {
+            const flat = quotationListRowToFlatRecord(q)
+            const pricing = flat.pricing as Record<string, unknown> | undefined
             const phasesFromApi =
-              q.installments ||
-              q.paymentPhases ||
-              q.quotationPaymentPhases ||
-              q.payment_phases ||
-              q.quotation_payment_phases ||
+              flat.installments ||
+              flat.paymentPhases ||
+              flat.quotationPaymentPhases ||
+              flat.payment_phases ||
+              flat.quotation_payment_phases ||
               []
             const subtotalVal = pickFirstFiniteNumber(
-              q.subtotal,
-              q.pricing?.subtotal,
-              q.pricing?.totalAmount,
-              q.totalAmount,
-              q.finalAmount,
+              flat.subtotal,
+              pricing?.subtotal as number | undefined,
+              pricing?.totalAmount as number | undefined,
+              flat.totalAmount,
+              flat.finalAmount,
             )
-            const rem = optionalFiniteNumber(q.remaining)
-            const remAmt = optionalFiniteNumber(q.remainingAmount)
+            const rem = optionalFiniteNumber(flat.remaining)
+            const remAmt = optionalFiniteNumber(flat.remainingAmount)
+            const fileLoginStatusRaw = flat.fileLoginStatus ?? flat.file_login_status
             return {
-              id: q.id,
-              customer: q.customer || {},
-              products: q.products || {},
-              discount: q.discount || 0,
+              id: String(flat.id ?? ""),
+              customer: (flat.customer as Quotation["customer"]) || {},
+              products: (flat.products as Quotation["products"]) || {},
+              discount: Number(flat.discount) || 0,
               subtotal: subtotalVal,
-              totalAmount: q.pricing?.subtotal ?? q.pricing?.totalAmount ?? q.totalAmount ?? q.finalAmount ?? 0,
-              finalAmount: q.pricing?.finalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0,
-              createdAt: q.createdAt,
-              dealerId: q.dealerId,
-              dealer: q.dealer || null, // NEW: Include dealer/admin information
-              status: "approved" as const,  // Ensure status is always approved
-              paymentMode: q.paymentMode ?? q.payment_mode,
-              paymentType: q.paymentType ?? q.payment_type,
-              paymentStatus: q.paymentStatus,
-              bankName: q.bankName ?? q.bank_name,
-              bankIfsc: q.bankIfsc ?? q.bank_ifsc,
+              totalAmount:
+                (pricing?.subtotal as number) ??
+                (pricing?.totalAmount as number) ??
+                (flat.totalAmount as number) ??
+                (flat.finalAmount as number) ??
+                0,
+              finalAmount:
+                (pricing?.finalAmount as number) ??
+                (flat.finalAmount as number) ??
+                (pricing?.totalAmount as number) ??
+                0,
+              createdAt: String(flat.createdAt ?? new Date().toISOString()),
+              dealerId: String(flat.dealerId ?? ""),
+              dealer: (flat.dealer as Quotation["dealer"]) || null,
+              status: "approved" as const,
+              paymentMode: (flat.paymentMode ?? flat.payment_mode) as string | undefined,
+              paymentType: (flat.paymentType ?? flat.payment_type) as string | undefined,
+              paymentStatus: flat.paymentStatus as Quotation["paymentStatus"],
+              bankName: (flat.bankName ?? flat.bank_name) as string | undefined,
+              bankIfsc: (flat.bankIfsc ?? flat.bank_ifsc) as string | undefined,
               ...(rem !== undefined ? { remaining: rem } : {}),
               ...(remAmt !== undefined ? { remainingAmount: remAmt } : {}),
               installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
               paymentPhases: Array.isArray(phasesFromApi) ? phasesFromApi : [],
-              validUntil: q.validUntil,
+              validUntil: flat.validUntil as string | undefined,
+              statusApprovedAt: pickApprovalTimestampFromQuotation(flat),
+              fileLoginAt: pickFileLoginTimestampFromQuotation(flat),
+              fileLoginStatus:
+                fileLoginStatusRaw === "already_login" || fileLoginStatusRaw === "login_now"
+                  ? fileLoginStatusRaw
+                  : undefined,
             }
           })
-        setQuotations(approvedQuotations)
+        setQuotations(approvedQuotations as Quotation[])
       } else {
         // Fallback to localStorage for development
         try {
@@ -469,6 +705,7 @@ export default function AccountManagementPage() {
     if (quotations.length > 0) {
       const payments: CustomerPayment[] = quotations.map((q) => {
         const qx = q as Quotation & { remaining?: number; remainingAmount?: number }
+        const flatQx = quotationListRowToFlatRecord(qx as unknown)
         const subtotal = pickFirstFiniteNumber(
           qx.subtotal,
           qx.pricing?.subtotal,
@@ -512,6 +749,11 @@ export default function AccountManagementPage() {
             )
           : []
 
+        const subsidyMap = getStoredSubsidyChequesMap()
+        const fromApiCheques = normalizeSubsidyChequesFromApi((qx as any).subsidyCheques)
+        const mergedSubsidy: SubsidyChequeRecord[] =
+          fromApiCheques.length > 0 ? fromApiCheques : subsidyMap[q.id || ""] || []
+
         return {
           quotationId: q.id || "",
           customerName: `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.trim() || "Unknown",
@@ -533,6 +775,10 @@ export default function AccountManagementPage() {
             "pending",
           phases,
           quotation: q,
+          statusApprovedAt: pickApprovalTimestampFromQuotation(flatQx),
+          fileLoginAt: pickFileLoginTimestampFromQuotation(flatQx),
+          fileLoginStatus: (qx as any).fileLoginStatus ?? (qx as any).file_login_status,
+          subsidyCheques: mergedSubsidy,
         }
       })
       setCustomerPayments(payments)
@@ -600,7 +846,7 @@ export default function AccountManagementPage() {
     const normalized = String(paymentType || "").toLowerCase()
     if (normalized === "loan") return "Loan"
     if (normalized === "cash") return "Cash"
-    if (normalized === "mix") return "Mix"
+    if (normalized === "mix") return "Cash + loan"
     return "N/A"
   }
 
@@ -643,7 +889,9 @@ export default function AccountManagementPage() {
       "Payment Type",
       "Bank & IFSC",
       "Payment Status",
-      "Installments",
+      "Approve date",
+      "File login date",
+      "File login status",
       "Subtotal",
       "Paid Amount",
       "Remaining Amount",
@@ -660,7 +908,9 @@ export default function AccountManagementPage() {
         getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
         bankCell === "—" ? "" : bankCell,
         (payment.paymentStatus || "pending").toUpperCase(),
-        payment.phases.length,
+        payment.statusApprovedAt ? formatAdminDate(payment.statusApprovedAt) : "",
+        payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
+        fileLoginStatusLabel(payment.fileLoginStatus) || "",
         payment.subtotal,
         paidAmount,
         remainingAmount,
@@ -741,6 +991,108 @@ export default function AccountManagementPage() {
     return "N/A"
   }
 
+  const handleAddSubsidyCheque = () => {
+    if (!activePayment) return
+    const amt = Math.round(Number(subsidyDraftAmount) || 0)
+    if (!subsidyDraftDetails.trim() || amt <= 0) {
+      toast({
+        title: "Cheque details required",
+        description: "Enter subsidy cheque details and a positive amount.",
+        variant: "destructive",
+      })
+      return
+    }
+    const id =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `sc-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+    const row: SubsidyChequeRecord = {
+      id,
+      details: subsidyDraftDetails.trim(),
+      amount: amt,
+      status: "pending",
+    }
+    const newCheques = [...(activePayment.subsidyCheques || []), row]
+    setCustomerPayments((prev) =>
+      prev.map((p) => (p.quotationId === activePayment.quotationId ? { ...p, subsidyCheques: newCheques } : p)),
+    )
+    persistSubsidyChequesForQuotation(activePayment.quotationId, newCheques)
+    setSubsidyDraftDetails("")
+    setSubsidyDraftAmount("")
+    toast({ title: "Subsidy cheque recorded", description: "Mark as cleared when the cheque is honored." })
+  }
+
+  const handleMarkSubsidyChequeCleared = (chequeId: string) => {
+    if (!activePayment) return
+    const ch = activePayment.subsidyCheques.find((c) => c.id === chequeId)
+    if (!ch || ch.status !== "pending") return
+    const amt = Math.round(Number(ch.amount) || 0)
+    if (amt <= 0) return
+
+    let phases = activePayment.phases
+    if (phases.length === 0) {
+      phases = buildInstallments(activePayment.subtotal, 1)
+    }
+    const paidBefore = getTotalPaidPhases(phases)
+    const nextPhases = applySubsidyAmountToPhases(phases, amt)
+    const paidAfter = getTotalPaidPhases(nextPhases)
+    const applied = paidAfter - paidBefore
+    if (applied <= 0) {
+      toast({
+        title: "Could not apply amount",
+        description: "Create installments or raise phase caps so the subsidy can be allocated.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (paidAfter > activePayment.subtotal + 0.5) {
+      toast({
+        title: "Would exceed subtotal",
+        description: "Reduce the cheque amount or adjust installments.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (applied < amt) {
+      toast({
+        title: "Partially applied",
+        description: `₹${applied.toLocaleString("en-IN")} applied to installments (₹${(amt - applied).toLocaleString("en-IN")} unallocated — add installments or increase amounts).`,
+      })
+    }
+    const newCheques = activePayment.subsidyCheques.map((c) =>
+      c.id === chequeId ? { ...c, status: "cleared" as const, clearedAt: new Date().toISOString() } : c,
+    )
+    const updated = customerPayments.map((p) =>
+      p.quotationId === activePayment.quotationId ? { ...p, phases: nextPhases, subsidyCheques: newCheques } : p,
+    )
+    setCustomerPayments(updated)
+    persistSubsidyChequesForQuotation(activePayment.quotationId, newCheques)
+
+    if (!useApi) {
+      const p = updated.find((x) => x.quotationId === activePayment.quotationId)
+      if (p) {
+        const coerced = coercePhasesPaymentModes(p.phases)
+        const phasesForStore = normalizePhaseAmountsForApi(coerced, p.subtotal)
+        const totalPaid = getTotalPaidPhases(phasesForStore)
+        const paymentStatus: CustomerPayment["paymentStatus"] =
+          totalPaid <= 0 ? "pending" : totalPaid >= p.subtotal ? "completed" : "partial"
+        saveStoredPaymentPlan(activePayment.quotationId, {
+          paymentType: p.paymentType,
+          paymentMode: p.paymentMode || "cash",
+          paymentStatus,
+          phases: phasesForStore,
+        })
+      }
+    }
+
+    toast({
+      title: "Cheque cleared",
+      description: useApi
+        ? "Amount added to installments. Click Submit to save to the server."
+        : "Amount applied to installments and saved locally.",
+    })
+  }
+
   const submitInstallments = async () => {
     if (!activePayment) return
 
@@ -771,6 +1123,9 @@ export default function AccountManagementPage() {
       paymentType: activePayment.paymentType,
       paymentMode: paymentModeFromPhases,
       paymentStatus: paymentStatus || "pending",
+      ...(activePayment.subsidyCheques?.length
+        ? { subsidyCheques: activePayment.subsidyCheques }
+        : {}),
       phases: phasesForApi.map((phase) => {
         const modeNorm = normalizePaymentMode(phase.paymentMode)
         const needsMode =
@@ -817,6 +1172,8 @@ export default function AccountManagementPage() {
           ),
         )
       }
+
+      persistSubsidyChequesForQuotation(activePayment.quotationId, activePayment.subsidyCheques || [])
 
       toast({
         title: "Payment details saved",
@@ -1154,7 +1511,9 @@ export default function AccountManagementPage() {
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                   <div>
                     <CardTitle className="text-base">Payment Management</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">Manage customer payments phase by phase</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Installments, subsidy cheques (cash / cash + loan), and balances
+                    </p>
                   </div>
                   <div className="relative w-full sm:w-64">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
@@ -1177,7 +1536,7 @@ export default function AccountManagementPage() {
                           <SelectItem value="all">All Payment Types</SelectItem>
                           <SelectItem value="loan">Loan</SelectItem>
                           <SelectItem value="cash">Cash</SelectItem>
-                          <SelectItem value="mix">Mix</SelectItem>
+                          <SelectItem value="mix">Cash + loan</SelectItem>
                           <SelectItem value="unknown">Not Set</SelectItem>
                         </SelectContent>
                       </Select>
@@ -1246,7 +1605,7 @@ export default function AccountManagementPage() {
                                 : "border-border/60 bg-card/80"
                             }`}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-9 gap-x-4 gap-y-3 items-start lg:items-center">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-10 gap-x-4 gap-y-3 items-start lg:items-center">
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
                                 <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -1255,12 +1614,22 @@ export default function AccountManagementPage() {
                               </div>
 
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installments</p>
-                                <p className="text-sm font-medium">
-                                  {payment.phases.length === 0
-                                    ? "None"
-                                    : `${payment.phases.length} installment${payment.phases.length > 1 ? "s" : ""}`}
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approve date</p>
+                                <p className="text-xs font-medium leading-snug">
+                                  {formatAdminDate(payment.statusApprovedAt)}
                                 </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">File login</p>
+                                <p className="text-xs font-medium leading-snug">
+                                  {formatAdminDate(payment.fileLoginAt)}
+                                </p>
+                                {payment.fileLoginStatus ? (
+                                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                                    {fileLoginStatusLabel(payment.fileLoginStatus)}
+                                  </p>
+                                ) : null}
                               </div>
 
                               <div className="min-w-0">
@@ -1346,27 +1715,129 @@ export default function AccountManagementPage() {
       >
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Installments</DialogTitle>
-            <DialogDescription>Manage installments, payment modes, and transaction IDs.</DialogDescription>
+            <DialogTitle>Payment management</DialogTitle>
+            <DialogDescription>
+              Record installments and, for Cash or Cash + loan, subsidy cheques. When a cheque clears, apply it to
+              installments so Remaining decreases. Submit saves to the server (or local storage when API is off).
+            </DialogDescription>
           </DialogHeader>
           {activePayment && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <div>
                   <p className="text-sm font-semibold">{activePayment.customerName}</p>
                   <p className="text-xs text-muted-foreground">
                     {activePayment.customerMobile} • {activePayment.quotationId}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                    <span>
+                      <span className="font-medium text-foreground/80">Approved: </span>
+                      {formatAdminDate(activePayment.statusApprovedAt)}
+                    </span>
+                    <span>
+                      <span className="font-medium text-foreground/80">File login: </span>
+                      {formatAdminDate(activePayment.fileLoginAt)}
+                      {activePayment.fileLoginStatus
+                        ? ` · ${fileLoginStatusLabel(activePayment.fileLoginStatus)}`
+                        : ""}
+                    </span>
+                  </div>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Subtotal</p>
                   <p className="text-base font-semibold">₹{activePayment.subtotal.toLocaleString()}</p>
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Remaining: ₹
+                    {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
+                  </p>
                 </div>
               </div>
               {["loan", "mix"].includes(getPaymentTypeValue(activePayment)) && (
                 <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm">
                   <span className="text-muted-foreground">Bank · IFSC </span>
                   <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
+                </div>
+              )}
+
+              {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-4 py-3 space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Subsidy cheques</p>
+                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                      Example: subtotal ₹2,99,000 with loan ₹2,00,000 and subsidy by cheque ₹78,000 — record each
+                      cheque here. When it clears, use &quot;Apply to paid&quot; so the amount is spread across
+                      installments and Remaining drops. Then Submit to sync.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Cheque details</Label>
+                      <Textarea
+                        value={subsidyDraftDetails}
+                        onChange={(e) => setSubsidyDraftDetails(e.target.value)}
+                        placeholder="Cheque no., bank, date, customer note…"
+                        rows={2}
+                        className="mt-1 resize-y min-h-[52px]"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Amount (₹)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={subsidyDraftAmount}
+                        onChange={(e) => setSubsidyDraftAmount(e.target.value)}
+                        placeholder="e.g. 78000"
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="secondary" onClick={handleAddSubsidyCheque}>
+                    Add pending cheque
+                  </Button>
+                  {(activePayment.subsidyCheques || []).length > 0 ? (
+                    <ul className="space-y-2 border-t border-amber-200/60 pt-3">
+                      {activePayment.subsidyCheques.map((sc) => (
+                        <li
+                          key={sc.id}
+                          className="rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium">₹{sc.amount.toLocaleString("en-IN")}</p>
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                                {sc.details || "—"}
+                              </p>
+                              {sc.status === "cleared" && sc.clearedAt ? (
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  Cleared {formatAdminDate(sc.clearedAt)}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant={sc.status === "cleared" ? "default" : "outline"}>
+                                {sc.status === "cleared" ? "Cleared" : "Pending"}
+                              </Badge>
+                              {sc.status === "pending" ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => handleMarkSubsidyChequeCleared(sc.id)}
+                                >
+                                  Apply to paid
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground border-t border-amber-200/60 pt-2">
+                      No subsidy cheques recorded yet.
+                    </p>
+                  )}
                 </div>
               )}
 

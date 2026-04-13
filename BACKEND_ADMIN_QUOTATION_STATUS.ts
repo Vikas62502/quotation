@@ -13,12 +13,38 @@
  *
  *   PATCH /admin/quotations/:quotationId/status
  *   Body when approving:
- *     { status: "approved", paymentType, paymentMode, bankName?, bankIfsc? }
- *   - paymentType and paymentMode are the same value: "loan" | "cash" | "mix"
+ *     { status: "approved", paymentType, paymentMode, bankName?, bankIfsc?, subsidyChequeDetails? }
+ *   - paymentType and paymentMode are the same value: "loan" | "cash" | "mix" (UI label for mix: "Cash + loan")
  *   - For "loan" or "mix", frontend requires bankName + bankIfsc (11-char IFSC)
+ *   - Optional subsidyChequeDetails (text) when payment is "cash" or "mix"
+ *
+ *   On every status change, append to statusHistory: [{ status, at }, ...] (ISO timestamps).
+ *   When status becomes "approved", set statusApprovedAt (ISO). Frontend shows "Last approved".
+ *
+ *   PATCH /admin/quotations/:quotationId/file-login
+ *   Body either:
+ *     { resetFileLogin: true }   -- clear file-login fields
+ *   or:
+ *     { fileLoginStatus: "already_login"|"login_now", filePaymentType: "loan"|"cash"|"mix",
+ *       fileBankName?, fileBankIfsc?, bankName?, bankIfsc?, fileSubsidyChequeDetails? }
+ *   - Frontend may duplicate bank as bankName/bankIfsc and fileBankName/fileBankIfsc; persist file* columns.
+ *   - For loan/mix: require bank + IFSC (same rules as approval).
+ *   - On successful save (not reset): set fileLoginAt = now (ISO).
  *
  *   GET /quotations?status=approved&limit=1000   (Account Management list)
  *   GET /quotations/:id                          (Quotation details dialog)
+ *
+ *   PATCH /quotations/:quotationId/payment-details   (Account Management — primary)
+ *   PATCH /quotations/:quotationId/installments      (fallback; body may use `installments` not `phases`)
+ *   Body (JSON):
+ *     paymentType?, paymentMode?, paymentStatus?,
+ *     phases: [{ phaseNumber, phaseName, amount, paidAmount, status, dueDate?, paymentDate?, paymentMode?, transactionId? }]
+ *     subsidyCheques?: [{ id, details, amount, status: "pending"|"cleared", clearedAt? }]
+ *   - Persist phases/installments to DB; recompute remaining = subtotal − sum(paidAmount) (store `remaining` / `remaining_amount` if you expose it).
+ *   - Persist `subsidy_cheques` JSON for audit (optional but recommended so clients do not rely only on localStorage).
+ *   - Cleared subsidy amounts are also reflected in `paidAmount` on phases when accounts “apply to paid”; keep subsidyCheques in sync.
+ *
+ *   Authorization: allow role `account-management` and `admin` for payment-details PATCH; dealers must NOT update other dealers’ quotations unless your product allows it.
  *
  *   HR upload/assignment flow:
  *   POST /hr/leads/upload-csv
@@ -28,7 +54,12 @@
  *     - used by HR "Uploaded Data" tab, must come from DB (not local cache)
  *
  * Each quotation in JSON should expose (camelCase preferred; frontend also reads snake_case):
- *   paymentMode, paymentType (optional), bankName, bankIfsc
+ *   paymentMode, paymentType (optional), bankName, bankIfsc, subsidyChequeDetails
+ *   fileLoginStatus, filePaymentType, fileBankName, fileBankIfsc, fileSubsidyChequeDetails, fileLoginAt
+ *   statusApprovedAt, statusHistory (array of { status, at })
+ *   subsidyCheques (array, audit trail for Account Management — see below)
+ *   remaining OR remainingAmount (number, optional but recommended for list UI)
+ *   installments | paymentPhases | payment_phases (phase rows; same shape as PATCH `phases`)
  */
 
 const PAYMENT_TYPES = ["loan", "cash", "mix"]
@@ -46,22 +77,78 @@ function normalizeIfsc(raw) {
   return IFSC_REGEX.test(v) ? v : null
 }
 
+function readStatusHistory(row) {
+  const raw = row.statusHistory ?? row.status_history
+  if (Array.isArray(raw)) return raw.filter((e) => e && e.status && e.at)
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const p = JSON.parse(raw)
+      return Array.isArray(p) ? p.filter((e) => e && e.status && e.at) : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+function normalizeFileLoginStatus(raw) {
+  if (typeof raw !== "string") return null
+  const v = raw.trim().toLowerCase().replace(/[-\s]+/g, "_")
+  if (v === "already_login" || v === "already_logged_in" || v === "alreadylogin") return "already_login"
+  if (v === "login_now" || v === "loginnow") return "login_now"
+  return null
+}
+
 /**
  * --- DATABASE: quotations table ---
  *
  * PostgreSQL:
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS bank_name VARCHAR(255);
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS bank_ifsc VARCHAR(11);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS subsidy_cheque_details TEXT;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_login_status VARCHAR(32);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_payment_type VARCHAR(16);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_bank_name VARCHAR(255);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_bank_ifsc VARCHAR(11);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_subsidy_cheque_details TEXT;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS file_login_at TIMESTAMPTZ;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS status_approved_at TIMESTAMPTZ;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS status_history JSONB DEFAULT '[]'::jsonb;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS subsidy_cheques JSONB DEFAULT '[]'::jsonb;
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(14,2);
+ *   -- Or compute `remaining` in API from subtotal − sum(phases.paidAmount) if you do not store it.
  *   -- payment_mode often already exists; ensure it can store loan|cash|mix
  *
  * MySQL:
  *   ALTER TABLE quotations ADD COLUMN bank_name VARCHAR(255) NULL;
  *   ALTER TABLE quotations ADD COLUMN bank_ifsc VARCHAR(11) NULL;
+ *   ALTER TABLE quotations ADD COLUMN subsidy_cheque_details TEXT NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_login_status VARCHAR(32) NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_payment_type VARCHAR(16) NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_bank_name VARCHAR(255) NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_bank_ifsc VARCHAR(11) NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_subsidy_cheque_details TEXT NULL;
+ *   ALTER TABLE quotations ADD COLUMN file_login_at DATETIME(3) NULL;
+ *   ALTER TABLE quotations ADD COLUMN status_approved_at DATETIME(3) NULL;
+ *   ALTER TABLE quotations ADD COLUMN status_history JSON NULL;
+ *   ALTER TABLE quotations ADD COLUMN subsidy_cheques JSON NULL;
+ *   ALTER TABLE quotations ADD COLUMN remaining_amount DECIMAL(14,2) NULL;
  *
  * Sequelize model (example):
  *   bankName: { type: DataTypes.STRING(255), allowNull: true, field: 'bank_name' },
  *   bankIfsc: { type: DataTypes.STRING(11), allowNull: true, field: 'bank_ifsc' },
  *   paymentMode: { type: DataTypes.STRING(20), allowNull: true, field: 'payment_mode' },
+ *   subsidyChequeDetails: { type: DataTypes.TEXT, allowNull: true, field: 'subsidy_cheque_details' },
+ *   fileLoginStatus: { type: DataTypes.STRING(32), allowNull: true, field: 'file_login_status' },
+ *   filePaymentType: { type: DataTypes.STRING(16), allowNull: true, field: 'file_payment_type' },
+ *   fileBankName: { type: DataTypes.STRING(255), allowNull: true, field: 'file_bank_name' },
+ *   fileBankIfsc: { type: DataTypes.STRING(11), allowNull: true, field: 'file_bank_ifsc' },
+ *   fileSubsidyChequeDetails: { type: DataTypes.TEXT, allowNull: true, field: 'file_subsidy_cheque_details' },
+ *   fileLoginAt: { type: DataTypes.DATE, allowNull: true, field: 'file_login_at' },
+ *   statusApprovedAt: { type: DataTypes.DATE, allowNull: true, field: 'status_approved_at' },
+ *   statusHistory: { type: DataTypes.JSON, allowNull: true, field: 'status_history', defaultValue: [] },
+ *   subsidyCheques: { type: DataTypes.JSON, allowNull: true, field: 'subsidy_cheques', defaultValue: [] },
+ *   remainingAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'remaining_amount' },
  */
 
 /**
@@ -98,7 +185,12 @@ export async function patchAdminQuotationStatus(req, res) {
       return
     }
 
-    const updates = { status: statusRaw }
+    const at = new Date().toISOString()
+    const prevHistory = readStatusHistory(quotation.get ? quotation.get({ plain: true }) : quotation)
+    const updates = {
+      status: statusRaw,
+      statusHistory: [...prevHistory, { status: statusRaw, at }],
+    }
 
     if (statusRaw === "approved") {
       const paymentType =
@@ -114,6 +206,7 @@ export async function patchAdminQuotationStatus(req, res) {
         return
       }
       updates.paymentMode = paymentType
+      updates.statusApprovedAt = at
 
       if (paymentType === "loan" || paymentType === "mix") {
         const bankName = typeof body.bankName === "string" ? body.bankName.trim() : ""
@@ -138,10 +231,23 @@ export async function patchAdminQuotationStatus(req, res) {
         updates.bankName = null
         updates.bankIfsc = null
       }
+
+      const subsidyRaw =
+        typeof body.subsidyChequeDetails === "string"
+          ? body.subsidyChequeDetails.trim()
+          : typeof body.subsidy_cheque_details === "string"
+            ? body.subsidy_cheque_details.trim()
+            : ""
+      if (paymentType === "loan") {
+        updates.subsidyChequeDetails = null
+      } else if (paymentType === "cash" || paymentType === "mix") {
+        updates.subsidyChequeDetails = subsidyRaw || null
+      }
     } else if (statusRaw === "rejected") {
       updates.bankName = null
       updates.bankIfsc = null
       updates.paymentMode = null
+      updates.subsidyChequeDetails = null
     }
 
     await quotation.update(updates)
@@ -155,6 +261,141 @@ export async function patchAdminQuotationStatus(req, res) {
         paymentMode: quotation.paymentMode,
         bankName: quotation.bankName,
         bankIfsc: quotation.bankIfsc,
+        subsidyChequeDetails: quotation.subsidyChequeDetails ?? quotation.subsidy_cheque_details ?? null,
+        statusApprovedAt: quotation.statusApprovedAt ?? quotation.status_approved_at ?? null,
+        statusHistory: readStatusHistory(quotation.get ? quotation.get({ plain: true }) : quotation),
+      },
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
+  }
+}
+
+/**
+ * PATCH /admin/quotations/:quotationId/file-login
+ * Body: { resetFileLogin: true } OR full file-login payload (see file header).
+ */
+export async function patchAdminQuotationFileLogin(req, res) {
+  try {
+    const user = req.admin ?? req.user
+    if (!user || user.role !== "admin") {
+      res.status(401).json({ success: false, error: { code: "AUTH_003", message: "Admin required" } })
+      return
+    }
+
+    const quotationId = req.params.quotationId || req.params.id
+    if (!quotationId) {
+      res.status(400).json({ success: false, error: { code: "VAL_001", message: "Quotation ID required" } })
+      return
+    }
+
+    const quotation = await Quotation.findByPk(quotationId)
+    if (!quotation) {
+      res.status(404).json({ success: false, error: { code: "RES_001", message: "Quotation not found" } })
+      return
+    }
+
+    const body = req.body || {}
+    if (body.resetFileLogin === true) {
+      await quotation.update({
+        fileLoginStatus: null,
+        filePaymentType: null,
+        fileBankName: null,
+        fileBankIfsc: null,
+        fileSubsidyChequeDetails: null,
+        fileLoginAt: null,
+      })
+      await quotation.reload()
+      res.json({
+        success: true,
+        data: {
+          id: quotationId,
+          reset: true,
+          fileLoginStatus: null,
+          fileLoginAt: null,
+        },
+      })
+      return
+    }
+
+    const fls = normalizeFileLoginStatus(body.fileLoginStatus ?? body.file_login_status)
+    if (!fls) {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_006", message: "fileLoginStatus must be already_login or login_now" },
+      })
+      return
+    }
+
+    const paymentType =
+      normalizePaymentType(body.filePaymentType) ??
+      normalizePaymentType(body.paymentMode) ??
+      normalizePaymentType(body.file_payment_type)
+    if (!paymentType) {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_007", message: "filePaymentType or paymentMode required (loan, cash, mix)" },
+      })
+      return
+    }
+
+    const updates = {
+      fileLoginStatus: fls,
+      filePaymentType: paymentType,
+      fileLoginAt: new Date(),
+    }
+
+    if (paymentType === "loan" || paymentType === "mix") {
+      const bankName =
+        typeof (body.fileBankName ?? body.bankName) === "string"
+          ? String(body.fileBankName ?? body.bankName).trim()
+          : ""
+      const ifsc = normalizeIfsc(body.fileBankIfsc ?? body.file_bank_ifsc ?? body.bankIfsc ?? body.bank_ifsc)
+      if (!bankName) {
+        res.status(400).json({
+          success: false,
+          error: { code: "VAL_008", message: "Bank name required for loan / cash + loan file login" },
+        })
+        return
+      }
+      if (!ifsc) {
+        res.status(400).json({
+          success: false,
+          error: { code: "VAL_009", message: "Valid 11-char IFSC required for loan / cash + loan file login" },
+        })
+        return
+      }
+      updates.fileBankName = bankName
+      updates.fileBankIfsc = ifsc
+    } else {
+      updates.fileBankName = null
+      updates.fileBankIfsc = null
+    }
+
+    const chequeRaw =
+      typeof body.fileSubsidyChequeDetails === "string"
+        ? body.fileSubsidyChequeDetails.trim()
+        : typeof body.file_subsidy_cheque_details === "string"
+          ? body.file_subsidy_cheque_details.trim()
+          : ""
+    updates.fileSubsidyChequeDetails =
+      chequeRaw && (paymentType === "cash" || paymentType === "mix") ? chequeRaw : null
+
+    await quotation.update(updates)
+    await quotation.reload()
+    const plain = quotation.get ? quotation.get({ plain: true }) : quotation
+
+    res.json({
+      success: true,
+      data: {
+        id: quotationId,
+        fileLoginStatus: plain.fileLoginStatus ?? plain.file_login_status,
+        filePaymentType: plain.filePaymentType ?? plain.file_payment_type,
+        fileBankName: plain.fileBankName ?? plain.file_bank_name,
+        fileBankIfsc: plain.fileBankIfsc ?? plain.file_bank_ifsc,
+        fileSubsidyChequeDetails: plain.fileSubsidyChequeDetails ?? plain.file_subsidy_cheque_details,
+        fileLoginAt: plain.fileLoginAt ?? plain.file_login_at,
       },
     })
   } catch (e) {
@@ -171,26 +412,207 @@ export async function patchAdminQuotationStatus(req, res) {
  *   bankName     (string | null)
  *   bankIfsc     (string | null)
  *   paymentType  (optional; frontend falls back to paymentMode)
+ *   subsidyChequeDetails, fileLoginStatus, filePaymentType, fileBankName, fileBankIfsc,
+ *   fileSubsidyChequeDetails, fileLoginAt, statusApprovedAt, statusHistory
  *
  * If you use Sequelize `attributes: [...]` whitelist on findAll/findByPk, add:
- *   'bank_name', 'bank_ifsc', 'payment_mode'
+ *   'bank_name', 'bank_ifsc', 'payment_mode', 'subsidy_cheque_details',
+ *   'file_login_status', 'file_payment_type', 'file_bank_name', 'file_bank_ifsc',
+ *   'file_subsidy_cheque_details', 'file_login_at', 'status_approved_at', 'status_history',
+ *   'subsidy_cheques', 'remaining_amount'
  *
  * Example mapper:
  */
+function readSubsidyCheques(q) {
+  const raw = q.subsidyCheques ?? q.subsidy_cheques
+  if (Array.isArray(raw)) return raw
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const p = JSON.parse(raw)
+      return Array.isArray(p) ? p : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
 export function quotationToApiJson(row) {
   const q = row.get ? row.get({ plain: true }) : row
+  const phases =
+    q.installments ||
+    q.paymentPhases ||
+    q.payment_phases ||
+    q.quotationPaymentPhases ||
+    q.quotation_payment_phases ||
+    []
   return {
     ...q,
     paymentMode: q.paymentMode ?? q.payment_mode ?? null,
     paymentType: q.paymentType ?? q.payment_type ?? q.paymentMode ?? q.payment_mode ?? null,
     bankName: q.bankName ?? q.bank_name ?? null,
     bankIfsc: q.bankIfsc ?? q.bank_ifsc ?? null,
+    subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details ?? null,
+    fileLoginStatus: q.fileLoginStatus ?? q.file_login_status ?? null,
+    filePaymentType: q.filePaymentType ?? q.file_payment_type ?? null,
+    fileBankName: q.fileBankName ?? q.file_bank_name ?? null,
+    fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc ?? null,
+    fileSubsidyChequeDetails: q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details ?? null,
+    fileLoginAt: q.fileLoginAt ?? q.file_login_at ?? null,
+    statusApprovedAt: q.statusApprovedAt ?? q.status_approved_at ?? null,
+    statusHistory: readStatusHistory(q),
+    subsidyCheques: readSubsidyCheques(q),
+    remaining: q.remaining ?? q.remaining_amount ?? null,
+    remainingAmount: q.remainingAmount ?? q.remaining_amount ?? q.remaining ?? null,
+    installments: Array.isArray(phases) ? phases : [],
+    paymentPhases: Array.isArray(phases) ? phases : [],
+  }
+}
+
+/**
+ * Normalize subsidy cheque rows from PATCH body (Account Management).
+ */
+export function normalizeSubsidyChequesFromRequestBody(body) {
+  const raw = body?.subsidyCheques ?? body?.subsidy_cheques
+  if (!Array.isArray(raw)) return undefined
+  const out = []
+  for (const c of raw) {
+    if (!c || typeof c !== "object") continue
+    const id = String(c.id || "").trim() || `sc-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    const details = String(c.details ?? c.chequeDetails ?? "").trim()
+    const amount = Math.max(0, Math.round(Number(c.amount) || 0))
+    const status = c.status === "cleared" ? "cleared" : "pending"
+    const clearedAt =
+      c.clearedAt || c.cleared_at || (status === "cleared" ? new Date().toISOString() : undefined)
+    out.push({ id, details, amount, status, clearedAt })
+  }
+  return out
+}
+
+function pickQuotationSubtotalForPayments(row) {
+  const q = row.get ? row.get({ plain: true }) : row
+  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+  return Math.max(
+    0,
+    Math.round(
+      n(q.subtotal) ||
+        n(q.pricing?.subtotal) ||
+        n(q.pricing?.totalAmount) ||
+        n(q.totalAmount) ||
+        n(q.finalAmount),
+    ),
+  )
+}
+
+/**
+ * PATCH /quotations/:quotationId/payment-details
+ * - Intended for Account Management “Manage” / Submit (see lib/api.ts updatePaymentDetails).
+ * - Merge with your real persistence (installment table vs JSON on quotation).
+ */
+export async function patchQuotationPaymentDetails(req, res) {
+  try {
+    const user = req.user
+    const role = user?.role
+    if (!user || !["account-management", "admin"].includes(role)) {
+      res.status(403).json({ success: false, error: { code: "AUTH_004", message: "Insufficient permissions" } })
+      return
+    }
+
+    const quotationId = req.params.quotationId || req.params.id
+    if (!quotationId) {
+      res.status(400).json({ success: false, error: { code: "VAL_001", message: "Quotation ID required" } })
+      return
+    }
+
+    const quotation = await Quotation.findByPk(quotationId)
+    if (!quotation) {
+      res.status(404).json({ success: false, error: { code: "RES_001", message: "Quotation not found" } })
+      return
+    }
+
+    const plain = quotation.get ? quotation.get({ plain: true }) : quotation
+    if (String(plain.status || "").toLowerCase() !== "approved") {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_010", message: "Only approved quotations can be updated here" },
+      })
+      return
+    }
+
+    const body = req.body || {}
+    const phasesInput = body.phases || body.installments || []
+    if (!Array.isArray(phasesInput)) {
+      res.status(400).json({ success: false, error: { code: "VAL_011", message: "phases must be an array" } })
+      return
+    }
+
+    const subtotal = pickQuotationSubtotalForPayments(quotation)
+    let sumPaid = 0
+    const phases = phasesInput.map((p, index) => {
+      const paid = Math.max(0, Math.round(Number(p.paidAmount) || 0))
+      const amount = Math.max(paid, Math.round(Number(p.amount) || 0))
+      sumPaid += paid
+      return {
+        phaseNumber: Number(p.phaseNumber) || index + 1,
+        phaseName: String(p.phaseName || `Installment ${index + 1}`),
+        amount,
+        paidAmount: paid,
+        status: p.status || (paid >= amount ? "completed" : paid > 0 ? "partial" : "pending"),
+        dueDate: p.dueDate || null,
+        paymentDate: p.paymentDate || null,
+        paymentMode: p.paymentMode || null,
+        transactionId: p.transactionId || null,
+      }
+    })
+
+    if (sumPaid > subtotal + 1) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: "VAL_012",
+          message: `Total paid (${sumPaid}) cannot exceed subtotal (${subtotal})`,
+        },
+      })
+      return
+    }
+
+    const remaining = Math.max(0, subtotal - sumPaid)
+    let paymentStatus = body.paymentStatus
+    if (!paymentStatus) {
+      if (sumPaid <= 0) paymentStatus = "pending"
+      else if (sumPaid >= subtotal) paymentStatus = "completed"
+      else paymentStatus = "partial"
+    }
+
+    const subsidyNormalized = normalizeSubsidyChequesFromRequestBody(body)
+    // Map keys to YOUR ORM / columns (e.g. payment_phases JSON, payment_status, remaining_amount, subsidy_cheques).
+    const updates = {
+      paymentPhases: phases,
+      paymentStatus,
+      remainingAmount: remaining,
+      ...(subsidyNormalized !== undefined ? { subsidyCheques: subsidyNormalized } : {}),
+      ...(body.paymentMode ? { paymentMode: String(body.paymentMode).toLowerCase() } : {}),
+      ...(body.paymentType ? { paymentType: String(body.paymentType).toLowerCase() } : {}),
+    }
+
+    await quotation.update(updates)
+    await quotation.reload()
+
+    res.json({
+      success: true,
+      data: quotationToApiJson(quotation),
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
   }
 }
 
 /**
  * Route registration (Express example):
  *   router.patch('/admin/quotations/:quotationId/status', adminAuth, patchAdminQuotationStatus)
+ *   router.patch('/admin/quotations/:quotationId/file-login', adminAuth, patchAdminQuotationFileLogin)
+ *   router.patch('/quotations/:quotationId/payment-details', accountMgmtOrAdminAuth, patchQuotationPaymentDetails)
  */
 
 /**

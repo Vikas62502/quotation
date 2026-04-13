@@ -36,6 +36,41 @@ interface Visit {
   createdAt: string
 }
 
+const getVisitStartTime = (timeRange: string) => (timeRange || "").split("-")[0]?.trim()
+const getVisitEndTime = (timeRange: string) => (timeRange || "").split("-")[1]?.trim()
+const resolveVisitTimeRange = (visit: any) => {
+  const start = (visit?.visitStartTime || visit?.startTime || "").trim()
+  const end = (visit?.visitEndTime || visit?.endTime || "").trim()
+  if (start && end) return `${start} - ${end}`
+  const explicitRange = (visit?.visitTimeRange || visit?.timeRange || "").trim()
+  if (explicitRange) return explicitRange
+  return (visit?.visitTime || visit?.time || "").trim()
+}
+const normalizeTimeForApi = (value: string) => {
+  const raw = (value || "").trim().replace(/\u202f/g, " ").replace(/\./g, "")
+  if (!raw) return ""
+
+  const basic = raw.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/)
+  if (basic) {
+    const hours = Number.parseInt(basic[1], 10)
+    if (hours >= 0 && hours <= 23) return `${String(hours).padStart(2, "0")}:${basic[2]}`
+    return ""
+  }
+
+  const ampm = raw.match(/^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/)
+  if (ampm) {
+    let hours = Number.parseInt(ampm[1], 10)
+    if (hours < 1 || hours > 12) return ""
+    const minutes = ampm[2]
+    const meridiem = ampm[3].toUpperCase()
+    if (meridiem === "PM" && hours < 12) hours += 12
+    if (meridiem === "AM" && hours === 12) hours = 0
+    return `${String(hours).padStart(2, "0")}:${minutes}`
+  }
+
+  return ""
+}
+
 interface VisitManagementDialogProps {
   quotation: Quotation | null
   open: boolean
@@ -44,14 +79,25 @@ interface VisitManagementDialogProps {
 
 export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitManagementDialogProps) {
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const getSafeLastName = (lastName?: string) => {
+    const cleaned = (lastName || "").trim()
+    return cleaned.toLowerCase() === "na" ? "" : cleaned
+  }
+  const customerDisplayName = `${quotation?.customer?.firstName || ""} ${getSafeLastName(quotation?.customer?.lastName)}`.trim()
   const [visits, setVisits] = useState<Visit[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [availableVisitors, setAvailableVisitors] = useState<Visitor[]>([])
   const [assignedVisitors, setAssignedVisitors] = useState<VisitVisitor[]>([])
   const [isLoadingVisitors, setIsLoadingVisitors] = useState(false)
+  const [rescheduleVisit, setRescheduleVisit] = useState<Visit | null>(null)
+  const [rescheduleReason, setRescheduleReason] = useState("")
+  const [rescheduleDate, setRescheduleDate] = useState("")
+  const [rescheduleStartTime, setRescheduleStartTime] = useState("")
+  const [rescheduleEndTime, setRescheduleEndTime] = useState("")
   const [formData, setFormData] = useState({
     date: "",
-    time: "",
+    startTime: "",
+    endTime: "",
     location: "",
     locationLink: "",
     notes: "",
@@ -133,7 +179,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
         setVisits(visitsList.map((v: any) => ({
           id: v.id,
           date: v.visitDate,
-          time: v.visitTime,
+          time: resolveVisitTimeRange(v),
           location: v.location,
           locationLink: v.locationLink,
           notes: v.notes,
@@ -192,10 +238,15 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
         }
 
         // Create visit via API
+        const startTime = getVisitStartTime(visitTime)
+        const endTime = getVisitEndTime(visitTime)
         const visitData: any = {
           quotationId: quotation.id,
           visitDate: visitDate,
           visitTime: visitTime,
+          ...(startTime ? { visitStartTime: startTime } : {}),
+          ...(endTime ? { visitEndTime: endTime } : {}),
+          visitTimeRange: visitTime,
           location: location,
           visitors: validVisitors,
         }
@@ -231,8 +282,19 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
   const handleAddVisit = async () => {
     if (!quotation) return
 
-    if (!formData.date || !formData.time || !formData.location.trim()) {
-      alert("Please fill in date, time, and location")
+    if (!formData.date || !formData.startTime || !formData.endTime || !formData.location.trim()) {
+      alert("Please fill in date, start time, end time, and location")
+      return
+    }
+
+    const startTime = normalizeTimeForApi(formData.startTime)
+    const endTime = normalizeTimeForApi(formData.endTime)
+    if (!startTime || !endTime) {
+      alert("Please enter valid start and end times")
+      return
+    }
+    if (endTime <= startTime) {
+      alert("End time must be after start time")
       return
     }
 
@@ -254,7 +316,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
     const newVisit: Visit = {
       id: `visit_${Date.now()}`,
       date: formData.date,
-      time: formData.time,
+      time: `${startTime} - ${endTime}`,
       location: formData.location.trim(),
       locationLink: formData.locationLink.trim() || undefined,
       notes: formData.notes.trim() || undefined,
@@ -272,7 +334,8 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
         : ""
       setFormData({
         date: "",
-        time: "",
+        startTime: "",
+        endTime: "",
         location: customerAddress,
         locationLink: "",
         notes: "",
@@ -315,6 +378,73 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
     }
   }
 
+  const openRescheduleDialog = (visit: Visit) => {
+    setRescheduleVisit(visit)
+    setRescheduleReason("")
+    setRescheduleDate(visit.date || "")
+    setRescheduleStartTime(getVisitStartTime(visit.time) || visit.time || "")
+    setRescheduleEndTime(getVisitEndTime(visit.time) || "")
+  }
+
+  const handleRescheduleVisit = async () => {
+    if (!quotation || !rescheduleVisit) return
+    if (!rescheduleReason.trim() || !rescheduleDate || !rescheduleStartTime || !rescheduleEndTime) {
+      alert("Please enter reason, date, start time, and end time")
+      return
+    }
+    const startTime = normalizeTimeForApi(rescheduleStartTime)
+    const endTime = normalizeTimeForApi(rescheduleEndTime)
+    if (!startTime || !endTime) {
+      alert("Please enter valid start and end times")
+      return
+    }
+    if (endTime <= startTime) {
+      alert("End time must be after start time")
+      return
+    }
+
+    const timeRange = `${startTime} - ${endTime}`
+
+    try {
+      if (useApi) {
+        await api.visits.reschedule(rescheduleVisit.id, {
+          reason: rescheduleReason.trim(),
+          visitDate: rescheduleDate,
+          visitTime: timeRange,
+          visitStartTime: startTime,
+          visitEndTime: endTime,
+          visitTimeRange: timeRange,
+        })
+        await loadVisits()
+      } else {
+        const updatedVisits = visits.map((v) =>
+          v.id === rescheduleVisit.id
+            ? {
+                ...v,
+                date: rescheduleDate,
+                time: timeRange,
+                notes: [v.notes || "", `Reschedule reason: ${rescheduleReason.trim()}`]
+                  .map((part) => part.trim())
+                  .filter(Boolean)
+                  .join(" | "),
+              }
+            : v,
+        )
+        localStorage.setItem(`visits_${quotation.id}`, JSON.stringify(updatedVisits))
+        setVisits(updatedVisits)
+      }
+
+      setRescheduleVisit(null)
+      setRescheduleReason("")
+      setRescheduleDate("")
+      setRescheduleStartTime("")
+      setRescheduleEndTime("")
+    } catch (error) {
+      console.error("Error rescheduling visit:", error)
+      alert(error instanceof ApiError ? error.message : "Failed to reschedule visit. Please try again.")
+    }
+  }
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleDateString("en-IN", {
@@ -325,7 +455,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
     })
   }
 
-  const formatTime = (timeString: string) => {
+  const formatSingleTime = (timeString: string) => {
     const [hours, minutes] = timeString.split(":")
     const hour = Number.parseInt(hours)
     const ampm = hour >= 12 ? "PM" : "AM"
@@ -333,8 +463,17 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
     return `${displayHour}:${minutes} ${ampm}`
   }
 
+  const formatTime = (timeString: string) => {
+    const startTime = getVisitStartTime(timeString)
+    const endTime = getVisitEndTime(timeString)
+    if (startTime && endTime) {
+      return `${formatSingleTime(startTime)} - ${formatSingleTime(endTime)}`
+    }
+    return formatSingleTime(timeString)
+  }
+
   const isPastVisit = (visit: Visit) => {
-    const visitDateTime = new Date(`${visit.date}T${visit.time}`)
+    const visitDateTime = new Date(`${visit.date}T${getVisitStartTime(visit.time) || visit.time}`)
     return visitDateTime < new Date()
   }
 
@@ -357,7 +496,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
             Visit Management
           </DialogTitle>
           <DialogDescription className="text-sm">
-            Schedule and manage visits for {quotation?.customer?.firstName || ""} {quotation?.customer?.lastName || ""} (Quotation: {quotation?.id || ""})
+            Schedule and manage visits for {customerDisplayName} (Quotation: {quotation?.id || ""})
           </DialogDescription>
         </DialogHeader>
 
@@ -399,15 +538,28 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                     </div>
 
                     <div>
-                      <Label htmlFor="visit-time" className="flex items-center gap-2">
+                      <Label htmlFor="visit-start-time" className="flex items-center gap-2">
                         <Clock className="w-4 h-4" />
-                        Time
+                        Start Time
                       </Label>
                       <Input
-                        id="visit-time"
+                        id="visit-start-time"
                         type="time"
-                        value={formData.time}
-                        onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                        value={formData.startTime}
+                        onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="visit-end-time" className="flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        End Time
+                      </Label>
+                      <Input
+                        id="visit-end-time"
+                        type="time"
+                        value={formData.endTime}
+                        onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
                         className="mt-1"
                       />
                     </div>
@@ -673,6 +825,15 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                         </div>
 
                         <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openRescheduleDialog(visit)}
+                          className="mr-2"
+                        >
+                          <Calendar className="w-4 h-4 mr-1" />
+                          Reschedule
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="icon"
                           onClick={() => handleDeleteVisit(visit.id)}
@@ -689,6 +850,70 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
           </div>
         </div>
       </DialogContent>
+
+      <Dialog open={!!rescheduleVisit} onOpenChange={(open) => !open && setRescheduleVisit(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Reschedule Visit</DialogTitle>
+            <DialogDescription>Update visit date and time range with reason.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="reschedule-reason">Reason *</Label>
+              <Textarea
+                id="reschedule-reason"
+                value={rescheduleReason}
+                onChange={(e) => setRescheduleReason(e.target.value)}
+                placeholder="Please provide reason for rescheduling..."
+                rows={3}
+                className="mt-1"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label htmlFor="reschedule-date">Date *</Label>
+                <Input
+                  id="reschedule-date"
+                  type="date"
+                  value={rescheduleDate}
+                  onChange={(e) => setRescheduleDate(e.target.value)}
+                  min={new Date().toISOString().split("T")[0]}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="reschedule-start-time">Start *</Label>
+                <Input
+                  id="reschedule-start-time"
+                  type="time"
+                  value={rescheduleStartTime}
+                  onChange={(e) => setRescheduleStartTime(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="reschedule-end-time">End *</Label>
+                <Input
+                  id="reschedule-end-time"
+                  type="time"
+                  value={rescheduleEndTime}
+                  onChange={(e) => setRescheduleEndTime(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRescheduleVisit(null)}>
+                Cancel
+              </Button>
+              <Button onClick={handleRescheduleVisit} className="bg-purple-600 hover:bg-purple-700">
+                <Calendar className="w-4 h-4 mr-2" />
+                Reschedule Visit
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   )
 }

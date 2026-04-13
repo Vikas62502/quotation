@@ -313,6 +313,9 @@ export default function DashboardPage() {
         bankName: "",
         bankBranch: "",
         bankPassbookImage: null,
+        geotagRoofPhoto: null,
+        customerWithHousePhoto: null,
+        propertyDocumentPdf: null,
         contactPhone: "",
         contactEmail: "",
       }
@@ -367,6 +370,9 @@ export default function DashboardPage() {
     appendIfValue("bankName", form.bankName)
     appendIfValue("bankBranch", form.bankBranch)
     appendFile("bankPassbookImage", form.bankPassbookImage)
+    appendFile("geotagRoofPhoto", form.geotagRoofPhoto)
+    appendFile("customerWithHousePhoto", form.customerWithHousePhoto)
+    appendFile("propertyDocumentPdf", form.propertyDocumentPdf)
 
     appendIfValue("emailId", form.contactEmail)
     return formData
@@ -780,7 +786,7 @@ export default function DashboardPage() {
                             Compliant (age &gt; 60)
                           </Label>
                           <p className="text-xs text-muted-foreground">
-                            When checked, compliant Aadhar front/back and contact number are mandatory.
+                            When checked, compliant contact number, Aadhar front/back images, PAN image, and bank passbook image are required.
                           </p>
                         </div>
                       </div>
@@ -798,7 +804,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>Phone Number</Label>
+                          <Label>Phone Number *</Label>
                           <Input
                             value={form.contactPhone}
                             onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactPhone: e.target.value })}
@@ -806,7 +812,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>Aadhar Front Image</Label>
+                          <Label>Aadhar Front Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -816,7 +822,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>Aadhar Back Image</Label>
+                          <Label>Aadhar Back Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -833,7 +839,7 @@ export default function DashboardPage() {
                         <div className="space-y-1">
                           <p className="text-sm font-semibold text-amber-900">Compliant Details (Mandatory)</p>
                           <p className="text-xs text-amber-800/80">
-                            Fill all compliant Aadhar, PAN, and bank fields to submit.
+                            Only the fields marked with * are required to submit.
                           </p>
                         </div>
 
@@ -841,7 +847,7 @@ export default function DashboardPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Aadhar</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant Aadhar No *</Label>
+                              <Label className="text-sm font-medium">Compliant Aadhar No</Label>
                               <Input
                                 value={form.compliantAadharNumber}
                                 onChange={(e) =>
@@ -891,7 +897,7 @@ export default function DashboardPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant PAN</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant PAN Number *</Label>
+                              <Label className="text-sm font-medium">Compliant PAN Number</Label>
                               <Input
                                 value={form.compliantPanNumber}
                                 onChange={(e) =>
@@ -917,7 +923,7 @@ export default function DashboardPage() {
                           <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Compliant Bank</p>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                              <Label className="text-sm font-medium">Compliant Account No *</Label>
+                              <Label className="text-sm font-medium">Compliant Account No</Label>
                               <Input
                                 value={form.compliantBankAccountNumber}
                                 onChange={(e) =>
@@ -927,7 +933,7 @@ export default function DashboardPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant IFSC Code *</Label>
+                              <Label className="text-sm font-medium">Compliant IFSC Code</Label>
                               <Input
                                 value={form.compliantBankIfsc}
                                 onChange={(e) =>
@@ -937,7 +943,7 @@ export default function DashboardPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant Bank Name *</Label>
+                              <Label className="text-sm font-medium">Compliant Bank Name</Label>
                               <Input
                                 value={form.compliantBankName}
                                 onChange={(e) =>
@@ -947,7 +953,7 @@ export default function DashboardPage() {
                               />
                             </div>
                             <div>
-                              <Label className="text-sm font-medium">Compliant Branch *</Label>
+                              <Label className="text-sm font-medium">Compliant Branch</Label>
                               <Input
                                 value={form.compliantBankBranch}
                                 onChange={(e) =>
@@ -985,7 +991,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>PAN Image</Label>
+                          <Label>PAN Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -1001,7 +1007,7 @@ export default function DashboardPage() {
                       <p className="text-sm font-semibold">Electricity Bill</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label>Electricity Bill KNO</Label>
+                          <Label>Electricity Bill KNO *</Label>
                           <Input
                             value={form.electricityKno}
                             onChange={(e) =>
@@ -1011,7 +1017,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>Electricity Bill Image</Label>
+                          <Label>Electricity Bill Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -1063,7 +1069,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div className="md:col-span-2">
-                          <Label>Bank Passbook Image</Label>
+                          <Label>Bank Passbook Image *</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -1081,12 +1087,54 @@ export default function DashboardPage() {
                       <p className="text-sm font-semibold">Contact Details</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label>Email ID</Label>
+                          <Label>Email ID *</Label>
                           <Input
                             type="email"
                             value={form.contactEmail}
                             onChange={(e) => updateDocumentsForm(documentsQuotation.id, { contactEmail: e.target.value })}
                             placeholder="Enter email"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border border-border/60 bg-background p-4 space-y-4">
+                      <p className="text-sm font-semibold">Additional Documents</p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label>Geotag Roof Photo *</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                geotagRoofPhoto: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                        <div>
+                          <Label>Customer Photo with House *</Label>
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                customerWithHousePhoto: e.target.files?.[0] || null,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="md:col-span-2">
+                          <Label>Property Documents (PDF) *</Label>
+                          <Input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            onChange={(e) =>
+                              updateDocumentsForm(documentsQuotation.id, {
+                                propertyDocumentPdf: e.target.files?.[0] || null,
+                              })
+                            }
                           />
                         </div>
                       </div>
@@ -1135,6 +1183,20 @@ export default function DashboardPage() {
                       toast({
                         title: "Invalid phone number",
                         description: "Phone number must be 10 digits.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+
+                    const missingRequiredDocuments =
+                      !form.geotagRoofPhoto ||
+                      !form.customerWithHousePhoto ||
+                      !form.propertyDocumentPdf
+                    if (missingRequiredDocuments) {
+                      toast({
+                        title: "Required documents missing",
+                        description:
+                          "Please upload Geotag Roof photo, Customer photo with house, and Property documents PDF.",
                         variant: "destructive",
                       })
                       return

@@ -69,6 +69,14 @@ export interface DealerInfo {
   role: "dealer" | "admin"
 }
 
+/** Admin file-login workflow (subsidy / portal filing). */
+export type FileLoginStatus = "already_login" | "login_now"
+
+export type StatusHistoryEntry = {
+  status: string
+  at: string
+}
+
 export interface Quotation {
   pricing?: any
   id: string
@@ -93,6 +101,21 @@ export interface Quotation {
   /** Set when admin approves with loan / mix */
   bankName?: string
   bankIfsc?: string
+  /** Subsidy cheque details when approval payment is cash or cash + loan */
+  subsidyChequeDetails?: string
+  /** File login: already filed vs mark as login now */
+  fileLoginStatus?: FileLoginStatus
+  /** Payment type recorded at file-login step (loan / cash / mix). Mix = cash + loan in UI. */
+  filePaymentType?: "loan" | "cash" | "mix"
+  fileBankName?: string
+  fileBankIfsc?: string
+  /** Subsidy cheque for file login when payment is cash or cash + loan */
+  fileSubsidyChequeDetails?: string
+  fileLoginAt?: string
+  /** When quotation became approved (server or admin action) */
+  statusApprovedAt?: string
+  /** Ordered status transitions for admin audit */
+  statusHistory?: StatusHistoryEntry[]
   paymentStatus?: "pending" | "completed" | "partial"
   validUntil?: string // Optional: quotation validity date
 }

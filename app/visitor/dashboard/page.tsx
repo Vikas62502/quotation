@@ -78,6 +78,41 @@ interface VisitWithQuotation extends Visit {
   }
 }
 
+const getVisitStartTime = (timeRange: string) => (timeRange || "").split("-")[0]?.trim()
+const getVisitEndTime = (timeRange: string) => (timeRange || "").split("-")[1]?.trim()
+const resolveVisitTimeRange = (visit: any) => {
+  const start = (visit?.visitStartTime || visit?.startTime || "").trim()
+  const end = (visit?.visitEndTime || visit?.endTime || "").trim()
+  if (start && end) return `${start} - ${end}`
+  const explicitRange = (visit?.visitTimeRange || visit?.timeRange || "").trim()
+  if (explicitRange) return explicitRange
+  return (visit?.visitTime || visit?.time || "").trim()
+}
+const normalizeTimeForApi = (value: string) => {
+  const raw = (value || "").trim().replace(/\u202f/g, " ").replace(/\./g, "")
+  if (!raw) return ""
+
+  const basic = raw.match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/)
+  if (basic) {
+    const hours = Number.parseInt(basic[1], 10)
+    if (hours >= 0 && hours <= 23) return `${String(hours).padStart(2, "0")}:${basic[2]}`
+    return ""
+  }
+
+  const ampm = raw.match(/^(\d{1,2}):([0-5]\d)\s*([AaPp][Mm])$/)
+  if (ampm) {
+    let hours = Number.parseInt(ampm[1], 10)
+    if (hours < 1 || hours > 12) return ""
+    const minutes = ampm[2]
+    const meridiem = ampm[3].toUpperCase()
+    if (meridiem === "PM" && hours < 12) hours += 12
+    if (meridiem === "AM" && hours === 12) hours = 0
+    return `${String(hours).padStart(2, "0")}:${minutes}`
+  }
+
+  return ""
+}
+
 export default function VisitorDashboardPage() {
   const { visitor, role, isAuthenticated, logout } = useAuth()
   const router = useRouter()
@@ -104,6 +139,12 @@ export default function VisitorDashboardPage() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const [reason, setReason] = useState("")
   const [completeNotes, setCompleteNotes] = useState("")
+  const [rescheduleDate, setRescheduleDate] = useState("")
+  const [rescheduleStartTime, setRescheduleStartTime] = useState("")
+  const [rescheduleEndTime, setRescheduleEndTime] = useState("")
+  const [rescheduleDecision, setRescheduleDecision] = useState<"rescheduled" | "completed" | "incomplete" | "rejected">(
+    "rescheduled",
+  )
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -134,7 +175,7 @@ export default function VisitorDashboardPage() {
         const visits: VisitWithQuotation[] = visitsList.map((v: any) => ({
           id: v.id,
           date: v.visitDate,
-          time: v.visitTime,
+          time: resolveVisitTimeRange(v),
           location: v.location,
           locationLink: v.locationLink,
           notes: v.notes,
@@ -195,8 +236,8 @@ export default function VisitorDashboardPage() {
 
         // Sort by date and time
         visits.sort((a, b) => {
-          const dateA = new Date(`${a.date}T${a.time}`)
-          const dateB = new Date(`${b.date}T${b.time}`)
+          const dateA = new Date(`${a.date}T${getVisitStartTime(a.time) || a.time}`)
+          const dateB = new Date(`${b.date}T${getVisitStartTime(b.time) || b.time}`)
           return dateA.getTime() - dateB.getTime()
         })
 
@@ -222,7 +263,7 @@ export default function VisitorDashboardPage() {
     })
   }
 
-  const formatTime = (timeString: string) => {
+  const formatSingleTime = (timeString: string) => {
     const [hours, minutes] = timeString.split(":")
     const hour = Number.parseInt(hours)
     const ampm = hour >= 12 ? "PM" : "AM"
@@ -230,8 +271,17 @@ export default function VisitorDashboardPage() {
     return `${displayHour}:${minutes} ${ampm}`
   }
 
+  const formatTime = (timeString: string) => {
+    const startTime = getVisitStartTime(timeString)
+    const endTime = getVisitEndTime(timeString)
+    if (startTime && endTime) {
+      return `${formatSingleTime(startTime)} - ${formatSingleTime(endTime)}`
+    }
+    return formatSingleTime(timeString)
+  }
+
   const isPastVisit = (visit: Visit) => {
-    const visitDateTime = new Date(`${visit.date}T${visit.time}`)
+    const visitDateTime = new Date(`${visit.date}T${getVisitStartTime(visit.time) || visit.time}`)
     return visitDateTime < new Date()
   }
 
@@ -346,6 +396,16 @@ export default function VisitorDashboardPage() {
     } else {
       // Open incomplete/reschedule dialog with reason
       setReason("")
+      if (outcome === "rescheduled") {
+        setRescheduleDecision("rescheduled")
+        setRescheduleDate(targetVisit.date || "")
+        setRescheduleStartTime(getVisitStartTime(targetVisit.time) || targetVisit.time || "")
+        setRescheduleEndTime(getVisitEndTime(targetVisit.time) || "")
+      } else {
+        setRescheduleDate("")
+        setRescheduleStartTime("")
+        setRescheduleEndTime("")
+      }
       setIncompleteRescheduleDialogOpen(true)
     }
   }
@@ -447,13 +507,44 @@ export default function VisitorDashboardPage() {
 
   const handleIncompleteRescheduleVisit = async () => {
     if (!selectedVisit || !reason.trim() || !approveOutcome) return
+    const startTime = normalizeTimeForApi(rescheduleStartTime)
+    const endTime = normalizeTimeForApi(rescheduleEndTime)
+    const effectiveDecision = approveOutcome === "rescheduled" ? rescheduleDecision : approveOutcome
+
+    if (effectiveDecision === "rescheduled") {
+      if (!rescheduleDate || !rescheduleStartTime || !rescheduleEndTime) {
+        alert("Please select reschedule date, start time, and end time")
+        return
+      }
+      if (!startTime || !endTime) {
+        alert("Please enter valid start and end times")
+        return
+      }
+      if (endTime <= startTime) {
+        alert("End time must be after start time")
+        return
+      }
+    }
 
     try {
       if (useApi) {
-        if (approveOutcome === "incomplete") {
+        if (effectiveDecision === "incomplete") {
           await api.visits.incomplete(selectedVisit.id, reason.trim())
-        } else if (approveOutcome === "rescheduled") {
-          await api.visits.reschedule(selectedVisit.id, reason.trim())
+        } else if (effectiveDecision === "rejected") {
+          await api.visits.reject(selectedVisit.id, reason.trim())
+        } else if (effectiveDecision === "completed") {
+          setIncompleteRescheduleDialogOpen(false)
+          handleApproveOutcomeClick("completed", selectedVisit)
+          return
+        } else if (effectiveDecision === "rescheduled") {
+          await api.visits.reschedule(selectedVisit.id, {
+            reason: reason.trim(),
+            visitDate: rescheduleDate,
+            visitTime: `${startTime} - ${endTime}`,
+            visitStartTime: startTime,
+            visitEndTime: endTime,
+            visitTimeRange: `${startTime} - ${endTime}`,
+          })
         }
         await loadAssignedVisits()
       } else {
@@ -463,8 +554,14 @@ export default function VisitorDashboardPage() {
           if (v.id === selectedVisit.id) {
             return {
               ...v,
-              status: approveOutcome,
-              rejectionReason: reason.trim(),
+              status: effectiveDecision,
+              rejectionReason: effectiveDecision === "rejected" || effectiveDecision === "incomplete" ? reason.trim() : v.rejectionReason,
+              ...(effectiveDecision === "rescheduled"
+                ? {
+                    date: rescheduleDate,
+                    time: `${startTime} - ${endTime}`,
+                  }
+                : {}),
             }
           }
           return v
@@ -478,6 +575,10 @@ export default function VisitorDashboardPage() {
       setStatusAction(null)
       setApproveOutcome(null)
       setReason("")
+      setRescheduleDate("")
+      setRescheduleStartTime("")
+      setRescheduleEndTime("")
+      setRescheduleDecision("rescheduled")
     } catch (error) {
       console.error("Error updating visit:", error)
       alert(error instanceof ApiError ? error.message : "Failed to update visit")
@@ -686,7 +787,7 @@ export default function VisitorDashboardPage() {
 
             // Filter by date
             if (dateFilter !== "all") {
-              const visitDate = new Date(`${visit.date}T${visit.time}`)
+              const visitDate = new Date(`${visit.date}T${getVisitStartTime(visit.time) || visit.time}`)
               const now = new Date()
               const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
               const thisWeekStart = new Date(today)
@@ -715,7 +816,21 @@ export default function VisitorDashboardPage() {
             return true
           })
 
-          if (filteredVisits.length === 0) {
+          const sortedFilteredVisits = [...filteredVisits].sort((a, b) => {
+            const aPending = (a.status || "pending") === "pending"
+            const bPending = (b.status || "pending") === "pending"
+
+            // Always keep pending visits at the top.
+            if (aPending !== bPending) {
+              return aPending ? -1 : 1
+            }
+
+            const aDateTime = new Date(`${a.date}T${getVisitStartTime(a.time) || a.time}`).getTime()
+            const bDateTime = new Date(`${b.date}T${getVisitStartTime(b.time) || b.time}`).getTime()
+            return aDateTime - bDateTime
+          })
+
+          if (sortedFilteredVisits.length === 0) {
             return (
               <Card>
                 <CardContent className="py-12 text-center text-muted-foreground">
@@ -746,7 +861,7 @@ export default function VisitorDashboardPage() {
 
           return (
             <div className="space-y-4">
-              {filteredVisits.map((visit) => {
+              {sortedFilteredVisits.map((visit) => {
               const myAvailability = getMyAvailability(visit)
               const isPast = isPastVisit(visit)
 
@@ -1007,8 +1122,8 @@ export default function VisitorDashboardPage() {
                           )}
                         </div>
                       )}
-                      {/* Show buttons for approved visits */}
-                      {visit.status === "approved" && (
+                      {/* Show action buttons for approved/rescheduled visits */}
+                      {(visit.status === "approved" || visit.status === "rescheduled") && (
                         <div className="space-y-2">
                           <div className="flex flex-col sm:flex-row gap-2">
                             <Button
@@ -1276,6 +1391,65 @@ export default function VisitorDashboardPage() {
                 This reason will be visible to the agent and customer.
               </p>
             </div>
+            {approveOutcome === "rescheduled" && (
+              <div>
+                <Label htmlFor="reschedule-decision">Decision *</Label>
+                <Select
+                  value={rescheduleDecision}
+                  onValueChange={(value: "rescheduled" | "completed" | "incomplete" | "rejected") =>
+                    setRescheduleDecision(value)
+                  }
+                >
+                  <SelectTrigger id="reschedule-decision" className="mt-1">
+                    <SelectValue placeholder="Select decision" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rescheduled">Reschedule</SelectItem>
+                    <SelectItem value="completed">Complete</SelectItem>
+                    <SelectItem value="incomplete">Incomplete</SelectItem>
+                    <SelectItem value="rejected">Reject</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {approveOutcome === "rescheduled" && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label htmlFor="reschedule-date">Reschedule Date *</Label>
+                  <Input
+                    id="reschedule-date"
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    min={new Date().toISOString().split("T")[0]}
+                    className="mt-1"
+                    disabled={rescheduleDecision !== "rescheduled"}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="reschedule-start-time">Start Time *</Label>
+                  <Input
+                    id="reschedule-start-time"
+                    type="time"
+                    value={rescheduleStartTime}
+                    onChange={(e) => setRescheduleStartTime(e.target.value)}
+                    className="mt-1"
+                    disabled={rescheduleDecision !== "rescheduled"}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="reschedule-end-time">End Time *</Label>
+                  <Input
+                    id="reschedule-end-time"
+                    type="time"
+                    value={rescheduleEndTime}
+                    onChange={(e) => setRescheduleEndTime(e.target.value)}
+                    className="mt-1"
+                    disabled={rescheduleDecision !== "rescheduled"}
+                  />
+                </div>
+              </div>
+            )}
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIncompleteRescheduleDialogOpen(false)}>
@@ -1298,7 +1472,13 @@ export default function VisitorDashboardPage() {
                 ) : (
                   <>
                     <Calendar className="w-4 h-4 mr-2" />
-                    Reschedule
+                    {rescheduleDecision === "completed"
+                      ? "Mark as Complete"
+                      : rescheduleDecision === "incomplete"
+                        ? "Mark as Incomplete"
+                        : rescheduleDecision === "rejected"
+                          ? "Reject Visit"
+                          : "Reschedule"}
                   </>
                 )}
               </Button>
