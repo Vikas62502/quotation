@@ -123,19 +123,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   useEffect(() => {
-    // Seed dummy data on app initialization (only in development/localStorage mode)
-    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
-    if (!useApi && typeof window !== "undefined") {
-      // Import and call seedDummyData to ensure account managers and quotations exist
-      import("@/lib/dummy-data").then(({ seedDummyData }) => {
-        seedDummyData()
-      }).catch((error) => {
-        console.error("Error seeding dummy data:", error)
-      })
-    }
-  }, [])
-
-  useEffect(() => {
     if (!isAuthenticated) {
       disconnectRealtime()
       return
@@ -564,52 +551,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Check for account management users (stored in separate localStorage key or with special prefix)
       const accountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
       
-      // If account managers don't exist, seed them first
-      if (accountManagers.length === 0) {
-        try {
-          const { seedDummyData } = await import("@/lib/dummy-data")
-          seedDummyData()
-          // Re-fetch after seeding
-          const refreshedAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-          const foundAccountManager = refreshedAccountManagers.find((am: AccountManager & { password: string }) => 
-            am.username === username && am.password === password
-          )
-          
-          if (foundAccountManager) {
-            if (foundAccountManager.isActive === false) {
-              console.error("Account manager is inactive")
-              return false
-            }
-            
-            const { password: _, ...accountManagerData } = foundAccountManager
-            setAccountManager(accountManagerData)
-            setDealer(null)
-            setVisitor(null)
-            setInstaller(null)
-            setBaldev(null)
-            setHrUser(null)
-            setRole("account-management")
-            setIsAuthenticated(true)
-            localStorage.setItem("accountManager", JSON.stringify(accountManagerData))
-            localStorage.setItem("userRole", "account-management")
-            localStorage.setItem("user", JSON.stringify({
-              ...accountManagerData,
-              role: "account-management"
-            }))
-            localStorage.removeItem("dealer")
-            localStorage.removeItem("visitor")
-            localStorage.removeItem("installerUser")
-            localStorage.removeItem("baldevUser")
-            localStorage.removeItem("hrUser")
-            // Note: In localStorage mode, we don't have real tokens, but we keep the structure
-            // If API mode is enabled later, user will need to login again
-            console.log("Account Management login successful (after seeding):", accountManagerData.username)
-            return true
-          }
-        } catch (seedError) {
-          console.error("Error seeding account managers:", seedError)
-        }
-      }
+      // Dummy-data seeding removed: only existing local/API users are allowed.
       
       const foundAccountManager = accountManagers.find((am: AccountManager & { password: string }) => 
         am.username === username && am.password === password

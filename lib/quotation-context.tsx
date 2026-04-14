@@ -3,7 +3,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { api, ApiError } from "./api"
 import { useAuth } from "./auth-context"
-import { seedDummyData } from "./dummy-data"
 import { calculateSystemSize, determinePhase } from "./pricing-tables"
 
 export interface Customer {
@@ -138,18 +137,6 @@ const QuotationContext = createContext<QuotationContextType | undefined>(undefin
 export function QuotationProvider({ children }: { children: ReactNode }) {
   const { dealer } = useAuth()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
-  
-  // Seed dummy data on mount if API is disabled
-  useEffect(() => {
-    if (!useApi && typeof window !== "undefined") {
-      try {
-        seedDummyData()
-        console.log("Dummy data seeded successfully")
-      } catch (error) {
-        console.error("Error seeding dummy data:", error)
-      }
-    }
-  }, [useApi])
   
   // Load from localStorage on mount (for form state only, not data)
   const [currentCustomer, setCurrentCustomerState] = useState<Customer | null>(() => {

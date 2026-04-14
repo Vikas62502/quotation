@@ -30,6 +30,7 @@ import {
   UserX,
   Wallet,
   History,
+  SlidersHorizontal,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -73,6 +74,11 @@ export default function AdminPanelPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [filterDealer, setFilterDealer] = useState("all")
   const [filterMonth, setFilterMonth] = useState("all")
+  const [filterStatus, setFilterStatus] = useState("all")
+  const [filterFileLogin, setFilterFileLogin] = useState("all")
+  const [filterPaymentType, setFilterPaymentType] = useState("all")
+  const [filterBankDetails, setFilterBankDetails] = useState("all")
+  const [quotationFiltersOpen, setQuotationFiltersOpen] = useState(false)
   const QUOTATIONS_PAGE_SIZE = 10
   const [currentQuotationPage, setCurrentQuotationPage] = useState(1)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
@@ -229,7 +235,7 @@ export default function AdminPanelPage() {
 
   useEffect(() => {
     setCurrentQuotationPage(1)
-  }, [searchTerm, filterDealer, filterMonth])
+  }, [searchTerm, filterDealer, filterMonth, filterStatus, filterFileLogin, filterPaymentType, filterBankDetails])
 
   // Fetch full quotation details when edit dialog opens
   useEffect(() => {
@@ -683,38 +689,69 @@ export default function AdminPanelPage() {
   })
   const thisMonthRevenue = thisMonthQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
 
-  // Filter quotations
+  // Filter quotations by all active conditions together.
+  const normalizedSearchTerm = searchTerm.trim().toLowerCase()
   const filteredQuotations = quotations.filter((q) => {
+    const dealerName = getDealerName(q.dealerId)
+    const dealerMobile = getDealerMobile(q.dealerId)
+    const paymentTypeLabel = getQuotationPaymentTypeLabel(q).toLowerCase()
+    const bankDetails = getQuotationBankDetails(q).toLowerCase()
+    const fileLoginText = fileLoginRowSummary(q).toLowerCase()
+    const statusText = String(q.status || "").toLowerCase()
+    const amountText = String(Math.abs(q.finalAmount || 0))
+    const createdAtText = new Date(q.createdAt).toLocaleString().toLowerCase()
+
     const matchesSearch =
-      q.customer.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      normalizedSearchTerm.length === 0 ||
+      q.customer.firstName.toLowerCase().includes(normalizedSearchTerm) ||
+      q.customer.lastName.toLowerCase().includes(normalizedSearchTerm) ||
       q.customer.mobile.includes(searchTerm) ||
-      q.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      q.customer.email.toLowerCase().includes(searchTerm.toLowerCase())
+      q.id.toLowerCase().includes(normalizedSearchTerm) ||
+      q.customer.email.toLowerCase().includes(normalizedSearchTerm) ||
+      dealerName.toLowerCase().includes(normalizedSearchTerm) ||
+      dealerMobile.includes(searchTerm) ||
+      paymentTypeLabel.includes(normalizedSearchTerm) ||
+      bankDetails.includes(normalizedSearchTerm) ||
+      fileLoginText.includes(normalizedSearchTerm) ||
+      statusText.includes(normalizedSearchTerm) ||
+      amountText.includes(searchTerm) ||
+      createdAtText.includes(normalizedSearchTerm)
 
     const matchesDealer = filterDealer === "all" || q.dealerId === filterDealer
-
-    if (filterMonth === "all") return matchesSearch && matchesDealer
+    const normalizedStatus = String(q.status || "pending").toLowerCase()
+    const normalizedFileLogin = String(q.fileLoginStatus || "unset").toLowerCase()
+    const normalizedPaymentType = String((q as any).paymentType || q.paymentMode || "").toLowerCase()
+    const hasBankDetails = Boolean(String(q.bankName || "").trim() || String(q.bankIfsc || "").trim())
+    const matchesStatus = filterStatus === "all" || normalizedStatus === filterStatus
+    const matchesFileLogin = filterFileLogin === "all" || normalizedFileLogin === filterFileLogin
+    const matchesPaymentType =
+      filterPaymentType === "all" ||
+      (filterPaymentType === "unknown" ? !normalizedPaymentType : normalizedPaymentType === filterPaymentType)
+    const matchesBankDetails =
+      filterBankDetails === "all" ||
+      (filterBankDetails === "with_bank" ? hasBankDetails : !hasBankDetails)
 
     const date = new Date(q.createdAt)
     const currentDate = new Date()
+    let matchesMonth = true
 
     if (filterMonth === "current") {
-      return (
-        matchesSearch &&
-        matchesDealer &&
-        date.getMonth() === currentDate.getMonth() &&
-        date.getFullYear() === currentDate.getFullYear()
-      )
-    }
-
-    if (filterMonth === "previous") {
+      matchesMonth = date.getMonth() === currentDate.getMonth() && date.getFullYear() === currentDate.getFullYear()
+    } else if (filterMonth === "previous") {
       const prevMonth = currentDate.getMonth() === 0 ? 11 : currentDate.getMonth() - 1
       const prevYear = currentDate.getMonth() === 0 ? currentDate.getFullYear() - 1 : currentDate.getFullYear()
-      return matchesSearch && matchesDealer && date.getMonth() === prevMonth && date.getFullYear() === prevYear
+      matchesMonth = date.getMonth() === prevMonth && date.getFullYear() === prevYear
     }
 
-    return matchesSearch && matchesDealer
+    return (
+      matchesSearch &&
+      matchesDealer &&
+      matchesMonth &&
+      matchesStatus &&
+      matchesFileLogin &&
+      matchesPaymentType &&
+      matchesBankDetails
+    )
   })
 
   const sortedQuotations = [...filteredQuotations].sort(
@@ -730,11 +767,46 @@ export default function AdminPanelPage() {
   const showingFrom =
     sortedQuotations.length === 0 ? 0 : (currentPage - 1) * QUOTATIONS_PAGE_SIZE + 1
   const showingTo = Math.min(sortedQuotations.length, currentPage * QUOTATIONS_PAGE_SIZE)
+  const activeQuotationFilterCount = [
+    filterDealer,
+    filterMonth,
+    filterStatus,
+    filterFileLogin,
+    filterPaymentType,
+    filterBankDetails,
+  ].filter((v) => v !== "all").length
 
   // Get dealer name by ID
-  const getDealerName = (dealerId: string) => {
+  function getDealerName(dealerId: string) {
     const dealer = dealers.find((d) => d.id === dealerId)
     return dealer ? `${dealer.firstName} ${dealer.lastName}` : "Unknown Dealer"
+  }
+
+  function getDealerMobile(dealerId: string) {
+    const dealer = dealers.find((d) => d.id === dealerId)
+    return dealer?.mobile || "—"
+  }
+
+  function getQuotationPaymentTypeLabel(quotation: Quotation) {
+    // Prefer file-login payment type; approval-time type is now fallback only.
+    const raw = String(
+      (quotation as any).filePaymentType || (quotation as any).paymentType || quotation.paymentMode || "",
+    ).toLowerCase()
+    if (raw === "loan") return "Loan"
+    if (raw === "cash") return "Cash"
+    if (raw === "mix") return "Cash + loan"
+    return "—"
+  }
+
+  function getQuotationBankDetails(quotation: Quotation) {
+    // Prefer file-login banking (latest filing step). Fallback to approval-time banking.
+    const bank = String((quotation.fileBankName as string | undefined) || quotation.bankName || "").trim()
+    const ifsc = String((quotation.fileBankIfsc as string | undefined) || quotation.bankIfsc || "")
+      .trim()
+      .toUpperCase()
+    if (!bank && !ifsc) return "—"
+    if (bank && ifsc) return `${bank} · ${ifsc}`
+    return bank || ifsc
   }
 
   const isWithinCallingRange = (actionAt?: string) => {
@@ -848,12 +920,8 @@ export default function AdminPanelPage() {
 
   const handleQuotationStatusChange = (quotationId: string, status: QuotationStatus) => {
     if (status === "approved") {
-      setApprovingQuotationId(quotationId)
-      setApprovalPaymentType("cash")
-      setApprovalBankName("")
-      setApprovalBankIfsc("")
-      setApprovalSubsidyCheque("")
-      setApprovalDialogOpen(true)
+      // Approve directly; file-login step captures payment/bank/subsidy details.
+      void updateQuotationStatus(quotationId, status)
       return
     }
     void updateQuotationStatus(quotationId, status)
@@ -1600,8 +1668,105 @@ export default function AdminPanelPage() {
           {/* All Quotations Tab */}
           <TabsContent value="quotations" className="space-y-4">
             <Card>
+              <Dialog open={quotationFiltersOpen} onOpenChange={setQuotationFiltersOpen}>
+                <DialogContent className="sm:max-w-xl">
+                  <DialogHeader>
+                    <DialogTitle>Quotation Filters</DialogTitle>
+                    <DialogDescription>Filter by dealer, time, status, file login, payment type, and bank details.</DialogDescription>
+                  </DialogHeader>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <Select value={filterDealer} onValueChange={setFilterDealer}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by dealer" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Dealers</SelectItem>
+                        {dealers.map((d) => (
+                          <SelectItem key={d.id} value={d.id}>
+                            {d.firstName} {d.lastName}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select value={filterMonth} onValueChange={setFilterMonth}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by month" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Time</SelectItem>
+                        <SelectItem value="current">Current Month</SelectItem>
+                        <SelectItem value="previous">Previous Month</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by status" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Status</SelectItem>
+                        <SelectItem value="pending">Pending</SelectItem>
+                        <SelectItem value="approved">Approved</SelectItem>
+                        <SelectItem value="rejected">Rejected</SelectItem>
+                        <SelectItem value="completed">Completed</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={filterFileLogin} onValueChange={setFilterFileLogin}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by file login" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All File Login</SelectItem>
+                        <SelectItem value="unset">Not set</SelectItem>
+                        <SelectItem value="already_login">Already logged in</SelectItem>
+                        <SelectItem value="login_now">Login now</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={filterPaymentType} onValueChange={setFilterPaymentType}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by payment type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Payment Type</SelectItem>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="loan">Loan</SelectItem>
+                        <SelectItem value="mix">Cash + loan</SelectItem>
+                        <SelectItem value="unknown">Not set</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Select value={filterBankDetails} onValueChange={setFilterBankDetails}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Filter by bank details" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Bank Details</SelectItem>
+                        <SelectItem value="with_bank">With Bank</SelectItem>
+                        <SelectItem value="without_bank">Without Bank</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setFilterDealer("all")
+                        setFilterMonth("all")
+                        setFilterStatus("all")
+                        setFilterFileLogin("all")
+                        setFilterPaymentType("all")
+                        setFilterBankDetails("all")
+                      }}
+                    >
+                      Reset
+                    </Button>
+                    <Button type="button" onClick={() => setQuotationFiltersOpen(false)}>
+                      Apply
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
               <CardHeader>
-                <div className="flex flex-col sm:flex-row gap-4">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
@@ -1611,29 +1776,16 @@ export default function AdminPanelPage() {
                       className="pl-9"
                     />
                   </div>
-                  <Select value={filterDealer} onValueChange={setFilterDealer}>
-                    <SelectTrigger className="w-full sm:w-48">
-                      <SelectValue placeholder="Filter by dealer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Dealers</SelectItem>
-                      {dealers.map((d) => (
-                        <SelectItem key={d.id} value={d.id}>
-                          {d.firstName} {d.lastName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Select value={filterMonth} onValueChange={setFilterMonth}>
-                    <SelectTrigger className="w-full sm:w-48">
-                      <SelectValue placeholder="Filter by month" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Time</SelectItem>
-                      <SelectItem value="current">Current Month</SelectItem>
-                      <SelectItem value="previous">Previous Month</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={() => setQuotationFiltersOpen(true)}
+                  >
+                    <SlidersHorizontal className="w-4 h-4 mr-2" />
+                    Filters
+                    {activeQuotationFilterCount > 0 ? ` (${activeQuotationFilterCount})` : ""}
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
@@ -1787,26 +1939,36 @@ export default function AdminPanelPage() {
                     </div>
 
                     {/* Desktop Table View */}
-                    <div className="hidden md:block overflow-x-auto">
-                      <table className="w-full">
+                    <div className="hidden md:block overflow-x-hidden">
+                      <table className="w-full table-fixed">
                         <thead>
                           <tr className="border-b border-border">
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[6rem]">
                               Quotation ID
                             </th>
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Customer</th>
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[8rem]">Customer</th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[9rem]">
                               Agent/Dealer
                             </th>
-                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
-                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground min-w-[9rem]">
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">Amount</th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
+                              Status
+                            </th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
                               File login
                             </th>
-                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground min-w-[10rem]">
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
+                              Payment Type
+                            </th>
+                            <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[8rem]">
+                              Bank details
+                            </th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[9rem]">
                               Dates
                             </th>
-                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Actions</th>
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
+                              Actions
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1815,10 +1977,10 @@ export default function AdminPanelPage() {
                               key={quotation.id}
                               className={`border-b border-border last:border-0 transition-colors ${getStatusColor(quotation.status)}`}
                             >
-                              <td className="py-3 px-2">
+                              <td className="py-3 px-2 align-top break-words">
                                 <span className="text-sm font-mono">{quotation.id}</span>
                               </td>
-                              <td className="py-3 px-2">
+                              <td className="py-3 px-2 align-top break-words">
                                 <div>
                                   <p className="text-sm font-medium">
                                     {quotation.customer.firstName} {quotation.customer.lastName}
@@ -1827,16 +1989,18 @@ export default function AdminPanelPage() {
                                   <p className="text-xs text-muted-foreground">{quotation.customer.email}</p>
                                 </div>
                               </td>
-                              <td className="py-3 px-2">
+                              <td className="py-3 px-2 align-top break-words">
                                 <div className="flex items-center gap-2">
                                   <Building className="w-4 h-4 text-muted-foreground" />
                                   <div>
                                     <span className="text-sm font-medium">{getDealerName(quotation.dealerId)}</span>
-                                    <p className="text-xs text-muted-foreground">ID: {quotation.dealerId}</p>
+                                    <p className="text-xs text-muted-foreground">
+                                      Contact: {getDealerMobile(quotation.dealerId)}
+                                    </p>
                                   </div>
                                 </div>
                               </td>
-                              <td className="py-3 px-2 text-right">
+                              <td className="py-3 px-2 text-right align-top break-words">
                                 <div>
                                   <p className="text-sm font-medium">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
                                   {quotation.discount > 0 && (
@@ -1844,13 +2008,13 @@ export default function AdminPanelPage() {
                                   )}
                                 </div>
                               </td>
-                              <td className="py-3 px-2">
-                                <div className="space-y-2">
+                              <td className="py-3 px-2 align-top">
+                                <div className="space-y-2 min-w-0">
                                   <Select
                                     value={quotation.status || "pending"}
                                     onValueChange={(value) => handleQuotationStatusChange(quotation.id, value as QuotationStatus)}
                                   >
-                                    <SelectTrigger className="w-32 h-8 text-xs">
+                                    <SelectTrigger className="w-full min-w-0 h-8 text-xs">
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -1869,8 +2033,8 @@ export default function AdminPanelPage() {
                                   </Badge>
                                 </div>
                               </td>
-                              <td className="py-3 px-2 align-top">
-                                <div className="space-y-1 max-w-[11rem]">
+                              <td className="py-3 px-2 align-top break-words">
+                                <div className="space-y-1 w-full min-w-0">
                                   <Select
                                     value={
                                       optimisticFileLoginSelect[quotation.id] ??
@@ -1879,7 +2043,7 @@ export default function AdminPanelPage() {
                                     }
                                     onValueChange={(value) => void handleFileLoginSelectChange(quotation, value)}
                                   >
-                                    <SelectTrigger className="h-8 text-xs">
+                                    <SelectTrigger className="w-full min-w-0 h-8 text-xs">
                                       <SelectValue placeholder="File login" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -1893,7 +2057,13 @@ export default function AdminPanelPage() {
                                   </p>
                                 </div>
                               </td>
-                              <td className="py-3 px-2 text-right text-xs text-muted-foreground align-top">
+                              <td className="py-3 px-2 align-top break-words">
+                                <p className="text-sm font-medium leading-snug">{getQuotationPaymentTypeLabel(quotation)}</p>
+                              </td>
+                              <td className="py-3 px-2 align-top break-words">
+                                <p className="text-sm leading-snug break-words">{getQuotationBankDetails(quotation)}</p>
+                              </td>
+                              <td className="py-3 px-2 text-right text-xs text-muted-foreground align-top break-words">
                                 <div className="space-y-1">
                                   <div>
                                     <span className="font-medium text-foreground/80">Created </span>

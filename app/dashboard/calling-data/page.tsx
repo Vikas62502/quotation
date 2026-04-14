@@ -349,6 +349,11 @@ export default function CallingDataPage() {
   const [editableLeadDetails, setEditableLeadDetails] = useState<EditableLeadDetails | null>(null)
   const [isEditingLead, setIsEditingLead] = useState(false)
   const [flowTab, setFlowTab] = useState<"current_lead" | "dialled" | "connected" | "not_connected">("current_lead")
+  const [analyticsRange, setAnalyticsRange] = useState<
+    "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_year" | "custom"
+  >("today")
+  const [analyticsFromDate, setAnalyticsFromDate] = useState("")
+  const [analyticsToDate, setAnalyticsToDate] = useState("")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   const syncRescheduleForStatus = (nextStatus: string) => {
@@ -505,6 +510,108 @@ export default function CallingDataPage() {
     if (range === "week") return diffMs >= 0 && diffMs <= 7 * 24 * 60 * 60 * 1000
     return diffMs >= 0 && diffMs <= 30 * 24 * 60 * 60 * 1000
   }
+
+  const getDayStart = (d: Date) => {
+    const x = new Date(d)
+    x.setHours(0, 0, 0, 0)
+    return x
+  }
+
+  const getDayEnd = (d: Date) => {
+    const x = new Date(d)
+    x.setHours(23, 59, 59, 999)
+    return x
+  }
+
+  const getWeekStart = (d: Date) => {
+    const x = getDayStart(d)
+    const day = x.getDay()
+    const diff = day === 0 ? 6 : day - 1
+    x.setDate(x.getDate() - diff)
+    return x
+  }
+
+  const getWeekEnd = (d: Date) => {
+    const start = getWeekStart(d)
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    return getDayEnd(end)
+  }
+
+  const analyticsRangeBounds = useMemo(() => {
+    const now = new Date()
+    if (analyticsRange === "today") return { start: getDayStart(now), end: getDayEnd(now) }
+    if (analyticsRange === "yesterday") {
+      const y = new Date(now)
+      y.setDate(now.getDate() - 1)
+      return { start: getDayStart(y), end: getDayEnd(y) }
+    }
+    if (analyticsRange === "this_week") return { start: getWeekStart(now), end: getWeekEnd(now) }
+    if (analyticsRange === "last_week") {
+      const prev = new Date(now)
+      prev.setDate(now.getDate() - 7)
+      return { start: getWeekStart(prev), end: getWeekEnd(prev) }
+    }
+    if (analyticsRange === "this_month") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1)
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+      return { start: getDayStart(start), end: getDayEnd(end) }
+    }
+    if (analyticsRange === "last_month") {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+      const end = new Date(now.getFullYear(), now.getMonth(), 0)
+      return { start: getDayStart(start), end: getDayEnd(end) }
+    }
+    if (analyticsRange === "last_year") {
+      const y = now.getFullYear() - 1
+      return { start: getDayStart(new Date(y, 0, 1)), end: getDayEnd(new Date(y, 11, 31)) }
+    }
+    if (!analyticsFromDate || !analyticsToDate) return null
+    const start = getDayStart(new Date(analyticsFromDate))
+    const end = getDayEnd(new Date(analyticsToDate))
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
+    return { start, end }
+  }, [analyticsRange, analyticsFromDate, analyticsToDate])
+
+  const rangeFilteredActionsForAnalytics = useMemo(() => {
+    if (!analyticsRangeBounds) return []
+    return recentActions.filter((item) => {
+      if (!item.actionAt) return false
+      const at = new Date(item.actionAt)
+      if (Number.isNaN(at.getTime())) return false
+      return at >= analyticsRangeBounds.start && at <= analyticsRangeBounds.end
+    })
+  }, [recentActions, analyticsRangeBounds])
+
+  const analyticsSummary = useMemo(() => {
+    let connected = 0
+    let notConnected = 0
+    let interested = 0
+    let notInterested = 0
+    let decisionPending = 0
+    rangeFilteredActionsForAnalytics.forEach((item) => {
+      const parsed = parseTaggedRemark(item.callRemark)
+      const status = (parsed.status || "").trim()
+      if (!status) return
+      if (NOT_CONNECTED_REASONS.includes(status)) {
+        notConnected += 1
+        return
+      }
+      connected += 1
+      const outcome = getConnectedOutcomeForStatus(status)
+      if (outcome === "interested") interested += 1
+      else if (outcome === "not_interested") notInterested += 1
+      else decisionPending += 1
+    })
+    return {
+      totalCalls: rangeFilteredActionsForAnalytics.length,
+      connected,
+      notConnected,
+      interested,
+      notInterested,
+      decisionPending,
+    }
+  }, [rangeFilteredActionsForAnalytics])
 
   // Each "Recent Actions" card must have its own local editing state.
   // Using `leadId` can cause state collisions when multiple recent history rows exist for the same lead/customer.
@@ -766,7 +873,7 @@ export default function CallingDataPage() {
     [recentActions],
   )
 
-  const getConnectedOutcomeForStatus = (status: string): "interested" | "not_interested" | "decision_pending" => {
+  function getConnectedOutcomeForStatus(status: string): "interested" | "not_interested" | "decision_pending" {
     if (LOST_REASONS.includes(status) || status === "Not Interested" || status === "Not Interested Currently") {
       return "not_interested"
     }
@@ -957,6 +1064,68 @@ export default function CallingDataPage() {
           One lead visible at a time. Submit call result to unlock next queued lead automatically. The queue
           refreshes in the background every 5 minutes (and when you return to this tab).
         </p>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Dealer Call Analytics</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Select
+                value={analyticsRange}
+                onValueChange={(value: "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_year" | "custom") =>
+                  setAnalyticsRange(value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select range" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="yesterday">Yesterday</SelectItem>
+                  <SelectItem value="this_week">This Week</SelectItem>
+                  <SelectItem value="last_week">Last Week</SelectItem>
+                  <SelectItem value="this_month">This Month</SelectItem>
+                  <SelectItem value="last_month">Last Month</SelectItem>
+                  <SelectItem value="last_year">Last Year</SelectItem>
+                  <SelectItem value="custom">Custom Date Range</SelectItem>
+                </SelectContent>
+              </Select>
+              {analyticsRange === "custom" ? (
+                <>
+                  <Input type="date" value={analyticsFromDate} onChange={(e) => setAnalyticsFromDate(e.target.value)} />
+                  <Input type="date" value={analyticsToDate} onChange={(e) => setAnalyticsToDate(e.target.value)} />
+                </>
+              ) : null}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Total Calls</p>
+                <p className="text-xl font-semibold">{analyticsSummary.totalCalls}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Connected</p>
+                <p className="text-xl font-semibold">{analyticsSummary.connected}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Not Connected</p>
+                <p className="text-xl font-semibold">{analyticsSummary.notConnected}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Interested</p>
+                <p className="text-xl font-semibold">{analyticsSummary.interested}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Not Interested</p>
+                <p className="text-xl font-semibold">{analyticsSummary.notInterested}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Decision Pending</p>
+                <p className="text-xl font-semibold">{analyticsSummary.decisionPending}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Tabs value={activeSubTab} onValueChange={setActiveSubTab}>
           <TabsList className="hidden">

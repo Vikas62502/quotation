@@ -50,6 +50,13 @@
  *   POST /hr/leads/upload-csv
  *     multipart: file, dealerIds[], activeLimitPerDealer
  *     - frontend now sends activeLimitPerDealer = 1 (single active lead per dealer)
+ *   GET /admin/dealers (HR dealer pool selector)
+ *     - return ALL dealers for selection (or support `includeInactive=true`).
+ *     - do not hard-filter to only active dealers for this screen.
+ *     - this endpoint is the single source of truth for HR "Select Dealers" checkbox list
+ *       (frontend should not need to merge old local/quotation dealer snapshots).
+ *     - include stable identity/contact fields per row:
+ *         { id, firstName, lastName, mobile, email, username, isActive, createdAt }
  *   GET /hr/leads/uploads?limit=200
  *     - used by HR "Uploaded Data" tab, must come from DB (not local cache)
  *
@@ -60,6 +67,17 @@
  *   subsidyCheques (array, audit trail for Account Management — see below)
  *   remaining OR remainingAmount (number, optional but recommended for list UI)
  *   installments | paymentPhases | payment_phases (phase rows; same shape as PATCH `phases`)
+ *
+ * Dealer details required by frontend:
+ *   - For quotation list rows:
+ *       include either nested `dealer` OR resolvable `dealerId` with directory endpoint.
+ *       Recommended nested shape:
+ *         dealer: { id, firstName, lastName, email, mobile, username, role }
+ *   - For `/admin/dealers` directory:
+ *       each row should include at least:
+ *         { id, firstName, lastName, mobile, email, username, isActive, createdAt }
+ *       (HR assignment uses this list for dealer checkbox selection; mobile is mandatory in UI)
+ *   - Do not omit `mobile` from dealer payloads where dealer identity is shown in admin tables.
  */
 
 const PAYMENT_TYPES = ["loan", "cash", "mix"]
@@ -412,6 +430,8 @@ export async function patchAdminQuotationFileLogin(req, res) {
  *   bankName     (string | null)
  *   bankIfsc     (string | null)
  *   paymentType  (optional; frontend falls back to paymentMode)
+ *   dealer object with contact mobile (either nested `dealer.mobile` OR ensure `/admin/dealers` returns `mobile`
+ *   for lookup by `dealerId`).
  *   subsidyChequeDetails, fileLoginStatus, filePaymentType, fileBankName, fileBankIfsc,
  *   fileSubsidyChequeDetails, fileLoginAt, statusApprovedAt, statusHistory
  *
@@ -1156,6 +1176,16 @@ export async function patchDealerCallingQueueAction(req, res, db) {
  *    - Recommended indexes:
  *        (assigned_dealer_id, status, assigned_at)
  *        (status, created_at)
+ *
+ * 6) HR "Dealer Actions" filter contract:
+ *    - Actions endpoint should support:
+ *        `dealerId`, `range` (daily|weekly|monthly|last_month|all), optional `startDate`, `endDate`.
+ *    - Return normalized rows with:
+ *        { id, leadId, dealerId, dealerName, action, callRemark, actionAt, nextFollowUpAt? }.
+ *    - Prefer filtering by `dealerId` server-side; `dealerName` is display-only and may vary in formatting.
+ *    - IMPORTANT: return `actionAt` as ISO-8601 UTC (e.g. 2026-04-14T11:47:00.000Z)
+ *      so frontend date-range filters/sorting are consistent.
+ *    - If old rows are stored in non-ISO formats, normalize in serializer before response.
  *
  * Example selection logic:
  *   SELECT * FROM calling_leads

@@ -878,6 +878,50 @@ export const api = {
 
   // HR APIs
   hr: {
+    dealers: {
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        search?: string
+        includeInactive?: boolean
+        isActive?: boolean
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        const querySuffix = query ? `?${query}` : ""
+
+        const endpoints = [
+          `/hr/dealers${querySuffix}`,
+          `/hr/dealer-pool${querySuffix}`,
+          `/hr/assignment/dealers${querySuffix}`,
+          `/admin/dealers${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const isRetryable =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                error.code === "HTTP_403")
+            if (!isRetryable) throw error
+          }
+        }
+
+        throw lastError
+      },
+    },
+
     uploadedLeads: {
       getAll: async (params?: { page?: number; limit?: number }) => {
         const queryParams = new URLSearchParams()
@@ -1151,6 +1195,7 @@ export const api = {
         limit?: number
         search?: string
         isActive?: boolean
+        includeInactive?: boolean
       }) => {
         const queryParams = new URLSearchParams()
         if (params) {

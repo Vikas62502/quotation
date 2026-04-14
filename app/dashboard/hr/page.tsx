@@ -125,20 +125,93 @@ const splitCityState = (value: string) => {
 
 const parseCallRemarkParts = (remark: string) => {
   const text = (remark || "").trim()
-  if (!text) {
-    return { statusCategory: "", status: "", remark: "" }
+  if (!text) return { statusCategory: "", status: "", remark: "" }
+  // Supports: [category] Status | free remark
+  const m = text.match(/^\[([^\]]+)\]\s*([^|]*?)\s*(?:\|\s*(.*))?$/)
+  if (!m) return { statusCategory: "", status: "", remark: text }
+  return {
+    statusCategory: (m[1] || "").trim(),
+    status: (m[2] || "").trim(),
+    remark: (m[3] || "").trim(),
+  }
+}
+
+const parseActionDate = (value?: string) => {
+  if (!value) return null
+  const raw = String(value).trim()
+  if (!raw) return null
+
+  // Epoch support (seconds / milliseconds)
+  if (/^\d{10,13}$/.test(raw)) {
+    const n = Number(raw)
+    const ms = raw.length === 10 ? n * 1000 : n
+    const d = new Date(ms)
+    return Number.isNaN(d.getTime()) ? null : d
   }
 
-  const categoryMatch = text.match(/^\[([^\]]+)\]\s*(.*)$/)
-  if (categoryMatch) {
-    return {
-      statusCategory: categoryMatch[1]?.trim() || "",
-      status: categoryMatch[2]?.trim() || "",
-      remark: "",
-    }
+  // Native parse for ISO / common formats
+  let d = new Date(raw)
+  if (!Number.isNaN(d.getTime())) return d
+
+  // MySQL-like "YYYY-MM-DD HH:mm:ss"
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw)) {
+    d = new Date(raw.replace(" ", "T"))
+    if (!Number.isNaN(d.getTime())) return d
   }
 
-  return { statusCategory: "", status: "", remark: text }
+  // Indian UI-like "DD/MM/YYYY, HH:mm:ss"
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:,\s*(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/)
+  if (m) {
+    const dd = Number(m[1])
+    const mm = Number(m[2]) - 1
+    const yyyy = Number(m[3])
+    const hh = Number(m[4] || 0)
+    const mi = Number(m[5] || 0)
+    const ss = Number(m[6] || 0)
+    d = new Date(yyyy, mm, dd, hh, mi, ss)
+    if (!Number.isNaN(d.getTime())) return d
+  }
+
+  return null
+}
+
+const normalizeName = (value?: string) =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+
+const getDateRangeParams = (range: "daily" | "weekly" | "monthly" | "last_month" | "all") => {
+  if (range === "all") return {}
+  const now = new Date()
+  const toIsoStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).toISOString()
+  const toIsoEnd = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).toISOString()
+
+  if (range === "daily") {
+    return { startDate: toIsoStart(now), endDate: toIsoEnd(now) }
+  }
+
+  if (range === "weekly") {
+    const start = new Date(now)
+    const day = start.getDay()
+    const diff = day === 0 ? 6 : day - 1
+    start.setDate(start.getDate() - diff)
+    const end = new Date(start)
+    end.setDate(start.getDate() + 6)
+    return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
+  }
+
+  if (range === "monthly") {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1)
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
+  }
+
+  const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
+  const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
+  const start = new Date(prevYear, prevMonth, 1)
+  const end = new Date(prevYear, prevMonth + 1, 0)
+  return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
 }
 
 export default function HrDashboardPage() {
@@ -180,32 +253,30 @@ export default function HrDashboardPage() {
 
   const getLocalDealers = (): DealerOption[] => {
     const localDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
-    return normalizeDealerList(localDealers.filter((d: any) => d.isActive !== false))
+    return normalizeDealerList(localDealers)
   }
 
-  const getDealersFromQuotations = async (): Promise<DealerOption[]> => {
-    try {
-      const response = await api.quotations.getAll({ limit: 1000 })
-      const quotations = response?.quotations || []
-      const fromQuotations = quotations
-        .map((q: any) => q?.dealer)
-        .filter((dealer: any) => dealer && dealer.id)
-      return normalizeDealerList(fromQuotations)
-    } catch {
-      return []
-    }
-  }
-
-  const getAllApprovedDealersFromAdmin = async (): Promise<DealerOption[]> => {
+  const getAllDealersFromAdmin = async (): Promise<DealerOption[]> => {
     const pageSize = 200
     let page = 1
     let totalPages = Number.POSITIVE_INFINITY
     const merged: any[] = []
     const seenIds = new Set<string>()
 
+    const pickDealerRows = (response: any): any[] => {
+      if (Array.isArray(response)) return response
+      if (Array.isArray(response?.dealers)) return response.dealers
+      if (Array.isArray(response?.items)) return response.items
+      if (Array.isArray(response?.data?.dealers)) return response.data.dealers
+      if (Array.isArray(response?.data?.items)) return response.data.items
+      if (Array.isArray(response?.data)) return response.data
+      return []
+    }
+
     while (page <= totalPages && page <= 100) {
-      const response = await api.admin.dealers.getAll({ page, limit: pageSize, isActive: true })
-      const list = Array.isArray(response?.dealers) ? response.dealers : []
+      // Use HR-aware endpoint chain first, then admin dealers as fallback (handled in api.hr.dealers.getAll).
+      const response = await api.hr.dealers.getAll({ page, limit: pageSize, includeInactive: true })
+      const list = pickDealerRows(response)
       const before = seenIds.size
       list.forEach((dealer: any) => {
         if (!dealer?.id || seenIds.has(dealer.id)) return
@@ -213,7 +284,9 @@ export default function HrDashboardPage() {
         merged.push(dealer)
       })
 
-      const responseTotalPages = Number(response?.pagination?.totalPages || response?.meta?.totalPages || 0)
+      const responseTotalPages = Number(
+        response?.pagination?.totalPages || response?.meta?.totalPages || response?.data?.pagination?.totalPages || 0,
+      )
       if (responseTotalPages > 0) {
         totalPages = responseTotalPages
       }
@@ -238,14 +311,28 @@ export default function HrDashboardPage() {
       dealerNameFromObject || (fallbackDealer ? `${fallbackDealer.firstName} ${fallbackDealer.lastName}` : "Unknown Employee")
     const actionAt = item?.actionAt || item?.updatedAt || item?.createdAt || ""
     const leadId = item?.leadId || item?.lead?.id || item?.id || ""
+    const rawAddress =
+      item?.address ||
+      item?.customerAddress ||
+      item?.lead?.address ||
+      item?.customer?.address ||
+      ""
+    const compactAddress = String(rawAddress)
+      .replace(/\s+/g, " ")
+      .replace(/,\s*,+/g, ", ")
+      .trim()
     return {
       id: item?.id || `${leadId || "lead"}-${actionAt || "na"}-${index}`,
       leadId,
       dealerId,
       dealerName,
-      customerName: item?.name || item?.customerName || item?.lead?.name || "",
-      customerMobile: item?.mobile || item?.customerMobile || item?.lead?.mobile || "",
-      customerAddress: item?.address || item?.customerAddress || item?.lead?.address || "",
+      customerName:
+        item?.name ||
+        item?.customerName ||
+        item?.lead?.name ||
+        `${item?.customer?.firstName || ""} ${item?.customer?.lastName || ""}`.trim(),
+      customerMobile: item?.mobile || item?.customerMobile || item?.lead?.mobile || item?.customer?.mobile || "",
+      customerAddress: compactAddress,
       action: item?.action || item?.status || "unknown",
       callRemark: item?.callRemark || item?.remark || "",
       actionAt,
@@ -322,29 +409,17 @@ export default function HrDashboardPage() {
       setIsLoadingDealers(true)
       try {
         if (useApi) {
-          let loadedDealers: DealerOption[] = []
-
-          // Primary source: admin dealers endpoint
-          try {
-            loadedDealers = await getAllApprovedDealersFromAdmin()
-          } catch {
-            // HR may not have access to admin endpoints on some backends
-          }
-
-          // Fallback source: derive dealer list from quotations response
-          if (loadedDealers.length === 0) {
-            loadedDealers = await getDealersFromQuotations()
-          }
-
+          // Use backend dealer directory as single source of truth (same as Admin).
+          const loadedDealers = await getAllDealersFromAdmin()
           setDealers(loadedDealers)
         } else {
           setDealers(getLocalDealers())
         }
       } catch {
-        setDealers(getLocalDealers())
+        setDealers([])
         toast({
           title: "Failed to load dealers",
-          description: "Could not load dealer list for assignment.",
+          description: "Could not load dealer list from API for assignment.",
           variant: "destructive",
         })
       } finally {
@@ -353,6 +428,11 @@ export default function HrDashboardPage() {
     }
     loadDealers()
   }, [toast, useApi, realtimeTick])
+
+  useEffect(() => {
+    // Keep selected IDs valid when dealer directory refreshes.
+    setSelectedDealerIds((prev) => prev.filter((id) => dealers.some((d) => d.id === id)))
+  }, [dealers])
 
   useEffect(() => {
     const loadUploadedLeadBatches = async () => {
@@ -388,7 +468,10 @@ export default function HrDashboardPage() {
       const normalizedLocal = Array.isArray(localCallingActions)
         ? localCallingActions
             .map((item: any, index: number) => normalizeCallingAction(item, dealers, index))
-            .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+            .sort(
+              (a, b) =>
+                (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
+            )
         : []
 
       if (!useApi) {
@@ -398,7 +481,16 @@ export default function HrDashboardPage() {
       }
 
       try {
-        const response = await api.hr.callingActions.getAll({ limit: 2000 })
+        const dealerIdParam = !callingDealerFilter || callingDealerFilter === "all" || callingDealerFilter.startsWith("name:")
+          ? undefined
+          : callingDealerFilter
+        const dateRangeParams = getDateRangeParams(callingRange)
+        const response = await api.hr.callingActions.getAll({
+          limit: 2000,
+          range: callingRange,
+          ...(dealerIdParam ? { dealerId: dealerIdParam } : {}),
+          ...dateRangeParams,
+        })
         const source =
           response?.actions ||
           response?.callingActions ||
@@ -409,7 +501,10 @@ export default function HrDashboardPage() {
         const normalizedFromApi = Array.isArray(source)
           ? source
               .map((item: any, index: number) => normalizeCallingAction(item, dealers, index))
-              .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+              .sort(
+                (a, b) =>
+                  (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
+              )
           : []
         const mergedById = new Map<string, CallingActionRecord>()
         ;[...normalizedFromApi, ...normalizedLocal].forEach((item) => {
@@ -417,7 +512,7 @@ export default function HrDashboardPage() {
           if (!mergedById.has(item.id)) mergedById.set(item.id, item)
         })
         const merged = Array.from(mergedById.values()).sort(
-          (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+          (a, b) => (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
         )
         setCallingActions(merged)
         setCallingActionsUnavailable(merged.length === 0)
@@ -427,7 +522,7 @@ export default function HrDashboardPage() {
       }
     }
     loadCallingActions()
-  }, [dealers, useApi, realtimeTick])
+  }, [dealers, useApi, realtimeTick, callingRange, callingDealerFilter])
 
   useEffect(() => {
     const socket = getRealtime()
@@ -599,40 +694,61 @@ export default function HrDashboardPage() {
     }
   }
 
-  const isWithinCallingRange = (actionAt?: string) => {
-    if (callingRange === "all") return true
-    if (!actionAt) return false
-    const actionDate = new Date(actionAt)
-    if (Number.isNaN(actionDate.getTime())) return false
+  const getCallingRangeBounds = () => {
     const now = new Date()
-
-    if (callingRange === "daily") return actionDate.toDateString() === now.toDateString()
+    if (callingRange === "all") return null
+    if (callingRange === "daily") {
+      const start = new Date(now)
+      start.setHours(0, 0, 0, 0)
+      const end = new Date(now)
+      end.setHours(23, 59, 59, 999)
+      return { start, end }
+    }
     if (callingRange === "weekly") {
       const startOfWeek = new Date(now)
-      startOfWeek.setDate(now.getDate() - now.getDay())
+      const day = startOfWeek.getDay()
+      const diff = day === 0 ? 6 : day - 1
+      startOfWeek.setDate(now.getDate() - diff)
       startOfWeek.setHours(0, 0, 0, 0)
-      return actionDate >= startOfWeek && actionDate <= now
+      const endOfWeek = new Date(startOfWeek)
+      endOfWeek.setDate(startOfWeek.getDate() + 6)
+      endOfWeek.setHours(23, 59, 59, 999)
+      return { start: startOfWeek, end: endOfWeek }
     }
     if (callingRange === "monthly") {
-      return actionDate.getMonth() === now.getMonth() && actionDate.getFullYear() === now.getFullYear()
+      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+      return { start, end }
     }
     if (callingRange === "last_month") {
       const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
       const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
-      return actionDate.getMonth() === prevMonth && actionDate.getFullYear() === prevYear
+      const start = new Date(prevYear, prevMonth, 1, 0, 0, 0, 0)
+      const end = new Date(prevYear, prevMonth + 1, 0, 23, 59, 59, 999)
+      return { start, end }
     }
-    return true
+    return null
+  }
+
+  const isWithinCallingRange = (actionAt?: string) => {
+    const bounds = getCallingRangeBounds()
+    if (!bounds) return true
+    if (!actionAt) return false
+    const actionDate = parseActionDate(actionAt)
+    if (!actionDate) return false
+    return actionDate >= bounds.start && actionDate <= bounds.end
   }
 
   const filteredCallingActions = useMemo(() => {
     return callingActions.filter((item) => {
       const isNameFilter = callingDealerFilter.startsWith("name:")
-      const normalizedNameFilter = callingDealerFilter.replace(/^name:/, "")
+      const normalizedNameFilter = normalizeName(callingDealerFilter.replace(/^name:/, ""))
+      const normalizedItemDealerName = normalizeName(item.dealerName)
       const matchesDealer =
         callingDealerFilter === "all" ||
         item.dealerId === callingDealerFilter ||
-        item.dealerName === callingDealerFilter ||
-        (isNameFilter && (item.dealerName || "").trim().toLowerCase() === normalizedNameFilter)
+        normalizedItemDealerName === normalizeName(callingDealerFilter) ||
+        (isNameFilter && normalizedItemDealerName === normalizedNameFilter)
       return matchesDealer && isWithinCallingRange(item.actionAt)
     })
   }, [callingActions, callingDealerFilter, callingRange])
@@ -670,12 +786,14 @@ export default function HrDashboardPage() {
     () =>
       filteredCallingActions.reduce(
         (acc, item) => {
-          const remark = item.callRemark || ""
-          if (item.action === "not_interested") acc.notInterested += 1
-          else if (item.action === "follow_up" && remark.includes("[Others]")) acc.others += 1
-          else if (item.action === "follow_up") acc.followUp += 1
-          else if (item.action === "called" && remark.includes("[Interested]")) acc.interested += 1
-          else acc.otherActions += 1
+          const parsed = parseCallRemarkParts(item.callRemark || "")
+          const action = String(item.action || "").toLowerCase()
+          const status = String(parsed.status || "").toLowerCase()
+          if (action === "not_interested" || status.includes("not interested")) acc.notInterested += 1
+          else if (action === "follow_up" || status.includes("follow-up") || status.includes("callback")) acc.followUp += 1
+          else if (action === "called" && (status.includes("interested") || status.includes("site visit") || status.includes("quotation"))) acc.interested += 1
+          else if (action === "called") acc.interested += 1
+          else acc.others += 1
           return acc
         },
         { interested: 0, followUp: 0, notInterested: 0, others: 0, otherActions: 0 },
@@ -749,7 +867,7 @@ export default function HrDashboardPage() {
                 {isLoadingDealers ? (
                   <p className="text-sm text-muted-foreground">Loading dealers...</p>
                 ) : dealers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No active dealers found.</p>
+                  <p className="text-sm text-muted-foreground">No dealers found.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {dealers.map((dealer) => (
@@ -924,7 +1042,7 @@ export default function HrDashboardPage() {
                                       : "border-border text-foreground"
                               }
                             >
-                              {item.action || "N/A"}
+                              {statusLabel}
                             </Badge>
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
                               {item.actionAt ? new Date(item.actionAt).toLocaleString() : "N/A"}
