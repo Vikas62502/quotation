@@ -611,6 +611,7 @@ export const api = {
           paymentDate?: string
           paymentMode?: string
           transactionId?: string
+          note?: string
         }>
         /** Account Management subsidy cheque audit (optional; backend should persist JSON). */
         subsidyCheques?: Array<{

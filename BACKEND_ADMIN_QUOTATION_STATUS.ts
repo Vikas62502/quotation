@@ -38,7 +38,7 @@
  *   PATCH /quotations/:quotationId/installments      (fallback; body may use `installments` not `phases`)
  *   Body (JSON):
  *     paymentType?, paymentMode?, paymentStatus?,
- *     phases: [{ phaseNumber, phaseName, amount, paidAmount, status, dueDate?, paymentDate?, paymentMode?, transactionId? }]
+ *     phases: [{ phaseNumber, phaseName, amount, paidAmount, status, dueDate?, paymentDate?, paymentMode?, transactionId?, note? }]
  *     subsidyCheques?: [{ id, details, amount, status: "pending"|"cleared", clearedAt? }]
  *   - Persist phases/installments to DB; recompute remaining = subtotal − sum(paidAmount) (store `remaining` / `remaining_amount` if you expose it).
  *   - Persist `subsidy_cheques` JSON for audit (optional but recommended so clients do not rely only on localStorage).
@@ -66,7 +66,7 @@
  *   statusApprovedAt, statusHistory (array of { status, at })
  *   subsidyCheques (array, audit trail for Account Management — see below)
  *   remaining OR remainingAmount (number, optional but recommended for list UI)
- *   installments | paymentPhases | payment_phases (phase rows; same shape as PATCH `phases`)
+ *   installments | paymentPhases | payment_phases (phase rows; same shape as PATCH `phases`, including optional `note`)
  *
  * Dealer details required by frontend:
  *   - For quotation list rows:

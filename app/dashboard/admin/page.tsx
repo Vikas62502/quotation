@@ -31,6 +31,7 @@ import {
   Wallet,
   History,
   SlidersHorizontal,
+  Download,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -44,6 +45,7 @@ import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
+import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
@@ -60,6 +62,21 @@ type CallingActionRecord = {
 }
 
 type ApprovalPaymentType = "loan" | "cash" | "mix"
+
+const GOVERNMENT_BANK_OPTIONS = [
+  "State Bank of India",
+  "Punjab National Bank",
+  "Bank of Baroda",
+  "Canara Bank",
+  "Union Bank of India",
+  "Bank of India",
+  "Indian Bank",
+  "Central Bank of India",
+  "UCO Bank",
+  "Bank of Maharashtra",
+  "Indian Overseas Bank",
+  "Punjab & Sind Bank",
+] as const
 
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer } = useAuth()
@@ -87,6 +104,7 @@ export default function AdminPanelPage() {
   const [documentsQuotation, setDocumentsQuotation] = useState<Quotation | null>(null)
   const [documentsFormById, setDocumentsFormById] = useState<Record<string, any>>({})
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
+  const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
@@ -809,6 +827,79 @@ export default function AdminPanelPage() {
     return bank || ifsc
   }
 
+  const csvEscape = (value: unknown) => {
+    const raw = String(value ?? "")
+    const escaped = raw.replace(/"/g, '""')
+    return `"${escaped}"`
+  }
+
+  const downloadFilteredQuotationsCsv = () => {
+    if (sortedQuotations.length === 0) {
+      toast({
+        title: "No data to download",
+        description: "Apply different filters or search to include quotations.",
+      })
+      return
+    }
+
+    const headers = [
+      "Quotation ID",
+      "Customer Name",
+      "Customer Mobile",
+      "Customer Email",
+      "Dealer Name",
+      "Dealer Contact",
+      "Amount",
+      "Status",
+      "File Login",
+      "Payment Type",
+      "Bank Details",
+      "Created At",
+      "File Login At",
+      "Approved At",
+    ]
+
+    const rows = sortedQuotations.map((quotation) => {
+      const customerName = `${quotation.customer.firstName || ""} ${quotation.customer.lastName || ""}`.trim()
+      return [
+        quotation.id,
+        customerName,
+        quotation.customer.mobile || "",
+        quotation.customer.email || "",
+        getDealerName(quotation.dealerId),
+        getDealerMobile(quotation.dealerId),
+        Math.abs(quotation.finalAmount || 0),
+        quotation.status || "pending",
+        fileLoginRowSummary(quotation),
+        getQuotationPaymentTypeLabel(quotation),
+        getQuotationBankDetails(quotation),
+        quotation.createdAt ? new Date(quotation.createdAt).toLocaleString() : "",
+        quotation.fileLoginAt ? new Date(quotation.fileLoginAt).toLocaleString() : "",
+        quotation.statusApprovedAt ? new Date(quotation.statusApprovedAt).toLocaleString() : "",
+      ]
+    })
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => csvEscape(cell)).join(","))
+      .join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    const dateStamp = new Date().toISOString().slice(0, 10)
+    link.href = url
+    link.download = `quotations-filtered-${dateStamp}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "Download started",
+      description: `Exported ${sortedQuotations.length} filtered quotations.`,
+    })
+  }
+
   const isWithinCallingRange = (actionAt?: string) => {
     if (callingRange === "all") return true
     if (!actionAt) return false
@@ -920,8 +1011,31 @@ export default function AdminPanelPage() {
 
   const handleQuotationStatusChange = (quotationId: string, status: QuotationStatus) => {
     if (status === "approved") {
-      // Approve directly; file-login step captures payment/bank/subsidy details.
-      void updateQuotationStatus(quotationId, status)
+      // Approve uses payment type already captured in file-login flow.
+      const q = quotations.find((x) => x.id === quotationId)
+      const paymentTypeRaw = String(
+        q?.filePaymentType || (q as any)?.paymentType || q?.paymentMode || "",
+      ).toLowerCase()
+      const paymentType =
+        paymentTypeRaw === "loan" || paymentTypeRaw === "cash" || paymentTypeRaw === "mix"
+          ? (paymentTypeRaw as ApprovalPaymentType)
+          : undefined
+
+      if (!paymentType) {
+        toast({
+          title: "File login payment type required",
+          description: "Set payment type in File Login first, then approve the quotation.",
+          variant: "destructive",
+        })
+        return
+      }
+
+      void updateQuotationStatus(quotationId, status, {
+        paymentType,
+        bankName: q?.fileBankName || q?.bankName,
+        bankIfsc: q?.fileBankIfsc || q?.bankIfsc,
+        subsidyChequeDetails: q?.fileSubsidyChequeDetails || q?.subsidyChequeDetails,
+      })
       return
     }
     void updateQuotationStatus(quotationId, status)
@@ -1785,6 +1899,16 @@ export default function AdminPanelPage() {
                     <SlidersHorizontal className="w-4 h-4 mr-2" />
                     Filters
                     {activeQuotationFilterCount > 0 ? ` (${activeQuotationFilterCount})` : ""}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={downloadFilteredQuotationsCsv}
+                    disabled={sortedQuotations.length === 0}
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Download ({sortedQuotations.length})
                   </Button>
                 </div>
               </CardHeader>
@@ -3530,6 +3654,43 @@ export default function AdminPanelPage() {
                     onClick={() => setDocumentsDialogOpen(false)}
                   >
                     Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!documentsQuotation || documentsZipDownloading}
+                    onClick={async () => {
+                      if (!documentsQuotation) return
+                      setDocumentsZipDownloading(true)
+                      try {
+                        const form = getDocumentsForm(documentsQuotation.id)
+                        const customerName =
+                          `${documentsQuotation.customer?.firstName || ""} ${documentsQuotation.customer?.lastName || ""}`.trim() ||
+                          "Customer"
+                        const result = await downloadQuotationDocumentsZip({
+                          customerName,
+                          quotationId: documentsQuotation.id,
+                          form,
+                        })
+                        if (!result.ok) {
+                          toast({
+                            title: "Download failed",
+                            description: result.message,
+                            variant: "destructive",
+                          })
+                        } else {
+                          toast({
+                            title: "Download ready",
+                            description: "ZIP includes uploaded files and document-details.txt.",
+                          })
+                        }
+                      } finally {
+                        setDocumentsZipDownloading(false)
+                      }
+                    }}
+                  >
+                    <Download className="w-4 h-4 mr-2 shrink-0" />
+                    {documentsZipDownloading ? "Preparing…" : "Download ZIP"}
                   </Button>
                   <Button
                     type="button"
@@ -5421,11 +5582,15 @@ export default function AdminPanelPage() {
                     <Label htmlFor="approval-bank-name">Bank name</Label>
                     <Input
                       id="approval-bank-name"
+                      list="government-bank-options"
                       value={approvalBankName}
                       onChange={(e) => setApprovalBankName(e.target.value)}
                       placeholder="e.g. State Bank of India"
                       autoComplete="organization"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Search/select a government bank, or type a new bank name.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="approval-bank-ifsc">IFSC code</Label>
@@ -5546,10 +5711,15 @@ export default function AdminPanelPage() {
                     <Label htmlFor="file-login-bank-name">Bank name</Label>
                     <Input
                       id="file-login-bank-name"
+                      list="government-bank-options"
                       value={fileLoginBankName}
                       onChange={(e) => setFileLoginBankName(e.target.value)}
                       placeholder="e.g. State Bank of India"
+                      autoComplete="organization"
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Search/select a government bank, or type a new bank name.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="file-login-bank-ifsc">IFSC code</Label>
@@ -5590,6 +5760,11 @@ export default function AdminPanelPage() {
                 {isSavingFileLogin ? "Saving…" : "Save"}
               </Button>
             </div>
+            <datalist id="government-bank-options">
+              {GOVERNMENT_BANK_OPTIONS.map((bank) => (
+                <option key={bank} value={bank} />
+              ))}
+            </datalist>
           </DialogContent>
         </Dialog>
 

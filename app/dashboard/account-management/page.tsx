@@ -33,6 +33,7 @@ interface PaymentPhase {
   paymentDate?: string
   paymentMode?: string
   transactionId?: string
+  note?: string
 }
 
 interface SubsidyChequeRecord {
@@ -453,6 +454,7 @@ export default function AccountManagementPage() {
           existingPhase?.paymentMode || (existingPhase as any)?.mode || (existingPhase as any)?.payment_method,
         ),
         transactionId: existingPhase?.transactionId,
+        note: (existingPhase as any)?.note || (existingPhase as any)?.remarks || "",
       }
     })
   }
@@ -745,6 +747,7 @@ export default function AccountManagementPage() {
                   phase.paymentMode || phase.mode || phase.payment_method,
                 ),
                 transactionId: phase.transactionId,
+                note: phase.note || phase.remarks || "",
               })),
             )
           : []
@@ -1142,6 +1145,7 @@ export default function AccountManagementPage() {
           paymentDate: phase.paymentDate || undefined,
           paymentMode: modeNorm || (needsMode ? paymentModeFromPhases : undefined),
           transactionId: phase.transactionId || undefined,
+          note: phase.note?.trim() || undefined,
         }
       }),
     }
@@ -2070,7 +2074,30 @@ export default function AccountManagementPage() {
                                 placeholder="Optional"
                               />
                             </div>
-                              </div>
+                          </div>
+
+                          <div className="mt-3">
+                            <Label className="text-xs text-muted-foreground">Notes</Label>
+                            <Textarea
+                              value={phase.note || ""}
+                              onChange={(e) => {
+                                const updated = customerPayments.map((p) =>
+                                  p.quotationId === activePayment.quotationId
+                                    ? {
+                                        ...p,
+                                        phases: p.phases.map((ph) =>
+                                          ph.phaseNumber === phase.phaseNumber ? { ...ph, note: e.target.value } : ph,
+                                        ),
+                                      }
+                                    : p,
+                                )
+                                setCustomerPayments(updated)
+                              }}
+                              className="mt-1 resize-y min-h-[64px]"
+                              rows={2}
+                              placeholder="Installment notes (optional)"
+                            />
+                          </div>
                               
                           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
                             <p className="text-xs text-muted-foreground">

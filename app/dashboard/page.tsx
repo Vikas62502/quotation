@@ -7,7 +7,7 @@ import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Users, FileText, Calendar, Search, Eye, PlusCircle, IndianRupee } from "lucide-react"
+import { Users, FileText, Calendar, Search, Eye, PlusCircle, IndianRupee, Download } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { Badge } from "@/components/ui/badge"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
@@ -17,6 +17,7 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 
 const ADMIN_USERNAME = "admin"
 
@@ -36,6 +37,7 @@ export default function DashboardPage() {
   const [documentsQuotation, setDocumentsQuotation] = useState<Quotation | null>(null)
   const [documentsFormById, setDocumentsFormById] = useState<Record<string, any>>({})
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
+  const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
@@ -1150,6 +1152,43 @@ export default function DashboardPage() {
                   onClick={() => setDocumentsDialogOpen(false)}
                 >
                   Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!documentsQuotation || documentsZipDownloading}
+                  onClick={async () => {
+                    if (!documentsQuotation) return
+                    setDocumentsZipDownloading(true)
+                    try {
+                      const form = getDocumentsForm(documentsQuotation.id)
+                      const customerName =
+                        `${documentsQuotation.customer?.firstName || ""} ${documentsQuotation.customer?.lastName || ""}`.trim() ||
+                        "Customer"
+                      const result = await downloadQuotationDocumentsZip({
+                        customerName,
+                        quotationId: documentsQuotation.id,
+                        form,
+                      })
+                      if (!result.ok) {
+                        toast({
+                          title: "Download failed",
+                          description: result.message,
+                          variant: "destructive",
+                        })
+                      } else {
+                        toast({
+                          title: "Download ready",
+                          description: "ZIP includes uploaded files and document-details.txt.",
+                        })
+                      }
+                    } finally {
+                      setDocumentsZipDownloading(false)
+                    }
+                  }}
+                >
+                  <Download className="w-4 h-4 mr-2 shrink-0" />
+                  {documentsZipDownloading ? "Preparing…" : "Download ZIP"}
                 </Button>
                 <Button
                   type="button"
