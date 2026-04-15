@@ -3606,7 +3606,7 @@ export default function AdminPanelPage() {
                         <p className="text-sm font-semibold">Additional Documents</p>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div>
-                            <Label>Geotag Roof Photo *</Label>
+                            <Label>Geotag Roof Photo</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -3618,7 +3618,7 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Customer Photo with House *</Label>
+                            <Label>Customer Photo with House</Label>
                             <Input
                               type="file"
                               accept="image/*"
@@ -3729,15 +3729,11 @@ export default function AdminPanelPage() {
                         return
                       }
 
-                      const missingRequiredDocuments =
-                        !form.geotagRoofPhoto ||
-                        !form.customerWithHousePhoto ||
-                        !form.propertyDocumentPdf
+                      const missingRequiredDocuments = !form.propertyDocumentPdf
                       if (missingRequiredDocuments) {
                         toast({
                           title: "Required documents missing",
-                          description:
-                            "Please upload Geotag Roof photo, Customer photo with house, and Property documents PDF.",
+                          description: "Please upload Property documents PDF.",
                           variant: "destructive",
                         })
                         return

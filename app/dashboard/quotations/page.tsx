@@ -1050,7 +1050,7 @@ export default function QuotationsPage() {
                       <p className="text-sm font-semibold">Additional Documents</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
-                          <Label>Geotag Roof Photo *</Label>
+                          <Label>Geotag Roof Photo</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -1062,7 +1062,7 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Customer Photo with House *</Label>
+                          <Label>Customer Photo with House</Label>
                           <Input
                             type="file"
                             accept="image/*"
@@ -1214,14 +1214,12 @@ export default function QuotationsPage() {
                       !form.panImage ||
                       !form.electricityBillImage ||
                       !form.bankPassbookImage ||
-                      !form.geotagRoofPhoto ||
-                      !form.customerWithHousePhoto ||
                       !form.propertyDocumentPdf
                     if (missingBaseImages) {
                       toast({
                         title: "Required images missing",
                         description:
-                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, Bank Passbook image, Geotag Roof photo, Customer photo with house, and Property documents PDF.",
+                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, Bank Passbook image, and Property documents PDF.",
                         variant: "destructive",
                       })
                       return
