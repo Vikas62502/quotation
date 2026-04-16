@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
@@ -18,6 +19,7 @@ import { formatPersonName } from "@/lib/name-display"
 type InstallerQuotation = {
   id: string
   customer?: { firstName?: string; lastName?: string; mobile?: string }
+  products?: Record<string, any>
   createdAt?: string
   pricing?: { subtotal?: number; totalAmount?: number; finalAmount?: number }
   subtotal?: number
@@ -31,6 +33,15 @@ type InstallerQuotation = {
   readyForInstallation?: boolean
   ready_for_installation?: boolean
   releaseToInstaller?: boolean
+  length?: number
+  width?: number
+  height?: number
+  siteLength?: number
+  siteWidth?: number
+  siteHeight?: number
+  visitLength?: number
+  visitWidth?: number
+  visitHeight?: number
 }
 
 type InstallerWorkflowItem = {
@@ -39,6 +50,19 @@ type InstallerWorkflowItem = {
   imageNames?: string[]
   updatedAt: string
 }
+
+const INSTALLATION_IMAGE_FIELDS = [
+  { key: "homeFrontPhoto", label: "Front Photo of Home" },
+  { key: "homeWithPersonPhoto", label: "Front Photo of Home with person" },
+  { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer" },
+  { key: "plantWithCustomerPhoto", label: "Plant photo with Customer" },
+  { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No" },
+  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No" },
+  { key: "geoTagPlantPhoto", label: "GeoTag photo with plants" },
+  { key: "otherImages", label: "Others Images", multiple: true, required: false },
+] as const
+
+type InstallationImageFieldKey = (typeof INSTALLATION_IMAGE_FIELDS)[number]["key"]
 
 const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 
@@ -60,7 +84,12 @@ export default function InstallerDashboardPage() {
   const [quotations, setQuotations] = useState<InstallerQuotation[]>([])
   const [expandedQuotationId, setExpandedQuotationId] = useState<string | null>(null)
   const [uploadNotes, setUploadNotes] = useState<Record<string, string>>({})
-  const [uploadFiles, setUploadFiles] = useState<Record<string, File[]>>({})
+  const [uploadFilesByQuotation, setUploadFilesByQuotation] = useState<Record<string, Partial<Record<InstallationImageFieldKey, File[]>>>>({})
+  const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, File | null>>({})
+  const [extraExpensesByQuotation, setExtraExpensesByQuotation] = useState<Record<string, string>>({})
+  const [dimensionsByQuotation, setDimensionsByQuotation] = useState<
+    Record<string, { length: string; width: string; height: string }>
+  >({})
   const [savingId, setSavingId] = useState<string | null>(null)
   const [workflowMap, setWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -198,7 +227,49 @@ export default function InstallerDashboardPage() {
       })
   }, [quotations, workflowMap, normalizedSearch])
 
-  const setInProgress = (quotationId: string) => {
+  const pickDimensionValue = (q: InstallerQuotation, keys: Array<keyof InstallerQuotation>) => {
+    for (const key of keys) {
+      const val = q[key]
+      const n = Number(val)
+      if (Number.isFinite(n) && n > 0) return String(n)
+    }
+    return ""
+  }
+
+  const getProductSpecRows = (q: InstallerQuotation) => {
+    const p = q.products || {}
+    return [
+      { label: "System Type", value: p.systemType },
+      { label: "Panel Brand", value: p.panelBrand },
+      { label: "Panel Size", value: p.panelSize },
+      { label: "Panel Quantity", value: p.panelQuantity },
+      { label: "Inverter Type", value: p.inverterType },
+      { label: "Inverter Brand", value: p.inverterBrand },
+      { label: "Inverter Size", value: p.inverterSize },
+      { label: "Hybrid Inverter", value: p.hybridInverter },
+      { label: "Battery Capacity", value: p.batteryCapacity },
+      { label: "Battery Price", value: p.batteryPrice },
+    ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
+  }
+
+  const ensureInstallerDraftData = (quotation: InstallerQuotation) => {
+    setDimensionsByQuotation((prev) => {
+      if (prev[quotation.id]) return prev
+      return {
+        ...prev,
+        [quotation.id]: {
+          length: pickDimensionValue(quotation, ["length", "siteLength", "visitLength"]),
+          width: pickDimensionValue(quotation, ["width", "siteWidth", "visitWidth"]),
+          height: pickDimensionValue(quotation, ["height", "siteHeight", "visitHeight"]),
+        },
+      }
+    })
+    setExtraExpensesByQuotation((prev) => (prev[quotation.id] !== undefined ? prev : { ...prev, [quotation.id]: "" }))
+    setUploadFilesByQuotation((prev) => (prev[quotation.id] ? prev : { ...prev, [quotation.id]: {} }))
+  }
+
+  const setInProgress = (quotation: InstallerQuotation) => {
+    const quotationId = quotation.id
     setWorkflowMap((prev) => ({
       ...prev,
       [quotationId]: {
@@ -207,17 +278,34 @@ export default function InstallerDashboardPage() {
         updatedAt: new Date().toISOString(),
       },
     }))
+    ensureInstallerDraftData(quotation)
     setExpandedQuotationId(quotationId)
   }
 
   const handleApproveInstallation = async (quotation: InstallerQuotation) => {
-    const files = uploadFiles[quotation.id] || []
+    const filesByField = uploadFilesByQuotation[quotation.id] || {}
+    const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => field.required !== false)
+    const files = INSTALLATION_IMAGE_FIELDS
+      .flatMap((field) => filesByField[field.key] || [])
+      .filter((file): file is File => file instanceof File)
     const notes = uploadNotes[quotation.id] || ""
+    const dimensions = dimensionsByQuotation[quotation.id] || { length: "", width: "", height: "" }
+    const piUpload = piUploadByQuotation[quotation.id]
+    const extraExpenses = extraExpensesByQuotation[quotation.id] || ""
 
-    if (files.length === 0) {
+    const missingFields = requiredFields.filter((field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0))
+    if (missingFields.length > 0) {
       toast({
         title: "Images required",
-        description: "Please upload at least one installation completion image.",
+        description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+        variant: "destructive",
+      })
+      return
+    }
+    if (!dimensions.length || !dimensions.width || !dimensions.height) {
+      toast({
+        title: "Dimensions required",
+        description: "Please enter length, width and height.",
         variant: "destructive",
       })
       return
@@ -228,7 +316,23 @@ export default function InstallerDashboardPage() {
     try {
       if (useApi) {
         const formData = new FormData()
-        files.forEach((file) => formData.append("installerCompletionImages", file))
+        INSTALLATION_IMAGE_FIELDS.forEach((field) => {
+          const fieldFiles = filesByField[field.key] || []
+          fieldFiles.forEach((file) => {
+            if (!(file instanceof File)) return
+            formData.append("installerCompletionImages", file)
+            formData.append(field.key, file)
+          })
+        })
+        if (piUpload instanceof File) {
+          formData.append("piUpload", piUpload)
+        }
+        if (extraExpenses.trim() !== "") {
+          formData.append("extraExpenses", extraExpenses.trim())
+        }
+        formData.append("siteLength", dimensions.length)
+        formData.append("siteWidth", dimensions.width)
+        formData.append("siteHeight", dimensions.height)
         formData.append("installerRemarks", notes)
         formData.append("installationStatus", "installer_approved")
         await api.installer.uploadCompletionDocuments(quotation.id, formData)
@@ -242,7 +346,10 @@ export default function InstallerDashboardPage() {
         [quotation.id]: {
           status: "approved",
           notes,
-          imageNames: files.map((f) => f.name),
+          imageNames: [
+            ...files.map((f) => f.name),
+            ...(piUpload instanceof File ? [piUpload.name] : []),
+          ],
           updatedAt: new Date().toISOString(),
         },
       }))
@@ -375,12 +482,19 @@ export default function InstallerDashboardPage() {
                       </div>
                       <div className="ml-auto">
                         {installerStatus === "pending" ? (
-                          <Button variant="outline" size="sm" onClick={() => setInProgress(q.id)}>
+                          <Button variant="outline" size="sm" onClick={() => setInProgress(q)}>
                             <Clock3 className="w-3.5 h-3.5 mr-1" />
                             Start In Progress
                           </Button>
                         ) : (
-                          <Button variant="outline" size="sm" onClick={() => setExpandedQuotationId(expandedQuotationId === q.id ? null : q.id)}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              ensureInstallerDraftData(q)
+                              setExpandedQuotationId(expandedQuotationId === q.id ? null : q.id)
+                            }}
+                          >
                             <Upload className="w-3.5 h-3.5 mr-1" />
                             In Progress
                           </Button>
@@ -390,30 +504,161 @@ export default function InstallerDashboardPage() {
 
                     {expandedQuotationId === q.id && (
                       <div className="rounded-md border border-border/70 p-3 space-y-3">
-                        <div className="space-y-1.5">
-                          <p className="text-xs font-medium">Installation Completion Images *</p>
-                          <Input
-                            type="file"
-                            multiple
-                            accept="image/*"
-                            onChange={(e) => {
-                              const files = Array.from(e.target.files || [])
-                              setUploadFiles((prev) => ({ ...prev, [q.id]: files }))
-                            }}
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            {(uploadFiles[q.id] || []).length} file(s) selected
-                          </p>
-                        </div>
+                        <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
+                          <div className="space-y-3">
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium">
+                                Installation Completion Images (required as marked *)
+                              </p>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {INSTALLATION_IMAGE_FIELDS.map((field) => (
+                                  <div key={field.key} className="space-y-1.5">
+                                    <p className="text-xs text-muted-foreground">
+                                      {field.label}
+                                      {field.required === false ? "" : " *"}
+                                    </p>
+                                    <Input
+                                      type="file"
+                                      accept="image/*"
+                                      multiple={field.multiple === true}
+                                      onChange={(e) => {
+                                        const files = Array.from(e.target.files || [])
+                                        setUploadFilesByQuotation((prev) => ({
+                                          ...prev,
+                                          [q.id]: {
+                                            ...(prev[q.id] || {}),
+                                            [field.key]: files,
+                                          },
+                                        }))
+                                      }}
+                                    />
+                                    <p className="text-[11px] text-muted-foreground truncate">
+                                      {(uploadFilesByQuotation[q.id]?.[field.key] || []).length > 0
+                                        ? `${(uploadFilesByQuotation[q.id]?.[field.key] || []).length} file(s) selected`
+                                        : "No file selected"}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
 
-                        <div className="space-y-1.5">
-                          <p className="text-xs font-medium">Notes (optional)</p>
-                          <Textarea
-                            rows={2}
-                            placeholder="Installation notes, material used, issues, etc."
-                            value={uploadNotes[q.id] || ""}
-                            onChange={(e) => setUploadNotes((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                          />
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">PI Upload</Label>
+                                <Input
+                                  type="file"
+                                  accept="application/pdf,image/*"
+                                  onChange={(e) =>
+                                    setPiUploadByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                                  }
+                                />
+                                <p className="text-[11px] text-muted-foreground truncate">
+                                  {piUploadByQuotation[q.id]?.name || "No file selected"}
+                                </p>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs">Extra Expenses</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="Enter extra expense amount"
+                                  value={extraExpensesByQuotation[q.id] || ""}
+                                  onChange={(e) =>
+                                    setExtraExpensesByQuotation((prev) => ({ ...prev, [q.id]: e.target.value }))
+                                  }
+                                />
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium">Site Dimensions (cm) *</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                  <Label className="text-xs">Length</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={dimensionsByQuotation[q.id]?.length || ""}
+                                    onChange={(e) =>
+                                      setDimensionsByQuotation((prev) => ({
+                                        ...prev,
+                                        [q.id]: {
+                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
+                                          length: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Width</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={dimensionsByQuotation[q.id]?.width || ""}
+                                    onChange={(e) =>
+                                      setDimensionsByQuotation((prev) => ({
+                                        ...prev,
+                                        [q.id]: {
+                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
+                                          width: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Height</Label>
+                                  <Input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={dimensionsByQuotation[q.id]?.height || ""}
+                                    onChange={(e) =>
+                                      setDimensionsByQuotation((prev) => ({
+                                        ...prev,
+                                        [q.id]: {
+                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
+                                          height: e.target.value,
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <p className="text-xs font-medium">Notes (optional)</p>
+                              <Textarea
+                                rows={2}
+                                placeholder="Installation notes, material used, issues, etc."
+                                value={uploadNotes[q.id] || ""}
+                                onChange={(e) => setUploadNotes((prev) => ({ ...prev, [q.id]: e.target.value }))}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                              Customer Product Specification
+                            </p>
+                            {getProductSpecRows(q).length > 0 ? (
+                              <div className="space-y-1.5">
+                                {getProductSpecRows(q).map((row) => (
+                                  <div key={row.label} className="text-xs flex items-start justify-between gap-2">
+                                    <span className="text-muted-foreground">{row.label}</span>
+                                    <span className="font-medium text-right">{String(row.value)}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">No product specification available.</p>
+                            )}
+                          </div>
                         </div>
 
                         <div className="flex justify-end gap-2">

@@ -44,8 +44,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 type VisitStatus = "pending" | "approved" | "completed" | "incomplete" | "rejected" | "rescheduled"
+type VisitStatusTab = VisitStatus | "all"
 
 interface Visit {
   id: string
@@ -128,6 +130,7 @@ export default function VisitorDashboardPage() {
   const [agentFilter, setAgentFilter] = useState("all")
   const [statusFilter, setStatusFilter] = useState<VisitStatus | "all">("all")
   const [dateFilter, setDateFilter] = useState("all")
+  const [activeStatusTab, setActiveStatusTab] = useState<VisitStatusTab>("pending")
   const [approveOutcome, setApproveOutcome] = useState<"completed" | "incomplete" | "rescheduled" | null>(null)
   const [approvedVisits, setApprovedVisits] = useState<Set<string>>(new Set())
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
@@ -145,6 +148,7 @@ export default function VisitorDashboardPage() {
   const [rescheduleDecision, setRescheduleDecision] = useState<"rescheduled" | "completed" | "incomplete" | "rejected">(
     "rescheduled",
   )
+  const [isLoadingVisits, setIsLoadingVisits] = useState(false)
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -167,10 +171,17 @@ export default function VisitorDashboardPage() {
   const loadAssignedVisits = async () => {
     if (!visitor) return
 
+    setIsLoadingVisits(true)
     try {
       if (useApi) {
         const response = await api.visitors.getAssignedVisits()
-        const visitsList = response.visits || []
+        const visitsList = Array.isArray(response?.visits)
+          ? response.visits
+          : Array.isArray(response)
+            ? response
+            : Array.isArray(response?.data?.visits)
+              ? response.data.visits
+              : []
         
         const visits: VisitWithQuotation[] = visitsList.map((v: any) => ({
           id: v.id,
@@ -245,6 +256,8 @@ export default function VisitorDashboardPage() {
       }
     } catch (error) {
       console.error("Error loading assigned visits:", error)
+    } finally {
+      setIsLoadingVisits(false)
     }
   }
 
@@ -748,6 +761,17 @@ export default function VisitorDashboardPage() {
           <Card className="mb-6">
             <CardHeader>
               <div className="flex flex-col gap-4">
+                <Tabs value={activeStatusTab} onValueChange={(value) => setActiveStatusTab(value as VisitStatusTab)}>
+                  <TabsList className="w-full overflow-x-auto justify-start">
+                    <TabsTrigger value="pending">Pending</TabsTrigger>
+                    <TabsTrigger value="approved">Approved</TabsTrigger>
+                    <TabsTrigger value="completed">Completed</TabsTrigger>
+                    <TabsTrigger value="incomplete">Incomplete</TabsTrigger>
+                    <TabsTrigger value="rescheduled">Rescheduled</TabsTrigger>
+                    <TabsTrigger value="rejected">Rejected</TabsTrigger>
+                    <TabsTrigger value="all">All</TabsTrigger>
+                  </TabsList>
+                </Tabs>
                 <div className="flex flex-col sm:flex-row gap-4">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -758,7 +782,7 @@ export default function VisitorDashboardPage() {
                       className="pl-9"
                     />
                   </div>
-                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all") && (
+                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending") && (
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -766,6 +790,7 @@ export default function VisitorDashboardPage() {
                         setAgentFilter("all")
                         setStatusFilter("all")
                         setDateFilter("all")
+                        setActiveStatusTab("pending")
                       }}
                       className="sm:w-auto"
                     >
@@ -826,7 +851,13 @@ export default function VisitorDashboardPage() {
           </Card>
         )}
 
-        {(() => {
+        {isLoadingVisits ? (
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">
+              Loading assigned visits...
+            </CardContent>
+          </Card>
+        ) : (() => {
           // Filter visits by search term, agent filter, status, and date
           const filteredVisits = assignedVisits.filter((visit) => {
             // Filter by agent (dropdown)
@@ -837,12 +868,12 @@ export default function VisitorDashboardPage() {
             // Search across multiple fields
             if (searchTerm.trim()) {
               const searchLower = searchTerm.toLowerCase()
-              const customerName = `${visit.quotation.customer.firstName} ${visit.quotation.customer.lastName}`.toLowerCase()
-              const quotationId = visit.quotation.id.toLowerCase()
-              const location = visit.location.toLowerCase()
-              const agentName = getDealerName(visit.quotation.dealerId, visit).toLowerCase()
-              const customerMobile = visit.quotation.customer.mobile.toLowerCase()
-              const customerEmail = visit.quotation.customer.email.toLowerCase()
+              const customerName = `${visit.quotation?.customer?.firstName || ""} ${visit.quotation?.customer?.lastName || ""}`.toLowerCase()
+              const quotationId = String(visit.quotation?.id || "").toLowerCase()
+              const location = String(visit.location || "").toLowerCase()
+              const agentName = String(getDealerName(visit.quotation?.dealerId || "", visit) || "").toLowerCase()
+              const customerMobile = String(visit.quotation?.customer?.mobile || "").toLowerCase()
+              const customerEmail = String((visit.quotation?.customer as any)?.email || "").toLowerCase()
 
               const matchesSearch =
                 customerName.includes(searchLower) ||
@@ -859,10 +890,13 @@ export default function VisitorDashboardPage() {
             if (statusFilter !== "all") {
               if (visit.status !== statusFilter) return false
             }
+            if (activeStatusTab !== "all") {
+              if ((visit.status || "pending") !== activeStatusTab) return false
+            }
 
             // Filter by date
             if (dateFilter !== "all") {
-              const visitDate = new Date(`${visit.date}T${getVisitStartTime(visit.time) || visit.time}`)
+              const visitDate = new Date(`${visit.date || ""}T${getVisitStartTime(visit.time || "") || visit.time || "00:00"}`)
               const now = new Date()
               const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
               const thisWeekStart = new Date(today)
@@ -900,8 +934,8 @@ export default function VisitorDashboardPage() {
               return aPending ? -1 : 1
             }
 
-            const aDateTime = new Date(`${a.date}T${getVisitStartTime(a.time) || a.time}`).getTime()
-            const bDateTime = new Date(`${b.date}T${getVisitStartTime(b.time) || b.time}`).getTime()
+            const aDateTime = new Date(`${a.date || ""}T${getVisitStartTime(a.time || "") || a.time || "00:00"}`).getTime()
+            const bDateTime = new Date(`${b.date || ""}T${getVisitStartTime(b.time || "") || b.time || "00:00"}`).getTime()
             return aDateTime - bDateTime
           })
 
@@ -911,11 +945,11 @@ export default function VisitorDashboardPage() {
                 <CardContent className="py-12 text-center text-muted-foreground">
                   <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>
-                    {searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all"
+                    {searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending"
                       ? "No visits found matching your search/filters"
                       : "No visits assigned to you yet"}
                   </p>
-                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all") && (
+                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending") && (
                     <Button
                       variant="link"
                       onClick={() => {
@@ -923,6 +957,7 @@ export default function VisitorDashboardPage() {
                         setAgentFilter("all")
                         setStatusFilter("all")
                         setDateFilter("all")
+                        setActiveStatusTab("pending")
                       }}
                       className="mt-2"
                     >
