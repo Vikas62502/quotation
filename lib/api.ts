@@ -673,6 +673,51 @@ export const api = {
       throw lastError
     },
 
+    /**
+     * Account Management gate for installer queue.
+     * Backend can implement any one endpoint below; client will fallback safely.
+     */
+    releaseForInstallation: async (
+      quotationId: string,
+      payload: { installationReadyForInstaller: boolean; installationReleasedAt?: string },
+    ) => {
+      const attempts: Array<{ endpoint: string; method: "PATCH"; body: Record<string, any> }> = [
+        {
+          endpoint: `/quotations/${quotationId}/installation-release`,
+          method: "PATCH",
+          body: payload,
+        },
+        {
+          endpoint: `/quotations/${quotationId}/installation/ready`,
+          method: "PATCH",
+          body: payload,
+        },
+        {
+          endpoint: `/quotations/${quotationId}/payment-details`,
+          method: "PATCH",
+          body: payload,
+        },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of attempts) {
+        try {
+          return await apiRequest(attempt.endpoint, {
+            method: attempt.method,
+            body: attempt.body,
+          })
+        } catch (error) {
+          lastError = error
+          const retryableMissingEndpoint =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryableMissingEndpoint) throw error
+        }
+      }
+
+      throw lastError
+    },
+
     updateProducts: async (quotationId: string, products: any) => {
       return apiRequest(`/quotations/${quotationId}/products`, {
         method: "PATCH",

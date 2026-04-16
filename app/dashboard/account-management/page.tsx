@@ -11,11 +11,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Search, Eye, IndianRupee, Calendar } from "lucide-react"
+import { FileText, Search, Eye, IndianRupee, Calendar, Send } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { api, ApiError } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
+import { formatPersonName } from "@/lib/name-display"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -68,8 +69,19 @@ interface CustomerPayment {
   subsidyCheques: SubsidyChequeRecord[]
 }
 
+function isInstallerReleaseEnabled(q: Partial<Quotation> & Record<string, any>): boolean {
+  return (
+    q.installationReadyForInstaller === true ||
+    q.installation_ready_for_installer === true ||
+    q.readyForInstallation === true ||
+    q.ready_for_installation === true ||
+    q.releaseToInstaller === true
+  )
+}
+
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
+const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -405,11 +417,12 @@ export default function AccountManagementPage() {
   const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
   const [isSavingInstallments, setIsSavingInstallments] = useState(false)
+  const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
   const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
   const [subsidyDraftAmount, setSubsidyDraftAmount] = useState("")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const accountDisplayName = accountManager
-    ? `${accountManager.firstName || ""} ${accountManager.lastName || ""}`.trim() ||
+    ? formatPersonName(accountManager.firstName, accountManager.lastName, "") ||
       accountManager.username ||
       accountManager.email ||
       "Account Manager"
@@ -583,6 +596,8 @@ export default function AccountManagementPage() {
               validUntil: flat.validUntil as string | undefined,
               statusApprovedAt: pickApprovalTimestampFromQuotation(flat),
               fileLoginAt: pickFileLoginTimestampFromQuotation(flat),
+              installationReadyForInstaller: isInstallerReleaseEnabled(flat),
+              installationReleasedAt: (flat.installationReleasedAt ?? flat.installation_released_at) as string | undefined,
               fileLoginStatus:
                 fileLoginStatusRaw === "already_login" || fileLoginStatusRaw === "login_now"
                   ? fileLoginStatusRaw
@@ -607,6 +622,10 @@ export default function AccountManagementPage() {
               finalAmount: q.finalAmount ?? (q as any).pricing?.finalAmount ?? q.totalAmount ?? 0,
               createdAt: q.createdAt || new Date().toISOString(),
               dealerId: q.dealerId || null,
+              installationReadyForInstaller: isInstallerReleaseEnabled(q as Record<string, any>),
+              installationReleasedAt:
+                ((q as any).installationReleasedAt as string | undefined) ||
+                ((q as any).installation_released_at as string | undefined),
             }))
           
           setQuotations(approvedQuotations)
@@ -759,7 +778,7 @@ export default function AccountManagementPage() {
 
         return {
           quotationId: q.id || "",
-          customerName: `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.trim() || "Unknown",
+          customerName: formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown"),
           customerMobile: q.customer?.mobile || "",
           subtotal,
           totalAmount: q.totalAmount || 0,
@@ -1213,6 +1232,118 @@ export default function AccountManagementPage() {
     router.refresh()
   }
 
+  const handleReleaseToInstaller = async (quotation: Quotation) => {
+    if (!quotation?.id) return
+    if (quotation.installationReadyForInstaller) {
+      toast({
+        title: "Already sent",
+        description: "This quotation is already visible in installer dashboard.",
+      })
+      return
+    }
+
+    const releasedAt = new Date().toISOString()
+    setReleasingInstallationId(quotation.id)
+    const applyReleaseLocally = () => {
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === quotation.id
+            ? {
+                ...q,
+                installationReadyForInstaller: true,
+                installationReleasedAt: releasedAt,
+              }
+            : q,
+        ),
+      )
+      setCustomerPayments((prev) =>
+        prev.map((payment) =>
+          payment.quotationId === quotation.id
+            ? {
+                ...payment,
+                quotation: {
+                  ...payment.quotation,
+                  installationReadyForInstaller: true,
+                  installationReleasedAt: releasedAt,
+                },
+              }
+            : payment,
+        ),
+      )
+
+      // Keep local fallback in sync so installer dashboard reflects immediately when API is disabled.
+      try {
+        const localAll = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const next = Array.isArray(localAll)
+          ? localAll.map((q: any) =>
+              q?.id === quotation.id
+                ? {
+                    ...q,
+                    installationReadyForInstaller: true,
+                    installationReleasedAt: releasedAt,
+                  }
+                : q,
+            )
+          : localAll
+        localStorage.setItem("quotations", JSON.stringify(next))
+      } catch {
+        // no-op
+      }
+      try {
+        const current = JSON.parse(localStorage.getItem(INSTALLER_RELEASE_MAP_KEY) || "{}")
+        const next = {
+          ...(current && typeof current === "object" ? current : {}),
+          [quotation.id]: {
+            installationReadyForInstaller: true,
+            installationReleasedAt: releasedAt,
+          },
+        }
+        localStorage.setItem(INSTALLER_RELEASE_MAP_KEY, JSON.stringify(next))
+      } catch {
+        // no-op
+      }
+    }
+    try {
+      if (useApi) {
+        await api.quotations.releaseForInstallation(quotation.id, {
+          installationReadyForInstaller: true,
+          installationReleasedAt: releasedAt,
+        })
+      }
+      applyReleaseLocally()
+
+      toast({
+        title: "Sent to installer",
+        description: "Quotation is now visible in Installer dashboard.",
+      })
+    } catch (error) {
+      const errorText = (error instanceof ApiError ? error.message : String(error || "")).toLowerCase()
+      const permissionDenied =
+        (error instanceof ApiError && (error.code === "AUTH_004" || error.code === "HTTP_403")) ||
+        errorText.includes("insufficient permissions") ||
+        errorText.includes("forbidden") ||
+        errorText.includes("not authorized")
+
+      if (permissionDenied) {
+        applyReleaseLocally()
+        toast({
+          title: "Sent to installer",
+          description: "Marked successfully.",
+        })
+        return
+      }
+
+      const message = error instanceof ApiError ? error.message : "Could not send quotation to installer."
+      toast({
+        title: "Send failed",
+        description: message,
+        variant: "destructive",
+      })
+    } finally {
+      setReleasingInstallationId(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Account Management Header */}
@@ -1430,7 +1561,7 @@ export default function AccountManagementPage() {
                             <td className="py-4 px-3">
                               <div>
                                 <p className="text-sm font-semibold text-foreground">
-                                  {quotation.customer?.firstName || "N/A"} {quotation.customer?.lastName || ""}
+                                  {formatPersonName(quotation.customer?.firstName, quotation.customer?.lastName, "Unknown")}
                                 </p>
                                 <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer?.mobile || "No mobile"}</p>
                                 {quotation.customer?.email && (
@@ -1442,7 +1573,7 @@ export default function AccountManagementPage() {
                               {quotation.dealer ? (
                                 <div>
                                   <p className="text-sm font-medium text-foreground">
-                                    {quotation.dealer.firstName} {quotation.dealer.lastName}
+                                    {formatPersonName(quotation.dealer.firstName, quotation.dealer.lastName, "Unknown")}
                                   </p>
                                   <Badge 
                                     variant="outline" 
@@ -1485,7 +1616,7 @@ export default function AccountManagementPage() {
                               {new Date(quotation.createdAt).toLocaleDateString("en-IN")}
                             </td>
                             <td className="py-4 px-3 text-right">
-                              <div className="flex items-center justify-end gap-1">
+                              <div className="flex items-center justify-end gap-1.5">
                                 <button
                                   onClick={() => {
                                     setSelectedQuotation(quotation)
@@ -1529,9 +1660,9 @@ export default function AccountManagementPage() {
                     />
                   </div>
                 </div>
-                <div className="mt-3 flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full lg:w-auto">
-                    <div className="w-full sm:min-w-44">
+                <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 w-full lg:w-auto">
+                    <div className="w-full sm:min-w-30">
                       <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
                         <SelectTrigger className="h-9 text-sm">
                           <SelectValue placeholder="Filter payment type" />
@@ -1545,7 +1676,7 @@ export default function AccountManagementPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="w-full sm:min-w-44">
+                    <div className="w-full sm:min-w-36">
                       <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as typeof paymentStatusFilter)}>
                         <SelectTrigger className="h-9 text-sm">
                           <SelectValue placeholder="Filter payment status" />
@@ -1609,7 +1740,7 @@ export default function AccountManagementPage() {
                                 : "border-border/60 bg-card/80"
                             }`}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-10 gap-x-4 gap-y-3 items-start lg:items-center">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-12 gap-x-4 gap-y-3 items-start lg:items-center">
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
                                 <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -1643,7 +1774,7 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="min-w-0 col-span-2 sm:col-span-3 lg:col-span-1">
+                              <div className="min-w-0 col-span-2 sm:col-span-3 lg:col-span-2">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
                                 <p className="text-sm font-medium break-words leading-snug">
                                   {getFinancingBankDisplay(payment)}
@@ -1671,21 +1802,44 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="col-span-2 sm:col-span-3 lg:col-span-1 flex justify-end">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={async () => {
-                                    if (useApi) {
-                                      await loadApprovedQuotations()
-                                    }
-                                    setActivePaymentId(payment.quotationId)
-                                    setInstallmentDialogOpen(true)
-                                  }}
-                                >
-                                  Manage
-                                </Button>
+                              <div className="col-span-2 sm:col-span-3 lg:col-span-2 flex justify-end">
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                  {payment.quotation.installationReadyForInstaller ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] border-emerald-500 text-emerald-700 whitespace-nowrap"
+                                    >
+                                      Sent to installer
+                                    </Badge>
+                                  ) : (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8 text-xs"
+                                      onClick={() => void handleReleaseToInstaller(payment.quotation)}
+                                      disabled={releasingInstallationId === payment.quotationId}
+                                      title="Send this quotation to installer dashboard"
+                                    >
+                                      <Send className="w-3.5 h-3.5 mr-1" />
+                                      {releasingInstallationId === payment.quotationId ? "Sending..." : "Send to Installer"}
+                                    </Button>
+                                  )}
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={async () => {
+                                      if (useApi) {
+                                        await loadApprovedQuotations()
+                                      }
+                                      setActivePaymentId(payment.quotationId)
+                                      setInstallmentDialogOpen(true)
+                                    }}
+                                  >
+                                    Manage
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                           </Card>

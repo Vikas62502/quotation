@@ -253,6 +253,36 @@ export default function VisitorDashboardPage() {
     router.push("/")
   }
 
+  const applyVisitUpdateFallback = (
+    quotationId: string,
+    visitId: string,
+    updater: (visit: VisitWithQuotation) => VisitWithQuotation,
+  ) => {
+    setAssignedVisits((prev) => prev.map((v) => (v.id === visitId ? updater(v) : v)))
+
+    // Best-effort local persistence so page reload preserves fallback update.
+    try {
+      const key = `visits_${quotationId}`
+      const storedVisits = JSON.parse(localStorage.getItem(key) || "[]")
+      if (Array.isArray(storedVisits) && storedVisits.length > 0) {
+        const updatedVisits = storedVisits.map((v: Visit) => {
+          if (v.id !== visitId) return v
+          const merged = updater({
+            ...v,
+            quotation: selectedVisit?.quotation as Quotation,
+            quotationId,
+            createdAt: v.createdAt || new Date().toISOString(),
+          } as VisitWithQuotation)
+          const { quotation, quotationId: _qid, dealer, ...plainVisit } = merged
+          return plainVisit as Visit
+        })
+        localStorage.setItem(key, JSON.stringify(updatedVisits))
+      }
+    } catch {
+      // ignore localStorage fallback errors
+    }
+  }
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
     return date.toLocaleDateString("en-IN", {
@@ -460,16 +490,24 @@ export default function VisitorDashboardPage() {
       const base64Images = await Promise.all(imagePromises)
       const allImages = [...imagePreviews, ...base64Images]
 
+      let syncedWithApi = false
       if (useApi) {
-        await api.visits.complete(selectedVisit.id, {
-          length: parseFloat(length) || 0,
-          width: parseFloat(width) || 0,
-          height: parseFloat(height) || 0,
-          images: allImages,
-          notes: completeNotes.trim() || undefined,
-        })
-        await loadAssignedVisits()
-      } else {
+        try {
+          await api.visits.complete(selectedVisit.id, {
+            length: parseFloat(length) || 0,
+            width: parseFloat(width) || 0,
+            height: parseFloat(height) || 0,
+            images: allImages,
+            notes: completeNotes.trim() || undefined,
+          })
+          syncedWithApi = true
+          await loadAssignedVisits()
+        } catch (error) {
+          console.warn("Visitor complete API failed, applying local fallback:", error)
+        }
+      }
+
+      if (!syncedWithApi) {
         // Fallback to localStorage
         const storedVisits = JSON.parse(localStorage.getItem(`visits_${selectedVisit.quotationId}`) || "[]")
         const updatedVisits = storedVisits.map((v: Visit) => {
@@ -487,7 +525,19 @@ export default function VisitorDashboardPage() {
           return v
         })
         localStorage.setItem(`visits_${selectedVisit.quotationId}`, JSON.stringify(updatedVisits))
-        await loadAssignedVisits()
+        if (updatedVisits.length > 0) {
+          await loadAssignedVisits()
+        } else {
+          applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
+            ...v,
+            status: "completed",
+            length: length ? parseFloat(length) : undefined,
+            width: width ? parseFloat(width) : undefined,
+            height: height ? parseFloat(height) : undefined,
+            images: allImages.length > 0 ? allImages : undefined,
+            notes: completeNotes.trim() || undefined,
+          }))
+        }
       }
 
       setCompleteDialogOpen(false)
@@ -527,27 +577,35 @@ export default function VisitorDashboardPage() {
     }
 
     try {
+      let syncedWithApi = false
       if (useApi) {
-        if (effectiveDecision === "incomplete") {
-          await api.visits.incomplete(selectedVisit.id, reason.trim())
-        } else if (effectiveDecision === "rejected") {
-          await api.visits.reject(selectedVisit.id, reason.trim())
-        } else if (effectiveDecision === "completed") {
-          setIncompleteRescheduleDialogOpen(false)
-          handleApproveOutcomeClick("completed", selectedVisit)
-          return
-        } else if (effectiveDecision === "rescheduled") {
-          await api.visits.reschedule(selectedVisit.id, {
-            reason: reason.trim(),
-            visitDate: rescheduleDate,
-            visitTime: `${startTime} - ${endTime}`,
-            visitStartTime: startTime,
-            visitEndTime: endTime,
-            visitTimeRange: `${startTime} - ${endTime}`,
-          })
+        try {
+          if (effectiveDecision === "incomplete") {
+            await api.visits.incomplete(selectedVisit.id, reason.trim())
+          } else if (effectiveDecision === "rejected") {
+            await api.visits.reject(selectedVisit.id, reason.trim())
+          } else if (effectiveDecision === "completed") {
+            setIncompleteRescheduleDialogOpen(false)
+            handleApproveOutcomeClick("completed", selectedVisit)
+            return
+          } else if (effectiveDecision === "rescheduled") {
+            await api.visits.reschedule(selectedVisit.id, {
+              reason: reason.trim(),
+              visitDate: rescheduleDate,
+              visitTime: `${startTime} - ${endTime}`,
+              visitStartTime: startTime,
+              visitEndTime: endTime,
+              visitTimeRange: `${startTime} - ${endTime}`,
+            })
+          }
+          syncedWithApi = true
+          await loadAssignedVisits()
+        } catch (error) {
+          console.warn("Visitor status update API failed, applying local fallback:", error)
         }
-        await loadAssignedVisits()
-      } else {
+      }
+
+      if (!syncedWithApi) {
         // Fallback to localStorage
         const storedVisits = JSON.parse(localStorage.getItem(`visits_${selectedVisit.quotationId}`) || "[]")
         const updatedVisits = storedVisits.map((v: Visit) => {
@@ -567,7 +625,24 @@ export default function VisitorDashboardPage() {
           return v
         })
         localStorage.setItem(`visits_${selectedVisit.quotationId}`, JSON.stringify(updatedVisits))
-        await loadAssignedVisits()
+        if (updatedVisits.length > 0) {
+          await loadAssignedVisits()
+        } else {
+          applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
+            ...v,
+            status: effectiveDecision,
+            rejectionReason:
+              effectiveDecision === "rejected" || effectiveDecision === "incomplete"
+                ? reason.trim()
+                : v.rejectionReason,
+            ...(effectiveDecision === "rescheduled"
+              ? {
+                  date: rescheduleDate,
+                  time: `${startTime} - ${endTime}`,
+                }
+              : {}),
+          }))
+        }
       }
 
       setIncompleteRescheduleDialogOpen(false)

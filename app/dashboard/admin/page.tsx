@@ -45,6 +45,7 @@ import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
+import { formatPersonName } from "@/lib/name-display"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 
 // Admin username check
@@ -860,7 +861,7 @@ export default function AdminPanelPage() {
     ]
 
     const rows = sortedQuotations.map((quotation) => {
-      const customerName = `${quotation.customer.firstName || ""} ${quotation.customer.lastName || ""}`.trim()
+      const customerName = formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")
       return [
         quotation.id,
         customerName,
@@ -1931,7 +1932,7 @@ export default function AdminPanelPage() {
                             <div className="flex-1">
                               <p className="text-xs font-mono text-muted-foreground mb-1">{quotation.id}</p>
                               <p className="font-semibold text-sm">
-                                {quotation.customer.firstName} {quotation.customer.lastName}
+                                {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                               </p>
                               <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
                             </div>
@@ -2107,7 +2108,7 @@ export default function AdminPanelPage() {
                               <td className="py-3 px-2 align-top break-words">
                                 <div>
                                   <p className="text-sm font-medium">
-                                    {quotation.customer.firstName} {quotation.customer.lastName}
+                                    {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                                   </p>
                                   <p className="text-xs text-muted-foreground">{quotation.customer.mobile}</p>
                                   <p className="text-xs text-muted-foreground">{quotation.customer.email}</p>
@@ -3236,7 +3237,7 @@ export default function AdminPanelPage() {
               <div className="space-y-6">
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                   <p className="text-sm font-semibold">
-                    {documentsQuotation.customer?.firstName || ""} {documentsQuotation.customer?.lastName || ""}
+                    {formatPersonName(documentsQuotation.customer?.firstName, documentsQuotation.customer?.lastName, "Customer")}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {documentsQuotation.customer?.mobile || ""} • {documentsQuotation.id}
@@ -3664,9 +3665,11 @@ export default function AdminPanelPage() {
                       setDocumentsZipDownloading(true)
                       try {
                         const form = getDocumentsForm(documentsQuotation.id)
-                        const customerName =
-                          `${documentsQuotation.customer?.firstName || ""} ${documentsQuotation.customer?.lastName || ""}`.trim() ||
-                          "Customer"
+                        const customerName = formatPersonName(
+                          documentsQuotation.customer?.firstName,
+                          documentsQuotation.customer?.lastName,
+                          "Customer",
+                        )
                         const result = await downloadQuotationDocumentsZip({
                           customerName,
                           quotationId: documentsQuotation.id,

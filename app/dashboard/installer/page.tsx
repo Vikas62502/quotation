@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { formatPersonName } from "@/lib/name-display"
 
 type InstallerQuotation = {
   id: string
@@ -23,6 +24,13 @@ type InstallerQuotation = {
   totalAmount?: number
   finalAmount?: number
   installationStatus?: string
+  installationReadyForInstaller?: boolean
+  installationReleasedAt?: string
+  installation_ready_for_installer?: boolean
+  installation_released_at?: string
+  readyForInstallation?: boolean
+  ready_for_installation?: boolean
+  releaseToInstaller?: boolean
 }
 
 type InstallerWorkflowItem = {
@@ -31,6 +39,16 @@ type InstallerWorkflowItem = {
   imageNames?: string[]
   updatedAt: string
 }
+
+const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
+
+const isReleasedForInstaller = (q: InstallerQuotation, localReleaseMap?: Record<string, any>) =>
+  q.installationReadyForInstaller === true ||
+  q.installation_ready_for_installer === true ||
+  q.readyForInstallation === true ||
+  q.ready_for_installation === true ||
+  q.releaseToInstaller === true ||
+  localReleaseMap?.[q.id]?.installationReadyForInstaller === true
 
 export default function InstallerDashboardPage() {
   const router = useRouter()
@@ -75,6 +93,13 @@ export default function InstallerDashboardPage() {
   useEffect(() => {
     const loadApprovedFromAdmin = async () => {
       setIsLoading(true)
+      let localReleaseMap: Record<string, any> = {}
+      try {
+        const stored = localStorage.getItem(INSTALLER_RELEASE_MAP_KEY)
+        localReleaseMap = stored ? JSON.parse(stored) : {}
+      } catch {
+        localReleaseMap = {}
+      }
       try {
         if (useApi) {
           const response = await api.quotations.getAll({ status: "approved", page: 1, limit: 1000 })
@@ -86,10 +111,13 @@ export default function InstallerDashboardPage() {
           } else if (Array.isArray(response?.data?.quotations)) {
             list = response.data.quotations
           }
-          setQuotations(list)
+          setQuotations(list.filter((q) => isReleasedForInstaller(q, localReleaseMap)))
         } else {
           const localQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
-          const approved = localQuotations.filter((q: any) => String(q.status || "").toLowerCase() === "approved")
+          const approved = localQuotations.filter(
+            (q: InstallerQuotation & { status?: string }) =>
+              String(q.status || "").toLowerCase() === "approved" && isReleasedForInstaller(q, localReleaseMap),
+          )
           setQuotations(approved)
         }
       } catch {
@@ -141,7 +169,7 @@ export default function InstallerDashboardPage() {
       .filter((q) => getInstallerStatus(q) !== "approved")
       .filter((q) => {
         if (!normalizedSearch) return true
-        const fullName = `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.toLowerCase()
+        const fullName = formatPersonName(q.customer?.firstName, q.customer?.lastName, "").toLowerCase()
         return (
           fullName.includes(normalizedSearch) ||
           (q.customer?.mobile || "").includes(normalizedSearch) ||
@@ -156,7 +184,7 @@ export default function InstallerDashboardPage() {
       .filter((q) => getInstallerStatus(q) === "approved")
       .filter((q) => {
         if (!normalizedSearch) return true
-        const fullName = `${q.customer?.firstName || ""} ${q.customer?.lastName || ""}`.toLowerCase()
+        const fullName = formatPersonName(q.customer?.firstName, q.customer?.lastName, "").toLowerCase()
         return (
           fullName.includes(normalizedSearch) ||
           (q.customer?.mobile || "").includes(normalizedSearch) ||
@@ -322,7 +350,9 @@ export default function InstallerDashboardPage() {
                         <>
                     <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
                       <div className="min-w-[180px] flex-1">
-                        <p className="text-sm font-semibold leading-tight">{q.customer?.firstName || "N/A"} {q.customer?.lastName || ""}</p>
+                        <p className="text-sm font-semibold leading-tight">
+                          {formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown")}
+                        </p>
                         <p className="text-xs text-muted-foreground mt-0.5">{q.customer?.mobile || "No mobile"} • {q.id}</p>
                       </div>
                       <div className="min-w-[120px]">
@@ -425,7 +455,7 @@ export default function InstallerDashboardPage() {
                       <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
                         <div className="min-w-[180px] flex-1">
                           <p className="text-sm font-semibold leading-tight">
-                            {q.customer?.firstName || "N/A"} {q.customer?.lastName || ""}
+                            {formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown")}
                           </p>
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {q.customer?.mobile || "No mobile"} • {q.id}

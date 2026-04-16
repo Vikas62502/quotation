@@ -111,6 +111,9 @@ export interface Quotation {
   /** Subsidy cheque for file login when payment is cash or cash + loan */
   fileSubsidyChequeDetails?: string
   fileLoginAt?: string
+  /** Account Management release flag: shown in installer queue only after this is true. */
+  installationReadyForInstaller?: boolean
+  installationReleasedAt?: string
   /** When quotation became approved (server or admin action) */
   statusApprovedAt?: string
   /** Ordered status transitions for admin audit */

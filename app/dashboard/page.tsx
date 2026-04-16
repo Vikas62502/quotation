@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { formatPersonName } from "@/lib/name-display"
 
 const ADMIN_USERNAME = "admin"
 
@@ -548,7 +549,7 @@ export default function DashboardPage() {
                         <div className="min-w-0">
                           <p className="text-[11px] font-mono text-muted-foreground break-all">{quotation.id}</p>
                           <p className="text-sm font-semibold">
-                            {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                            {formatPersonName(quotation.customer?.firstName, quotation.customer?.lastName, "Unknown")}
                           </p>
                           <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                         </div>
@@ -646,7 +647,7 @@ export default function DashboardPage() {
                           <td className="py-4 px-3">
                             <div>
                               <p className="text-sm font-medium text-foreground">
-                                {quotation.customer?.firstName || ""} {quotation.customer?.lastName || ""}
+                                {formatPersonName(quotation.customer?.firstName, quotation.customer?.lastName, "Unknown")}
                               </p>
                               <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
                             </div>
@@ -759,7 +760,7 @@ export default function DashboardPage() {
             <div className="space-y-6">
               <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <p className="text-sm font-semibold">
-                  {documentsQuotation.customer?.firstName || ""} {documentsQuotation.customer?.lastName || ""}
+                  {formatPersonName(documentsQuotation.customer?.firstName, documentsQuotation.customer?.lastName, "Customer")}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {documentsQuotation.customer?.mobile || ""} • {documentsQuotation.id}
@@ -1162,9 +1163,11 @@ export default function DashboardPage() {
                     setDocumentsZipDownloading(true)
                     try {
                       const form = getDocumentsForm(documentsQuotation.id)
-                      const customerName =
-                        `${documentsQuotation.customer?.firstName || ""} ${documentsQuotation.customer?.lastName || ""}`.trim() ||
-                        "Customer"
+                      const customerName = formatPersonName(
+                        documentsQuotation.customer?.firstName,
+                        documentsQuotation.customer?.lastName,
+                        "Customer",
+                      )
                       const result = await downloadQuotationDocumentsZip({
                         customerName,
                         quotationId: documentsQuotation.id,

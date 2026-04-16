@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 
 const ADMIN_USERNAME = "admin"
 
@@ -163,19 +164,12 @@ export default function QuotationsPage() {
 
   if (!isAuthenticated) return null
 
-  const getSafeLastName = (lastName?: string) => {
-    const cleaned = (lastName || "").trim()
-    return cleaned.toLowerCase() === "na" ? "" : cleaned
-  }
-
   const getCustomerDisplayName = (customer?: Quotation["customer"]) => {
-    const firstName = (customer?.firstName || "").trim()
-    const safeLastName = getSafeLastName(customer?.lastName)
-    return `${firstName} ${safeLastName}`.trim()
+    return formatPersonName(customer?.firstName, customer?.lastName, "")
   }
 
   const filteredQuotations = quotations.filter((q) => {
-    const safeLastName = getSafeLastName(q.customer?.lastName)
+    const safeLastName = sanitizeNamePart(q.customer?.lastName)
     const matchesSearch =
       (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
       safeLastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
