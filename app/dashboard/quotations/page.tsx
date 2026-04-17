@@ -1101,8 +1101,29 @@ export default function QuotationsPage() {
                     if (!documentsQuotation) return
                     setDocumentsZipDownloading(true)
                     try {
-                      const form = getDocumentsForm(documentsQuotation.id)
                       const customerName = getCustomerDisplayName(documentsQuotation.customer) || "Customer"
+                      const safeName = customerName.replace(/\s+/g, "-")
+                      const fileName = `${safeName}-${documentsQuotation.id}.zip`
+                      try {
+                        const blob = await api.quotations.downloadDocumentsZip(documentsQuotation.id)
+                        const url = window.URL.createObjectURL(blob)
+                        const link = document.createElement("a")
+                        link.href = url
+                        link.download = fileName
+                        document.body.appendChild(link)
+                        link.click()
+                        link.remove()
+                        window.URL.revokeObjectURL(url)
+                        toast({
+                          title: "Download ready",
+                          description: "ZIP downloaded from backend.",
+                        })
+                        return
+                      } catch (backendError) {
+                        console.warn("Backend ZIP failed, falling back to client ZIP:", backendError)
+                      }
+
+                      const form = getDocumentsForm(documentsQuotation.id)
                       const result = await downloadQuotationDocumentsZip({
                         customerName,
                         quotationId: documentsQuotation.id,

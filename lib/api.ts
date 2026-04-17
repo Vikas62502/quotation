@@ -780,6 +780,18 @@ export const api = {
       const blob = await response.blob()
       return blob
     },
+
+    downloadDocumentsZip: async (quotationId: string) => {
+      const token = getAuthToken()
+      const url = `${API_BASE_URL}/quotations/${quotationId}/documents/zip`
+      const response = await fetch(url, {
+        headers: {
+          Authorization: token ? `Bearer ${token}` : "",
+        },
+      })
+      if (!response.ok) throw new ApiError(`Failed to download documents ZIP: ${response.statusText}`)
+      return response.blob()
+    },
   },
 
   // Visits

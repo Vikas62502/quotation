@@ -1,4 +1,5 @@
 import JSZip from "jszip"
+import { API_CONFIG } from "./api-config"
 
 /** Form shape used by dashboard / admin document submission dialogs */
 export type DocumentsFormLike = Record<string, unknown>
@@ -49,6 +50,76 @@ function extensionFromUrl(url: string): string {
     /* ignore */
   }
   return ""
+}
+
+function isFileReferenceObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function extractUrlLike(value: unknown): string | null {
+  if (typeof value === "string" && value.trim() !== "") return value.trim()
+  if (isFileReferenceObject(value)) {
+    const candidate =
+      value.url ||
+      value.s3Url ||
+      value.s3_url ||
+      value.path ||
+      value.filePath ||
+      value.file_path ||
+      value.location ||
+      value.key
+    if (typeof candidate === "string" && candidate.trim() !== "") return candidate.trim()
+  }
+  return null
+}
+
+function resolveAbsoluteUrl(rawUrl: string): string {
+  if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://") || rawUrl.startsWith("data:") || rawUrl.startsWith("blob:")) {
+    return rawUrl
+  }
+  if (rawUrl.startsWith("//")) return `https:${rawUrl}`
+  if (rawUrl.startsWith("/")) {
+    if (typeof window !== "undefined") return `${window.location.origin}${rawUrl}`
+    return rawUrl
+  }
+  const apiHost = API_CONFIG.baseURL.replace(/\/api\/?$/, "")
+  return `${apiHost}/${rawUrl.replace(/^\/+/, "")}`
+}
+
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, body] = dataUrl.split(",", 2)
+  const mimeMatch = header.match(/^data:([^;]+)(;base64)?$/i)
+  const mime = mimeMatch?.[1] || "application/octet-stream"
+  const isBase64 = /;base64/i.test(header)
+  if (isBase64) {
+    const binary = atob(body || "")
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+    return new Blob([bytes], { type: mime })
+  }
+  return new Blob([decodeURIComponent(body || "")], { type: mime })
+}
+
+async function fetchBlobWithFallback(url: string): Promise<Response> {
+  const absoluteUrl = resolveAbsoluteUrl(url)
+  const attempts: RequestInit[] = [{ credentials: "include" }]
+  const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null
+  if (token) {
+    attempts.push({
+      credentials: "include",
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  }
+
+  let lastResponse: Response | null = null
+  for (const init of attempts) {
+    const response = await fetch(absoluteUrl, init)
+    lastResponse = response
+    if (response.ok) return response
+    if (response.status !== 401 && response.status !== 403) return response
+  }
+  if (lastResponse) return lastResponse
+  throw new Error("No fetch attempts made")
 }
 
 function triggerBlobDownload(blob: Blob, filename: string) {
@@ -125,16 +196,73 @@ async function addFileFieldToZip(
   entryLabel: string,
   fetchFailures: string[],
 ): Promise<void> {
-  const value = form[formKey]
+  const candidateValues = [
+    form[formKey],
+    form[`${formKey}Url`],
+    form[`${formKey}_url`],
+    form[`${formKey}Path`],
+    form[`${formKey}_path`],
+  ]
+  const value = candidateValues.find((item) => item != null)
+
   if (value instanceof File) {
     const safeName = sanitizeFilenameSegment(value.name || `${entryLabel}.bin`)
     zip.file(`${entryLabel}-${safeName}`, value)
     return
   }
-  if (typeof value === "string" && value.trim() !== "") {
-    const url = value.trim()
+
+  if (Array.isArray(value)) {
+    // Some backends may send a single-file field as [url] or [{ url }].
+    const first = value.find((item) => item != null)
+    if (first instanceof File) {
+      const safeName = sanitizeFilenameSegment(first.name || `${entryLabel}.bin`)
+      zip.file(`${entryLabel}-${safeName}`, first)
+      return
+    }
+    const firstUrlLike = extractUrlLike(first)
+    if (!firstUrlLike) return
+    const url = resolveAbsoluteUrl(firstUrlLike)
+    if (url.startsWith("data:")) {
+      try {
+        const blob = dataUrlToBlob(url)
+        const ext = extensionFromMime(blob.type) || ".bin"
+        zip.file(`${entryLabel}${ext}`, blob)
+      } catch {
+        fetchFailures.push(`${entryLabel}: invalid data URL`)
+      }
+      return
+    }
     try {
-      const response = await fetch(url)
+      const response = await fetchBlobWithFallback(url)
+      if (!response.ok) {
+        fetchFailures.push(`${entryLabel}: HTTP ${response.status}`)
+        return
+      }
+      const blob = await response.blob()
+      const ext = extensionFromMime(blob.type) || extensionFromUrl(url) || ".bin"
+      zip.file(`${entryLabel}${ext}`, blob)
+      return
+    } catch {
+      fetchFailures.push(`${entryLabel}: fetch failed (check URL / CORS)`)
+      return
+    }
+  }
+
+  const urlLike = extractUrlLike(value)
+  if (urlLike) {
+    const url = resolveAbsoluteUrl(urlLike)
+    if (url.startsWith("data:")) {
+      try {
+        const blob = dataUrlToBlob(url)
+        const ext = extensionFromMime(blob.type) || ".bin"
+        zip.file(`${entryLabel}${ext}`, blob)
+      } catch {
+        fetchFailures.push(`${entryLabel}: invalid data URL`)
+      }
+      return
+    }
+    try {
+      const response = await fetchBlobWithFallback(url)
       if (!response.ok) {
         fetchFailures.push(`${entryLabel}: HTTP ${response.status}`)
         return

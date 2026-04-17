@@ -47,6 +47,76 @@
   - `success: true`
   - `data: { id, status, length, width, height, unit, backLegFeet, midLegFeet, frontLegFeet, images, rowDiagramImage, notes, updatedAt }`
 
+---
+
+# Quotation Documents ZIP (Backend Required)
+
+## Goal
+- Ensure downloaded ZIP always contains all uploaded attachments (images + PDF + text manifest), even when S3 objects are private.
+
+## Required backend behavior
+- Store document files in S3.
+- Persist either:
+  - stable public URL, or
+  - object key/path + generate URL at response time.
+- Return frontend-usable URLs for each document field (public URL or presigned GET URL).
+
+## S3 URL rule
+- Do **not** return raw private object URLs that cause `AccessDenied`.
+- Return one of:
+  1. public object URL
+  2. CDN/public proxy URL
+  3. presigned GET URL (recommended for private buckets)
+
+## New endpoint (recommended): server-side ZIP
+- `GET /api/quotations/{quotationId}/documents/zip`
+- Auth required (`admin`/authorized roles).
+- Backend should:
+  - load quotation + document metadata
+  - fetch objects from S3 via IAM (not browser URLs)
+  - build ZIP with:
+    - `aadhar-front.*`
+    - `aadhar-back.*`
+    - `compliant-aadhar-front.*`
+    - `compliant-aadhar-back.*`
+    - `pan.*`
+    - `compliant-pan.*`
+    - `electricity-bill.*`
+    - `bank-passbook.*`
+    - `compliant-bank-passbook.*`
+    - `geotag-roof.*`
+    - `customer-with-house.*`
+    - `property-document.pdf` (if exists)
+    - `document-details.txt`
+  - return binary ZIP stream.
+
+## ZIP response headers
+- `Content-Type: application/zip`
+- `Content-Disposition: attachment; filename="<CustomerName>-<QuotationId>.zip"`
+- `Cache-Control: no-store`
+
+## Quotation document payload consistency
+- In quotation GET/list payloads, include stable fields for document files:
+  - `aadharFront`
+  - `aadharBack`
+  - `compliantAadharFront`
+  - `compliantAadharBack`
+  - `panImage`
+  - `compliantPanImage`
+  - `electricityBillImage`
+  - `bankPassbookImage`
+  - `compliantBankPassbookImage`
+  - `geotagRoofPhoto`
+  - `customerWithHousePhoto`
+  - `propertyDocumentPdf`
+- Each value should be either:
+  - direct URL string (public/presigned), or
+  - object with URL field (`url`).
+
+## Error handling
+- If one file is missing, still generate ZIP and include note in `document-details.txt`.
+- Return 404 only when quotation/documents do not exist.
+
 # Backend Changes Required - Frontend Implementation Summary
 
 ## Overview
