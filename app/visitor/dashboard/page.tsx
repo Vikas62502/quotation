@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
+import { API_CONFIG } from "@/lib/api-config"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -62,6 +63,12 @@ interface Visit {
   length?: number
   width?: number
   height?: number
+  /** Site dimensions in feet (visitor complete visit). */
+  backLegFeet?: number
+  midLegFeet?: number
+  frontLegFeet?: number
+  unit?: "feet" | "cm"
+  rowDiagramImage?: string
   images?: string[]
   visitors?: Array<{
     visitorId: string
@@ -115,6 +122,64 @@ const normalizeTimeForApi = (value: string) => {
   return ""
 }
 
+const pickFirstNumber = (...values: any[]): number | undefined => {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) return value
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number.parseFloat(value)
+      if (Number.isFinite(parsed)) return parsed
+    }
+  }
+  return undefined
+}
+
+const normalizeMediaUrl = (raw: any): string | undefined => {
+  if (!raw) return undefined
+  const value = typeof raw === "string" ? raw.trim() : ""
+  if (!value) return undefined
+  if (
+    value.startsWith("http://") ||
+    value.startsWith("https://") ||
+    value.startsWith("data:") ||
+    value.startsWith("blob:")
+  ) {
+    return value
+  }
+  if (value.startsWith("//")) return `https:${value}`
+  if (value.startsWith("/")) {
+    if (typeof window !== "undefined") return `${window.location.origin}${value}`
+    return value
+  }
+  const apiHost = API_CONFIG.baseURL.replace(/\/api\/?$/, "")
+  return `${apiHost}/${value.replace(/^\/+/, "")}`
+}
+
+const extractImageList = (visit: any): string[] => {
+  const sources = [
+    visit?.images,
+    visit?.siteImages,
+    visit?.site_images,
+    visit?.completionImages,
+    visit?.completion_images,
+    visit?.documents?.siteCompletionImages,
+    visit?.documents?.site_completion_images,
+    visit?.documents?.images,
+  ]
+  const result: string[] = []
+  sources.forEach((source) => {
+    if (!Array.isArray(source)) return
+    source.forEach((item) => {
+      const maybeUrl =
+        typeof item === "string"
+          ? item
+          : item?.url || item?.s3Url || item?.s3_url || item?.location || item?.path || item?.key
+      const normalized = normalizeMediaUrl(maybeUrl)
+      if (normalized && !result.includes(normalized)) result.push(normalized)
+    })
+  })
+  return result
+}
+
 export default function VisitorDashboardPage() {
   const { visitor, role, isAuthenticated, logout } = useAuth()
   const router = useRouter()
@@ -135,11 +200,17 @@ export default function VisitorDashboardPage() {
   const [approvedVisits, setApprovedVisits] = useState<Set<string>>(new Set())
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
   const [incompleteRescheduleDialogOpen, setIncompleteRescheduleDialogOpen] = useState(false)
-  const [length, setLength] = useState("")
-  const [width, setWidth] = useState("")
-  const [height, setHeight] = useState("")
+  const [lengthFeet, setLengthFeet] = useState("")
+  const [widthFeet, setWidthFeet] = useState("")
+  const [backLegFeet, setBackLegFeet] = useState("")
+  const [midLegFeet, setMidLegFeet] = useState("")
+  const [frontLegFeet, setFrontLegFeet] = useState("")
   const [images, setImages] = useState<File[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
+  const [rowDiagramFile, setRowDiagramFile] = useState<File | null>(null)
+  const [rowDiagramPreview, setRowDiagramPreview] = useState<string | null>(null)
+  /** Count of site images already on the visit when the complete dialog opens (URL strings). */
+  const [persistedSiteImageCount, setPersistedSiteImageCount] = useState(0)
   const [reason, setReason] = useState("")
   const [completeNotes, setCompleteNotes] = useState("")
   const [rescheduleDate, setRescheduleDate] = useState("")
@@ -183,43 +254,65 @@ export default function VisitorDashboardPage() {
               ? response.data.visits
               : []
         
-        const visits: VisitWithQuotation[] = visitsList.map((v: any) => ({
-          id: v.id,
-          date: v.visitDate,
-          time: resolveVisitTimeRange(v),
-          location: v.location,
-          locationLink: v.locationLink,
-          notes: v.notes,
-          status: v.status,
-          feedback: v.feedback,
-          rejectionReason: v.rejectionReason,
-          length: v.length,
-          width: v.width,
-          height: v.height,
-          images: v.images,
-          visitors: v.otherVisitors?.map((ov: any) => ({
-            visitorId: ov.visitorId,
-            visitorName: ov.visitorName,
-          })),
-          createdAt: v.createdAt,
-          quotation: {
-            id: v.quotation.id,
-            customer: v.customer,
-            products: {} as any,
-            discount: 0,
-            totalAmount: v.quotation.finalAmount || 0,
-            finalAmount: v.quotation.finalAmount || 0,
-            createdAt: v.quotation.createdAt,
-            dealerId: v.dealer?.id || "",
-            status: "pending",
-          },
-          quotationId: v.quotation.id,
-          dealer: v.dealer ? {
-            id: v.dealer.id || "",
-            firstName: v.dealer.firstName || "",
-            lastName: v.dealer.lastName || "",
-          } : undefined,
-        }))
+        const visits: VisitWithQuotation[] = visitsList.map((v: any) => {
+          const completion = v.completionDetails || v.completion_details || {}
+          const dimensions = v.siteDimensions || v.site_dimensions || completion.siteDimensions || completion.site_dimensions || {}
+          const rowDiagram = normalizeMediaUrl(
+            v.rowDiagramImage ||
+              v.row_diagram_image ||
+              completion.rowDiagramImage ||
+              completion.row_diagram_image ||
+              v.documents?.rowDiagramImage ||
+              v.documents?.row_diagram_image ||
+              v.documents?.rowDiagram ||
+              v.documents?.row_diagram,
+          )
+          const normalizedImages = extractImageList(v)
+          return {
+            id: v.id,
+            date: v.visitDate || v.date || "",
+            time: resolveVisitTimeRange(v),
+            location: v.location || v.visitLocation || "",
+            locationLink: v.locationLink || v.location_link,
+            notes: v.notes || completion.notes,
+            status: v.status,
+            feedback: v.feedback,
+            rejectionReason: v.rejectionReason || v.rejection_reason,
+            length: pickFirstNumber(v.length, v.lengthFeet, v.length_feet, dimensions.length, dimensions.lengthFeet, dimensions.length_feet),
+            width: pickFirstNumber(v.width, v.widthFeet, v.width_feet, dimensions.width, dimensions.widthFeet, dimensions.width_feet),
+            height: pickFirstNumber(v.height, dimensions.height, dimensions.heightFeet, dimensions.height_feet),
+            backLegFeet: pickFirstNumber(v.backLegFeet, v.back_leg_feet, dimensions.backLegFeet, dimensions.back_leg_feet),
+            midLegFeet: pickFirstNumber(v.midLegFeet, v.mid_leg_feet, dimensions.midLegFeet, dimensions.mid_leg_feet),
+            frontLegFeet: pickFirstNumber(v.frontLegFeet, v.front_leg_feet, dimensions.frontLegFeet, dimensions.front_leg_feet),
+            unit: (v.unit || dimensions.unit || completion.unit || "feet") as "feet" | "cm",
+            rowDiagramImage: rowDiagram,
+            images: normalizedImages,
+            visitors: v.otherVisitors?.map((ov: any) => ({
+              visitorId: ov.visitorId,
+              visitorName: ov.visitorName,
+            })),
+            createdAt: v.createdAt,
+            quotation: {
+              id: v.quotation.id,
+              customer: v.customer,
+              products: {} as any,
+              discount: 0,
+              totalAmount: v.quotation.finalAmount || 0,
+              finalAmount: v.quotation.finalAmount || 0,
+              createdAt: v.quotation.createdAt,
+              dealerId: v.dealer?.id || "",
+              status: "pending",
+            },
+            quotationId: v.quotation.id,
+            dealer: v.dealer
+              ? {
+                  id: v.dealer.id || "",
+                  firstName: v.dealer.firstName || "",
+                  lastName: v.dealer.lastName || "",
+                }
+              : undefined,
+          }
+        })
         
         setAssignedVisits(visits)
       } else {
@@ -429,11 +522,24 @@ export default function VisitorDashboardPage() {
     setApproveOutcome(outcome)
     if (outcome === "completed") {
       // Open complete dialog with dimensions and images
-      setLength(targetVisit.length?.toString() || "")
-      setWidth(targetVisit.width?.toString() || "")
-      setHeight(targetVisit.height?.toString() || "")
+      setLengthFeet(targetVisit.length?.toString() || "")
+      setWidthFeet(targetVisit.width?.toString() || "")
+      const hasLegs =
+        targetVisit.backLegFeet != null ||
+        targetVisit.midLegFeet != null ||
+        targetVisit.frontLegFeet != null
+      setBackLegFeet(
+        targetVisit.backLegFeet?.toString() ||
+          (!hasLegs && targetVisit.height != null ? targetVisit.height.toString() : "") ||
+          "",
+      )
+      setMidLegFeet(targetVisit.midLegFeet?.toString() || "")
+      setFrontLegFeet(targetVisit.frontLegFeet?.toString() || "")
       setImages([])
       setImagePreviews(targetVisit.images || [])
+      setPersistedSiteImageCount(targetVisit.images?.length ?? 0)
+      setRowDiagramFile(null)
+      setRowDiagramPreview(targetVisit.rowDiagramImage || null)
       setCompleteNotes(targetVisit.notes || "")
       setCompleteDialogOpen(true)
     } else {
@@ -491,33 +597,88 @@ export default function VisitorDashboardPage() {
     if (!selectedVisit) return
 
     try {
-      // Convert images to base64 for storage
-      const imagePromises = images.map((file) => {
-        return new Promise<string>((resolve) => {
+      const L = parseFloat(lengthFeet) || 0
+      const W = parseFloat(widthFeet) || 0
+      const back = parseFloat(backLegFeet) || 0
+      const midParsed = parseFloat(midLegFeet)
+      const mid = Number.isFinite(midParsed) ? midParsed : 0
+      const front = parseFloat(frontLegFeet) || 0
+      const legacyHeight = Math.max(back, mid, front)
+
+      // Previews already include persisted URLs and data URLs for newly selected files.
+      const allImages = [...imagePreviews]
+
+      let rowDiagramImage: string | undefined
+      if (rowDiagramFile) {
+        rowDiagramImage = await new Promise<string>((resolve) => {
           const reader = new FileReader()
           reader.onload = (e) => resolve(e.target?.result as string)
-          reader.readAsDataURL(file)
+          reader.readAsDataURL(rowDiagramFile)
         })
-      })
+      } else if (rowDiagramPreview) {
+        rowDiagramImage = rowDiagramPreview
+      }
 
-      const base64Images = await Promise.all(imagePromises)
-      const allImages = [...imagePreviews, ...base64Images]
+      const completePayload = {
+        length: L,
+        width: W,
+        height: legacyHeight,
+        unit: "feet" as const,
+        backLegFeet: back,
+        ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
+        frontLegFeet: front,
+        images: allImages,
+        notes: completeNotes.trim() || undefined,
+        ...(rowDiagramImage ? { rowDiagramImage } : {}),
+      }
 
       let syncedWithApi = false
       if (useApi) {
         try {
-          await api.visits.complete(selectedVisit.id, {
-            length: parseFloat(length) || 0,
-            width: parseFloat(width) || 0,
-            height: parseFloat(height) || 0,
-            images: allImages,
-            notes: completeNotes.trim() || undefined,
-          })
+          const persistedImages = imagePreviews.slice(0, persistedSiteImageCount)
+          await api.visits.completeWithFiles(
+            selectedVisit.id,
+            {
+              length: L,
+              width: W,
+              height: legacyHeight,
+              unit: "feet",
+              backLegFeet: back,
+              ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
+              frontLegFeet: front,
+              notes: completeNotes.trim() || undefined,
+              existingImages: persistedImages,
+              existingRowDiagramImage: rowDiagramFile ? undefined : rowDiagramPreview || undefined,
+            },
+            images,
+            rowDiagramFile,
+          )
           syncedWithApi = true
           await loadAssignedVisits()
         } catch (error) {
-          console.warn("Visitor complete API failed, applying local fallback:", error)
+          console.warn("Visitor complete multipart API failed, trying JSON fallback:", error)
+          try {
+            await api.visits.complete(selectedVisit.id, completePayload)
+            syncedWithApi = true
+            await loadAssignedVisits()
+          } catch (jsonError) {
+            console.warn("Visitor complete JSON API failed, applying local fallback:", jsonError)
+          }
         }
+      }
+
+      const visitPatch = {
+        status: "completed" as const,
+        length: L || undefined,
+        width: W || undefined,
+        height: legacyHeight || undefined,
+        unit: "feet" as const,
+        backLegFeet: back || undefined,
+        midLegFeet: midLegFeet.trim() !== "" ? mid : undefined,
+        frontLegFeet: front || undefined,
+        rowDiagramImage: rowDiagramImage || undefined,
+        images: allImages.length > 0 ? allImages : undefined,
+        notes: completeNotes.trim() || undefined,
       }
 
       if (!syncedWithApi) {
@@ -527,12 +688,7 @@ export default function VisitorDashboardPage() {
           if (v.id === selectedVisit.id) {
             return {
               ...v,
-              status: "completed",
-              length: length ? parseFloat(length) : undefined,
-              width: width ? parseFloat(width) : undefined,
-              height: height ? parseFloat(height) : undefined,
-              images: allImages.length > 0 ? allImages : undefined,
-              notes: completeNotes.trim() || undefined,
+              ...visitPatch,
             }
           }
           return v
@@ -543,24 +699,31 @@ export default function VisitorDashboardPage() {
         } else {
           applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
             ...v,
-            status: "completed",
-            length: length ? parseFloat(length) : undefined,
-            width: width ? parseFloat(width) : undefined,
-            height: height ? parseFloat(height) : undefined,
-            images: allImages.length > 0 ? allImages : undefined,
-            notes: completeNotes.trim() || undefined,
+            ...visitPatch,
           }))
         }
+      } else {
+        // Ensure Completed tab immediately reflects submitted details even if
+        // list API response is delayed/partial for completion fields.
+        applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
+          ...v,
+          ...visitPatch,
+        }))
       }
 
       setCompleteDialogOpen(false)
       setSelectedVisit(null)
       setApproveOutcome(null)
-      setLength("")
-      setWidth("")
-      setHeight("")
+      setLengthFeet("")
+      setWidthFeet("")
+      setBackLegFeet("")
+      setMidLegFeet("")
+      setFrontLegFeet("")
       setImages([])
       setImagePreviews([])
+      setPersistedSiteImageCount(0)
+      setRowDiagramFile(null)
+      setRowDiagramPreview(null)
       setCompleteNotes("")
     } catch (error) {
       console.error("Error completing visit:", error)
@@ -690,7 +853,27 @@ export default function VisitorDashboardPage() {
 
   const removeImage = (index: number) => {
     setImagePreviews((prev) => prev.filter((_, i) => i !== index))
-    setImages((prev) => prev.filter((_, i) => i !== index))
+    if (index < persistedSiteImageCount) {
+      setPersistedSiteImageCount((c) => Math.max(0, c - 1))
+    } else {
+      const fileIndex = index - persistedSiteImageCount
+      setImages((prev) => prev.filter((_, i) => i !== fileIndex))
+    }
+  }
+
+  const handleRowDiagramUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    setRowDiagramFile(file)
+    const reader = new FileReader()
+    reader.onload = (ev) => setRowDiagramPreview(ev.target?.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  const clearRowDiagram = () => {
+    setRowDiagramFile(null)
+    setRowDiagramPreview(null)
   }
 
 
@@ -1122,6 +1305,125 @@ export default function VisitorDashboardPage() {
                       </div>
                     )}
 
+                    {(visit.length != null ||
+                      visit.width != null ||
+                      visit.backLegFeet != null ||
+                      visit.midLegFeet != null ||
+                      visit.frontLegFeet != null ||
+                      (visit.images && visit.images.length > 0) ||
+                      visit.rowDiagramImage) && (
+                      <div className="bg-blue-50 rounded-md p-3 border border-blue-200 space-y-3">
+                        <div className="flex items-center gap-2">
+                          <ImageIcon className="w-4 h-4 text-blue-700" />
+                          <p className="text-xs font-semibold text-blue-800">Completion Details</p>
+                        </div>
+
+                        {(visit.length != null ||
+                          visit.width != null ||
+                          visit.backLegFeet != null ||
+                          visit.midLegFeet != null ||
+                          visit.frontLegFeet != null) && (
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            {visit.length != null && (
+                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
+                                <p className="text-[11px] text-muted-foreground">Length ({visit.unit === "cm" ? "cm" : "ft"})</p>
+                                <p className="text-sm font-semibold">{visit.length}</p>
+                              </div>
+                            )}
+                            {visit.width != null && (
+                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
+                                <p className="text-[11px] text-muted-foreground">Width ({visit.unit === "cm" ? "cm" : "ft"})</p>
+                                <p className="text-sm font-semibold">{visit.width}</p>
+                              </div>
+                            )}
+                            {visit.backLegFeet != null && (
+                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
+                                <p className="text-[11px] text-muted-foreground">Back leg (ft)</p>
+                                <p className="text-sm font-semibold">{visit.backLegFeet}</p>
+                              </div>
+                            )}
+                            {visit.midLegFeet != null && (
+                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
+                                <p className="text-[11px] text-muted-foreground">Mid leg (ft)</p>
+                                <p className="text-sm font-semibold">{visit.midLegFeet}</p>
+                              </div>
+                            )}
+                            {visit.frontLegFeet != null && (
+                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
+                                <p className="text-[11px] text-muted-foreground">Front leg (ft)</p>
+                                <p className="text-sm font-semibold">{visit.frontLegFeet}</p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {visit.rowDiagramImage && (
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-2">Row diagram document</p>
+                            <a
+                              href={visit.rowDiagramImage}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-block"
+                              title="Open row diagram"
+                            >
+                              <img
+                                src={visit.rowDiagramImage}
+                                alt="Row diagram"
+                                className="h-28 w-auto rounded-md border object-contain bg-white"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = "none"
+                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                                  if (fallback) fallback.style.display = "inline-flex"
+                                }}
+                              />
+                              <span
+                                style={{ display: "none" }}
+                                className="px-3 py-2 text-xs rounded-md border bg-white text-blue-700"
+                              >
+                                Open row diagram document
+                              </span>
+                            </a>
+                          </div>
+                        )}
+
+                        {visit.images && visit.images.length > 0 && (
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-2">Uploaded site images ({visit.images.length})</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                              {visit.images.map((img, idx) => (
+                                <a
+                                  key={`${visit.id}_site_img_${idx}`}
+                                  href={img}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block"
+                                  title="Open uploaded image"
+                                >
+                                  <img
+                                    src={img}
+                                    alt={`Site image ${idx + 1}`}
+                                    className="w-full h-24 rounded-md border object-cover bg-white"
+                                    onError={(e) => {
+                                      e.currentTarget.style.display = "none"
+                                      const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                                      if (fallback) fallback.style.display = "inline-flex"
+                                    }}
+                                  />
+                                  <span
+                                    style={{ display: "none" }}
+                                    className="w-full h-24 rounded-md border bg-white text-xs text-blue-700 items-center justify-center p-2 text-center"
+                                  >
+                                    Open uploaded file
+                                  </span>
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
                     {/* Feedback Display */}
                     {visit.feedback && (
                       <div className="bg-green-50 rounded-md p-3 border border-green-200">
@@ -1345,14 +1647,14 @@ export default function VisitorDashboardPage() {
           </DialogHeader>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="length">Length (cm) *</Label>
+                <Label htmlFor="length-feet">Length (ft) *</Label>
                 <Input
-                  id="length"
+                  id="length-feet"
                   type="number"
-                  value={length}
-                  onChange={(e) => setLength(e.target.value)}
+                  value={lengthFeet}
+                  onChange={(e) => setLengthFeet(e.target.value)}
                   placeholder="0"
                   className="mt-1"
                   min="0"
@@ -1360,12 +1662,28 @@ export default function VisitorDashboardPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="width">Width (cm) *</Label>
+                <Label htmlFor="width-feet">Width (ft) *</Label>
                 <Input
-                  id="width"
+                  id="width-feet"
                   type="number"
-                  value={width}
-                  onChange={(e) => setWidth(e.target.value)}
+                  value={widthFeet}
+                  onChange={(e) => setWidthFeet(e.target.value)}
+                  placeholder="0"
+                  className="mt-1"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="back-leg-feet">Back leg (ft) *</Label>
+                <Input
+                  id="back-leg-feet"
+                  type="number"
+                  value={backLegFeet}
+                  onChange={(e) => setBackLegFeet(e.target.value)}
                   placeholder="0"
                   className="mt-1"
                   min="0"
@@ -1373,12 +1691,25 @@ export default function VisitorDashboardPage() {
                 />
               </div>
               <div>
-                <Label htmlFor="height">Height (cm) *</Label>
+                <Label htmlFor="mid-leg-feet">Mid leg (ft) (optional)</Label>
                 <Input
-                  id="height"
+                  id="mid-leg-feet"
                   type="number"
-                  value={height}
-                  onChange={(e) => setHeight(e.target.value)}
+                  value={midLegFeet}
+                  onChange={(e) => setMidLegFeet(e.target.value)}
+                  placeholder="—"
+                  className="mt-1"
+                  min="0"
+                  step="0.01"
+                />
+              </div>
+              <div>
+                <Label htmlFor="front-leg-feet">Front leg (ft) *</Label>
+                <Input
+                  id="front-leg-feet"
+                  type="number"
+                  value={frontLegFeet}
+                  onChange={(e) => setFrontLegFeet(e.target.value)}
                   placeholder="0"
                   className="mt-1"
                   min="0"
@@ -1437,6 +1768,40 @@ export default function VisitorDashboardPage() {
             </div>
 
             <div>
+              <Label htmlFor="row-diagram-upload">Row diagram image (optional)</Label>
+              <div className="mt-2 border-2 border-dashed border-border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Upload a row layout sketch or diagram (PNG, JPG up to 10MB).</p>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Input
+                    id="row-diagram-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleRowDiagramUpload}
+                    className="hidden"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById("row-diagram-upload")?.click()}>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Select
+                  </Button>
+                  {rowDiagramPreview && (
+                    <Button type="button" variant="ghost" size="sm" onClick={clearRowDiagram}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {rowDiagramPreview && (
+                <div className="mt-3 relative inline-block group">
+                  <img
+                    src={rowDiagramPreview}
+                    alt="Row diagram preview"
+                    className="max-h-40 rounded-lg border object-contain"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
               <Label htmlFor="complete-notes">Notes (Optional)</Label>
               <Textarea
                 id="complete-notes"
@@ -1457,7 +1822,13 @@ export default function VisitorDashboardPage() {
               </Button>
               <Button
                 onClick={handleCompleteVisit}
-                disabled={!length || !width || !height || imagePreviews.length === 0}
+                disabled={
+                  !lengthFeet ||
+                  !widthFeet ||
+                  !backLegFeet ||
+                  !frontLegFeet ||
+                  imagePreviews.length === 0
+                }
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <CheckCircle className="w-4 h-4 mr-2" />

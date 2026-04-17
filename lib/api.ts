@@ -819,17 +819,76 @@ export const api = {
       })
     },
 
-    complete: async (visitId: string, completeData: {
-      length: number
-      width: number
-      height: number
-      images: string[]
-      notes?: string
-    }) => {
+    complete: async (
+      visitId: string,
+      completeData: {
+        length: number
+        width: number
+        height: number
+        images: string[]
+        notes?: string
+        /** Dimensions in feet (visitor complete flow). */
+        unit?: "feet" | "cm"
+        backLegFeet?: number
+        midLegFeet?: number
+        frontLegFeet?: number
+        rowDiagramImage?: string
+      },
+    ) => {
       return apiRequest(`/visits/${visitId}/complete`, {
         method: "PATCH",
         body: completeData,
       })
+    },
+
+    /**
+     * Preferred complete endpoint mode when backend uploads files to S3.
+     * Sends multipart/form-data with dimensions + image files.
+     * Backend can return image URL(s) after successful S3 upload.
+     */
+    completeWithFiles: async (
+      visitId: string,
+      completeData: {
+        length: number
+        width: number
+        height: number
+        notes?: string
+        unit?: "feet" | "cm"
+        backLegFeet?: number
+        midLegFeet?: number
+        frontLegFeet?: number
+        existingImages?: string[]
+        existingRowDiagramImage?: string
+      },
+      siteImageFiles: File[],
+      rowDiagramFile?: File | null,
+    ) => {
+      const formData = new FormData()
+      formData.append("length", String(completeData.length))
+      formData.append("width", String(completeData.width))
+      formData.append("height", String(completeData.height))
+      if (completeData.notes?.trim()) formData.append("notes", completeData.notes.trim())
+      if (completeData.unit) formData.append("unit", completeData.unit)
+      if (typeof completeData.backLegFeet === "number") formData.append("backLegFeet", String(completeData.backLegFeet))
+      if (typeof completeData.midLegFeet === "number") formData.append("midLegFeet", String(completeData.midLegFeet))
+      if (typeof completeData.frontLegFeet === "number") formData.append("frontLegFeet", String(completeData.frontLegFeet))
+
+      // Keep already-uploaded images when editing/re-completing a visit.
+      if (Array.isArray(completeData.existingImages) && completeData.existingImages.length > 0) {
+        formData.append("existingImages", JSON.stringify(completeData.existingImages))
+      }
+      if (completeData.existingRowDiagramImage) {
+        formData.append("existingRowDiagramImage", completeData.existingRowDiagramImage)
+      }
+
+      siteImageFiles.forEach((file) => {
+        formData.append("images", file)
+      })
+      if (rowDiagramFile) {
+        formData.append("rowDiagramImage", rowDiagramFile)
+      }
+
+      return multipartRequest(`/visits/${visitId}/complete`, "PATCH", formData)
     },
 
     incomplete: async (visitId: string, reason: string) => {
