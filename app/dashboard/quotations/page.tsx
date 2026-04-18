@@ -13,7 +13,7 @@ import { Search, Eye, FileText, Calendar, Download } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
-import { api, ApiError } from "@/lib/api"
+import { api, apiErrorToUserMessage } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -1309,11 +1309,9 @@ export default function QuotationsPage() {
                           setDocumentsDialogOpen(false)
                         })
                         .catch((error: unknown) => {
-                          const message =
-                            error instanceof Error ? error.message : "Failed to upload documents."
                           toast({
                             title: "Upload failed",
-                            description: message,
+                            description: apiErrorToUserMessage(error),
                             variant: "destructive",
                           })
                         })

@@ -33,6 +33,19 @@ class ApiError extends Error {
   }
 }
 
+/** Short user-facing text for toasts (includes validation details when present). */
+function apiErrorToUserMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    const bits: string[] = [error.message]
+    if (error.details?.length) {
+      bits.push(error.details.map((d) => `${d.field}: ${d.message}`).join(" · "))
+    }
+    return bits.join(" — ")
+  }
+  if (error instanceof Error) return error.message
+  return "Something went wrong."
+}
+
 // Get auth token from localStorage
 const getAuthToken = (): string | null => {
   if (typeof window === "undefined") return null
@@ -750,22 +763,49 @@ export const api = {
         body: formData,
       })
 
-      const contentType = response.headers.get("content-type")
-      if (contentType?.includes("application/json")) {
-        const data = await response.json()
-        if (!response.ok || data?.success === false) {
-          const message = data?.error?.message || response.statusText
-          throw new ApiError(message, data?.error?.code || `HTTP_${response.status}`)
+      const raw = await response.text().catch(() => "")
+      let payload: any = null
+      if (raw) {
+        try {
+          payload = JSON.parse(raw)
+        } catch {
+          payload = null
         }
-        return data?.data || data
       }
 
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => response.statusText)
-        throw new ApiError(errorText || `HTTP_${response.status}`)
+      const success = response.ok && (payload == null || payload.success !== false)
+      if (success) {
+        return payload?.data ?? payload ?? {}
       }
 
-      return response as any
+      const errObj =
+        payload && typeof payload === "object" && payload.error && typeof payload.error === "object"
+          ? payload.error
+          : null
+      const jsonMessage =
+        (typeof errObj?.message === "string" && errObj.message) ||
+        (typeof payload?.message === "string" && payload.message) ||
+        (typeof payload?.error === "string" && payload.error) ||
+        undefined
+      const details = Array.isArray(errObj?.details) ? errObj.details : undefined
+      const code = (typeof errObj?.code === "string" && errObj.code) || `HTTP_${response.status}`
+
+      const compact = raw.replace(/\s+/g, " ").trim()
+      const looksLikeHtml = /^<!DOCTYPE/i.test(compact) || /^<html/i.test(compact)
+
+      let message = jsonMessage
+      if (!message) {
+        if (response.status >= 500) {
+          message =
+            "Server error while saving documents. Your API logs for PATCH /quotations/…/documents will show the cause (often S3 credentials, bucket policy, or an unhandled exception in the upload handler)."
+        } else if (looksLikeHtml || compact.length > 400) {
+          message = `${response.statusText || "Request failed"} (${response.status})`
+        } else {
+          message = compact || response.statusText || `HTTP_${response.status}`
+        }
+      }
+
+      throw new ApiError(String(message), code, details)
     },
 
     downloadPDF: async (quotationId: string) => {
@@ -1510,7 +1550,7 @@ export const api = {
 }
 
 // api is already exported above, so we only export the other items here
-export { ApiError, getAuthToken, clearAuthTokens }
+export { ApiError, getAuthToken, clearAuthTokens, apiErrorToUserMessage }
 export type { ApiResponse }
 
 

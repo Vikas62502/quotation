@@ -4,14 +4,32 @@ import { useEffect, useState, useCallback } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
-import { ArrowLeft, LogOut, User, Wallet, CheckCircle2, Clock, AlertCircle, Download } from "lucide-react"
+import {
+  ArrowLeft,
+  LogOut,
+  User,
+  Wallet,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
+  Download,
+  FileText,
+  Search,
+  Eye,
+  IndianRupee,
+  Calendar as CalendarIcon,
+  Send,
+} from "lucide-react"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { FileText, Search, Eye, IndianRupee, Calendar, Send } from "lucide-react"
+import { format } from "date-fns"
+import type { DateRange } from "react-day-picker"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { api, ApiError } from "@/lib/api"
@@ -399,6 +417,72 @@ function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
   })
 }
 
+function calendarDateLocalYmd(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function paymentDateRangeToFilterStrings(range?: DateRange) {
+  return {
+    from: range?.from ? calendarDateLocalYmd(range.from) : "",
+    to: range?.to ? calendarDateLocalYmd(range.to) : "",
+  }
+}
+
+function PaymentDateRangeFilter({
+  id,
+  label,
+  value,
+  onChange,
+  placeholder,
+}: {
+  id: string
+  label: string
+  value: DateRange | undefined
+  onChange: (next: DateRange | undefined) => void
+  placeholder: string
+}) {
+  const text = (() => {
+    if (!value?.from) return placeholder
+    const a = format(value.from, "dd/MM/yyyy")
+    if (!value.to) return `${a} → …`
+    const b = format(value.to, "dd/MM/yyyy")
+    return a === b ? a : `${a} → ${b}`
+  })()
+
+  return (
+    <div className="space-y-1">
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            id={id}
+            type="button"
+            variant="outline"
+            className="h-9 w-full justify-start gap-2 px-3 text-left text-sm font-normal"
+          >
+            <CalendarIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="truncate">{text}</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start">
+          <Calendar
+            mode="range"
+            selected={value}
+            onSelect={onChange}
+            defaultMonth={value?.from ?? new Date()}
+            numberOfMonths={1}
+          />
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
 export default function AccountManagementPage() {
   const { isAuthenticated, role, logout, accountManager, dealer } = useAuth()
   const router = useRouter()
@@ -409,6 +493,9 @@ export default function AccountManagementPage() {
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
+  /** Approve / file-login filters as calendar ranges (local YYYY-MM-DD derived for row matching). */
+  const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
+  const [fileLoginDateRange, setFileLoginDateRange] = useState<DateRange | undefined>()
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -872,6 +959,24 @@ export default function AccountManagementPage() {
     return "N/A"
   }
 
+  const toLocalCalendarDateString = (iso?: string | null) => {
+    if (!iso) return null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return null
+    const y = d.getFullYear()
+    const m = String(d.getMonth() + 1).padStart(2, "0")
+    const day = String(d.getDate()).padStart(2, "0")
+    return `${y}-${m}-${day}`
+  }
+
+  const calendarDateInRange = (ymd: string | null, from: string, to: string) => {
+    if (!from.trim() && !to.trim()) return true
+    if (!ymd) return false
+    if (from.trim() && ymd < from.trim()) return false
+    if (to.trim() && ymd > to.trim()) return false
+    return true
+  }
+
   const filteredCustomerPayments = customerPayments.filter((payment) => {
     const matchesSearch =
       payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
@@ -883,7 +988,19 @@ export default function AccountManagementPage() {
       (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
     const paymentStatusValue = payment.paymentStatus || "pending"
     const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
-    return matchesSearch && matchesPaymentType && matchesPaymentStatus
+    const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
+    const fileLoginYmd = toLocalCalendarDateString(payment.fileLoginAt)
+    const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
+    const fileLoginBounds = paymentDateRangeToFilterStrings(fileLoginDateRange)
+    const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
+    const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
+    return (
+      matchesSearch &&
+      matchesPaymentType &&
+      matchesPaymentStatus &&
+      matchesApproveDateRange &&
+      matchesFileLoginDateRange
+    )
   })
 
   const downloadFilteredPaymentsExcel = () => {
@@ -1469,7 +1586,7 @@ export default function AccountManagementPage() {
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Last Updated</CardTitle>
                   <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                    <Calendar className="w-5 h-5 text-blue-500" />
+                    <CalendarIcon className="w-5 h-5 text-blue-500" />
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -1700,6 +1817,44 @@ export default function AccountManagementPage() {
                     <Download className="w-4 h-4" />
                     Download Excel
                   </Button>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Date range filters</p>
+                    {(approveDateRange?.from ||
+                      approveDateRange?.to ||
+                      fileLoginDateRange?.from ||
+                      fileLoginDateRange?.to) && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-xs"
+                        onClick={() => {
+                          setApproveDateRange(undefined)
+                          setFileLoginDateRange(undefined)
+                        }}
+                      >
+                        Clear dates
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <PaymentDateRangeFilter
+                      id="approve-date-range"
+                      label="Approve date range"
+                      value={approveDateRange}
+                      onChange={setApproveDateRange}
+                      placeholder="All approve dates"
+                    />
+                    <PaymentDateRangeFilter
+                      id="file-login-date-range"
+                      label="File login date range"
+                      value={fileLoginDateRange}
+                      onChange={setFileLoginDateRange}
+                      placeholder="All file login dates"
+                    />
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-0 px-2 sm:px-6">
@@ -2198,10 +2353,7 @@ export default function AccountManagementPage() {
                                   <SelectItem value="cash">Cash</SelectItem>
                                   <SelectItem value="upi">UPI</SelectItem>
                                   <SelectItem value="loan">Loan</SelectItem>
-                                  <SelectItem value="netbanking">Net Banking</SelectItem>
-                                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
                                   <SelectItem value="cheque">Cheque</SelectItem>
-                                  <SelectItem value="card">Card</SelectItem>
                                 </SelectContent>
                               </Select>
                                         </div>

@@ -18,7 +18,22 @@ import { formatPersonName } from "@/lib/name-display"
 
 type InstallerQuotation = {
   id: string
-  customer?: { firstName?: string; lastName?: string; mobile?: string }
+  customer?: {
+    firstName?: string
+    lastName?: string
+    mobile?: string
+    email?: string
+    address?: string
+    location?: string
+    locationLink?: string
+  }
+  dealer?: { firstName?: string; lastName?: string; mobile?: string }
+  visitors?: Array<{ visitorName?: string; name?: string; mobile?: string }>
+  otherVisitors?: Array<{ visitorName?: string; name?: string; mobile?: string }>
+  assignedVisitors?: Array<{ visitorName?: string; name?: string; mobile?: string }>
+  visitLocation?: string
+  location?: string
+  locationLink?: string
   products?: Record<string, any>
   createdAt?: string
   pricing?: { subtotal?: number; totalAmount?: number; finalAmount?: number }
@@ -91,6 +106,7 @@ export default function InstallerDashboardPage() {
     Record<string, { length: string; width: string; height: string }>
   >({})
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [loadingDetailsForId, setLoadingDetailsForId] = useState<string | null>(null)
   const [workflowMap, setWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -238,17 +254,83 @@ export default function InstallerDashboardPage() {
 
   const getProductSpecRows = (q: InstallerQuotation) => {
     const p = q.products || {}
+    const systemType = String(p.systemType || "").toLowerCase()
+    const panelConfig = (() => {
+      if (systemType === "both") {
+        const dcr =
+          p.dcrPanelSize && p.dcrPanelQuantity
+            ? `DCR: ${p.dcrPanelBrand ? `${p.dcrPanelBrand} ` : ""}${p.dcrPanelSize} x ${p.dcrPanelQuantity}`
+            : ""
+        const nonDcr =
+          p.nonDcrPanelSize && p.nonDcrPanelQuantity
+            ? `NON-DCR: ${p.nonDcrPanelBrand ? `${p.nonDcrPanelBrand} ` : ""}${p.nonDcrPanelSize} x ${p.nonDcrPanelQuantity}`
+            : ""
+        return [dcr, nonDcr].filter(Boolean).join(" | ")
+      }
+      if (systemType === "customize" && Array.isArray(p.customPanels) && p.customPanels.length > 0) {
+        return p.customPanels
+          .map((cp: any) => `${cp.brand ? `${cp.brand} ` : ""}${cp.size || ""}W x ${cp.quantity || 0}`)
+          .join(" | ")
+      }
+      if (p.panelSize && p.panelQuantity) {
+        return `${p.panelBrand ? `${p.panelBrand} ` : ""}${p.panelSize} x ${p.panelQuantity}`
+      }
+      return ""
+    })()
+
+    const inverterConfig = [p.inverterBrand, p.inverterSize, p.inverterType].filter(Boolean).join(" - ")
+
+    const batteryConfig = (() => {
+      const parts = [p.batteryCapacity, p.batteryPrice ? `₹${p.batteryPrice}` : undefined].filter(Boolean)
+      return parts.join(" - ")
+    })()
+
     return [
       { label: "System Type", value: p.systemType },
-      { label: "Panel Brand", value: p.panelBrand },
-      { label: "Panel Size", value: p.panelSize },
-      { label: "Panel Quantity", value: p.panelQuantity },
+      { label: "Panel Configuration", value: panelConfig },
+      { label: "Inverter", value: inverterConfig },
+      { label: "Panel Brand", value: p.panelBrand || p.dcrPanelBrand || p.nonDcrPanelBrand },
+      { label: "Panel Size", value: p.panelSize || p.dcrPanelSize || p.nonDcrPanelSize },
+      { label: "Panel Quantity", value: p.panelQuantity || p.dcrPanelQuantity || p.nonDcrPanelQuantity },
       { label: "Inverter Type", value: p.inverterType },
       { label: "Inverter Brand", value: p.inverterBrand },
       { label: "Inverter Size", value: p.inverterSize },
+      { label: "Phase", value: p.phase },
       { label: "Hybrid Inverter", value: p.hybridInverter },
+      { label: "Battery", value: batteryConfig },
       { label: "Battery Capacity", value: p.batteryCapacity },
-      { label: "Battery Price", value: p.batteryPrice },
+      { label: "Battery Price", value: p.batteryPrice ? `₹${p.batteryPrice}` : undefined },
+      { label: "Structure", value: [p.structureType, p.structureSize].filter(Boolean).join(" - ") },
+      { label: "Meter", value: p.meterBrand },
+      { label: "AC Cable", value: [p.acCableBrand, p.acCableSize].filter(Boolean).join(" - ") },
+      { label: "DC Cable", value: [p.dcCableBrand, p.dcCableSize].filter(Boolean).join(" - ") },
+      { label: "ACDB", value: p.acdb },
+      { label: "DCDB", value: p.dcdb },
+    ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
+  }
+
+  const getCustomerInfoRows = (q: InstallerQuotation) => {
+    const customerName = formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown")
+    return [
+      { label: "Customer", value: customerName },
+      { label: "Mobile", value: q.customer?.mobile },
+      { label: "Email", value: q.customer?.email },
+      { label: "Address", value: q.customer?.address || q.customer?.location },
+      { label: "Agent", value: q.dealer ? formatPersonName(q.dealer.firstName, q.dealer.lastName, "") : undefined },
+      { label: "Agent Mobile", value: q.dealer?.mobile },
+    ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
+  }
+
+  const getVisitorDetailsRows = (q: InstallerQuotation) => {
+    const visitors = (q.visitors || q.otherVisitors || q.assignedVisitors || [])
+      .map((v) => String(v.visitorName || v.name || "").trim())
+      .filter((name) => name.length > 0)
+    const location = q.visitLocation || q.location || q.customer?.location || q.customer?.address
+    const locationLink = q.locationLink || q.customer?.locationLink
+    return [
+      { label: "Visit Location", value: location },
+      { label: "Location Link", value: locationLink },
+      { label: "Visitors", value: visitors.length > 0 ? visitors.join(", ") : undefined },
     ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
   }
 
@@ -268,6 +350,64 @@ export default function InstallerDashboardPage() {
     setUploadFilesByQuotation((prev) => (prev[quotation.id] ? prev : { ...prev, [quotation.id]: {} }))
   }
 
+  const hydrateQuotationDetails = async (quotation: InstallerQuotation) => {
+    if (!useApi || !quotation?.id) return
+    setLoadingDetailsForId(quotation.id)
+    try {
+      const full = await api.quotations.getById(quotation.id)
+      if (!full || typeof full !== "object") return
+
+      let visitDetails: any = null
+      try {
+        const visitResp = await api.visits.getByQuotation(quotation.id)
+        const visitList = Array.isArray((visitResp as any)?.visits)
+          ? (visitResp as any).visits
+          : Array.isArray(visitResp)
+            ? (visitResp as any[])
+            : []
+        visitDetails = visitList[0] || null
+      } catch {
+        visitDetails = null
+      }
+
+      setQuotations((prev) =>
+        prev.map((item) => {
+          if (item.id !== quotation.id) return item
+          return {
+            ...item,
+            ...full,
+            customer: {
+              ...(item.customer || {}),
+              ...((full as any).customer || {}),
+            },
+            dealer: (full as any).dealer || item.dealer,
+            products: (full as any).products || item.products,
+            visitors:
+              (visitDetails?.visitors as any[]) ||
+              (visitDetails?.otherVisitors as any[]) ||
+              item.visitors ||
+              item.otherVisitors,
+            otherVisitors: (visitDetails?.otherVisitors as any[]) || item.otherVisitors,
+            assignedVisitors: (visitDetails?.assignedVisitors as any[]) || item.assignedVisitors,
+            visitLocation: visitDetails?.location || visitDetails?.visitLocation || item.visitLocation,
+            location: visitDetails?.location || item.location,
+            locationLink: visitDetails?.locationLink || item.locationLink,
+            length: visitDetails?.length ?? item.length,
+            width: visitDetails?.width ?? item.width,
+            height: visitDetails?.height ?? item.height,
+            siteLength: visitDetails?.siteLength ?? item.siteLength,
+            siteWidth: visitDetails?.siteWidth ?? item.siteWidth,
+            siteHeight: visitDetails?.siteHeight ?? item.siteHeight,
+          } as InstallerQuotation
+        }),
+      )
+    } catch (error) {
+      console.warn("Could not hydrate installer quotation details:", error)
+    } finally {
+      setLoadingDetailsForId((current) => (current === quotation.id ? null : current))
+    }
+  }
+
   const setInProgress = (quotation: InstallerQuotation) => {
     const quotationId = quotation.id
     setWorkflowMap((prev) => ({
@@ -280,6 +420,7 @@ export default function InstallerDashboardPage() {
     }))
     ensureInstallerDraftData(quotation)
     setExpandedQuotationId(quotationId)
+    void hydrateQuotationDetails(quotation)
   }
 
   const handleApproveInstallation = async (quotation: InstallerQuotation) => {
@@ -493,6 +634,9 @@ export default function InstallerDashboardPage() {
                             onClick={() => {
                               ensureInstallerDraftData(q)
                               setExpandedQuotationId(expandedQuotationId === q.id ? null : q.id)
+                                  if (expandedQuotationId !== q.id) {
+                                    void hydrateQuotationDetails(q)
+                                  }
                             }}
                           >
                             <Upload className="w-3.5 h-3.5 mr-1" />
@@ -504,6 +648,9 @@ export default function InstallerDashboardPage() {
 
                     {expandedQuotationId === q.id && (
                       <div className="rounded-md border border-border/70 p-3 space-y-3">
+                        {loadingDetailsForId === q.id && (
+                          <p className="text-xs text-muted-foreground">Loading full customer/quotation details...</p>
+                        )}
                         <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
                           <div className="space-y-3">
                             <div className="space-y-1.5">
@@ -642,22 +789,71 @@ export default function InstallerDashboardPage() {
                             </div>
                           </div>
 
-                          <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-2">
-                            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                              Customer Product Specification
-                            </p>
-                            {getProductSpecRows(q).length > 0 ? (
-                              <div className="space-y-1.5">
-                                {getProductSpecRows(q).map((row) => (
-                                  <div key={row.label} className="text-xs flex items-start justify-between gap-2">
-                                    <span className="text-muted-foreground">{row.label}</span>
-                                    <span className="font-medium text-right">{String(row.value)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-xs text-muted-foreground">No product specification available.</p>
-                            )}
+                          <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
+                            <div className="space-y-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Customer Details
+                              </p>
+                              {getCustomerInfoRows(q).length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {getCustomerInfoRows(q).map((row) => (
+                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
+                                      <span className="text-muted-foreground">{row.label}</span>
+                                      <span className="font-medium text-right">{String(row.value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No customer details available.</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-2 border-t border-border/60 pt-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Visitor / Location Details
+                              </p>
+                              {getVisitorDetailsRows(q).length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {getVisitorDetailsRows(q).map((row) => (
+                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
+                                      <span className="text-muted-foreground">{row.label}</span>
+                                      {row.label === "Location Link" ? (
+                                        <a
+                                          href={String(row.value)}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="font-medium text-right text-primary hover:underline break-all"
+                                        >
+                                          {String(row.value)}
+                                        </a>
+                                      ) : (
+                                        <span className="font-medium text-right">{String(row.value)}</span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No visitor/location details available.</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-2 border-t border-border/60 pt-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                Product Specification
+                              </p>
+                              {getProductSpecRows(q).length > 0 ? (
+                                <div className="space-y-1.5">
+                                  {getProductSpecRows(q).map((row) => (
+                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
+                                      <span className="text-muted-foreground">{row.label}</span>
+                                      <span className="font-medium text-right">{String(row.value)}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No product specification available.</p>
+                              )}
+                            </div>
                           </div>
                         </div>
 

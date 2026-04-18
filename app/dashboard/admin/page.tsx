@@ -39,7 +39,7 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { api, ApiError } from "@/lib/api"
+import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
@@ -3826,11 +3826,9 @@ export default function AdminPanelPage() {
                             setDocumentsDialogOpen(false)
                           })
                           .catch((error: unknown) => {
-                            const message =
-                              error instanceof Error ? error.message : "Failed to upload documents."
                             toast({
                               title: "Upload failed",
-                              description: message,
+                              description: apiErrorToUserMessage(error),
                               variant: "destructive",
                             })
                           })

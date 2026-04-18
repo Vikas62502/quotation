@@ -117,6 +117,103 @@
 - If one file is missing, still generate ZIP and include note in `document-details.txt`.
 - Return 404 only when quotation/documents do not exist.
 
+---
+
+# Quotation customer documents — `PATCH /api/quotations/{quotationId}/documents`
+
+## Purpose
+Dealer/admin **Document Submission** dialog uploads KYC, bank, and property files plus related text fields. The live app calls this route with **`multipart/form-data`** (not JSON).
+
+## Auth
+- Require a valid Bearer token.
+- Restrict to roles that should edit quotation documents (e.g. dealer, admin) — match your authorization model.
+
+## Request
+- **Method:** `PATCH`
+- **Path:** `/api/quotations/{quotationId}/documents`
+- **Content-Type:** `multipart/form-data`
+- **Body:** mix of text parts and file parts. File parts are **omitted** when the user did not pick a new file for that slot (partial update).
+
+### Text / boolean parts (exact field names from the dashboard)
+
+| Form field | Notes |
+|------------|--------|
+| `isCompliantSenior` | String `"true"` or `"false"` |
+| `aadharNumber` | Optional if left empty in UI |
+| `phoneNumber` | **Required in UI** — customer phone (not `contactPhone`) |
+| `compliantAadharNumber` | When compliant flow used |
+| `compliantContactPhone` | When compliant flow used |
+| `compliantPanNumber` | Uppercase PAN string |
+| `compliantBankAccountNumber`, `compliantBankIfsc`, `compliantBankName`, `compliantBankBranch` | Compliant bank block |
+| `panNumber` | Primary PAN |
+| `electricityKno` | **Required in UI** |
+| `bankAccountNumber`, `bankIfsc`, `bankName`, `bankBranch` | Optional in UI; may be empty |
+| `emailId` | **Required in UI** — maps from “Email ID *” (not `contactEmail`) |
+
+### File parts (binary; exact keys)
+
+| Field | Typical accept |
+|-------|----------------|
+| `aadharFront`, `aadharBack` | images |
+| `compliantAadharFront`, `compliantAadharBack` | images (if compliant senior) |
+| `compliantPanImage` | image |
+| `compliantBankPassbookImage` | image |
+| `panImage` | image |
+| `electricityBillImage` | image |
+| `bankPassbookImage` | image |
+| `geotagRoofPhoto` | image (optional in UI) |
+| `customerWithHousePhoto` | image (optional in UI) |
+| `propertyDocumentPdf` | **PDF** |
+
+## Required backend behavior
+
+1. **Multipart parsing**
+   - Use a parser (e.g. multer/busboy) with explicit **max file size** and **max file count** suitable for several photos + one PDF.
+   - Allowlist **only** the field names above so stray fields do not crash the handler.
+
+2. **Partial updates**
+   - If a file key is **missing** on this request, **keep** the existing stored object URL / key for that document on the quotation.
+   - If a file key is present, upload the new object and replace the stored reference.
+
+3. **Storage**
+   - Upload files to **S3** (or equivalent). Recommended key prefix: `quotations/{quotationId}/documents/{logicalField}-{uuid}.{ext}`.
+   - Persist on the quotation (or a `documents` sub-document) both **metadata** (text fields) and **stable object keys** or **URLs** per your schema.
+
+4. **URLs returned to clients**
+   - Follow the same rule as elsewhere in this document: do **not** return private S3 URLs that return `AccessDenied` in the browser unless you also serve **presigned GET** or public/CDN URLs in API responses.
+
+5. **Validation and HTTP status**
+   - For invalid input (bad email format, missing required text when your rules say required, file type/size violations), respond with **`400`** and JSON:
+     ```json
+     {
+       "success": false,
+       "error": {
+         "code": "VALIDATION_ERROR",
+         "message": "Human readable summary",
+         "details": [{ "field": "emailId", "message": "Invalid email" }]
+       }
+     }
+     ```
+   - Do **not** leak stack traces in production responses. Log server-side with `quotationId`, received field names, file sizes, and S3 error codes (never log file contents or secrets).
+
+6. **Success response**
+   - **`200`** with your standard envelope, e.g. `{ "success": true, "data": { /* updated quotation or documents summary */ } }`.
+   - Include updated document URLs/fields so the UI can refresh without a second round trip if needed.
+
+## Common causes of HTTP 500 on this route (fix server-side)
+
+- Unhandled S3 errors (`AccessDenied`, wrong bucket/region, KMS, expired credentials).
+- Parser throwing on **unknown field names** or **oversized** uploads instead of returning **413** / **400** with JSON.
+- Code assuming **every** file part is always present on every PATCH (must support partial file updates).
+- DB constraint violations (e.g. writing `undefined`, wrong column type for `isCompliantSenior`, or enum mismatch) not caught and mapped to **400**/**409**.
+
+## Operational checklist (live)
+
+1. Reproduce: note `quotationId`, timestamp, and response body.
+2. Inspect API logs / APM for the stack trace on `PATCH .../documents`.
+3. Verify S3 IAM policy, bucket policy, and CORS if uploads go direct from browser (this flow is **server-side multipart**, so the API user/role must be allowed `s3:PutObject` on the target prefix).
+4. Confirm reverse proxy / gateway **body size** limit (nginx `client_max_body_size`, etc.) is larger than your max upload.
+
 # Backend Changes Required - Frontend Implementation Summary
 
 ## Overview
