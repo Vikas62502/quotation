@@ -26,7 +26,7 @@ const ADMIN_USERNAME = "admin"
 
 const getNavItems = (isAdmin: boolean, role: string | null) => {
   // Account Management users should not see regular navigation (they have their own header)
-  if (role === "account-management" || role === "installer" || role === "baldev" || role === "hr") {
+  if (role === "account-management" || role === "installer" || role === "metering" || role === "baldev" || role === "hr") {
     return []
   }
   
@@ -58,11 +58,13 @@ export function DashboardNav() {
   if (
     role === "account-management" ||
     role === "installer" ||
+    role === "metering" ||
     role === "baldev" ||
     role === "hr" ||
     accountManager ||
     pathname.startsWith("/dashboard/account-management") ||
     pathname.startsWith("/dashboard/installer") ||
+    pathname.startsWith("/dashboard/metering") ||
     pathname.startsWith("/dashboard/baldev") ||
     pathname.startsWith("/dashboard/hr")
   ) {

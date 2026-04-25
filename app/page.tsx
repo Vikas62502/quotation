@@ -28,6 +28,8 @@ export default function HomePage() {
         router.push("/dashboard/hr")
       } else if (role === "installer") {
         router.push("/dashboard/installer")
+      } else if (role === "metering") {
+        router.push("/dashboard/metering")
       } else if (role === "baldev") {
         router.push("/dashboard/baldev")
       } else if (role === "visitor") {
@@ -46,6 +48,7 @@ export default function HomePage() {
     { label: "Visitor Login", path: "/visitor-login" },
     { label: "HR Login", path: "/hr-login" },
     { label: "Installer Login", path: "/installer-login" },
+    { label: "Metering Login", path: "/metering-login" },
     { label: "Baldev Login", path: "/baldev-login" },
   ]
 

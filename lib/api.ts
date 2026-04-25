@@ -332,6 +332,15 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
   }
 }
 
+/** Clone multipart body so a second HTTP attempt does not reuse a consumed stream. */
+function cloneFormData(formData: FormData): FormData {
+  const next = new FormData()
+  for (const [key, value] of formData.entries()) {
+    next.append(key, value)
+  }
+  return next
+}
+
 // Multipart helper for file uploads through backend
 async function multipartRequest<T = any>(endpoint: string, method: "POST" | "PATCH", formData: FormData): Promise<T> {
   const token = getAuthToken()
@@ -992,6 +1001,14 @@ export const api = {
         method: "DELETE",
       })
     },
+
+    /** Optional: persist site / leg dimensions on the visit record (backend may implement PATCH /visits/:id). */
+    patch: async (visitId: string, body: Record<string, unknown>) => {
+      return apiRequest(`/visits/${visitId}`, {
+        method: "PATCH",
+        body,
+      })
+    },
   },
 
   // Visitors
@@ -1019,17 +1036,193 @@ export const api = {
 
   // Installer APIs
   installer: {
-    uploadCompletionDocuments: async (quotationId: string, formData: FormData) => {
-      try {
-        // Preferred installer-specific endpoint (backend should upload files to AWS/S3)
-        return await multipartRequest(`/installer/quotations/${quotationId}/documents`, "POST", formData)
-      } catch (error) {
-        // Temporary compatibility fallback to existing quotation documents endpoint
-        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
-          return multipartRequest(`/quotations/${quotationId}/documents`, "PATCH", formData)
-        }
-        throw error
+    /** Fetch installer queue with endpoint fallbacks for live backend variations. */
+    getQueue: async (params?: {
+      page?: number
+      limit?: number
+      status?: string
+      search?: string
+      sortBy?: string
+      sortOrder?: "asc" | "desc"
+    }) => {
+      const queryParams = new URLSearchParams()
+      if (params) {
+        Object.entries(params).forEach(([key, value]) => {
+          if (value !== undefined) queryParams.append(key, String(value))
+        })
       }
+      const query = queryParams.toString()
+      const suffix = query ? `?${query}` : ""
+      const endpoints = [
+        `/installer/quotations${suffix}`,
+        `/installer/queue${suffix}`,
+        `/quotations${suffix}`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest(endpoint)
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
+    },
+
+    /**
+     * Uploads installer completion images + site legs + extra expenses + status.
+     * Do not fall back to PATCH /quotations/{id}/documents — that route is for customer KYC
+     * (aadhaar, PAN, etc.); sending installer multipart there causes 500 / SYS_001 on many servers.
+     */
+    uploadCompletionDocuments: async (quotationId: string, formData: FormData) => {
+      const tried: string[] = []
+      const isMissingRoute = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+
+      try {
+        tried.push("POST /installer/quotations/{id}/documents")
+        return await multipartRequest(`/installer/quotations/${quotationId}/documents`, "POST", formData)
+      } catch (firstError) {
+        if (!isMissingRoute(firstError)) throw firstError
+      }
+
+      try {
+        tried.push("POST /quotations/{id}/documents")
+        return await multipartRequest(`/quotations/${quotationId}/documents`, "POST", cloneFormData(formData))
+      } catch (secondError) {
+        if (!isMissingRoute(secondError)) throw secondError
+      }
+
+      throw new ApiError(
+        `Installer completion upload is not available on this API (tried: ${tried.join(
+          " → ",
+        )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents, that accepts the installer multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
+        "HTTP_404",
+      )
+    },
+  },
+
+  // Metering APIs
+  metering: {
+    /** Update metering workflow status/stage. */
+    updateStatus: async (
+      quotationId: string,
+      action: "start" | "approve" | "send_to_mco" | "mark_completed" | "move_back",
+      remarks?: string,
+    ) => {
+      const body: Record<string, any> = { action }
+      if (remarks && remarks.trim()) body.remarks = remarks.trim()
+
+      const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
+        { endpoint: `/metering/quotations/${quotationId}/status`, method: "PATCH" },
+        { endpoint: `/metering/quotations/${quotationId}/decision`, method: "PATCH" },
+        { endpoint: `/quotations/${quotationId}/metering-status`, method: "PATCH" },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of endpoints) {
+        try {
+          return await apiRequest(attempt.endpoint, { method: attempt.method, body })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
+    },
+
+    /** Force set metering status for backends that don't support action-based transition yet. */
+    forceSetStatus: async (quotationId: string, status: "metering_approved" | "mco") => {
+      const body = {
+        status,
+        installationStatus: status,
+        meteringStatus: status,
+      }
+
+      const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
+        { endpoint: `/metering/quotations/${quotationId}/status`, method: "PATCH" },
+        { endpoint: `/quotations/${quotationId}/metering-status`, method: "PATCH" },
+        { endpoint: `/quotations/${quotationId}/status`, method: "PATCH" },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of endpoints) {
+        try {
+          return await apiRequest(attempt.endpoint, { method: attempt.method, body })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
+    },
+
+    /** Save metering details (discom/meter fields + optional meter document image). */
+    saveDetails: async (
+      quotationId: string,
+      payload: {
+        discomName?: string
+        meterType?: "solar" | "net" | "both"
+        meterNo?: string
+        solarMeterNo?: string
+        netMeterNo?: string
+      },
+      meterDocumentFile?: File | null,
+    ) => {
+      const formData = new FormData()
+      if (payload.discomName) formData.append("discomName", payload.discomName)
+      if (payload.meterType) formData.append("meterType", payload.meterType)
+      if (payload.meterNo) formData.append("meterNo", payload.meterNo)
+      if (payload.solarMeterNo) formData.append("solarMeterNo", payload.solarMeterNo)
+      if (payload.netMeterNo) formData.append("netMeterNo", payload.netMeterNo)
+      if (meterDocumentFile) formData.append("meterDocumentImage", meterDocumentFile)
+
+      const isMissingRoute = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+
+      const isForbidden = (error: unknown) =>
+        error instanceof ApiError && error.code === "HTTP_403"
+
+      let firstError: unknown
+      try {
+        return await multipartRequest(`/metering/quotations/${quotationId}/details`, "POST", formData)
+      } catch (e) {
+        firstError = e
+        if (!isMissingRoute(e) && !isForbidden(e)) throw e
+      }
+
+      let secondError: unknown
+      try {
+        return await multipartRequest(`/quotations/${quotationId}/metering-details`, "POST", cloneFormData(formData))
+      } catch (e) {
+        secondError = e
+        if (!isMissingRoute(e) && !isForbidden(e)) throw e
+      }
+
+      if (isForbidden(firstError) || isForbidden(secondError)) {
+        throw new ApiError(
+          "Insufficient permissions (AUTH_004): allow JWT role `metering` on POST /api/metering/quotations/{id}/details (or grant the same on POST /api/quotations/{id}/metering-details). Admin-only middleware on these routes causes this for metering logins.",
+          "AUTH_004",
+        )
+      }
+
+      throw new ApiError(
+        "Metering details save endpoint is not available. Expected POST /api/metering/quotations/{id}/details (or compatible fallback).",
+        "HTTP_404",
+      )
     },
   },
 

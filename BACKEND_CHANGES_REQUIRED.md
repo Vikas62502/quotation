@@ -546,17 +546,24 @@ Implement a two-step post-approval workflow:
 #### New Roles Required
 - `installer`
 - `baldev` (or `confirmation`, frontend maps this to baldev)
+- `metering` (backend may also receive legacy aliases like `meter`, `metering-team`, `mco`)
 
 #### Login Behavior
 `POST /api/auth/login` must return:
 - `user.role = "installer"` for installer credentials
 - `user.role = "baldev"` (or `"confirmation"`) for Baldev credentials
+- `user.role = "metering"` for metering credentials
+
+#### Admin User Creation Compatibility
+- `POST /api/admin/account-managers` (or your operational user create route) should accept `role = "metering"` in the same flow used for installer/baldev/hr creation.
+- Role validation must include `metering` in allowed operational roles.
 
 #### Authorization Rules
 - `installer` can access only installer endpoints.
 - `baldev` can access only baldev confirmation endpoints.
+- `metering` can access only metering workflow endpoints.
 - `admin` can view all stages and override if needed.
-- `dealer` cannot perform installer/baldev approvals.
+- `dealer` cannot perform installer/baldev/metering approvals.
 
 ---
 
@@ -571,6 +578,10 @@ Implement a two-step post-approval workflow:
   - `pending_baldev`
   - `baldev_approved`
   - `baldev_rejected`
+  - `pending_metering`
+  - `metering_in_progress`
+  - `metering_approved`
+  - `mco`
   - `completed`
 - `installerId` (nullable FK to users table)
 - `installerActionAt` (nullable timestamp)
@@ -580,7 +591,25 @@ Implement a two-step post-approval workflow:
 - `baldevId` (nullable FK to users table)
 - `baldevActionAt` (nullable timestamp)
 - `baldevRemarks` (nullable text)
+- `meteringId` (nullable FK to users table)
+- `meteringActionAt` (nullable timestamp)
+- `meteringApprovedAt` (nullable timestamp)
+- `meteringRemarks` (nullable text)
+- `mcoAt` (nullable timestamp)
 - `completionAt` (nullable timestamp)
+
+**Installer completion (aligned with installer dashboard — site legs + expenses):**
+
+- `site_length_cm` / `site_width_cm` / `site_height_cm` (DECIMAL/NUMERIC nullable) — **back leg**, **mid leg**, **front leg** in centimetres; `site_width_cm` nullable when mid leg omitted.
+- **Or** reuse existing `length` / `width` / `height` on quotation if those already mean “site legs” in cm; document the contract clearly.
+- `back_leg_ft`, `mid_leg_ft`, `front_leg_ft` (DECIMAL nullable) — optional denormalized feet (frontend sends these in multipart).
+- `extra_expenses_total` (DECIMAL nullable) — sum of installer extra expenses.
+- `extra_expenses_json` (JSONB/TEXT nullable) — array of `{ "description": string, "amount": number }`, or rely only on child table below.
+
+**Visits table (if visits store site dimensions for visitor panel):**
+
+- Ensure `visits` (or embedded `siteDimensions` JSON) can store **`backLegFeet`**, **`midLegFeet`**, **`frontLegFeet`**, and/or **`length` / `width` / `height`** with **`unit`** (`cm` | `feet`) so `GET /quotations/{id}/visits` and visitor UIs show the same numbers the installer saved.
+- When `PATCH /visits/{visitId}` (C-bis) is used, update these fields transactionally with permission checks (installer only for visits tied to quotations in `installer_in_progress` / allowed statuses).
 
 #### Optional Separate Table (recommended for uploads)
 `quotation_installation_docs`:
@@ -607,12 +636,29 @@ Allowed transitions:
 - `installer_in_progress` -> `installer_approved` OR `installer_rejected`
 - `installer_approved` -> `pending_baldev`
 - `pending_baldev` -> `baldev_approved` OR `baldev_rejected`
-- `baldev_approved` -> `completed`
+- `baldev_approved` -> `pending_metering`
+- `pending_metering` -> `metering_in_progress`
+- `metering_in_progress` -> `metering_approved` OR `pending_metering`
+- `metering_approved` -> `mco`
+- `mco` -> `completed`
 
 Validation:
 - Transition should fail with `409` if current status is not valid for requested action.
 - On `installer_approved`, require at least one site completion image.
 - On `completed`, require required Baldev docs (warranty + meter as per business rule).
+
+---
+
+### 6.4.0 Production troubleshooting: `500` / `SYS_001` on `/quotations/{id}/documents`
+
+**Symptom:** Browser Network tab shows **`PATCH /api/quotations/{quotationId}/documents`** with **500 Internal Server Error** and JSON like `success: false`, `error.code: "SYS_001"`, `error.message: "Internal server error"`, right after an installer submits “Complete & Mark as Approved”.
+
+**Cause:** Older frontends fell back to **`PATCH /api/quotations/{id}/documents`** when **`POST /api/installer/quotations/{id}/documents`** was missing (**404**/**405**). That **PATCH** route is built for **customer KYC / quotation documents** (aadhaar, PAN, bank passbook, etc.) — not for installer completion multipart (`installerCompletionImages`, `siteLength`, `extraExpensesJson`, `installationStatus`, etc.). Sending the installer payload there often triggers an **unhandled exception** → generic **500** / **SYS_001**.
+
+**Required fix (pick one):**
+
+1. **Preferred:** Implement **`POST /api/installer/quotations/{quotationId}/documents`** as specified in **section 6.4.C** below (multipart, S3, persist legs + expenses + status). The current frontend tries this first, then **`POST /api/quotations/{quotationId}/documents`** with the same body, and **does not** call **PATCH** `/quotations/{id}/documents` for installer completion anymore.
+2. **Alternative:** Extend **`PATCH /api/quotations/{id}/documents`** to **safely ignore or fully implement** installer-only fields (no uncaught throws on unknown multipart keys). This is harder to keep compatible with the existing KYC flow; prefer (1).
 
 ---
 
@@ -651,21 +697,116 @@ Behavior:
 #### C) Installer Uploads (AWS via backend)
 `POST /api/installer/quotations/{quotationId}/documents`
 
-Multipart fields:
-- `installerCompletionImages[]` (preferred key used by frontend)
-- `files[]` (optional backward compatibility alias)
-- `docType` (`installer_po`, `additional_expense`, `site_completion_image`)
-- `remarks` (optional)
+**Content-Type:** `multipart/form-data`
 
-AWS/S3 requirement:
+**Auth:** `installer` (or role your gateway maps to installer UI).
+
+##### C.1 Files (completion proof)
+
+The installer dashboard sends **each completion image twice** (same file bytes): once under the aggregate key and once under the field key. Backend may deduplicate by hashing or prefer one key only.
+
+- **`installerCompletionImages`** — repeatable; each file is one site-completion image (required set is driven by UI; treat all received files as completion images).
+- **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
+  - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `otherImages`).
+- **`piUpload`** — optional single file (PDF or image): proforma / PI document.
+
+##### C.2 Site legs (dimensions) — **cm + feet**
+
+Frontend labels map to stored semantics as follows:
+
+| UI label        | Meaning        | Multipart fields (primary) |
+|-----------------|----------------|------------------------------|
+| Back leg (cm)   | Required       | `siteLength`, `backLegCm` (same numeric string) |
+| Mid leg (cm)    | Optional       | `siteWidth`, `midLegCm` (omit or empty string if not provided) |
+| Front leg (cm)  | Required       | `siteHeight`, `frontLegCm` (same numeric string) |
+
+Also sent for visitor / reporting compatibility (decimal feet, derived from cm):
+
+- **`backLegFeet`** (string number, required when legs submitted)
+- **`midLegFeet`** (optional; omit if no mid leg)
+- **`frontLegFeet`** (string number, required)
+
+**Backend should:**
+
+1. Persist site dimensions on the **quotation** (or your canonical “installation site” record), e.g. `site_length_cm`, `site_width_cm`, `site_height_cm` and/or `back_leg_ft`, `mid_leg_ft`, `front_leg_ft`.
+2. Optionally persist the same values on the **visit** row linked to this quotation (see **C-bis** below), or rely on the installer client calling `PATCH /visits/{visitId}` after a successful upload.
+
+Validation:
+
+- Reject with **400** if `siteLength` / `siteHeight` (back / front legs) are missing, non-numeric, or ≤ 0.
+- If `siteWidth` / `midLegCm` is present, it must be a positive number; if absent or empty, store null.
+
+##### C.3 Extra expenses (multiple lines)
+
+When the installer adds one or more expense lines, the frontend sends:
+
+- **`extraExpensesJson`** — stringified JSON array, e.g.  
+  `[{"description":"Transport","amount":1200},{"description":"Extra cable","amount":3500.5}]`  
+  - `description` — string (may be empty if only amount is provided; normalize as you prefer).
+  - `amount` — number ≥ 0.
+- **`extraExpensesTotal`** — string number: sum of `amount` for all lines (redundant; backend should recompute from JSON and reject mismatch if you want strict integrity).
+
+**Backend should:**
+
+- Parse `extraExpensesJson` safely; ignore if absent or invalid empty array.
+- Store either:
+  - rows in `quotation_installation_expenses` (`quotationId`, `description`, `amount`, `currency` default INR), or
+  - a single JSON column on quotations / installation docs, plus optional denormalized `extra_expenses_total`.
+
+##### C.4 Status and remarks
+
+- **`installationStatus`** — frontend sends `installer_approved` when the installer completes the form (align with §6.2 `installationStatus` enum).
+- **`installerRemarks`** — optional text (maps to UI “Notes”).
+
+##### C.5 Optional backward-compatible fields
+
+- `files[]` — optional alias for generic file upload.
+- `docType` — optional (`installer_po`, `additional_expense`, `site_completion_image`); if omitted, infer from filenames or default to `site_completion_image`.
+- `remarks` — optional alias for `installerRemarks` if you already use this name.
+
+##### C.6 AWS / S3
+
 - Backend must upload received files to AWS S3 (not local disk).
-- Save S3 URL(s) in quotation documents/workflow records.
+- Save S3 URL(s) in quotation documents / workflow records.
 - Response should return uploaded file URLs for frontend display.
 - Suggested response payload should include:
   - `installationStatus`
   - `installerInProgressAt`
   - `installerApprovedAt`
-  - `documents.siteCompletionImages[]`
+  - `documents.siteCompletionImages[]` (or equivalent)
+  - Persisted **site leg** fields and **extra expense** summary if applicable
+
+#### C-bis) Installer → Visit dimension sync (optional separate call)
+
+After a successful `POST .../installer/quotations/{quotationId}/documents`, the **frontend** may call:
+
+`PATCH /api/visits/{visitId}`
+
+**Auth:** `installer` (or same role allowed to update visit site data for that quotation’s visit).
+
+**JSON body example** (installer sends **cm** as canonical numbers on the visit; feet duplicated for visitor UI parity):
+
+```json
+{
+  "unit": "cm",
+  "length": 450,
+  "width": 320,
+  "height": 410,
+  "siteLength": 450,
+  "siteWidth": 320,
+  "siteHeight": 410,
+  "backLegFeet": 14.7638,
+  "midLegFeet": 10.4987,
+  "frontLegFeet": 13.4512
+}
+```
+
+Rules:
+
+- `width` / `siteWidth` / `midLegFeet` may be omitted if there is no mid leg.
+- Resolve `visitId` from `GET /api/quotations/{quotationId}/visits` (or your list visits for quotation route) when the quotation payload does not yet include it.
+- If this endpoint is **not** implemented, return **404** or **405**; the installer UI tolerates failure and still completes installation upload.
+- When implemented, **visitor** dashboards and APIs that read `GET /visitors/me/visits` or `GET /quotations/{id}/visits` must return the updated `length` / `width` / `height`, `unit`, `siteDimensions` / `backLegFeet` / `midLegFeet` / `frontLegFeet` so visitor and installer stay consistent.
 
 #### D) Baldev Queue
 `GET /api/baldev/quotations?status=pending_baldev&page=1&limit=20`
@@ -699,6 +840,112 @@ Multipart fields:
 
 Returns timeline of status transitions + actor + remarks + docs.
 
+#### H) Metering Queue
+`GET /api/metering/quotations?status=pending_metering&page=1&limit=20`
+
+Expected behavior:
+- Supports filters for metering dashboard tabs:
+  - `processing` -> `pending_metering`, `metering_in_progress`
+  - `approved` -> `metering_approved`
+  - `mco` -> `mco`
+- Returns same quotation envelope shape used by installer/baldev list endpoints.
+
+#### I) Metering Stage Update
+`PATCH /api/metering/quotations/{quotationId}/status`
+
+Request:
+```json
+{
+  "action": "start" | "approve" | "send_to_mco" | "mark_completed" | "move_back",
+  "remarks": "string"
+}
+```
+
+Behavior:
+- `start` -> `metering_in_progress`
+- `approve` -> `metering_approved`
+- `send_to_mco` -> `mco`
+- `mark_completed` -> `completed`
+- `move_back` -> `pending_metering` or `metering_approved` (based on business rule / current status)
+
+Required timestamp persistence:
+- On `approve`, set `meteringApprovedAt = NOW()`.
+- On `send_to_mco`, set `mcoAt = NOW()`.
+- Return these fields in response payload so frontend can immediately show the correct date in each tab.
+
+Important sync note:
+- Frontend persists tab placement via **backend status only** (no local/session storage for metering stage).
+- Backend must persist every transition; list/queue responses must return updated `installationStatus` / `meteringStatus` (and timestamps) so **Approved** and **MCO** tabs match DB after refresh.
+
+**Approve transition rule (fixes `WF_003` / “not allowed for current stage”):**  
+If metering queue can return rows still in `pending_installer` (or other pre-metering states), backend must **either**:
+- **A)** allow `action=approve` (or `start` then `approve`) from those stages for role `metering`, **or**
+- **B)** exclude such rows from `GET /api/metering/quotations` until `installationStatus` is at least `pending_metering`.
+
+Do not expose rows in the metering queue that metering users cannot legally approve.
+
+**Frontend retry contract (implement at least one path):**  
+The client may call, in order:
+1. `PATCH /api/metering/quotations/{id}/status` with `{ "action": "approve" }`
+2. On `WF_003` / `409`: `action=start` then `action=approve` again
+3. On continued failure: **direct status body** (for older or stricter gateways), same route or fallbacks:
+   - `PATCH /api/metering/quotations/{id}/status` with JSON body:
+     ```json
+     { "status": "metering_approved", "installationStatus": "metering_approved", "meteringStatus": "metering_approved" }
+     ```
+   - or `PATCH /api/quotations/{id}/metering-status` with the same body
+   - or `PATCH /api/quotations/{id}/status` with the same body (if your API uses a single quotation status field)
+
+Additional compatibility expectation:
+- If current quotation status is non-pending and action-based approve is rejected, backend should still accept direct status patch to `metering_approved` so metering users can complete the move without manual stage repair.
+
+Backend should accept **one** of these shapes and return the updated quotation row (including `meteringApprovedAt`).
+
+Status flow required by UI tabs:
+- Initial records should be returned in Processing as `pending_*` states (commonly `pending_installer` / `pending_metering`).
+- On Move to Approved (`action=approve`), persist status as `metering_approved` (or equivalent mapped approved state).
+- On Move to MCO (`action=send_to_mco`), persist status as `mco` and set `mcoAt`.
+- Queue endpoint must return these status values so records land in the correct tab after refresh/relogin.
+
+Example response (after `send_to_mco`):
+```json
+{
+  "success": true,
+  "data": {
+    "id": "QT-123",
+    "installationStatus": "mco",
+    "meteringApprovedAt": "2026-04-22T10:10:00.000Z",
+    "mcoAt": "2026-04-22T11:05:00.000Z",
+    "updatedAt": "2026-04-22T11:05:00.000Z"
+  }
+}
+```
+
+#### J) Metering Detail Save (Modal fields + document)
+`POST /api/metering/quotations/{quotationId}/details`
+
+Content-Type: `multipart/form-data`
+
+Fields expected from frontend modal:
+- `discomName` (string, optional but recommended)
+- `meterType` (`solar` | `net` | `both`)
+- `meterNo` (string, used when meterType is single/unknown)
+- `solarMeterNo` (string, required when `meterType=both`, optional for `solar`)
+- `netMeterNo` (string, required when `meterType=both`, optional for `net`)
+- `meterDocumentImage` (file, optional/required as per business rule)
+
+Behavior:
+- Persist these values in quotation metering fields (or a `quotation_metering_details` table linked by quotation id).
+- Store uploaded `meterDocumentImage` in S3 and persist URL/metadata.
+- Return saved values in response so UI can rehydrate after refresh.
+
+**RBAC (fixes `AUTH_004` / “Insufficient permissions” on Save Details):**  
+Metering dashboard users authenticate with role `metering`. This `POST` must **not** be admin-only. Use the same role list as `GET /api/metering/quotations` (at minimum `metering`, plus `admin` if desired). If only `admin` is allowed here, metering logins will get **403** with `AUTH_004` while the queue still loads.
+
+Compatibility fallback (optional):
+- If you cannot add the route above immediately, support:
+  - `POST /api/quotations/{quotationId}/metering-details`
+
 ---
 
 ### 6.5 Frontend Compatibility Requirements
@@ -708,12 +955,35 @@ For all quotation list endpoints used by account-management/installer/baldev, in
 - `installationStatus`
 - `approvedAt` (admin approval date)
 - `installerApprovedAt` (installer approval date, when available)
+- `meteringStage` / `meteringStatus` (or derive from `installationStatus`)
+- `mcoAt` (when available)
 - `documents` grouped by docType (if available)
 - `dealer`, `customer`, `products`, `createdAt`, `validUntil`
+
+For metering dashboard specifically:
+- Include `meteringApprovedAt` in list/detail payloads.
+- Include `mcoAt` in list/detail payloads.
+- In Approved tab flows, frontend should use `meteringApprovedAt` as the approved date (fallback: `approvedAt`).
+- In MCO tab flows, frontend should use `mcoAt` as the MCO date (fallback: `meteringApprovedAt`, then `approvedAt`).
+- Include metering detail fields when available:
+  - `discomName`
+  - `meterType`
+  - `meterNo`
+  - `solarMeterNo`
+  - `netMeterNo`
+  - `meterDocumentImageUrl` (or document object under `documents` with `docType=meter_doc`)
 
 For installer listing UI requirements:
 - support oldest-first ordering (`sortBy=approvedAt&sortOrder=asc`) so old approved jobs appear first
 - support search by customer name/mobile/quotation id
+
+**Installer detail / visit sync (prefill site legs in installer UI):**
+
+- `GET /api/quotations/{quotationId}/visits` (or list visits for quotation) should return, per visit:
+  - `id` (visitId — used for optional `PATCH /visits/{visitId}` after installer save)
+  - `location`, `locationLink`, visitors arrays (existing)
+  - **Leg / site fields:** `backLegFeet`, `midLegFeet`, `frontLegFeet` (numbers), and/or `siteDimensions` / `completionDetails` nesting the same keys (snake_case variants accepted: `back_leg_feet`, etc.)
+  - Legacy **`length`**, **`width`**, **`height`** with **`unit`** when legs are not stored separately (installer maps L→back, W→mid, H→front when feet fields absent).
 
 ---
 
@@ -723,6 +993,7 @@ For installer listing UI requirements:
 |------|-------------|------|
 | `WF_001` | Invalid workflow transition | 409 |
 | `WF_002` | Required documents missing for transition | 400 |
+| `WF_003` | Metering action not allowed for current stage | 409 |
 | `AUTH_004` | Insufficient permissions | 403 |
 | `RES_001` | Quotation not found | 404 |
 
@@ -741,6 +1012,11 @@ ADD COLUMN installer_remarks TEXT NULL,
 ADD COLUMN baldev_id UUID NULL,
 ADD COLUMN baldev_action_at TIMESTAMP NULL,
 ADD COLUMN baldev_remarks TEXT NULL,
+ADD COLUMN metering_id UUID NULL,
+ADD COLUMN metering_action_at TIMESTAMP NULL,
+ADD COLUMN metering_approved_at TIMESTAMP NULL,
+ADD COLUMN metering_remarks TEXT NULL,
+ADD COLUMN mco_at TIMESTAMP NULL,
 ADD COLUMN completion_at TIMESTAMP NULL;
 
 CREATE INDEX idx_quotations_installation_status ON quotations(installation_status);
@@ -1244,10 +1520,184 @@ await api.quotations.updatePricing(quotationId, {
 
 ---
 
+## Metering Backend Code (S3 + DB)
+
+Use this as a reference implementation for:
+- `POST /api/metering/quotations/{quotationId}/details`
+- Upload `meterDocumentImage` to S3
+- Persist metering fields + image metadata in database
+
+### A) SQL (PostgreSQL) - table for metering details
+
+```sql
+CREATE TABLE IF NOT EXISTS quotation_metering_details (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  quotation_id UUID NOT NULL REFERENCES quotations(id) ON DELETE CASCADE,
+  discom_name TEXT,
+  meter_type VARCHAR(10) CHECK (meter_type IN ('solar', 'net', 'both')),
+  meter_no TEXT,
+  solar_meter_no TEXT,
+  net_meter_no TEXT,
+  meter_document_url TEXT,
+  meter_document_key TEXT,
+  meter_document_name TEXT,
+  saved_by_user_id UUID NULL REFERENCES users(id),
+  saved_by_role VARCHAR(40),
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (quotation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qmd_quotation_id ON quotation_metering_details(quotation_id);
+```
+
+### B) Express Route (Multer memory + S3 upload + upsert)
+
+```ts
+import { Router } from "express";
+import multer from "multer";
+import { randomUUID } from "crypto";
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { QuotationMeteringDetails } from "../models/QuotationMeteringDetails";
+
+const router = Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+const s3 = new S3Client({ region: process.env.AWS_REGION });
+const bucket = process.env.AWS_S3_BUCKET!;
+
+router.post(
+  "/api/metering/quotations/:quotationId/details",
+  requireAuth,
+  requireRole(["metering", "admin"]),
+  upload.single("meterDocumentImage"),
+  async (req, res, next) => {
+    try {
+      const { quotationId } = req.params;
+      const discomName = (req.body.discomName || "").trim();
+      const meterType = req.body.meterType as "solar" | "net" | "both" | undefined;
+      const meterNo = (req.body.meterNo || "").trim();
+      const solarMeterNo = (req.body.solarMeterNo || "").trim();
+      const netMeterNo = (req.body.netMeterNo || "").trim();
+
+      // Validation for "Move to Approved" rule parity
+      if (!discomName) return res.status(400).json({ success: false, error: { code: "VAL_001", message: "discomName is required" } });
+      if (!meterType || !["solar", "net", "both"].includes(meterType)) {
+        return res.status(400).json({ success: false, error: { code: "VAL_001", message: "meterType must be solar/net/both" } });
+      }
+      if (meterType === "both" && (!solarMeterNo || !netMeterNo)) {
+        return res.status(400).json({ success: false, error: { code: "VAL_001", message: "solarMeterNo and netMeterNo are required for meterType=both" } });
+      }
+      if (meterType !== "both" && !meterNo) {
+        return res.status(400).json({ success: false, error: { code: "VAL_001", message: "meterNo is required" } });
+      }
+
+      let meterDocumentUrl: string | null = null;
+      let meterDocumentKey: string | null = null;
+      let meterDocumentName: string | null = null;
+
+      if (req.file) {
+        const ext = (req.file.originalname.split(".").pop() || "bin").toLowerCase();
+        meterDocumentKey = `metering/${quotationId}/${Date.now()}-${randomUUID()}.${ext}`;
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: meterDocumentKey,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype || "application/octet-stream",
+          }),
+        );
+        meterDocumentUrl = `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${meterDocumentKey}`;
+        meterDocumentName = req.file.originalname;
+      }
+
+      const existing = await QuotationMeteringDetails.findOne({ where: { quotationId } });
+      const payload = {
+        quotationId,
+        discomName,
+        meterType,
+        meterNo: meterType === "both" ? null : meterNo,
+        solarMeterNo: meterType === "both" ? solarMeterNo : meterType === "solar" ? meterNo : null,
+        netMeterNo: meterType === "both" ? netMeterNo : meterType === "net" ? meterNo : null,
+        meterDocumentUrl: meterDocumentUrl ?? existing?.meterDocumentUrl ?? null,
+        meterDocumentKey: meterDocumentKey ?? existing?.meterDocumentKey ?? null,
+        meterDocumentName: meterDocumentName ?? existing?.meterDocumentName ?? null,
+        savedByUserId: req.user?.id || null,
+        savedByRole: req.user?.role || null,
+      };
+
+      const saved = existing ? await existing.update(payload) : await QuotationMeteringDetails.create(payload);
+      return res.json({ success: true, data: saved });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+```
+
+### C) Stage transition guard (approve action)
+
+In `PATCH /api/metering/quotations/{quotationId}/status` when `action=approve`:
+- Fetch metering details row
+- Ensure required fields exist (including meter document URL)
+- If missing, return:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "WF_002",
+    "message": "Metering details are incomplete for approve action."
+  }
+}
+```
+
+Also set `meteringApprovedAt = NOW()` on successful approve.
+
+### D) Stage compatibility for detail-save endpoint (important)
+
+Current frontend allows opening/saving Metering Details while items are visible in Processing tab (often still `pending_installer` / pre-metering states).
+
+To avoid repeated `WF_003` / `HTTP_409` during normal data entry, backend should support one of these contracts:
+
+1. **Preferred**: Allow `POST /api/metering/quotations/{id}/details` for workflow states:
+   - `pending_installer`
+   - `installer_in_progress`
+   - `installer_approved`
+   - `pending_baldev`
+   - `baldev_approved`
+   - `pending_metering`
+   - `metering_in_progress`
+
+2. **Alternative**: Keep strict stage check, but return a clear business error:
+   - `code: WF_003`
+   - `message: "Metering details are not allowed for current stage"`
+   - frontend will show an error until the quotation reaches an allowed stage (no silent local persistence for metering details).
+
+Recommendation: choose (1) so S3 + DB persistence happens immediately and metering users are not blocked by stage mismatches.
+
+Frontend persistence contract (updated):
+- Metering UI now expects backend-persisted data only (no local/session storage for stage/details persistence).
+- After Save Details / Approve / Move to MCO, subsequent refresh must return the same data from DB via queue endpoints.
+
+Modal prefill/edit contract (important for current UI):
+- `GET /api/metering/quotations` (and any metering detail endpoint, if separate) must return previously saved metering fields so the modal opens pre-filled and editable:
+  - `discomName`
+  - `meterType`
+  - `meterNo`
+  - `solarMeterNo`
+  - `netMeterNo`
+  - `meterDocumentName` (or `meter_document_name`)
+  - `meterDocumentUrl` (or `meter_document_url`) — public S3 URL
+- After `POST /api/metering/quotations/{id}/details`, response should echo saved values above (including S3 URL) so frontend can reflect latest data immediately without reload.
+- Field naming may be camelCase or snake_case, but keep it consistent in list + save responses.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
 - Frontend API client: `lib/api.ts`
-- Frontend save handlers: `components/quotation-details-dialog.tsx`
+- Metering dashboard save/status handlers: `app/dashboard/metering/page.tsx`
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

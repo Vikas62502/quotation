@@ -11,11 +11,11 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { Eye, EyeOff, Users } from "lucide-react"
+import { Eye, EyeOff, Gauge } from "lucide-react"
 
-function HrLoginForm() {
+function MeteringLoginForm() {
   const router = useRouter()
-  const { loginHr, isAuthenticated, role } = useAuth()
+  const { loginMetering, isAuthenticated, role } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [showPassword, setShowPassword] = useState(false)
@@ -23,17 +23,18 @@ function HrLoginForm() {
 
   useEffect(() => {
     if (!isAuthenticated) return
+
     const timer = setTimeout(() => {
-      if (role === "hr") {
-        router.push("/dashboard/hr")
-      } else if (role === "account-management") {
-        router.push("/dashboard/account-management")
+      if (role === "metering") {
+        router.push("/dashboard/metering")
       } else if (role === "installer") {
         router.push("/dashboard/installer")
-      } else if (role === "metering") {
-        router.push("/dashboard/metering")
       } else if (role === "baldev") {
         router.push("/dashboard/baldev")
+      } else if (role === "account-management") {
+        router.push("/dashboard/account-management")
+      } else if (role === "hr") {
+        router.push("/dashboard/hr")
       } else if (role === "visitor") {
         router.push("/visitor/dashboard")
       } else if (role === "admin") {
@@ -42,6 +43,7 @@ function HrLoginForm() {
         router.push("/dashboard")
       }
     }, 100)
+
     return () => clearTimeout(timer)
   }, [isAuthenticated, role, router])
 
@@ -51,17 +53,20 @@ function HrLoginForm() {
       setError("Please enter username and password")
       return
     }
+
     setIsLoading(true)
     setError("")
+
     try {
-      const success = await loginHr(credentials.username, credentials.password)
+      const success = await loginMetering(credentials.username, credentials.password)
       if (!success) {
-        setError("Invalid credentials or you don't have HR access.")
+        setError("Invalid credentials or you don't have metering access.")
         setIsLoading(false)
         return
       }
+
       await new Promise((resolve) => setTimeout(resolve, 300))
-      window.location.href = "/dashboard/hr"
+      window.location.href = "/dashboard/metering"
     } catch (err) {
       setIsLoading(false)
       if (err instanceof ApiError) {
@@ -89,14 +94,16 @@ function HrLoginForm() {
           <Card className="shadow-lg border-border/50">
             <CardHeader className="text-center pb-4">
               <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
-                <Users className="w-8 h-8 text-primary" />
+                <Gauge className="w-8 h-8 text-primary" />
               </div>
-              <CardTitle className="text-2xl">HR Login</CardTitle>
-              <CardDescription>Upload CSV and assign unique leads to dealers</CardDescription>
+              <CardTitle className="text-2xl">Metering Login</CardTitle>
+              <CardDescription>Login to manage metering workflow: Processing, Approved, and MCO</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleLogin} className="space-y-4">
-                {error && <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">{error}</div>}
+                {error && (
+                  <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-lg text-destructive text-sm">{error}</div>
+                )}
                 <div className="space-y-2">
                   <Label htmlFor="username">Username</Label>
                   <Input
@@ -130,7 +137,7 @@ function HrLoginForm() {
                   </div>
                 </div>
                 <Button type="submit" className="w-full h-11 shadow-lg shadow-primary/25" disabled={isLoading}>
-                  {isLoading ? "Logging in..." : "Login as HR"}
+                  {isLoading ? "Logging in..." : "Login as Metering"}
                 </Button>
               </form>
             </CardContent>
@@ -141,10 +148,10 @@ function HrLoginForm() {
   )
 }
 
-export default function HrLoginPage() {
+export default function MeteringLoginPage() {
   return (
     <Suspense fallback={<div className="min-h-screen bg-background flex items-center justify-center">Loading...</div>}>
-      <HrLoginForm />
+      <MeteringLoginForm />
     </Suspense>
   )
 }

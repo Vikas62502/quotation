@@ -43,6 +43,8 @@ function AccountManagementLoginForm() {
           router.push("/dashboard/admin")
         } else if (role === "installer") {
           router.push("/dashboard/installer")
+        } else if (role === "metering") {
+          router.push("/dashboard/metering")
         } else if (role === "baldev") {
           router.push("/dashboard/baldev")
         } else if (role === "hr") {

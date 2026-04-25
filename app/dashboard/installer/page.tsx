@@ -6,18 +6,25 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, Wrench, CheckCircle2, Clock3, Upload, Search, CalendarDays } from "lucide-react"
+import { LogOut, Wrench, CheckCircle2, Clock3, Upload, Search, CalendarDays, Plus, Trash2 } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
-import { api } from "@/lib/api"
+import { api, apiErrorToUserMessage } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
+import {
+  INSTALLER_RELEASE_MAP_KEY,
+  extractQuotationListFromApiResponse,
+  getInstallationWorkflowStatus,
+  isQuotationReleasedToInstaller,
+} from "@/lib/operational-install-queue"
 
 type InstallerQuotation = {
   id: string
+  status?: string
   customer?: {
     firstName?: string
     lastName?: string
@@ -41,6 +48,7 @@ type InstallerQuotation = {
   totalAmount?: number
   finalAmount?: number
   installationStatus?: string
+  installation_status?: string
   installationReadyForInstaller?: boolean
   installationReleasedAt?: string
   installation_ready_for_installer?: boolean
@@ -57,6 +65,10 @@ type InstallerQuotation = {
   visitLength?: number
   visitWidth?: number
   visitHeight?: number
+  visitId?: string
+  backLegFeet?: number
+  midLegFeet?: number
+  frontLegFeet?: number
 }
 
 type InstallerWorkflowItem = {
@@ -79,15 +91,103 @@ const INSTALLATION_IMAGE_FIELDS = [
 
 type InstallationImageFieldKey = (typeof INSTALLATION_IMAGE_FIELDS)[number]["key"]
 
-const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
+type ImageFieldConfig = (typeof INSTALLATION_IMAGE_FIELDS)[number] & { required?: boolean; multiple?: boolean }
 
-const isReleasedForInstaller = (q: InstallerQuotation, localReleaseMap?: Record<string, any>) =>
-  q.installationReadyForInstaller === true ||
-  q.installation_ready_for_installer === true ||
-  q.readyForInstallation === true ||
-  q.ready_for_installation === true ||
-  q.releaseToInstaller === true ||
-  localReleaseMap?.[q.id]?.installationReadyForInstaller === true
+const isImageFieldRequired = (field: (typeof INSTALLATION_IMAGE_FIELDS)[number]) =>
+  (field as ImageFieldConfig).required !== false
+
+const isImageFieldMultiple = (field: (typeof INSTALLATION_IMAGE_FIELDS)[number]) =>
+  (field as ImageFieldConfig).multiple === true
+
+const CM_PER_FT = 30.48
+
+const newExpenseLineId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `exp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+type ExtraExpenseLine = { id: string; description: string; amount: string }
+
+/** Product-shaped fields sometimes returned on the quotation root or QuotationProduct row instead of `products`. */
+const INSTALLER_PRODUCT_ROOT_KEYS = [
+  "systemType",
+  "phase",
+  "panelBrand",
+  "panelSize",
+  "panelQuantity",
+  "panelPrice",
+  "dcrPanelBrand",
+  "dcrPanelSize",
+  "dcrPanelQuantity",
+  "nonDcrPanelBrand",
+  "nonDcrPanelSize",
+  "nonDcrPanelQuantity",
+  "inverterType",
+  "inverterBrand",
+  "inverterSize",
+  "inverterPrice",
+  "structureType",
+  "structureSize",
+  "structurePrice",
+  "hybridInverter",
+  "batteryCapacity",
+  "batteryPrice",
+  "customPanels",
+] as const
+
+const isNonEmptyPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).length > 0
+
+const pickProductFieldsFromRecord = (record?: Record<string, any> | null): Record<string, any> => {
+  if (!record) return {}
+  const out: Record<string, any> = {}
+  for (const k of INSTALLER_PRODUCT_ROOT_KEYS) {
+    const val = record[k]
+    if (val === undefined || val === null) continue
+    if (typeof val === "string" && val.trim() === "") continue
+    out[k] = val
+  }
+  return out
+}
+
+/**
+ * Merge `products` JSON with nested quotation rows and Sequelize-style product rows so installer UI always sees one object.
+ */
+const mergeInstallerProductSources = (record: Record<string, any>): Record<string, any> => {
+  const nested = record.quotation && typeof record.quotation === "object" ? (record.quotation as Record<string, any>) : null
+  const qp = record.quotationProduct
+  const qps = record.quotationProducts
+  const firstArrayRow =
+    Array.isArray(qps) && qps[0] && typeof qps[0] === "object" && !Array.isArray(qps[0]) ? (qps[0] as Record<string, any>) : null
+  const productRow =
+    qp && typeof qp === "object" && !Array.isArray(qp) ? (qp as Record<string, any>) : firstArrayRow
+
+  let merged: Record<string, any> = {}
+  if (nested) {
+    merged = { ...merged, ...pickProductFieldsFromRecord(nested) }
+    if (isNonEmptyPlainObject(nested.products)) merged = { ...merged, ...nested.products }
+  }
+  merged = { ...merged, ...pickProductFieldsFromRecord(record) }
+  if (isNonEmptyPlainObject(record.products)) merged = { ...merged, ...record.products }
+  if (productRow && Object.keys(productRow).length > 0) merged = { ...merged, ...productRow }
+  return merged
+}
+
+/** Flatten `{ quotation: {...} }` list/detail shapes and attach merged `products` for display. */
+const installerQuotationFromApiRecord = (raw: unknown): InstallerQuotation => {
+  if (!raw || typeof raw !== "object") return raw as InstallerQuotation
+  const r = raw as Record<string, any>
+  const nested = r.quotation
+  const flat =
+    nested && typeof nested === "object" && !Array.isArray(nested)
+      ? ({ ...(nested as Record<string, any>), ...r } as Record<string, any>)
+      : { ...r }
+  const mergedProducts = mergeInstallerProductSources(flat)
+  const products = isNonEmptyPlainObject(mergedProducts)
+    ? mergedProducts
+    : isNonEmptyPlainObject(flat.products)
+      ? (flat.products as Record<string, any>)
+      : flat.products || {}
+  return { ...flat, products } as InstallerQuotation
+}
 
 export default function InstallerDashboardPage() {
   const router = useRouter()
@@ -101,7 +201,7 @@ export default function InstallerDashboardPage() {
   const [uploadNotes, setUploadNotes] = useState<Record<string, string>>({})
   const [uploadFilesByQuotation, setUploadFilesByQuotation] = useState<Record<string, Partial<Record<InstallationImageFieldKey, File[]>>>>({})
   const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, File | null>>({})
-  const [extraExpensesByQuotation, setExtraExpensesByQuotation] = useState<Record<string, string>>({})
+  const [extraExpenseLinesByQuotation, setExtraExpenseLinesByQuotation] = useState<Record<string, ExtraExpenseLine[]>>({})
   const [dimensionsByQuotation, setDimensionsByQuotation] = useState<
     Record<string, { length: string; width: string; height: string }>
   >({})
@@ -147,22 +247,26 @@ export default function InstallerDashboardPage() {
       }
       try {
         if (useApi) {
-          const response = await api.quotations.getAll({ status: "approved", page: 1, limit: 1000 })
-          let list: any[] = []
-          if (Array.isArray(response)) {
-            list = response
-          } else if (Array.isArray(response?.quotations)) {
-            list = response.quotations
-          } else if (Array.isArray(response?.data?.quotations)) {
-            list = response.data.quotations
+          // Prefer installer queue endpoint; fall back to generic quotations inside API layer.
+          let list = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
+          )
+          if (list.length === 0) {
+            list = extractQuotationListFromApiResponse(await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }))
           }
-          setQuotations(list.filter((q) => isReleasedForInstaller(q, localReleaseMap)))
+          if (list.length === 0) {
+            list = extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 }))
+          }
+          const normalizedList = list.map((q) => installerQuotationFromApiRecord(q))
+          setQuotations(normalizedList.filter((q) => isQuotationReleasedToInstaller(q as any, localReleaseMap)))
         } else {
           const localQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
-          const approved = localQuotations.filter(
-            (q: InstallerQuotation & { status?: string }) =>
-              String(q.status || "").toLowerCase() === "approved" && isReleasedForInstaller(q, localReleaseMap),
-          )
+          const approved = localQuotations
+            .filter(
+              (q: InstallerQuotation & { status?: string }) =>
+                (String(q.status || "").toLowerCase() === "approved" || isQuotationReleasedToInstaller(q as any, localReleaseMap)),
+            )
+            .map((q: unknown) => installerQuotationFromApiRecord(q))
           setQuotations(approved)
         }
       } catch {
@@ -192,7 +296,7 @@ export default function InstallerDashboardPage() {
   }
 
   const getInstallerStatus = (q: InstallerQuotation): "pending" | "inprogress" | "approved" => {
-    const backendStatus = String(q.installationStatus || "").toLowerCase()
+    const backendStatus = getInstallationWorkflowStatus(q as any)
     if (
       backendStatus === "installer_approved" ||
       backendStatus === "pending_baldev" ||
@@ -252,8 +356,66 @@ export default function InstallerDashboardPage() {
     return ""
   }
 
+  const pickFirstFiniteNumber = (...vals: unknown[]): number | undefined => {
+    for (const v of vals) {
+      if (v === undefined || v === null) continue
+      const n = typeof v === "string" && String(v).trim() !== "" ? Number(v) : Number(v)
+      if (Number.isFinite(n) && n > 0) return n
+    }
+    return undefined
+  }
+
+  const feetToCmString = (feet: unknown): string => {
+    const n = typeof feet === "string" && feet.trim() !== "" ? Number(feet) : Number(feet)
+    if (!Number.isFinite(n) || n <= 0) return ""
+    const cm = Math.round(n * CM_PER_FT * 100) / 100
+    return String(cm)
+  }
+
+  /** Site legs (cm): prefer visitor leg fields / siteDimensions, then legacy L×W×H on quotation. */
+  const pickSiteLegCmString = (q: InstallerQuotation, leg: "back" | "mid" | "front") => {
+    const r = q as Record<string, any>
+    if (leg === "back") {
+      const cm = pickFirstFiniteNumber(r.backLegCm, r.back_leg_cm)
+      if (cm != null) return String(cm)
+      const fromFeet = feetToCmString(pickFirstFiniteNumber(r.backLegFeet, r.back_leg_feet))
+      if (fromFeet) return fromFeet
+      return pickDimensionValue(q, ["length", "siteLength", "visitLength"])
+    }
+    if (leg === "mid") {
+      const cm = pickFirstFiniteNumber(r.midLegCm, r.mid_leg_cm)
+      if (cm != null) return String(cm)
+      const fromFeet = feetToCmString(pickFirstFiniteNumber(r.midLegFeet, r.mid_leg_feet))
+      if (fromFeet) return fromFeet
+      return pickDimensionValue(q, ["width", "siteWidth", "visitWidth"])
+    }
+    const cm = pickFirstFiniteNumber(r.frontLegCm, r.front_leg_cm)
+    if (cm != null) return String(cm)
+    const fromFeet = feetToCmString(pickFirstFiniteNumber(r.frontLegFeet, r.front_leg_feet))
+    if (fromFeet) return fromFeet
+    return pickDimensionValue(q, ["height", "siteHeight", "visitHeight"])
+  }
+
+  const getVisitorLegRows = (
+    q: InstallerQuotation,
+    draft?: { length: string; width: string; height: string },
+  ): { label: string; value: string }[] => {
+    const useDraft = (d: string | undefined, fallback: string) => {
+      const t = (d || "").trim()
+      return t !== "" ? t : fallback
+    }
+    const back = useDraft(draft?.length, pickSiteLegCmString(q, "back"))
+    const mid = useDraft(draft?.width, pickSiteLegCmString(q, "mid"))
+    const front = useDraft(draft?.height, pickSiteLegCmString(q, "front"))
+    return [
+      { label: "Back leg (cm)", value: back },
+      { label: "Mid leg (cm)", value: mid },
+      { label: "Front leg (cm)", value: front },
+    ].filter((row) => row.value.trim() !== "")
+  }
+
   const getProductSpecRows = (q: InstallerQuotation) => {
-    const p = q.products || {}
+    const p = mergeInstallerProductSources(q as unknown as Record<string, any>)
     const systemType = String(p.systemType || "").toLowerCase()
     const panelConfig = (() => {
       if (systemType === "both") {
@@ -289,23 +451,12 @@ export default function InstallerDashboardPage() {
       { label: "System Type", value: p.systemType },
       { label: "Panel Configuration", value: panelConfig },
       { label: "Inverter", value: inverterConfig },
-      { label: "Panel Brand", value: p.panelBrand || p.dcrPanelBrand || p.nonDcrPanelBrand },
-      { label: "Panel Size", value: p.panelSize || p.dcrPanelSize || p.nonDcrPanelSize },
-      { label: "Panel Quantity", value: p.panelQuantity || p.dcrPanelQuantity || p.nonDcrPanelQuantity },
-      { label: "Inverter Type", value: p.inverterType },
-      { label: "Inverter Brand", value: p.inverterBrand },
-      { label: "Inverter Size", value: p.inverterSize },
       { label: "Phase", value: p.phase },
       { label: "Hybrid Inverter", value: p.hybridInverter },
       { label: "Battery", value: batteryConfig },
       { label: "Battery Capacity", value: p.batteryCapacity },
       { label: "Battery Price", value: p.batteryPrice ? `₹${p.batteryPrice}` : undefined },
       { label: "Structure", value: [p.structureType, p.structureSize].filter(Boolean).join(" - ") },
-      { label: "Meter", value: p.meterBrand },
-      { label: "AC Cable", value: [p.acCableBrand, p.acCableSize].filter(Boolean).join(" - ") },
-      { label: "DC Cable", value: [p.dcCableBrand, p.dcCableSize].filter(Boolean).join(" - ") },
-      { label: "ACDB", value: p.acdb },
-      { label: "DCDB", value: p.dcdb },
     ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
   }
 
@@ -315,7 +466,6 @@ export default function InstallerDashboardPage() {
       { label: "Customer", value: customerName },
       { label: "Mobile", value: q.customer?.mobile },
       { label: "Email", value: q.customer?.email },
-      { label: "Address", value: q.customer?.address || q.customer?.location },
       { label: "Agent", value: q.dealer ? formatPersonName(q.dealer.firstName, q.dealer.lastName, "") : undefined },
       { label: "Agent Mobile", value: q.dealer?.mobile },
     ].filter((row) => row.value !== undefined && row.value !== null && String(row.value).trim() !== "")
@@ -340,13 +490,15 @@ export default function InstallerDashboardPage() {
       return {
         ...prev,
         [quotation.id]: {
-          length: pickDimensionValue(quotation, ["length", "siteLength", "visitLength"]),
-          width: pickDimensionValue(quotation, ["width", "siteWidth", "visitWidth"]),
-          height: pickDimensionValue(quotation, ["height", "siteHeight", "visitHeight"]),
+          length: pickSiteLegCmString(quotation, "back"),
+          width: pickSiteLegCmString(quotation, "mid"),
+          height: pickSiteLegCmString(quotation, "front"),
         },
       }
     })
-    setExtraExpensesByQuotation((prev) => (prev[quotation.id] !== undefined ? prev : { ...prev, [quotation.id]: "" }))
+    setExtraExpenseLinesByQuotation((prev) =>
+      prev[quotation.id] !== undefined ? prev : { ...prev, [quotation.id]: [] },
+    )
     setUploadFilesByQuotation((prev) => (prev[quotation.id] ? prev : { ...prev, [quotation.id]: {} }))
   }
 
@@ -356,6 +508,7 @@ export default function InstallerDashboardPage() {
     try {
       const full = await api.quotations.getById(quotation.id)
       if (!full || typeof full !== "object") return
+      const normalized = installerQuotationFromApiRecord(full)
 
       let visitDetails: any = null
       try {
@@ -370,18 +523,44 @@ export default function InstallerDashboardPage() {
         visitDetails = null
       }
 
+      const vd = visitDetails as Record<string, any> | null
+      const completion = vd?.completionDetails || vd?.completion_details || {}
+      const sd = vd?.siteDimensions || vd?.site_dimensions || completion?.siteDimensions || completion?.site_dimensions || {}
+      const backLegFeet = pickFirstFiniteNumber(
+        vd?.backLegFeet,
+        vd?.back_leg_feet,
+        sd.backLegFeet,
+        sd.back_leg_feet,
+      )
+      const midLegFeet = pickFirstFiniteNumber(
+        vd?.midLegFeet,
+        vd?.mid_leg_feet,
+        sd.midLegFeet,
+        sd.mid_leg_feet,
+      )
+      const frontLegFeet = pickFirstFiniteNumber(
+        vd?.frontLegFeet,
+        vd?.front_leg_feet,
+        sd.frontLegFeet,
+        sd.front_leg_feet,
+      )
+
       setQuotations((prev) =>
         prev.map((item) => {
           if (item.id !== quotation.id) return item
           return {
             ...item,
-            ...full,
+            ...normalized,
             customer: {
               ...(item.customer || {}),
-              ...((full as any).customer || {}),
+              ...((normalized as any).customer || {}),
             },
-            dealer: (full as any).dealer || item.dealer,
-            products: (full as any).products || item.products,
+            dealer: (normalized as any).dealer || item.dealer,
+            products: isNonEmptyPlainObject(normalized.products) ? normalized.products : item.products,
+            visitId: (vd?.id as string | undefined) || item.visitId,
+            backLegFeet: backLegFeet ?? (item as any).backLegFeet,
+            midLegFeet: midLegFeet ?? (item as any).midLegFeet,
+            frontLegFeet: frontLegFeet ?? (item as any).frontLegFeet,
             visitors:
               (visitDetails?.visitors as any[]) ||
               (visitDetails?.otherVisitors as any[]) ||
@@ -425,14 +604,15 @@ export default function InstallerDashboardPage() {
 
   const handleApproveInstallation = async (quotation: InstallerQuotation) => {
     const filesByField = uploadFilesByQuotation[quotation.id] || {}
-    const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => field.required !== false)
+    const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => isImageFieldRequired(field))
     const files = INSTALLATION_IMAGE_FIELDS
       .flatMap((field) => filesByField[field.key] || [])
       .filter((file): file is File => file instanceof File)
     const notes = uploadNotes[quotation.id] || ""
     const dimensions = dimensionsByQuotation[quotation.id] || { length: "", width: "", height: "" }
     const piUpload = piUploadByQuotation[quotation.id]
-    const extraExpenses = extraExpensesByQuotation[quotation.id] || ""
+    const rawExpenseLines = extraExpenseLinesByQuotation[quotation.id] || []
+    const expenseLines = rawExpenseLines.filter((l) => l.description.trim() !== "" || l.amount.trim() !== "")
 
     const missingFields = requiredFields.filter((field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0))
     if (missingFields.length > 0) {
@@ -443,17 +623,60 @@ export default function InstallerDashboardPage() {
       })
       return
     }
-    if (!dimensions.length || !dimensions.width || !dimensions.height) {
+    const backCm = dimensions.length.trim()
+    const frontCm = dimensions.height.trim()
+    const midCmRaw = dimensions.width.trim()
+    if (!backCm || !frontCm) {
       toast({
-        title: "Dimensions required",
-        description: "Please enter length, width and height.",
+        title: "Site legs required",
+        description: "Please enter back leg and front leg (cm). Mid leg is optional.",
+        variant: "destructive",
+      })
+      return
+    }
+    const backN = parseFloat(backCm)
+    const frontN = parseFloat(frontCm)
+    if (!Number.isFinite(backN) || backN <= 0 || !Number.isFinite(frontN) || frontN <= 0) {
+      toast({
+        title: "Invalid dimensions",
+        description: "Back leg and front leg must be valid numbers greater than zero.",
+        variant: "destructive",
+      })
+      return
+    }
+    let midN: number | undefined
+    if (midCmRaw !== "") {
+      midN = parseFloat(midCmRaw)
+      if (!Number.isFinite(midN) || midN <= 0) {
+        toast({
+          title: "Invalid mid leg",
+          description: "Mid leg must be a valid number greater than zero, or leave it empty.",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+    if (
+      expenseLines.some(
+        (l) =>
+          !l.amount.trim() ||
+          Number.isNaN(parseFloat(l.amount)) ||
+          parseFloat(l.amount) < 0,
+      )
+    ) {
+      toast({
+        title: "Extra expenses",
+        description: "Each expense line with a description must have a valid amount (≥ 0).",
         variant: "destructive",
       })
       return
     }
 
+    const cmToFeet = (cm: number) => Number((cm / CM_PER_FT).toFixed(4))
+
     setSavingId(quotation.id)
     let apiSaved = false
+    let uploadErrorMessage: string | undefined
     try {
       if (useApi) {
         const formData = new FormData()
@@ -468,40 +691,130 @@ export default function InstallerDashboardPage() {
         if (piUpload instanceof File) {
           formData.append("piUpload", piUpload)
         }
-        if (extraExpenses.trim() !== "") {
-          formData.append("extraExpenses", extraExpenses.trim())
+        if (expenseLines.length > 0) {
+          const payload = expenseLines.map(({ description, amount }) => ({
+            description: description.trim(),
+            amount: parseFloat(amount),
+          }))
+          formData.append("extraExpensesJson", JSON.stringify(payload))
+          formData.append(
+            "extraExpensesTotal",
+            String(payload.reduce((s, row) => s + (Number.isFinite(row.amount) ? row.amount : 0), 0)),
+          )
         }
-        formData.append("siteLength", dimensions.length)
-        formData.append("siteWidth", dimensions.width)
-        formData.append("siteHeight", dimensions.height)
+        formData.append("siteLength", backCm)
+        formData.append("siteWidth", midCmRaw === "" ? "" : midCmRaw)
+        formData.append("siteHeight", frontCm)
+        formData.append("backLegCm", backCm)
+        if (midCmRaw !== "") formData.append("midLegCm", midCmRaw)
+        formData.append("frontLegCm", frontCm)
+        formData.append("backLegFeet", String(cmToFeet(backN)))
+        if (midN != null) formData.append("midLegFeet", String(cmToFeet(midN)))
+        formData.append("frontLegFeet", String(cmToFeet(frontN)))
         formData.append("installerRemarks", notes)
         formData.append("installationStatus", "installer_approved")
         await api.installer.uploadCompletionDocuments(quotation.id, formData)
         apiSaved = true
+
+        let visitIdToPatch = (quotation as InstallerQuotation & { visitId?: string }).visitId
+        if (!visitIdToPatch) {
+          try {
+            const visitResp = await api.visits.getByQuotation(quotation.id)
+            const visitList = Array.isArray((visitResp as any)?.visits)
+              ? (visitResp as any).visits
+              : Array.isArray(visitResp)
+                ? (visitResp as any[])
+                : []
+            visitIdToPatch = visitList[0]?.id
+          } catch {
+            visitIdToPatch = undefined
+          }
+        }
+        if (visitIdToPatch) {
+          const patchBody: Record<string, unknown> = {
+            unit: "cm",
+            length: backN,
+            height: frontN,
+            siteLength: backN,
+            siteHeight: frontN,
+            backLegFeet: cmToFeet(backN),
+            frontLegFeet: cmToFeet(frontN),
+          }
+          if (midN != null) {
+            patchBody.width = midN
+            patchBody.siteWidth = midN
+            patchBody.midLegFeet = cmToFeet(midN)
+          }
+          try {
+            await api.visits.patch(visitIdToPatch, patchBody)
+            setQuotations((prev) =>
+              prev.map((it) => (it.id === quotation.id ? { ...it, visitId: visitIdToPatch } : it)),
+            )
+          } catch {
+            /* optional backend support */
+          }
+        }
+      } else {
+        apiSaved = true
       }
-    } catch {
+    } catch (err) {
       apiSaved = false
+      uploadErrorMessage = apiErrorToUserMessage(err)
     } finally {
-      setWorkflowMap((prev) => ({
-        ...prev,
-        [quotation.id]: {
-          status: "approved",
-          notes,
-          imageNames: [
-            ...files.map((f) => f.name),
-            ...(piUpload instanceof File ? [piUpload.name] : []),
-          ],
-          updatedAt: new Date().toISOString(),
-        },
-      }))
-      setExpandedQuotationId(null)
       setSavingId(null)
-      toast({
-        title: apiSaved ? "Marked as approved" : "Saved locally",
-        description: apiSaved
-          ? "Installation approved and moved to Approved by Installer."
-          : "Installation moved to Approved by Installer (backend endpoint not ready).",
-      })
+      const backNum = parseFloat(dimensions.length)
+      const frontNum = parseFloat(dimensions.height)
+      const midStr = dimensions.width.trim()
+      const midNum = midStr === "" ? undefined : parseFloat(midStr)
+
+      if (apiSaved) {
+        if (Number.isFinite(backNum) && Number.isFinite(frontNum)) {
+          setQuotations((prev) =>
+            prev.map((it) => {
+              if (it.id !== quotation.id) return it
+              return {
+                ...it,
+                length: backNum,
+                height: frontNum,
+                siteLength: backNum,
+                siteHeight: frontNum,
+                backLegFeet: cmToFeet(backNum),
+                frontLegFeet: cmToFeet(frontNum),
+                ...(midNum != null && Number.isFinite(midNum)
+                  ? { width: midNum, siteWidth: midNum, midLegFeet: cmToFeet(midNum) }
+                  : {}),
+              }
+            }),
+          )
+        }
+        setWorkflowMap((prev) => ({
+          ...prev,
+          [quotation.id]: {
+            status: "approved",
+            notes,
+            imageNames: [
+              ...files.map((f) => f.name),
+              ...(piUpload instanceof File ? [piUpload.name] : []),
+            ],
+            updatedAt: new Date().toISOString(),
+          },
+        }))
+        setExpandedQuotationId(null)
+        toast({
+          title: "Marked as approved",
+          description: useApi
+            ? "Installation approved and moved to Approved by Installer."
+            : "Installation moved to Approved by Installer (saved locally; API disabled).",
+        })
+      } else if (useApi) {
+        toast({
+          title: "Upload failed",
+          description:
+            uploadErrorMessage ||
+            "Could not save installation completion. Check the network response or ask the backend team to deploy POST /api/installer/quotations/{id}/documents.",
+          variant: "destructive",
+        })
+      }
     }
   }
 
@@ -662,12 +975,12 @@ export default function InstallerDashboardPage() {
                                   <div key={field.key} className="space-y-1.5">
                                     <p className="text-xs text-muted-foreground">
                                       {field.label}
-                                      {field.required === false ? "" : " *"}
+                                      {isImageFieldRequired(field) ? " *" : ""}
                                     </p>
                                     <Input
                                       type="file"
                                       accept="image/*"
-                                      multiple={field.multiple === true}
+                                      multiple={isImageFieldMultiple(field)}
                                       onChange={(e) => {
                                         const files = Array.from(e.target.files || [])
                                         setUploadFilesByQuotation((prev) => ({
@@ -703,26 +1016,97 @@ export default function InstallerDashboardPage() {
                                   {piUploadByQuotation[q.id]?.name || "No file selected"}
                                 </p>
                               </div>
-                              <div className="space-y-1.5">
-                                <Label className="text-xs">Extra Expenses</Label>
-                                <Input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  placeholder="Enter extra expense amount"
-                                  value={extraExpensesByQuotation[q.id] || ""}
-                                  onChange={(e) =>
-                                    setExtraExpensesByQuotation((prev) => ({ ...prev, [q.id]: e.target.value }))
+                            </div>
+
+                            <div className="space-y-2 rounded-md border border-border/60 p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <Label className="text-xs font-medium">Extra expenses (optional)</Label>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 text-xs gap-1"
+                                  onClick={() =>
+                                    setExtraExpenseLinesByQuotation((prev) => ({
+                                      ...prev,
+                                      [q.id]: [...(prev[q.id] || []), { id: newExpenseLineId(), description: "", amount: "" }],
+                                    }))
                                   }
-                                />
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  Add expense
+                                </Button>
                               </div>
+                              {(extraExpenseLinesByQuotation[q.id] || []).length === 0 ? (
+                                <p className="text-[11px] text-muted-foreground">No extra expenses added.</p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {(extraExpenseLinesByQuotation[q.id] || []).map((line) => (
+                                    <div key={line.id} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2 items-end">
+                                      <div className="space-y-1">
+                                        <Label className="text-[11px] text-muted-foreground">Description</Label>
+                                        <Input
+                                          className="h-9 text-sm"
+                                          placeholder="e.g. Transport, extra cable"
+                                          value={line.description}
+                                          onChange={(e) =>
+                                            setExtraExpenseLinesByQuotation((prev) => ({
+                                              ...prev,
+                                              [q.id]: (prev[q.id] || []).map((l) =>
+                                                l.id === line.id ? { ...l, description: e.target.value } : l,
+                                              ),
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-[11px] text-muted-foreground">Amount (₹)</Label>
+                                        <Input
+                                          className="h-9 text-sm"
+                                          type="number"
+                                          min="0"
+                                          step="0.01"
+                                          placeholder="0"
+                                          value={line.amount}
+                                          onChange={(e) =>
+                                            setExtraExpenseLinesByQuotation((prev) => ({
+                                              ...prev,
+                                              [q.id]: (prev[q.id] || []).map((l) =>
+                                                l.id === line.id ? { ...l, amount: e.target.value } : l,
+                                              ),
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-9 w-9 shrink-0 text-muted-foreground"
+                                        onClick={() =>
+                                          setExtraExpenseLinesByQuotation((prev) => ({
+                                            ...prev,
+                                            [q.id]: (prev[q.id] || []).filter((l) => l.id !== line.id),
+                                          }))
+                                        }
+                                        aria-label="Remove expense line"
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
 
                             <div className="space-y-1.5">
-                              <p className="text-xs font-medium">Site Dimensions (cm) *</p>
+                              <p className="text-xs font-medium">Site legs (cm) *</p>
+                              <p className="text-[11px] text-muted-foreground">
+                                Prefilled from the visitor site visit when available. Edits sync back to the visit when you complete installation.
+                              </p>
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 <div>
-                                  <Label className="text-xs">Length</Label>
+                                  <Label className="text-xs">Back leg *</Label>
                                   <Input
                                     type="number"
                                     min="0"
@@ -740,7 +1124,7 @@ export default function InstallerDashboardPage() {
                                   />
                                 </div>
                                 <div>
-                                  <Label className="text-xs">Width</Label>
+                                  <Label className="text-xs">Mid leg (optional)</Label>
                                   <Input
                                     type="number"
                                     min="0"
@@ -758,7 +1142,7 @@ export default function InstallerDashboardPage() {
                                   />
                                 </div>
                                 <div>
-                                  <Label className="text-xs">Height</Label>
+                                  <Label className="text-xs">Front leg *</Label>
                                   <Input
                                     type="number"
                                     min="0"
@@ -812,29 +1196,35 @@ export default function InstallerDashboardPage() {
                               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                                 Visitor / Location Details
                               </p>
-                              {getVisitorDetailsRows(q).length > 0 ? (
-                                <div className="space-y-1.5">
-                                  {getVisitorDetailsRows(q).map((row) => (
-                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
-                                      <span className="text-muted-foreground">{row.label}</span>
-                                      {row.label === "Location Link" ? (
-                                        <a
-                                          href={String(row.value)}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="font-medium text-right text-primary hover:underline break-all"
-                                        >
-                                          {String(row.value)}
-                                        </a>
-                                      ) : (
-                                        <span className="font-medium text-right">{String(row.value)}</span>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No visitor/location details available.</p>
-                              )}
+                              {(() => {
+                                const visitorRows = [
+                                  ...getVisitorDetailsRows(q),
+                                  ...getVisitorLegRows(q, dimensionsByQuotation[q.id]),
+                                ]
+                                return visitorRows.length > 0 ? (
+                                  <div className="space-y-1.5">
+                                    {visitorRows.map((row) => (
+                                      <div key={row.label} className="text-xs flex items-start justify-between gap-2">
+                                        <span className="text-muted-foreground">{row.label}</span>
+                                        {row.label === "Location Link" ? (
+                                          <a
+                                            href={String(row.value)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="font-medium text-right text-primary hover:underline break-all"
+                                          >
+                                            {String(row.value)}
+                                          </a>
+                                        ) : (
+                                          <span className="font-medium text-right">{String(row.value)}</span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">No visitor/location details available.</p>
+                                )
+                              })()}
                             </div>
 
                             <div className="space-y-2 border-t border-border/60 pt-2">

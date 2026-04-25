@@ -68,6 +68,17 @@ export interface InstallerUser {
   createdAt?: string
 }
 
+export interface MeteringUser {
+  id: string
+  username: string
+  firstName: string
+  lastName: string
+  mobile: string
+  email: string
+  isActive?: boolean
+  createdAt?: string
+}
+
 export interface BaldevUser {
   id: string
   username: string
@@ -90,13 +101,22 @@ export interface HrUser {
   createdAt?: string
 }
 
-export type UserRole = "dealer" | "visitor" | "admin" | "account-management" | "installer" | "baldev" | "hr"
+export type UserRole =
+  | "dealer"
+  | "visitor"
+  | "admin"
+  | "account-management"
+  | "installer"
+  | "metering"
+  | "baldev"
+  | "hr"
 
 interface AuthContextType {
   dealer: Dealer | null
   visitor: Visitor | null
   accountManager: AccountManager | null
   installer: InstallerUser | null
+  meteringUser: MeteringUser | null
   baldev: BaldevUser | null
   hrUser: HrUser | null
   role: UserRole | null
@@ -104,6 +124,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<boolean>
   loginAccountManagement: (username: string, password: string) => Promise<boolean>
   loginInstaller: (username: string, password: string) => Promise<boolean>
+  loginMetering: (username: string, password: string) => Promise<boolean>
   loginBaldev: (username: string, password: string) => Promise<boolean>
   loginHr: (username: string, password: string) => Promise<boolean>
   logout: () => void
@@ -117,6 +138,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [accountManager, setAccountManager] = useState<AccountManager | null>(null)
   const [installer, setInstaller] = useState<InstallerUser | null>(null)
+  const [meteringUser, setMeteringUser] = useState<MeteringUser | null>(null)
   const [baldev, setBaldev] = useState<BaldevUser | null>(null)
   const [hrUser, setHrUser] = useState<HrUser | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
@@ -153,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRole("visitor")
           setAccountManager(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
           setDealer(null)
@@ -161,6 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRole("hr")
           setAccountManager(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setVisitor(null)
           setDealer(null)
@@ -169,6 +193,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRole("installer")
           setAccountManager(null)
           setVisitor(null)
+          setMeteringUser(null)
+          setBaldev(null)
+          setHrUser(null)
+          setDealer(null)
+        } else if (user.role === "metering" || user.role === "meter" || user.role === "metering-team") {
+          setMeteringUser({
+            id: user.id,
+            username: user.username,
+            firstName: user.firstName,
+            lastName: user.lastName,
+            email: user.email,
+            mobile: (user as any).mobile || "",
+            isActive: (user as any).isActive ?? true,
+            createdAt: (user as any).createdAt,
+          })
+          setRole("metering")
+          setAccountManager(null)
+          setVisitor(null)
+          setInstaller(null)
           setBaldev(null)
           setHrUser(null)
           setDealer(null)
@@ -178,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAccountManager(null)
           setVisitor(null)
           setInstaller(null)
+          setMeteringUser(null)
           setHrUser(null)
           setDealer(null)
         } else if (user.role === "account-management" || user.role === "accountManager") {
@@ -185,6 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRole("account-management")
           setVisitor(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
           setDealer(null)
@@ -194,6 +239,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAccountManager(null)
           setVisitor(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
         }
@@ -206,6 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("userRole")
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
       }
@@ -215,6 +262,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedVisitor = localStorage.getItem("visitor")
       const savedAccountManager = localStorage.getItem("accountManager")
       const savedInstaller = localStorage.getItem("installerUser")
+      const savedMeteringUser = localStorage.getItem("meteringUser")
       const savedBaldev = localStorage.getItem("baldevUser")
       const savedHrUser = localStorage.getItem("hrUser")
 
@@ -225,6 +273,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
       } else if (savedHrUser) {
@@ -235,6 +284,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
       } else if (savedInstaller) {
         setInstaller(JSON.parse(savedInstaller))
@@ -243,6 +293,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setAccountManager(null)
+        setMeteringUser(null)
+        setBaldev(null)
+        setHrUser(null)
+      } else if (savedMeteringUser) {
+        setMeteringUser(JSON.parse(savedMeteringUser))
+        setRole("metering")
+        setIsAuthenticated(true)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
         setBaldev(null)
         setHrUser(null)
       } else if (savedBaldev) {
@@ -253,6 +314,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setHrUser(null)
       } else if (savedDealer) {
         setDealer(JSON.parse(savedDealer))
@@ -261,6 +323,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccountManager(null)
         setVisitor(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
       } else if (savedVisitor) {
@@ -270,6 +333,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setAccountManager(null)
         setDealer(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
       }
@@ -314,6 +378,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setDealer(null)
           setAccountManager(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
         } else if (userRole === "hr") {
@@ -331,6 +396,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setVisitor(null)
           setAccountManager(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
         } else {
           setDealer({
@@ -359,6 +425,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setVisitor(null)
           setAccountManager(null)
           setInstaller(null)
+          setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
         }
@@ -388,6 +455,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
         const userRole: UserRole = username === "admin" ? "admin" : "dealer"
@@ -411,6 +479,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
         setRole("visitor")
@@ -430,6 +499,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setRole("hr")
         setIsAuthenticated(true)
@@ -440,6 +510,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("visitor")
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         return true
       }
@@ -463,6 +534,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVisitor(null)
     setAccountManager(null)
     setInstaller(null)
+    setMeteringUser(null)
     setBaldev(null)
     setHrUser(null)
     setRole(null)
@@ -471,6 +543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("visitor")
     localStorage.removeItem("accountManager")
     localStorage.removeItem("installerUser")
+    localStorage.removeItem("meteringUser")
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("hrUser")
     localStorage.removeItem("userRole")
@@ -519,6 +592,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
 
@@ -535,6 +609,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           mobile: (user as any).mobile || "",
         }))
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
         return true
@@ -569,6 +644,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
         setRole("account-management")
@@ -584,6 +660,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("dealer")
         localStorage.removeItem("visitor")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
         localStorage.removeItem("authToken")
@@ -636,6 +713,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setAccountManager(null)
+        setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
         setRole("installer")
@@ -645,6 +723,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("userRole", "installer")
         localStorage.setItem("installerUser", JSON.stringify(installerData))
         localStorage.removeItem("accountManager")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
         localStorage.removeItem("dealer")
@@ -672,6 +751,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setDealer(null)
     setVisitor(null)
     setAccountManager(null)
+    setMeteringUser(null)
     setBaldev(null)
     setHrUser(null)
     setRole("installer")
@@ -680,6 +760,106 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("userRole", "installer")
     localStorage.setItem("user", JSON.stringify({ ...installerData, role: "installer" }))
     localStorage.removeItem("accountManager")
+    localStorage.removeItem("meteringUser")
+    localStorage.removeItem("baldevUser")
+    localStorage.removeItem("hrUser")
+    localStorage.removeItem("dealer")
+    localStorage.removeItem("visitor")
+    return true
+  }
+
+  const loginMetering = async (username: string, password: string): Promise<boolean> => {
+    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+    if (useApi) {
+      try {
+        const response = await api.auth.login(username, password)
+        const user = response.user
+        const backendRole = String(user.role || "").toLowerCase()
+        const allowedMeteringRoles = [
+          "metering",
+          "meter",
+          "metering-team",
+          "metering_team",
+          "mco",
+          "account-management",
+          "accountmanager",
+        ]
+        if (!allowedMeteringRoles.includes(backendRole)) {
+          console.error("Login rejected: User role is not metering")
+          return false
+        }
+
+        if (response.token) {
+          localStorage.setItem("authToken", response.token)
+        }
+        if (response.refreshToken) {
+          localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        const meteringData: MeteringUser = {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+          mobile: (user as any).mobile || "",
+          isActive: (user as any).isActive ?? true,
+          createdAt: (user as any).createdAt,
+        }
+
+        setMeteringUser(meteringData)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setBaldev(null)
+        setHrUser(null)
+        setRole("metering")
+        setIsAuthenticated(true)
+
+        localStorage.setItem("user", JSON.stringify({ ...user, role: "metering" }))
+        localStorage.setItem("userRole", "metering")
+        localStorage.setItem("meteringUser", JSON.stringify(meteringData))
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        return true
+      } catch (error) {
+        console.error("Metering login error:", error)
+        if (error instanceof ApiError) {
+          console.error("API Error Code:", error.code)
+          console.error("API Error Message:", error.message)
+        }
+        return false
+      }
+    }
+
+    const meteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
+    const found = meteringUsers.find((u: MeteringUser & { password: string }) => u.username === username && u.password === password)
+
+    if (!found || found.isActive === false) {
+      return false
+    }
+
+    const { password: _, ...meteringData } = found
+    setMeteringUser(meteringData)
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setInstaller(null)
+    setBaldev(null)
+    setHrUser(null)
+    setRole("metering")
+    setIsAuthenticated(true)
+    localStorage.setItem("meteringUser", JSON.stringify(meteringData))
+    localStorage.setItem("userRole", "metering")
+    localStorage.setItem("user", JSON.stringify({ ...meteringData, role: "metering" }))
+    localStorage.removeItem("accountManager")
+    localStorage.removeItem("installerUser")
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("hrUser")
     localStorage.removeItem("dealer")
@@ -724,6 +904,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setHrUser(null)
         setRole("baldev")
         setIsAuthenticated(true)
@@ -733,6 +914,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("baldevUser", JSON.stringify(baldevData))
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("hrUser")
         localStorage.removeItem("dealer")
         localStorage.removeItem("visitor")
@@ -760,6 +942,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVisitor(null)
     setAccountManager(null)
     setInstaller(null)
+    setMeteringUser(null)
     setHrUser(null)
     setRole("baldev")
     setIsAuthenticated(true)
@@ -768,6 +951,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("user", JSON.stringify({ ...baldevData, role: "baldev" }))
     localStorage.removeItem("accountManager")
     localStorage.removeItem("installerUser")
+    localStorage.removeItem("meteringUser")
     localStorage.removeItem("hrUser")
     localStorage.removeItem("dealer")
     localStorage.removeItem("visitor")
@@ -811,6 +995,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setMeteringUser(null)
         setBaldev(null)
         setRole("hr")
         setIsAuthenticated(true)
@@ -820,6 +1005,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("hrUser", JSON.stringify(hrData))
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("dealer")
         localStorage.removeItem("visitor")
@@ -847,6 +1033,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVisitor(null)
     setAccountManager(null)
     setInstaller(null)
+    setMeteringUser(null)
     setBaldev(null)
     setRole("hr")
     setIsAuthenticated(true)
@@ -855,6 +1042,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("user", JSON.stringify({ ...hrData, role: "hr" }))
     localStorage.removeItem("accountManager")
     localStorage.removeItem("installerUser")
+    localStorage.removeItem("meteringUser")
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("dealer")
     localStorage.removeItem("visitor")
@@ -918,6 +1106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         visitor,
         accountManager,
         installer,
+        meteringUser,
         baldev,
         hrUser,
         role,
@@ -925,6 +1114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         loginAccountManagement,
         loginInstaller,
+        loginMetering,
         loginBaldev,
         loginHr,
         logout,

@@ -573,11 +573,13 @@ export default function AdminPanelPage() {
         try {
           const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
           const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+          const allMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
           const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
           const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
           const mergedOperationUsers = [
             ...allAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
             ...allInstallers.map((u: any) => ({ ...u, role: "installer" })),
+            ...allMeteringUsers.map((u: any) => ({ ...u, role: "metering" })),
             ...allBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
             ...allHrUsers.map((u: any) => ({ ...u, role: "hr" })),
           ]
@@ -2930,7 +2932,7 @@ export default function AdminPanelPage() {
                           {accountManagerSearchTerm ? "No matching account managers found" : "No account management users found"}
                         </p>
                         {!accountManagerSearchTerm && (
-                          <p className="text-sm mt-1">Click "Create User ID" to add account manager, installer, baldev, or HR user</p>
+                          <p className="text-sm mt-1">Click "Create User ID" to add account manager, installer, metering, baldev, or HR user</p>
                         )}
                       </div>
                     )
@@ -3118,11 +3120,13 @@ export default function AdminPanelPage() {
                                           const key =
                                             roleKey === "installer"
                                               ? "installers"
-                                              : roleKey === "baldev"
-                                                ? "baldevUsers"
-                                                : roleKey === "hr"
-                                                  ? "hrUsers"
-                                                  : "accountManagers"
+                                              : roleKey === "metering"
+                                                ? "meteringUsers"
+                                                : roleKey === "baldev"
+                                                  ? "baldevUsers"
+                                                  : roleKey === "hr"
+                                                    ? "hrUsers"
+                                                    : "accountManagers"
                                           const roleUsers = JSON.parse(localStorage.getItem(key) || "[]")
                                           const updated = roleUsers.map((accountManager: AccountManager & { password?: string }) =>
                                             accountManager.id === am.id ? { ...accountManager, isActive: am.isActive === false ? true : false } : accountManager
@@ -3130,11 +3134,13 @@ export default function AdminPanelPage() {
                                           localStorage.setItem(key, JSON.stringify(updated))
                                           const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
                                           const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                                          const allMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
                                           const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
                                           const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
                                           const mergedUsers = [
                                             ...allAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
                                             ...allInstallers.map((u: any) => ({ ...u, role: "installer" })),
+                                            ...allMeteringUsers.map((u: any) => ({ ...u, role: "metering" })),
                                             ...allBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
                                             ...allHrUsers.map((u: any) => ({ ...u, role: "hr" })),
                                           ]
@@ -5089,7 +5095,7 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>{editingAccountManager ? "Edit User ID" : "Create New User ID"}</DialogTitle>
               <DialogDescription>
-                {editingAccountManager ? "Update user information" : "Add a new account manager, installer, baldev, or HR user"}
+                {editingAccountManager ? "Update user information" : "Add a new account manager, installer, metering, baldev, or HR user"}
               </DialogDescription>
             </DialogHeader>
 
@@ -5107,6 +5113,7 @@ export default function AdminPanelPage() {
                   <SelectContent>
                     <SelectItem value="account-management">Account Manager</SelectItem>
                     <SelectItem value="installer">Installer</SelectItem>
+                    <SelectItem value="metering">Metering</SelectItem>
                     <SelectItem value="baldev">Baldev Confirmation</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                   </SelectContent>
@@ -5197,7 +5204,7 @@ export default function AdminPanelPage() {
                     if (!newAccountManager.role) {
                       toast({
                         title: "Validation Error",
-                        description: "Please select a role (Account Manager, Installer, Baldev, or HR).",
+                        description: "Please select a role (Account Manager, Installer, Metering, Baldev, or HR).",
                         variant: "destructive",
                       })
                       return
@@ -5278,6 +5285,7 @@ export default function AdminPanelPage() {
                         // Fallback to localStorage
                         const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
                         const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                        const allMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
                         const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
                         const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
 
@@ -5287,11 +5295,13 @@ export default function AdminPanelPage() {
                           const sourceList =
                             roleKey === "installer"
                               ? allInstallers
-                              : roleKey === "baldev"
-                                ? allBaldevUsers
-                                : roleKey === "hr"
-                                  ? allHrUsers
-                                  : allAccountManagers
+                              : roleKey === "metering"
+                                ? allMeteringUsers
+                                : roleKey === "baldev"
+                                  ? allBaldevUsers
+                                  : roleKey === "hr"
+                                    ? allHrUsers
+                                    : allAccountManagers
                           const updated = sourceList.map((am: AccountManager & { password?: string }) => {
                             if (am.id === editingAccountManager.id) {
                               return {
@@ -5307,6 +5317,8 @@ export default function AdminPanelPage() {
                           })
                           if (roleKey === "installer") {
                             localStorage.setItem("installers", JSON.stringify(updated))
+                          } else if (roleKey === "metering") {
+                            localStorage.setItem("meteringUsers", JSON.stringify(updated))
                           } else if (roleKey === "baldev") {
                             localStorage.setItem("baldevUsers", JSON.stringify(updated))
                           } else if (roleKey === "hr") {
@@ -5331,7 +5343,7 @@ export default function AdminPanelPage() {
                           }
 
                           // Check if username or email already exists (for localStorage fallback only)
-                          const allUsers = [...allAccountManagers, ...allInstallers, ...allBaldevUsers, ...allHrUsers]
+                          const allUsers = [...allAccountManagers, ...allInstallers, ...allMeteringUsers, ...allBaldevUsers, ...allHrUsers]
                           const usernameExists = allUsers.some((am: AccountManager) => am.username === newAccountManager.username)
                           const emailExists = allUsers.some((am: AccountManager) => am.email === newAccountManager.email)
 
@@ -5356,6 +5368,9 @@ export default function AdminPanelPage() {
                           if (newAccountManager.role === "installer") {
                             allInstallers.push(newAccountManagerData)
                             localStorage.setItem("installers", JSON.stringify(allInstallers))
+                          } else if (newAccountManager.role === "metering") {
+                            allMeteringUsers.push(newAccountManagerData)
+                            localStorage.setItem("meteringUsers", JSON.stringify(allMeteringUsers))
                           } else if (newAccountManager.role === "baldev") {
                             allBaldevUsers.push(newAccountManagerData)
                             localStorage.setItem("baldevUsers", JSON.stringify(allBaldevUsers))
@@ -5371,11 +5386,13 @@ export default function AdminPanelPage() {
                         // Reload account managers
                         const updatedAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
                         const updatedInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
+                        const updatedMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
                         const updatedBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
                         const updatedHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
                         const mergedUpdatedUsers = [
                           ...updatedAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
                           ...updatedInstallers.map((u: any) => ({ ...u, role: "installer" })),
+                          ...updatedMeteringUsers.map((u: any) => ({ ...u, role: "metering" })),
                           ...updatedBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
                           ...updatedHrUsers.map((u: any) => ({ ...u, role: "hr" })),
                         ]

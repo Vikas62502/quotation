@@ -29,6 +29,8 @@ function BaldevLoginForm() {
         router.push("/dashboard/baldev")
       } else if (role === "installer") {
         router.push("/dashboard/installer")
+      } else if (role === "metering") {
+        router.push("/dashboard/metering")
       } else if (role === "account-management") {
         router.push("/dashboard/account-management")
       } else if (role === "hr") {

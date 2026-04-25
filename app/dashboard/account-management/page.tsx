@@ -1442,11 +1442,22 @@ export default function AccountManagementPage() {
         errorText.includes("not authorized")
 
       if (permissionDenied) {
-        applyReleaseLocally()
-        toast({
-          title: "Sent to installer",
-          description: "Marked successfully.",
-        })
+        // In API mode, local-only marking causes false success across users/devices.
+        // Keep local fallback only when API is disabled.
+        if (!useApi) {
+          applyReleaseLocally()
+          toast({
+            title: "Sent to installer",
+            description: "Marked successfully.",
+          })
+        } else {
+          toast({
+            title: "Send failed",
+            description:
+              "Backend denied this action (403). Please grant Account Management permission for installation release endpoint so installer dashboard can see it for all users.",
+            variant: "destructive",
+          })
+        }
         return
       }
 
