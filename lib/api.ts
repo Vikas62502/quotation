@@ -1224,6 +1224,52 @@ export const api = {
         "HTTP_404",
       )
     },
+
+    /** Upload MCO completion docs required before moving to Baldev confirmation. */
+    uploadMcoDocuments: async (
+      quotationId: string,
+      files: {
+        workCompleteReportImage?: File | null
+        meterInstalledPhoto?: File | null
+        completeDcrReportImage?: File | null
+      },
+    ) => {
+      const formData = new FormData()
+      if (files.workCompleteReportImage) {
+        formData.append("workCompleteReportImage", files.workCompleteReportImage)
+      }
+      if (files.meterInstalledPhoto) {
+        formData.append("meterInstalledPhoto", files.meterInstalledPhoto)
+      }
+      if (files.completeDcrReportImage) {
+        formData.append("completeDcrReportImage", files.completeDcrReportImage)
+      }
+
+      const isRetryable = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501" || error.code === "HTTP_403")
+
+      const attempts: Array<{ endpoint: string; method: "POST" | "PATCH" }> = [
+        { endpoint: `/metering/quotations/${quotationId}/mco-documents`, method: "POST" },
+        { endpoint: `/metering/quotations/${quotationId}/documents`, method: "POST" },
+        { endpoint: `/quotations/${quotationId}/metering-mco-documents`, method: "POST" },
+      ]
+
+      let lastError: unknown = null
+      for (const attempt of attempts) {
+        try {
+          return await multipartRequest(attempt.endpoint, attempt.method, cloneFormData(formData))
+        } catch (error) {
+          lastError = error
+          if (!isRetryable(error)) throw error
+        }
+      }
+
+      throw new ApiError(
+        "MCO completion upload endpoint is not available. Expected POST /api/metering/quotations/{id}/mco-documents (or compatible fallback).",
+        (lastError instanceof ApiError && lastError.code) || "HTTP_404",
+      )
+    },
   },
 
   // HR APIs
@@ -1491,6 +1537,38 @@ export const api = {
               : {}),
           },
         })
+      },
+
+      /** Admin override for operational workflow stages (installer/metering/baldev confirmation). */
+      updateOperationalStatus: async (quotationId: string, installationStatus: string) => {
+        const body = {
+          installationStatus,
+          installation_status: installationStatus,
+          meteringStatus: installationStatus,
+          metering_status: installationStatus,
+          status: installationStatus,
+        }
+
+        const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
+          { endpoint: `/admin/quotations/${quotationId}/installation-status`, method: "PATCH" },
+          { endpoint: `/admin/quotations/${quotationId}/workflow-status`, method: "PATCH" },
+          { endpoint: `/quotations/${quotationId}/status`, method: "PATCH" },
+          { endpoint: `/quotations/${quotationId}/metering-status`, method: "PATCH" },
+        ]
+
+        let lastError: unknown = null
+        for (const attempt of endpoints) {
+          try {
+            return await apiRequest(attempt.endpoint, { method: attempt.method, body })
+          } catch (error) {
+            lastError = error
+            const isRetryable =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isRetryable) throw error
+          }
+        }
+        throw lastError
       },
 
       /**

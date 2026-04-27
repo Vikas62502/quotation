@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, BadgeCheck, FileCheck2, ShieldCheck, Search, CalendarDays } from "lucide-react"
+import { LogOut, BadgeCheck, FileCheck2, ShieldCheck, Search, CalendarDays, ChevronDown } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -46,6 +46,12 @@ export default function BaldevDashboardPage() {
   const [installerWorkflowMap, setInstallerWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
   const [baldevWorkflowMap, setBaldevWorkflowMap] = useState<Record<string, BaldevWorkflowItem>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [finalDocsExpandedId, setFinalDocsExpandedId] = useState<string | null>(null)
+  const [finalDocsSavingId, setFinalDocsSavingId] = useState<string | null>(null)
+  const [finalBillFileByQuotation, setFinalBillFileByQuotation] = useState<Record<string, File | null>>({})
+  const [panelWarrantyFileByQuotation, setPanelWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
+  const [inverterWarrantyFileByQuotation, setInverterWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
+  const [workCompletionWarrantyFileByQuotation, setWorkCompletionWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
@@ -186,6 +192,49 @@ export default function BaldevDashboardPage() {
     }
   }
 
+  const toggleFinalDocuments = (quotationId: string) => {
+    setFinalDocsExpandedId((prev) => (prev === quotationId ? null : quotationId))
+  }
+
+  const saveFinalDocuments = async (quotationId: string) => {
+    const finalBillFile = finalBillFileByQuotation[quotationId] || null
+    const panelFile = panelWarrantyFileByQuotation[quotationId] || null
+    const inverterFile = inverterWarrantyFileByQuotation[quotationId] || null
+    const workFile = workCompletionWarrantyFileByQuotation[quotationId] || null
+    if (!finalBillFile && !panelFile && !inverterFile && !workFile) {
+      toast({
+        title: "Upload required",
+        description: "Please upload at least one final confirmation document (PDF/JPG).",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      setFinalDocsSavingId(quotationId)
+      if (useApi) {
+        const formData = new FormData()
+        if (finalBillFile) formData.append("customerFinalBillFile", finalBillFile)
+        if (panelFile) formData.append("panelWarrantyFile", panelFile)
+        if (inverterFile) formData.append("inverterWarrantyFile", inverterFile)
+        if (workFile) formData.append("workCompletionWarrantyFile", workFile)
+        await api.quotations.updateDocuments(quotationId, formData)
+      }
+      toast({
+        title: "Saved",
+        description: "Final confirmation documents updated.",
+      })
+      setFinalDocsExpandedId(null)
+    } catch (error) {
+      toast({
+        title: "Save failed",
+        description: error instanceof Error ? error.message : "Could not save final confirmation documents.",
+        variant: "destructive",
+      })
+    } finally {
+      setFinalDocsSavingId(null)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card">
@@ -282,12 +331,74 @@ export default function BaldevDashboardPage() {
                       <div className="min-w-[130px]">
                         <Badge variant="outline" className="text-xs">Pending Baldev</Badge>
                       </div>
-                      <div className="ml-auto">
+                      <div className="ml-auto flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => toggleFinalDocuments(q.id)}>
+                          <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                          Update Final Details
+                        </Button>
                         <Button size="sm" onClick={() => markFinalApproved(q.id)} disabled={savingId === q.id}>
                           {savingId === q.id ? "Saving..." : "Mark Final Approved"}
                         </Button>
                       </div>
                     </div>
+                    {finalDocsExpandedId === q.id ? (
+                      <div className="mt-4 rounded-md border border-border/70 p-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <p className="text-xs">Customer Final Bill (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setFinalBillFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Panel Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setPanelWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Inverter Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setInverterWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Work Completion Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setWorkCompletionWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-3 flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setFinalDocsExpandedId(null)}>
+                            Cancel
+                          </Button>
+                          <Button size="sm" onClick={() => void saveFinalDocuments(q.id)} disabled={finalDocsSavingId === q.id}>
+                            {finalDocsSavingId === q.id ? "Saving..." : "Save Details"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               ))
@@ -319,10 +430,72 @@ export default function BaldevDashboardPage() {
                         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
                         <p className="text-sm font-semibold">₹{getAmount(q).toLocaleString()}</p>
                       </div>
-                      <div className="ml-auto">
+                      <div className="ml-auto flex items-center gap-2">
+                        <Button variant="outline" size="sm" onClick={() => toggleFinalDocuments(q.id)}>
+                          <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                          Update Final Details
+                        </Button>
                         <Badge className="bg-green-600 text-white text-xs">Final Closure</Badge>
                       </div>
                     </div>
+                    {finalDocsExpandedId === q.id ? (
+                      <div className="mt-4 rounded-md border border-border/70 p-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <div className="space-y-1">
+                            <p className="text-xs">Customer Final Bill (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setFinalBillFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Panel Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setPanelWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Inverter Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setInverterWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <p className="text-xs">Work Completion Warranty (PDF/JPG)</p>
+                            <Input
+                              type="file"
+                              accept="image/*,.pdf"
+                              className="h-9 text-sm"
+                              onChange={(e) =>
+                                setWorkCompletionWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
+                              }
+                            />
+                          </div>
+                        </div>
+                        <div className="mt-3 flex justify-end gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setFinalDocsExpandedId(null)}>
+                            Cancel
+                          </Button>
+                          <Button size="sm" onClick={() => void saveFinalDocuments(q.id)} disabled={finalDocsSavingId === q.id}>
+                            {finalDocsSavingId === q.id ? "Saving..." : "Save Details"}
+                          </Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               ))

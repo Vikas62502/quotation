@@ -3,6 +3,7 @@ import { io, Socket } from "socket.io-client"
 let socket: Socket | null = null
 let subscribed = false
 let currentToken: string | null = null
+let loggedTransientConnectIssue = false
 
 const getRealtimeBaseUrl = () => {
   if (typeof window === "undefined") return ""
@@ -21,20 +22,41 @@ export const connectRealtime = (token: string) => {
     socket = null
     subscribed = false
   }
+  if (socket && currentToken === token && !socket.connected) {
+    socket.disconnect()
+    socket = null
+    subscribed = false
+  }
 
   currentToken = token
   socket = io(baseUrl, {
     transports: ["websocket", "polling"],
     withCredentials: true,
     auth: { token },
+    timeout: 10000,
+    reconnection: true,
+    reconnectionAttempts: 2,
   })
 
   socket.on("connect_error", (err) => {
-    console.error("[realtime] connect_error:", err.message)
+    const msg = String(err?.message || "").toLowerCase()
+    const isTransient = msg.includes("timeout") || msg.includes("xhr poll error") || msg.includes("websocket error")
+    if (isTransient) {
+      if (!loggedTransientConnectIssue) {
+        console.warn("[realtime] unavailable; continuing without live updates.")
+        loggedTransientConnectIssue = true
+      }
+      return
+    }
+    console.warn("[realtime] connect_error:", err.message)
   })
 
   socket.on("disconnect", () => {
     subscribed = false
+  })
+
+  socket.on("connect", () => {
+    loggedTransientConnectIssue = false
   })
 
   return socket

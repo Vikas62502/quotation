@@ -118,6 +118,17 @@ export interface Quotation {
   statusApprovedAt?: string
   /** Ordered status transitions for admin audit */
   statusHistory?: StatusHistoryEntry[]
+  /** Cross-team operational workflow status (installer/metering/baldev). */
+  installationStatus?: string
+  installation_status?: string
+  meteringStatus?: string
+  metering_status?: string
+  mcoStatus?: string
+  mco_status?: string
+  meteringApprovedAt?: string
+  metering_approved_at?: string
+  mcoAt?: string
+  mco_at?: string
   paymentStatus?: "pending" | "completed" | "partial"
   validUntil?: string // Optional: quotation validity date
 }

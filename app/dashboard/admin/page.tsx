@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import {
   Search,
+  Clock3,
   FileText,
   Users,
   IndianRupee,
@@ -32,6 +33,7 @@ import {
   History,
   SlidersHorizontal,
   Download,
+  ChevronDown,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -47,9 +49,58 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { cn } from "@/lib/utils"
+import {
+  getInstallationWorkflowStatus,
+  INSTALLER_RELEASE_MAP_KEY,
+  extractQuotationListFromApiResponse,
+  flattenWrappedQuotationRow,
+  isQuotationReleasedToInstaller,
+} from "@/lib/operational-install-queue"
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
+const ADMIN_OPERATIONAL_STAGES = [
+  "pending_installer",
+  "installer_in_progress",
+  "installer_approved",
+  "pending_metering",
+  "metering_in_progress",
+  "metering_approved",
+  "mco",
+  "pending_baldev",
+  "baldev_approved",
+] as const
+type AdminOperationalStage = (typeof ADMIN_OPERATIONAL_STAGES)[number]
+type AdminOperationalTab = "all" | "installation" | "metering" | "confirmation"
+type AdminOperationalProgressTab = "all" | "pending" | "done" | "mco"
+type AdminMeteringModalDraft = {
+  discomName: string
+  meterType: "" | "solar" | "net" | "both"
+  meterNo: string
+  solarMeterNo: string
+  netMeterNo: string
+}
+const ADMIN_INSTALLATION_IMAGE_FIELDS = [
+  { key: "homeFrontPhoto", label: "Front Photo of Home" },
+  { key: "homeWithPersonPhoto", label: "Front Photo of Home with person" },
+  { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer" },
+  { key: "plantWithCustomerPhoto", label: "Plant photo with Customer" },
+  { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No" },
+  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No" },
+  { key: "geoTagPlantPhoto", label: "GeoTag photo with plants" },
+  { key: "otherImages", label: "Others Images", multiple: true, required: false },
+] as const
+
+type AdminInstallationImageFieldKey = (typeof ADMIN_INSTALLATION_IMAGE_FIELDS)[number]["key"]
+type AdminImageFieldConfig = (typeof ADMIN_INSTALLATION_IMAGE_FIELDS)[number] & { required?: boolean; multiple?: boolean }
+const isAdminImageFieldRequired = (field: (typeof ADMIN_INSTALLATION_IMAGE_FIELDS)[number]) =>
+  (field as AdminImageFieldConfig).required !== false
+const isAdminImageFieldMultiple = (field: (typeof ADMIN_INSTALLATION_IMAGE_FIELDS)[number]) =>
+  (field as AdminImageFieldConfig).multiple === true
+type AdminExtraExpenseLine = { id: string; description: string; amount: string }
+const newAdminExpenseLineId = () =>
+  typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `exp-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 type CallingActionRecord = {
   id: string
@@ -97,6 +148,41 @@ export default function AdminPanelPage() {
   const [filterPaymentType, setFilterPaymentType] = useState("all")
   const [filterBankDetails, setFilterBankDetails] = useState("all")
   const [quotationFiltersOpen, setQuotationFiltersOpen] = useState(false)
+  const [operationalTab, setOperationalTab] = useState<AdminOperationalTab>("all")
+  const [operationalProgressTab, setOperationalProgressTab] = useState<AdminOperationalProgressTab>("all")
+  const [installerQueueIds, setInstallerQueueIds] = useState<Set<string>>(new Set())
+  const [adminInstallExpandedId, setAdminInstallExpandedId] = useState<string | null>(null)
+  const [adminInstallQuotation, setAdminInstallQuotation] = useState<Quotation | null>(null)
+  const [adminInstallFiles, setAdminInstallFiles] = useState<Partial<Record<AdminInstallationImageFieldKey, File[]>>>({})
+  const [adminInstallPiUpload, setAdminInstallPiUpload] = useState<File | null>(null)
+  const [adminInstallExtraExpenses, setAdminInstallExtraExpenses] = useState<AdminExtraExpenseLine[]>([])
+  const [adminInstallNotes, setAdminInstallNotes] = useState("")
+  const [adminInstallDimensions, setAdminInstallDimensions] = useState({ length: "", width: "", height: "" })
+  const [adminInstallSaving, setAdminInstallSaving] = useState(false)
+  const [adminMeteringModalOpen, setAdminMeteringModalOpen] = useState(false)
+  const [adminMeteringQuotationId, setAdminMeteringQuotationId] = useState<string | null>(null)
+  const [adminMeteringDraft, setAdminMeteringDraft] = useState<AdminMeteringModalDraft>({
+    discomName: "",
+    meterType: "",
+    meterNo: "",
+    solarMeterNo: "",
+    netMeterNo: "",
+  })
+  const [adminMeteringDocByQuotation, setAdminMeteringDocByQuotation] = useState<Record<string, File | null>>({})
+  const [adminMeteringSaving, setAdminMeteringSaving] = useState(false)
+  const [adminMcoDocsModalOpen, setAdminMcoDocsModalOpen] = useState(false)
+  const [adminMcoDocsQuotationId, setAdminMcoDocsQuotationId] = useState<string | null>(null)
+  const [adminMcoDocsSaving, setAdminMcoDocsSaving] = useState(false)
+  const [adminWorkCompleteReportByQuotation, setAdminWorkCompleteReportByQuotation] = useState<Record<string, File | null>>({})
+  const [adminMeterInstalledPhotoByQuotation, setAdminMeterInstalledPhotoByQuotation] = useState<Record<string, File | null>>({})
+  const [adminCompleteDcrReportByQuotation, setAdminCompleteDcrReportByQuotation] = useState<Record<string, File | null>>({})
+  const [adminBaldevSavingId, setAdminBaldevSavingId] = useState<string | null>(null)
+  const [adminFinalExpandedId, setAdminFinalExpandedId] = useState<string | null>(null)
+  const [adminFinalBillFileByQuotation, setAdminFinalBillFileByQuotation] = useState<Record<string, File | null>>({})
+  const [adminPanelWarrantyFileByQuotation, setAdminPanelWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
+  const [adminInverterWarrantyFileByQuotation, setAdminInverterWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
+  const [adminWorkCompletionWarrantyFileByQuotation, setAdminWorkCompletionWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
+  const [adminFinalSavingId, setAdminFinalSavingId] = useState<string | null>(null)
   const QUOTATIONS_PAGE_SIZE = 10
   const [currentQuotationPage, setCurrentQuotationPage] = useState(1)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
@@ -254,7 +340,21 @@ export default function AdminPanelPage() {
 
   useEffect(() => {
     setCurrentQuotationPage(1)
-  }, [searchTerm, filterDealer, filterMonth, filterStatus, filterFileLogin, filterPaymentType, filterBankDetails])
+  }, [
+    searchTerm,
+    filterDealer,
+    filterMonth,
+    filterStatus,
+    filterFileLogin,
+    filterPaymentType,
+    filterBankDetails,
+    operationalTab,
+    operationalProgressTab,
+  ])
+
+  useEffect(() => {
+    setOperationalProgressTab("all")
+  }, [operationalTab])
 
   // Fetch full quotation details when edit dialog opens
   useEffect(() => {
@@ -377,9 +477,43 @@ export default function AdminPanelPage() {
             fileLoginAt: q.fileLoginAt ?? q.file_login_at,
             statusApprovedAt: q.statusApprovedAt ?? q.status_approved_at ?? q.approvedAt,
             statusHistory: normalizeStatusHistoryFromApi(q.statusHistory ?? q.status_history ?? q.statusChanges),
+            installationStatus: q.installationStatus ?? q.installation_status,
+            installation_status: q.installation_status ?? q.installationStatus,
+            meteringStatus: q.meteringStatus ?? q.metering_status,
+            metering_status: q.metering_status ?? q.meteringStatus,
+            mcoStatus: q.mcoStatus ?? q.mco_status,
+            mco_status: q.mco_status ?? q.mcoStatus,
+            meteringApprovedAt: q.meteringApprovedAt ?? q.metering_approved_at,
+            metering_approved_at: q.metering_approved_at ?? q.meteringApprovedAt,
+            mcoAt: q.mcoAt ?? q.mco_at,
+            mco_at: q.mco_at ?? q.mcoAt,
           }
         })
         setQuotations(quotationsList)
+
+        // Match Installer dashboard visibility exactly by using the same queue source.
+        try {
+          let installerQueueRows: any[] = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
+          )
+          if (installerQueueRows.length === 0) {
+            installerQueueRows = extractQuotationListFromApiResponse(
+              await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
+            )
+          }
+          if (installerQueueRows.length === 0) {
+            installerQueueRows = extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 }))
+          }
+          const ids = new Set<string>()
+          installerQueueRows.forEach((row: any) => {
+            const flat = flattenWrappedQuotationRow(row)
+            const id = String(flat.id || "").trim()
+            if (id) ids.add(id)
+          })
+          setInstallerQueueIds(ids)
+        } catch {
+          setInstallerQueueIds(new Set())
+        }
 
         // Load dealers
         const dealersResponse = await api.admin.dealers.getAll()
@@ -555,6 +689,7 @@ export default function AdminPanelPage() {
           subtotal: (q as any).subtotal ?? q.totalAmount ?? 0,
         }))
         setQuotations(quotationsWithStatus)
+        setInstallerQueueIds(new Set(quotationsWithStatus.map((q: Quotation) => q.id)))
         // Update localStorage with status if needed
         if (allQuotations.some((q: Quotation) => !q.status)) {
           localStorage.setItem("quotations", JSON.stringify(quotationsWithStatus))
@@ -693,6 +828,19 @@ export default function AdminPanelPage() {
 
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
+  const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
+
+  const onAdminMobileNavChange = (value: string) => {
+    if (value.startsWith("quotations__")) {
+      const sub = value.replace("quotations__", "") as AdminOperationalTab
+      setActiveTab("quotations")
+      setOperationalTab(sub)
+      return
+    }
+    setActiveTab(value)
+    if (value !== "quotations") setOperationalTab("all")
+  }
+
   // Calculate statistics
   const totalQuotations = quotations.length
   const approvedQuotations = quotations.filter((q) => q.status === "approved")
@@ -719,6 +867,7 @@ export default function AdminPanelPage() {
     const bankDetails = getQuotationBankDetails(q).toLowerCase()
     const fileLoginText = fileLoginRowSummary(q).toLowerCase()
     const statusText = String(q.status || "").toLowerCase()
+    const operationalStageText = getOperationalStage(q).toLowerCase()
     const amountText = String(Math.abs(q.finalAmount || 0))
     const createdAtText = new Date(q.createdAt).toLocaleString().toLowerCase()
 
@@ -735,6 +884,7 @@ export default function AdminPanelPage() {
       bankDetails.includes(normalizedSearchTerm) ||
       fileLoginText.includes(normalizedSearchTerm) ||
       statusText.includes(normalizedSearchTerm) ||
+      operationalStageText.includes(normalizedSearchTerm) ||
       amountText.includes(searchTerm) ||
       createdAtText.includes(normalizedSearchTerm)
 
@@ -751,6 +901,30 @@ export default function AdminPanelPage() {
     const matchesBankDetails =
       filterBankDetails === "all" ||
       (filterBankDetails === "with_bank" ? hasBankDetails : !hasBankDetails)
+    const stage = getOperationalStage(q)
+    const matchesOperationalTab = (() => {
+      if (operationalTab === "all") return true
+      if (operationalTab === "installation") {
+        if (!isInstallerVisible(q)) return false
+        const progress = getOperationalProgressState(q, operationalTab)
+        if (operationalProgressTab === "all") return progress !== null
+        if (operationalProgressTab === "pending") return progress === "pending"
+        return progress === "done"
+      }
+      if (operationalTab === "metering") {
+        if (!isMeteringVisible(q)) return false
+        const progress = getOperationalProgressState(q, operationalTab)
+        if (operationalProgressTab === "all") return progress !== null
+        if (operationalProgressTab === "pending") return progress === "pending"
+        if (operationalProgressTab === "done") return progress === "done"
+        return progress === "mco"
+      }
+      if (!isConfirmationVisible(q)) return false
+      const progress = getOperationalProgressState(q, operationalTab)
+      if (operationalProgressTab === "all") return progress !== null
+      if (operationalProgressTab === "pending") return progress === "pending"
+      return progress === "done"
+    })()
 
     const date = new Date(q.createdAt)
     const currentDate = new Date()
@@ -771,13 +945,76 @@ export default function AdminPanelPage() {
       matchesStatus &&
       matchesFileLogin &&
       matchesPaymentType &&
-      matchesBankDetails
+      matchesBankDetails &&
+      matchesOperationalTab
     )
   })
+
+  const operationalCounts = quotations.reduce(
+    (acc, quotation) => {
+      if (isInstallerVisible(quotation)) acc.installation += 1
+      if (isMeteringVisible(quotation)) acc.metering += 1
+      if (isConfirmationVisible(quotation)) acc.confirmation += 1
+      return acc
+    },
+    { installation: 0, metering: 0, confirmation: 0 },
+  )
+
+  const operationalProgressCounts = quotations.reduce(
+    (acc, quotation) => {
+      if (operationalTab === "all") return acc
+      if (operationalTab === "installation" && !isInstallerVisible(quotation)) return acc
+      if (operationalTab === "metering" && !isMeteringVisible(quotation)) return acc
+      if (operationalTab === "confirmation" && !isConfirmationVisible(quotation)) return acc
+      const progress = getOperationalProgressState(quotation, operationalTab)
+      if (progress === "pending") acc.pending += 1
+      if (progress === "done") acc.done += 1
+      return acc
+    },
+    { pending: 0, done: 0 },
+  )
+
+  const operationalMeteringCounts = quotations.reduce(
+    (acc, quotation) => {
+      const stage = getAdminMeteringStage(quotation)
+      if (!stage) return acc
+      if (stage === "processing") acc.processing += 1
+      if (stage === "approved") acc.approved += 1
+      if (stage === "mco") acc.mco += 1
+      return acc
+    },
+    { processing: 0, approved: 0, mco: 0 },
+  )
+
+  const getInstallerQueueStatusForAdmin = (quotation: Quotation): "pending" | "inprogress" | "approved" => {
+    const backendStatus = getInstallationWorkflowStatus(quotation as any)
+    if (
+      backendStatus === "installer_approved" ||
+      backendStatus === "pending_baldev" ||
+      backendStatus === "baldev_approved" ||
+      backendStatus === "completed"
+    ) {
+      return "approved"
+    }
+    if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
+      return "inprogress"
+    }
+    return "pending"
+  }
 
   const sortedQuotations = [...filteredQuotations].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   )
+  const installationPendingQuotations = sortedQuotations.filter((q) => getInstallerQueueStatusForAdmin(q) !== "approved")
+  const installationApprovedQuotations = sortedQuotations.filter((q) => getInstallerQueueStatusForAdmin(q) === "approved")
+  const meteringProcessingQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "processing")
+  const meteringApprovedQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "approved")
+  const meteringMcoQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "mco")
+  const confirmationQueueQuotations = sortedQuotations.filter((q) => getAdminConfirmationStage(q) === "queue")
+  const confirmationFinalQuotations = sortedQuotations.filter((q) => getAdminConfirmationStage(q) === "final")
+  const adminMeteringSelectedQuotation = adminMeteringQuotationId
+    ? sortedQuotations.find((quotation) => quotation.id === adminMeteringQuotationId) || null
+    : null
 
   const quotationTotalPages = Math.max(1, Math.ceil(sortedQuotations.length / QUOTATIONS_PAGE_SIZE))
   const currentPage = Math.min(Math.max(currentQuotationPage, 1), quotationTotalPages)
@@ -1042,6 +1279,508 @@ export default function AdminPanelPage() {
       return
     }
     void updateQuotationStatus(quotationId, status)
+  }
+
+  function getOperationalStage(quotation: Quotation): AdminOperationalStage | "" {
+    const raw = String(
+      (quotation as any).installationStatus ||
+        (quotation as any).installation_status ||
+        (quotation as any).meteringStatus ||
+        (quotation as any).metering_status ||
+        (quotation as any).mcoStatus ||
+        (quotation as any).mco_status ||
+        "",
+    ).toLowerCase()
+    if (ADMIN_OPERATIONAL_STAGES.includes(raw as AdminOperationalStage)) return raw as AdminOperationalStage
+    return ""
+  }
+
+  function isInstallerVisible(quotation: Quotation) {
+    if (useApi && installerQueueIds.size > 0) {
+      return installerQueueIds.has(quotation.id)
+    }
+    let localReleaseMap: Record<string, any> = {}
+    if (typeof window !== "undefined") {
+      try {
+        localReleaseMap = JSON.parse(localStorage.getItem(INSTALLER_RELEASE_MAP_KEY) || "{}")
+      } catch {
+        localReleaseMap = {}
+      }
+    }
+    // Keep Admin Installation list exactly aligned with Installer dashboard visibility.
+    return isQuotationReleasedToInstaller(quotation as any, localReleaseMap)
+  }
+
+  function isMeteringVisible(quotation: Quotation) {
+    return isInstallerVisible(quotation) && getAdminMeteringStage(quotation) !== null
+  }
+
+  function isConfirmationVisible(quotation: Quotation) {
+    return getAdminConfirmationStage(quotation) !== null
+  }
+
+  function getOperationalProgressState(quotation: Quotation, tab: AdminOperationalTab): "pending" | "done" | "mco" | null {
+    const stage = getOperationalStage(quotation)
+    if (tab === "installation") {
+      const backendStatus = getInstallationWorkflowStatus(stage ? { installationStatus: stage } : ({} as any))
+      if (
+        backendStatus === "installer_approved" ||
+        backendStatus === "pending_baldev" ||
+        backendStatus === "baldev_approved" ||
+        backendStatus === "completed"
+      ) {
+        return "done"
+      }
+      if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") return "pending"
+      if (backendStatus === "pending_installer" || backendStatus === "") return "pending"
+      return null
+    }
+    if (tab === "metering") {
+      const mStage = getAdminMeteringStage(quotation)
+      if (mStage === "processing") return "pending"
+      if (mStage === "approved") return "done"
+      if (mStage === "mco") return "mco"
+      return null
+    }
+    if (tab === "confirmation") {
+      const stage = getAdminConfirmationStage(quotation)
+      if (stage === "queue") return "pending"
+      if (stage === "final") return "done"
+      return null
+    }
+    return null
+  }
+
+  function getAdminConfirmationStage(quotation: Quotation): "queue" | "final" | null {
+    if (String(quotation.status || "").toLowerCase() !== "approved") return null
+    const backendStatus = String((quotation as any).installationStatus || (quotation as any).installation_status || "").toLowerCase()
+    if (backendStatus === "installer_approved" || backendStatus === "pending_baldev" || backendStatus === "installer_in_progress") {
+      return "queue"
+    }
+    if (backendStatus === "baldev_approved" || backendStatus === "completed") {
+      return "final"
+    }
+    return null
+  }
+
+  function getAdminMeteringStage(quotation: Quotation): "processing" | "approved" | "mco" | null {
+    const raw = String(
+      (quotation as any).meteringStage ||
+        (quotation as any).metering_status ||
+        (quotation as any).mcoStatus ||
+        (quotation as any).mco_status ||
+        (quotation as any).installationStatus ||
+        (quotation as any).installation_status ||
+        "",
+    ).toLowerCase()
+    if (raw === "mco" || raw.includes("mco")) return "mco"
+    if (raw === "metering_approved" || raw === "approved" || (raw.includes("approved") && !raw.includes("pending"))) return "approved"
+    if (
+      raw === "pending_metering" ||
+      raw === "metering_in_progress" ||
+      raw === "pending_installer" ||
+      raw === "installer_in_progress" ||
+      raw === "installer_approved" ||
+      raw === "pending_baldev" ||
+      raw === "baldev_approved" ||
+      raw.includes("processing") ||
+      raw.includes("pending")
+    ) {
+      return "processing"
+    }
+    return null
+  }
+
+  function hasRequiredAdminMeteringDetails(quotation: Quotation) {
+    const q: any = quotation
+    const discom = String(adminMeteringDraft.discomName || q.discomName || q.discom_name || "").trim()
+    const meterType = (adminMeteringDraft.meterType || q.meterType || q.meter_type || "") as AdminMeteringModalDraft["meterType"]
+    const meterNo =
+      meterType === "both"
+        ? String(adminMeteringDraft.solarMeterNo || q.solarMeterNo || q.solar_meter_no || "").trim().length > 0 &&
+          String(adminMeteringDraft.netMeterNo || q.netMeterNo || q.net_meter_no || "").trim().length > 0
+        : String(adminMeteringDraft.meterNo || q.meterNo || q.meter_no || "").trim().length > 0
+    const meterDoc =
+      !!adminMeteringDocByQuotation[quotation.id] ||
+      String(q.meterDocumentUrl || q.meter_document_url || "").trim().length > 0 ||
+      String(q.meterDocumentName || q.meter_document_name || "").trim().length > 0
+    return discom.length > 0 && !!meterType && meterNo && meterDoc
+  }
+
+  function hasRequiredAdminMcoDocuments(quotation: Quotation) {
+    const q: any = quotation
+    return (
+      (!!adminWorkCompleteReportByQuotation[quotation.id] ||
+        !!q.workCompleteReportImageUrl ||
+        !!q.work_complete_report_image_url) &&
+      (!!adminMeterInstalledPhotoByQuotation[quotation.id] ||
+        !!q.meterInstalledPhotoUrl ||
+        !!q.meter_installed_photo_url) &&
+      (!!adminCompleteDcrReportByQuotation[quotation.id] ||
+        !!q.completeDcrReportImageUrl ||
+        !!q.complete_dcr_report_image_url)
+    )
+  }
+
+  const openAdminMeteringDetails = (quotation: Quotation) => {
+    const q: any = quotation
+    setAdminMeteringQuotationId(quotation.id)
+    setAdminMeteringDraft({
+      discomName: q.discomName || q.discom_name || "",
+      meterType: (q.meterType || q.meter_type || "") as AdminMeteringModalDraft["meterType"],
+      meterNo: q.meterNo || q.meter_no || "",
+      solarMeterNo: q.solarMeterNo || q.solar_meter_no || "",
+      netMeterNo: q.netMeterNo || q.net_meter_no || "",
+    })
+    setAdminMeteringModalOpen(true)
+  }
+
+  const saveAdminMeteringDetails = async () => {
+    if (!adminMeteringQuotationId) return
+    try {
+      setAdminMeteringSaving(true)
+      await api.metering.saveDetails(
+        adminMeteringQuotationId,
+        {
+          discomName: adminMeteringDraft.discomName.trim(),
+          meterType: adminMeteringDraft.meterType || undefined,
+          meterNo: adminMeteringDraft.meterNo.trim(),
+          solarMeterNo: adminMeteringDraft.solarMeterNo.trim(),
+          netMeterNo: adminMeteringDraft.netMeterNo.trim(),
+        },
+        adminMeteringDocByQuotation[adminMeteringQuotationId] || null,
+      )
+      await loadData()
+      toast({ title: "Saved", description: "Metering details saved." })
+      setAdminMeteringModalOpen(false)
+    } catch (error) {
+      toast({
+        title: "Save failed",
+        description: error instanceof Error ? error.message : "Could not save metering details.",
+        variant: "destructive",
+      })
+    } finally {
+      setAdminMeteringSaving(false)
+    }
+  }
+
+  const openAdminMcoDocsModal = (quotation: Quotation) => {
+    setAdminMcoDocsQuotationId(quotation.id)
+    setAdminMcoDocsModalOpen(true)
+  }
+
+  const saveAdminMcoDocuments = async () => {
+    if (!adminMcoDocsQuotationId) return
+    const workFile = adminWorkCompleteReportByQuotation[adminMcoDocsQuotationId] || null
+    const meterFile = adminMeterInstalledPhotoByQuotation[adminMcoDocsQuotationId] || null
+    const dcrFile = adminCompleteDcrReportByQuotation[adminMcoDocsQuotationId] || null
+    if (!workFile && !meterFile && !dcrFile) {
+      toast({
+        title: "Upload required",
+        description: "Please upload at least one MCO document to save changes.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      setAdminMcoDocsSaving(true)
+      await api.metering.uploadMcoDocuments(adminMcoDocsQuotationId, {
+        workCompleteReportImage: workFile,
+        meterInstalledPhoto: meterFile,
+        completeDcrReportImage: dcrFile,
+      })
+      await loadData()
+      toast({ title: "Saved", description: "MCO documents uploaded." })
+      setAdminMcoDocsModalOpen(false)
+    } catch (error) {
+      toast({
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "Could not upload MCO documents.",
+        variant: "destructive",
+      })
+    } finally {
+      setAdminMcoDocsSaving(false)
+    }
+  }
+
+  const moveAdminToBaldevConfirmation = async (quotation: Quotation) => {
+    if (!hasRequiredAdminMeteringDetails(quotation) || !hasRequiredAdminMcoDocuments(quotation)) {
+      toast({
+        title: "Required data missing",
+        description: "Complete Metering Details and all 3 MCO documents before moving to Confirmation.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      await api.metering.updateStatus(quotation.id, "mark_completed")
+      await loadData()
+      toast({ title: "Moved", description: "Quotation moved to Confirmation (Baldev)." })
+    } catch (error) {
+      toast({
+        title: "Status update failed",
+        description: error instanceof Error ? error.message : "Could not move quotation to confirmation.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const markAdminFinalApproved = async (quotation: Quotation) => {
+    try {
+      setAdminBaldevSavingId(quotation.id)
+      await updateOperationalStage(quotation.id, "baldev_approved")
+    } finally {
+      setAdminBaldevSavingId(null)
+    }
+  }
+
+  const toggleAdminFinalUpdate = (quotation: Quotation) => {
+    setAdminFinalExpandedId((prev) => (prev === quotation.id ? null : quotation.id))
+  }
+
+  const saveAdminFinalConfirmationDetails = async (quotation: Quotation) => {
+    try {
+      setAdminFinalSavingId(quotation.id)
+      const finalBillFile = adminFinalBillFileByQuotation[quotation.id]
+      const panelWarrantyFile = adminPanelWarrantyFileByQuotation[quotation.id]
+      const inverterWarrantyFile = adminInverterWarrantyFileByQuotation[quotation.id]
+      const workCompletionWarrantyFile = adminWorkCompletionWarrantyFileByQuotation[quotation.id]
+      if (!finalBillFile && !panelWarrantyFile && !inverterWarrantyFile && !workCompletionWarrantyFile) {
+        toast({
+          title: "Upload required",
+          description: "Please upload at least one PDF/JPG document to save.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (useApi) {
+        const formData = new FormData()
+        if (finalBillFile) formData.append("customerFinalBillFile", finalBillFile)
+        if (panelWarrantyFile) formData.append("panelWarrantyFile", panelWarrantyFile)
+        if (inverterWarrantyFile) formData.append("inverterWarrantyFile", inverterWarrantyFile)
+        if (workCompletionWarrantyFile) formData.append("workCompletionWarrantyFile", workCompletionWarrantyFile)
+        await api.quotations.updateDocuments(quotation.id, formData)
+      }
+      await loadData()
+      setAdminFinalExpandedId(null)
+      toast({
+        title: "Saved",
+        description: "Final confirmation documents updated.",
+      })
+    } catch (error) {
+      toast({
+        title: "Save failed",
+        description: error instanceof Error ? error.message : "Could not save final confirmation details.",
+        variant: "destructive",
+      })
+    } finally {
+      setAdminFinalSavingId(null)
+    }
+  }
+
+  const setAdminMeteringStage = async (quotation: Quotation, target: "approved" | "mco" | "processing") => {
+    try {
+      const q: any = quotation
+      const currentRawStatus = String(q.meteringStage || q.metering_status || q.installationStatus || q.installation_status || "").toLowerCase()
+      if (target === "approved") {
+        if (currentRawStatus && !currentRawStatus.includes("pending")) {
+          await api.metering.forceSetStatus(quotation.id, "metering_approved")
+        } else {
+          try {
+            await api.metering.updateStatus(quotation.id, "approve")
+          } catch (error) {
+            if (error instanceof ApiError && (error.code === "WF_003" || error.code === "HTTP_409")) {
+              try {
+                await api.metering.updateStatus(quotation.id, "start")
+                await api.metering.updateStatus(quotation.id, "approve")
+              } catch {
+                await api.metering.forceSetStatus(quotation.id, "metering_approved")
+              }
+            } else {
+              throw error
+            }
+          }
+        }
+      } else if (target === "mco") {
+        await api.metering.updateStatus(quotation.id, "send_to_mco")
+      } else {
+        await api.metering.updateStatus(quotation.id, "move_back")
+      }
+      await loadData()
+      toast({ title: "Stage updated", description: `Moved to ${target}.` })
+    } catch (error) {
+      toast({
+        title: "Status update failed",
+        description: error instanceof Error ? error.message : "Could not update metering stage.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const updateOperationalStage = async (quotationId: string, stage: AdminOperationalStage) => {
+    try {
+      if (useApi) {
+        await api.admin.quotations.updateOperationalStatus(quotationId, stage)
+        await loadData()
+      } else {
+        const updated = quotations.map((q) =>
+          q.id === quotationId
+            ? {
+                ...q,
+                installationStatus: stage,
+                installation_status: stage,
+                meteringStatus: stage,
+                metering_status: stage,
+              }
+            : q,
+        )
+        setQuotations(updated)
+        localStorage.setItem("quotations", JSON.stringify(updated))
+      }
+      toast({
+        title: "Operational stage updated",
+        description: `Quotation moved to ${stage.replaceAll("_", " ")}.`,
+      })
+    } catch (error) {
+      console.error("Error updating operational stage:", error)
+      toast({
+        title: "Update failed",
+        description: error instanceof ApiError ? error.message : "Failed to update installation/metering/confirmation stage.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const openAdminInstallDialog = async (quotation: Quotation) => {
+    let mergedQuotation = quotation
+    if (useApi) {
+      try {
+        const full = await api.quotations.getById(quotation.id)
+        mergedQuotation = { ...(quotation as any), ...(full as any) } as Quotation
+      } catch {
+        mergedQuotation = quotation
+      }
+    }
+    setAdminInstallQuotation(mergedQuotation)
+    setAdminInstallExpandedId((prev) => (prev === quotation.id ? null : quotation.id))
+    setAdminInstallFiles({})
+    setAdminInstallPiUpload(null)
+    setAdminInstallExtraExpenses([])
+    setAdminInstallNotes("")
+    setAdminInstallDimensions({ length: "", width: "", height: "" })
+  }
+
+  const submitAdminInstallationUpload = async () => {
+    if (!adminInstallQuotation) return
+    const requiredFields = ADMIN_INSTALLATION_IMAGE_FIELDS.filter((f) => isAdminImageFieldRequired(f))
+    const missingFields = requiredFields.filter((field) => !(adminInstallFiles[field.key] && adminInstallFiles[field.key]!.length > 0))
+    if (missingFields.length > 0) {
+      toast({
+        title: "Images required",
+        description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+        variant: "destructive",
+      })
+      return
+    }
+
+    const backCm = adminInstallDimensions.length.trim()
+    const frontCm = adminInstallDimensions.height.trim()
+    const midCmRaw = adminInstallDimensions.width.trim()
+    if (!backCm || !frontCm) {
+      toast({
+        title: "Site legs required",
+        description: "Please enter back leg and front leg (cm). Mid leg is optional.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const backN = Number(backCm)
+    const frontN = Number(frontCm)
+    if (!Number.isFinite(backN) || backN <= 0 || !Number.isFinite(frontN) || frontN <= 0) {
+      toast({
+        title: "Invalid dimensions",
+        description: "Back leg and front leg must be valid numbers greater than zero.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (midCmRaw) {
+      const midN = Number(midCmRaw)
+      if (!Number.isFinite(midN) || midN <= 0) {
+        toast({
+          title: "Invalid mid leg",
+          description: "Mid leg must be a valid number greater than zero, or leave it empty.",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
+    const expenseLines = adminInstallExtraExpenses.filter((l) => l.description.trim() !== "" || l.amount.trim() !== "")
+    if (expenseLines.some((l) => !l.amount.trim() || Number.isNaN(parseFloat(l.amount)) || parseFloat(l.amount) < 0)) {
+      toast({
+        title: "Extra expenses",
+        description: "Each expense line with a description must have a valid amount (>= 0).",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const cmToFeet = (cm: number) => Number((cm / 30.48).toFixed(4))
+
+    try {
+      setAdminInstallSaving(true)
+      const formData = new FormData()
+      ADMIN_INSTALLATION_IMAGE_FIELDS.forEach((field) => {
+        const selected = adminInstallFiles[field.key] || []
+        selected.forEach((file) => {
+          formData.append("installerCompletionImages", file)
+          formData.append(field.key, file)
+        })
+      })
+      if (adminInstallPiUpload instanceof File) {
+        formData.append("piUpload", adminInstallPiUpload)
+      }
+      if (expenseLines.length > 0) {
+        const payload = expenseLines.map(({ description, amount }) => ({
+          description: description.trim(),
+          amount: parseFloat(amount),
+        }))
+        formData.append("extraExpensesJson", JSON.stringify(payload))
+        formData.append(
+          "extraExpensesTotal",
+          String(payload.reduce((s, row) => s + (Number.isFinite(row.amount) ? row.amount : 0), 0)),
+        )
+      }
+      formData.append("siteLength", backCm)
+      formData.append("siteWidth", midCmRaw === "" ? "" : midCmRaw)
+      formData.append("siteHeight", frontCm)
+      formData.append("backLegCm", backCm)
+      if (midCmRaw) formData.append("midLegCm", midCmRaw)
+      formData.append("frontLegCm", frontCm)
+      formData.append("backLegFeet", String(cmToFeet(backN)))
+      if (midCmRaw) formData.append("midLegFeet", String(cmToFeet(Number(midCmRaw))))
+      formData.append("frontLegFeet", String(cmToFeet(frontN)))
+      formData.append("installerRemarks", adminInstallNotes)
+      formData.append("installationStatus", "installer_approved")
+
+      await api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData)
+      await updateOperationalStage(adminInstallQuotation.id, "installer_approved")
+      setAdminInstallExpandedId(null)
+      toast({
+        title: "Saved",
+        description: "Installation completion uploaded and moved to Approved by Installer.",
+      })
+    } catch (error) {
+      toast({
+        title: "Upload failed",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setAdminInstallSaving(false)
+    }
   }
 
   const confirmApprovalWithPaymentType = async () => {
@@ -1344,6 +2083,55 @@ export default function AdminPanelPage() {
     return "N/A"
   }
 
+  const getAdminInstallProductSpec = (quotation: Quotation) => {
+    const q: any = quotation
+    const nestedProduct = q.quotationProduct && typeof q.quotationProduct === "object" ? q.quotationProduct : {}
+    const merged = {
+      ...(q.products && typeof q.products === "object" ? q.products : {}),
+      ...nestedProduct,
+      // fallback to flattened row fields when products object is missing
+      systemType: q.products?.systemType || q.systemType || nestedProduct.systemType,
+      panelBrand: q.products?.panelBrand || q.panelBrand || nestedProduct.panelBrand,
+      panelSize: q.products?.panelSize || q.panelSize || nestedProduct.panelSize,
+      panelQuantity: q.products?.panelQuantity || q.panelQuantity || nestedProduct.panelQuantity,
+      inverterBrand: q.products?.inverterBrand || q.inverterBrand || nestedProduct.inverterBrand,
+      inverterSize: q.products?.inverterSize || q.inverterSize || nestedProduct.inverterSize,
+      phase: q.products?.phase || q.phase || nestedProduct.phase,
+      structureType: q.products?.structureType || q.structureType || nestedProduct.structureType,
+      structureSize: q.products?.structureSize || q.structureSize || nestedProduct.structureSize,
+    }
+    return merged
+  }
+
+  const getQuotationPhaseText = (quotation: Quotation) => {
+    const productSpec = getAdminInstallProductSpec(quotation) as any
+    return String(
+      productSpec?.phase ||
+        (quotation as any)?.phase ||
+        (quotation as any)?.quotationProduct?.phase ||
+        (quotation as any)?.product?.phase ||
+        "N/A",
+    )
+  }
+
+  const getQuotationAddressText = (quotation: Quotation) => {
+    const q: any = quotation
+    const rawAddress = q?.customer?.address
+    const addressText =
+      rawAddress && typeof rawAddress === "object"
+        ? [rawAddress.street, rawAddress.city, rawAddress.state, rawAddress.pincode].filter(Boolean).join(", ")
+        : String(rawAddress || "")
+    return (
+      q.visitLocation ||
+      q.visit_location ||
+      q.location ||
+      q.customerAddress ||
+      q.customer_address ||
+      addressText ||
+      "N/A"
+    )
+  }
+
   const getDocumentsForm = (quotationId: string) => {
     return (
       documentsFormById[quotationId] || {
@@ -1559,14 +2347,17 @@ export default function AdminPanelPage() {
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <div className="md:hidden">
             <div className="text-xs font-medium text-muted-foreground mb-2">Select Section</div>
-            <Select value={activeTab} onValueChange={setActiveTab}>
+            <Select value={adminMobileNavValue} onValueChange={onAdminMobileNavChange}>
               <SelectTrigger className="w-full h-10 rounded-xl border-border/70 bg-card shadow-sm">
                 <SelectValue placeholder="Select section" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="overview">Overview</SelectItem>
                 <SelectItem value="calling-reports">Calling Reports</SelectItem>
-                <SelectItem value="quotations">Quotations</SelectItem>
+                <SelectItem value="quotations__all">Quotations (all)</SelectItem>
+                <SelectItem value="quotations__installation">Installation</SelectItem>
+                <SelectItem value="quotations__metering">Metering</SelectItem>
+                <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
                 <SelectItem value="dealers">Dealers</SelectItem>
                 <SelectItem value="customers">Customers</SelectItem>
                 <SelectItem value="visitors">Visitors</SelectItem>
@@ -1578,10 +2369,41 @@ export default function AdminPanelPage() {
           </div>
 
           <div className="hidden md:block w-full pb-1">
-            <TabsList className="grid w-full grid-cols-9 h-11 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
+            <TabsList className="flex h-auto min-h-11 w-full flex-wrap gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:shrink-0 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
-            <TabsTrigger value="quotations">Quotations</TabsTrigger>
+            <TabsTrigger
+              value="quotations"
+              onPointerDown={() => {
+                setOperationalTab("all")
+              }}
+            >
+              Quotations
+            </TabsTrigger>
+            <TabsTrigger
+              value="quotations"
+              onPointerDown={() => {
+                setOperationalTab("installation")
+              }}
+            >
+              Installation
+            </TabsTrigger>
+            <TabsTrigger
+              value="quotations"
+              onPointerDown={() => {
+                setOperationalTab("metering")
+              }}
+            >
+              Metering
+            </TabsTrigger>
+            <TabsTrigger
+              value="quotations"
+              onPointerDown={() => {
+                setOperationalTab("confirmation")
+              }}
+            >
+              Final confirmation
+            </TabsTrigger>
             <TabsTrigger value="dealers">Dealers</TabsTrigger>
             <TabsTrigger value="customers">Customers</TabsTrigger>
             <TabsTrigger value="visitors">Visitors</TabsTrigger>
@@ -1883,6 +2705,61 @@ export default function AdminPanelPage() {
                 </DialogContent>
               </Dialog>
               <CardHeader>
+                <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+                  {operationalTab === "all" ? (
+                    (
+                      [
+                        { key: "all" as const, label: "All" },
+                        { key: "installation" as const, label: "Installation" },
+                        { key: "metering" as const, label: "Metering" },
+                        { key: "confirmation" as const, label: "Final confirmation" },
+                      ] as const
+                    ).map((item) => (
+                      <Button
+                        key={item.key}
+                        type="button"
+                        size="sm"
+                        variant={operationalTab === item.key ? "default" : "ghost"}
+                        className={cn("h-8", operationalTab === item.key && "shadow-sm")}
+                        onClick={() => setOperationalTab(item.key)}
+                      >
+                        {item.label}
+                      </Button>
+                    ))
+                  ) : (
+                    (
+                      operationalTab === "metering"
+                        ? ([
+                            { key: "all" as const, label: "All" },
+                            { key: "pending" as const, label: "Processing" },
+                            { key: "done" as const, label: "Approved" },
+                            { key: "mco" as const, label: "MCO" },
+                          ] as const)
+                        : ([
+                            { key: "all" as const, label: "All" },
+                            {
+                              key: "pending" as const,
+                              label: operationalTab === "installation" ? "Pending Installations" : "Pending",
+                            },
+                            {
+                              key: "done" as const,
+                              label: operationalTab === "installation" ? "Approved by Installer" : "Done",
+                            },
+                          ] as const)
+                    ).map((item) => (
+                      <Button
+                        key={item.key}
+                        type="button"
+                        size="sm"
+                        variant={operationalProgressTab === item.key ? "default" : "ghost"}
+                        className={cn("h-8", operationalProgressTab === item.key && "shadow-sm")}
+                        onClick={() => setOperationalProgressTab(item.key)}
+                      >
+                        {item.label}
+                      </Button>
+                    ))
+                  )}
+                </div>
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="relative flex-1">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -1916,7 +2793,595 @@ export default function AdminPanelPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                {sortedQuotations.length === 0 ? (
+                {operationalTab === "metering" ? (
+                  (() => {
+                    const meteringList =
+                      operationalProgressTab === "pending"
+                        ? meteringProcessingQuotations
+                        : operationalProgressTab === "done"
+                          ? meteringApprovedQuotations
+                          : operationalProgressTab === "mco"
+                            ? meteringMcoQuotations
+                            : sortedQuotations
+                    return meteringList.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No metering records found</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {meteringList.map((quotation) => {
+                          const meteringStage = getAdminMeteringStage(quotation)
+                          const approvedDate =
+                            (quotation as any).approvedAt || (quotation as any).approvedDate || (quotation as any).statusUpdatedAt || quotation.createdAt
+                          return (
+                            <Card key={quotation.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
+                              <CardContent className="p-4">
+                                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-1">
+                                  <div className="xl:col-span-2 min-w-0">
+                                    <p className="text-sm font-semibold leading-tight">
+                                      {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                      {meteringStage === "mco" ? "MCO Date" : "Approved date"}
+                                    </p>
+                                    <p className="text-xs font-medium flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-muted-foreground" />
+                                      {approvedDate ? new Date(approvedDate as string).toLocaleDateString("en-IN") : "N/A"}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Phase</p>
+                                    <p className="text-xs font-medium">{getQuotationPhaseText(quotation)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Dealer</p>
+                                    <p className="text-xs font-medium">{getDealerName(quotation.dealerId)}</p>
+                                    <p className="text-[11px] text-muted-foreground">{getDealerMobile(quotation.dealerId)}</p>
+                                  </div>
+                                  <div className="xl:col-span-2 min-w-0">
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Customer Address / Visitor Location</p>
+                                    <p className="text-xs font-medium truncate">{getQuotationAddressText(quotation)}</p>
+                                  </div>
+                                  <div>
+                                    <Badge variant="outline" className="text-xs capitalize">
+                                      {String((quotation as any).installationStatus || (quotation as any).installation_status || "—")}
+                                    </Badge>
+                                  </div>
+                                  <div className="md:col-span-2 xl:col-span-8 w-full flex flex-wrap gap-2 justify-end">
+                                    <Button variant="outline" size="sm" onClick={() => openAdminMeteringDetails(quotation)}>
+                                      Metering Details
+                                    </Button>
+                                    {meteringStage === "processing" && (
+                                      <Button
+                                        size="sm"
+                                        onClick={() => void setAdminMeteringStage(quotation, "approved")}
+                                        disabled={!hasRequiredAdminMeteringDetails(quotation)}
+                                      >
+                                        Move to Approved
+                                      </Button>
+                                    )}
+                                    {meteringStage === "approved" && (
+                                      <>
+                                        <Button variant="outline" size="sm" onClick={() => void setAdminMeteringStage(quotation, "processing")}>
+                                          Back to Processing
+                                        </Button>
+                                        <Button size="sm" onClick={() => void setAdminMeteringStage(quotation, "mco")}>
+                                          Move to MCO
+                                        </Button>
+                                      </>
+                                    )}
+                                    {meteringStage === "mco" && (
+                                      <>
+                                        <Button variant="outline" size="sm" onClick={() => openAdminMcoDocsModal(quotation)}>
+                                          Upload MCO Docs
+                                        </Button>
+                                        <Button
+                                          size="sm"
+                                          onClick={() => void moveAdminToBaldevConfirmation(quotation)}
+                                          disabled={!hasRequiredAdminMeteringDetails(quotation) || !hasRequiredAdminMcoDocuments(quotation)}
+                                        >
+                                          Move to Confirmation (Baldev)
+                                        </Button>
+                                        <Button variant="outline" size="sm" onClick={() => void setAdminMeteringStage(quotation, "approved")}>
+                                          Back to Approved
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()
+                ) : operationalTab === "confirmation" ? (
+                  (() => {
+                    const confirmationList =
+                      operationalProgressTab === "pending"
+                        ? confirmationQueueQuotations
+                        : operationalProgressTab === "done"
+                          ? confirmationFinalQuotations
+                          : sortedQuotations
+                    return confirmationList.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No confirmation records found</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {confirmationList.map((quotation) => {
+                          const confirmationStage = getAdminConfirmationStage(quotation)
+                          const installerApprovedDate =
+                            (quotation as any).installerApprovedAt ||
+                            (quotation as any).installer_approved_at ||
+                            (quotation as any).approvedAt ||
+                            (quotation as any).approvedDate ||
+                            quotation.createdAt
+                          return (
+                            <Card
+                              key={quotation.id}
+                              className={
+                                confirmationStage === "final"
+                                  ? "border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm"
+                                  : "border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm"
+                              }
+                            >
+                              <CardContent className="p-4">
+                                <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
+                                  <div className="min-w-[180px] flex-1">
+                                    <p className="text-sm font-semibold leading-tight">
+                                      {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
+                                  </div>
+                                  <div className="min-w-[120px]">
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                      {confirmationStage === "final" ? "Closed On" : "Installer Approved"}
+                                    </p>
+                                    <p className="text-xs font-medium flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-muted-foreground" />
+                                      {installerApprovedDate ? new Date(installerApprovedDate as string).toLocaleDateString("en-IN") : "N/A"}
+                                    </p>
+                                  </div>
+                                  <div className="min-w-[120px]">
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                                    <p className="text-sm font-semibold">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                                  </div>
+                                  <div className="min-w-[130px]">
+                                    {confirmationStage === "final" ? (
+                                      <Badge className="bg-green-600 text-white text-xs">Final Closure</Badge>
+                                    ) : (
+                                      <Badge variant="outline" className="text-xs">Pending Baldev</Badge>
+                                    )}
+                                  </div>
+                                  {confirmationStage === "queue" ? (
+                                    <div className="ml-auto flex gap-2">
+                                      <Button variant="outline" size="sm" onClick={() => toggleAdminFinalUpdate(quotation)}>
+                                        <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                        Update Final Details
+                                      </Button>
+                                      <Button size="sm" onClick={() => void markAdminFinalApproved(quotation)} disabled={adminBaldevSavingId === quotation.id}>
+                                        {adminBaldevSavingId === quotation.id ? "Saving..." : "Mark Final Approved"}
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                  {confirmationStage === "final" ? (
+                                    <div className="ml-auto">
+                                      <Button variant="outline" size="sm" onClick={() => toggleAdminFinalUpdate(quotation)}>
+                                        <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                        Update Final Details
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                                {adminFinalExpandedId === quotation.id ? (
+                                  <div className="mt-4 rounded-md border border-border/70 p-3">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                      <div className="space-y-1">
+                                        <Label className="text-xs">Customer Final Bill (PDF/JPG)</Label>
+                                        <Input
+                                          type="file"
+                                          accept="image/*,.pdf"
+                                          className="h-9 text-sm"
+                                          onChange={(e) =>
+                                            setAdminFinalBillFileByQuotation((prev) => ({
+                                              ...prev,
+                                              [quotation.id]: e.target.files?.[0] || null,
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-xs">Panel Warranty (PDF/JPG)</Label>
+                                        <Input
+                                          type="file"
+                                          accept="image/*,.pdf"
+                                          className="h-9 text-sm"
+                                          onChange={(e) =>
+                                            setAdminPanelWarrantyFileByQuotation((prev) => ({
+                                              ...prev,
+                                              [quotation.id]: e.target.files?.[0] || null,
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-xs">Inverter Warranty (PDF/JPG)</Label>
+                                        <Input
+                                          type="file"
+                                          accept="image/*,.pdf"
+                                          className="h-9 text-sm"
+                                          onChange={(e) =>
+                                            setAdminInverterWarrantyFileByQuotation((prev) => ({
+                                              ...prev,
+                                              [quotation.id]: e.target.files?.[0] || null,
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label className="text-xs">Work Completion Warranty (PDF/JPG)</Label>
+                                        <Input
+                                          type="file"
+                                          accept="image/*,.pdf"
+                                          className="h-9 text-sm"
+                                          onChange={(e) =>
+                                            setAdminWorkCompletionWarrantyFileByQuotation((prev) => ({
+                                              ...prev,
+                                              [quotation.id]: e.target.files?.[0] || null,
+                                            }))
+                                          }
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 flex justify-end gap-2">
+                                      <Button variant="outline" size="sm" onClick={() => setAdminFinalExpandedId(null)}>
+                                        Cancel
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => void saveAdminFinalConfirmationDetails(quotation)}
+                                        disabled={adminFinalSavingId === quotation.id}
+                                      >
+                                        {adminFinalSavingId === quotation.id ? "Saving..." : "Save Details"}
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()
+                ) : operationalTab === "installation" ? (
+                  (() => {
+                    const installerList =
+                      operationalProgressTab === "pending"
+                        ? installationPendingQuotations
+                        : operationalProgressTab === "done"
+                          ? installationApprovedQuotations
+                          : sortedQuotations
+                    return installerList.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                        <p>No installer records found</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {installerList.map((quotation) => {
+                          const installerStatus = getInstallerQueueStatusForAdmin(quotation)
+                          const approvedDate =
+                            (quotation as any).approvedAt || (quotation as any).approvedDate || (quotation as any).statusUpdatedAt || quotation.createdAt
+                          return (
+                            <Card key={quotation.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
+                              <CardContent className="p-4">
+                                <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
+                                  <div className="min-w-[220px] flex-1">
+                                    <p className="text-sm font-semibold leading-tight">
+                                      {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
+                                  </div>
+                                  <div className="min-w-[140px]">
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved date</p>
+                                    <p className="text-xs font-medium flex items-center gap-1">
+                                      <Calendar className="w-3 h-3 text-muted-foreground" />
+                                      {approvedDate ? new Date(approvedDate as string).toLocaleDateString("en-IN") : "N/A"}
+                                    </p>
+                                  </div>
+                                  <div className="min-w-[120px]">
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                                    <p className="text-sm font-semibold">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                                  </div>
+                                  <div className="min-w-[140px]">
+                                    <Badge variant="outline" className="text-xs capitalize">
+                                      {installerStatus === "approved"
+                                        ? "Approved by Installer"
+                                        : installerStatus === "inprogress"
+                                          ? "Installer In Progress"
+                                          : "Pending Installation"}
+                                    </Badge>
+                                  </div>
+                                  <div className="ml-auto flex gap-2">
+                                    {installerStatus === "pending" ? (
+                                      <>
+                                        <Button size="sm" variant="outline" onClick={() => void updateOperationalStage(quotation.id, "installer_in_progress")}>
+                                          <Clock3 className="w-3.5 h-3.5 mr-1" />
+                                          Start In Progress
+                                        </Button>
+                                        <Button size="sm" onClick={() => void openAdminInstallDialog(quotation)}>
+                                          <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                          Upload
+                                        </Button>
+                                      </>
+                                    ) : null}
+                                    {installerStatus === "inprogress" ? (
+                                      <Button size="sm" onClick={() => void openAdminInstallDialog(quotation)}>
+                                        <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                        Upload
+                                      </Button>
+                                    ) : null}
+                                    <Button variant="outline" size="sm" onClick={() => setStatusHistoryQuotation(quotation)}>
+                                      <History className="w-3.5 h-3.5 mr-1" />
+                                      Timeline
+                                    </Button>
+                                  </div>
+                                </div>
+                                {adminInstallExpandedId === quotation.id && adminInstallQuotation?.id === quotation.id ? (
+                                  <div className="mt-4 rounded-md border border-border/70 p-3">
+                                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
+                                      <div className="space-y-4">
+                                        <div className="space-y-1.5">
+                                          <p className="text-xs font-semibold">Installation Completion Images (required as marked *)</p>
+                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {ADMIN_INSTALLATION_IMAGE_FIELDS.map((field) => (
+                                              <div className="space-y-1" key={field.key}>
+                                                <Label className="text-xs">
+                                                  {field.label}
+                                                  {isAdminImageFieldRequired(field) ? " *" : ""}
+                                                </Label>
+                                                <Input
+                                                  type="file"
+                                                  accept="image/*"
+                                                  multiple={isAdminImageFieldMultiple(field)}
+                                                  className="h-9 text-sm"
+                                                  onChange={(e) => {
+                                                    const files = Array.from(e.target.files || [])
+                                                    setAdminInstallFiles((prev) => ({ ...prev, [field.key]: files }))
+                                                  }}
+                                                />
+                                                <p className="text-[11px] text-muted-foreground">
+                                                  {(adminInstallFiles[field.key] || []).length > 0
+                                                    ? `${(adminInstallFiles[field.key] || []).length} file(s) selected`
+                                                    : "No file selected"}
+                                                </p>
+                                              </div>
+                                            ))}
+                                            <div className="space-y-1 md:col-span-2">
+                                              <Label className="text-xs">PI Upload</Label>
+                                              <Input
+                                                type="file"
+                                                className="h-9 text-sm"
+                                                onChange={(e) => setAdminInstallPiUpload(e.target.files?.[0] || null)}
+                                              />
+                                              <p className="text-[11px] text-muted-foreground">{adminInstallPiUpload?.name || "No file selected"}</p>
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        <div className="space-y-2 rounded-md border border-border/60 p-3">
+                                          <div className="flex flex-wrap items-center justify-between gap-2">
+                                            <Label className="text-xs font-medium">Extra expenses (optional)</Label>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-8 text-xs gap-1"
+                                              onClick={() =>
+                                                setAdminInstallExtraExpenses((prev) => [
+                                                  ...prev,
+                                                  { id: newAdminExpenseLineId(), description: "", amount: "" },
+                                                ])
+                                              }
+                                            >
+                                              <Plus className="w-3.5 h-3.5" />
+                                              Add expense
+                                            </Button>
+                                          </div>
+                                          {adminInstallExtraExpenses.length === 0 ? (
+                                            <p className="text-[11px] text-muted-foreground">No extra expenses added.</p>
+                                          ) : (
+                                            <div className="space-y-2">
+                                              {adminInstallExtraExpenses.map((line) => (
+                                                <div key={line.id} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2 items-end">
+                                                  <div className="space-y-1">
+                                                    <Label className="text-[11px] text-muted-foreground">Description</Label>
+                                                    <Input
+                                                      className="h-9 text-sm"
+                                                      placeholder="e.g. Transport, extra cable"
+                                                      value={line.description}
+                                                      onChange={(e) =>
+                                                        setAdminInstallExtraExpenses((prev) =>
+                                                          prev.map((l) => (l.id === line.id ? { ...l, description: e.target.value } : l)),
+                                                        )
+                                                      }
+                                                    />
+                                                  </div>
+                                                  <div className="space-y-1">
+                                                    <Label className="text-[11px] text-muted-foreground">Amount (₹)</Label>
+                                                    <Input
+                                                      className="h-9 text-sm"
+                                                      type="number"
+                                                      min="0"
+                                                      step="0.01"
+                                                      value={line.amount}
+                                                      onChange={(e) =>
+                                                        setAdminInstallExtraExpenses((prev) =>
+                                                          prev.map((l) => (l.id === line.id ? { ...l, amount: e.target.value } : l)),
+                                                        )
+                                                      }
+                                                    />
+                                                  </div>
+                                                  <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-9 w-9 shrink-0 text-muted-foreground"
+                                                    onClick={() => setAdminInstallExtraExpenses((prev) => prev.filter((l) => l.id !== line.id))}
+                                                  >
+                                                    <Trash2 className="w-4 h-4" />
+                                                  </Button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                          <div>
+                                            <Label className="text-xs">Back leg (cm) *</Label>
+                                            <Input
+                                              type="number"
+                                              min="0"
+                                              step="0.01"
+                                              value={adminInstallDimensions.length}
+                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, length: e.target.value }))}
+                                            />
+                                          </div>
+                                          <div>
+                                            <Label className="text-xs">Mid leg (cm)</Label>
+                                            <Input
+                                              type="number"
+                                              min="0"
+                                              step="0.01"
+                                              value={adminInstallDimensions.width}
+                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, width: e.target.value }))}
+                                            />
+                                          </div>
+                                          <div>
+                                            <Label className="text-xs">Front leg (cm) *</Label>
+                                            <Input
+                                              type="number"
+                                              min="0"
+                                              step="0.01"
+                                              value={adminInstallDimensions.height}
+                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, height: e.target.value }))}
+                                            />
+                                          </div>
+                                        </div>
+                                        <div className="space-y-1">
+                                          <Label className="text-xs">Notes (optional)</Label>
+                                          <Textarea
+                                            rows={3}
+                                            placeholder="Installation notes, material used, issues, etc."
+                                            value={adminInstallNotes}
+                                            onChange={(e) => setAdminInstallNotes(e.target.value)}
+                                          />
+                                        </div>
+                                        <div className="flex justify-end gap-2">
+                                          <Button variant="outline" onClick={() => setAdminInstallExpandedId(null)} disabled={adminInstallSaving}>
+                                            Cancel
+                                          </Button>
+                                          <Button onClick={() => void submitAdminInstallationUpload()} disabled={adminInstallSaving}>
+                                            {adminInstallSaving ? "Saving..." : "Complete & Mark as Approved"}
+                                          </Button>
+                                        </div>
+                                      </div>
+
+                                      <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
+                                        <div className="space-y-2">
+                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Customer Details</p>
+                                          <div className="space-y-1.5 text-xs">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <span className="text-muted-foreground">Customer</span>
+                                              <span className="font-medium text-right">
+                                                {formatPersonName(adminInstallQuotation.customer.firstName, adminInstallQuotation.customer.lastName, "N/A")}
+                                              </span>
+                                            </div>
+                                            <div className="flex items-start justify-between gap-2">
+                                              <span className="text-muted-foreground">Mobile</span>
+                                              <span className="font-medium text-right">{adminInstallQuotation.customer.mobile || "N/A"}</span>
+                                            </div>
+                                            <div className="flex items-start justify-between gap-2">
+                                              <span className="text-muted-foreground">Agent</span>
+                                              <span className="font-medium text-right">{getDealerName(adminInstallQuotation.dealerId)}</span>
+                                            </div>
+                                            <div className="flex items-start justify-between gap-2">
+                                              <span className="text-muted-foreground">Agent Mobile</span>
+                                              <span className="font-medium text-right">{getDealerMobile(adminInstallQuotation.dealerId)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2 border-t border-border/60 pt-2">
+                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visitor / Location Details</p>
+                                          <div className="space-y-1.5 text-xs">
+                                            <div className="flex items-start justify-between gap-2">
+                                              <span className="text-muted-foreground">Visit Location</span>
+                                              <span className="font-medium text-right">
+                                                {(() => {
+                                                  const rawAddress = adminInstallQuotation.customer.address
+                                                  const addressText =
+                                                    rawAddress && typeof rawAddress === "object"
+                                                      ? [rawAddress.street, rawAddress.city, rawAddress.state, rawAddress.pincode].filter(Boolean).join(", ")
+                                                      : String(rawAddress || "")
+                                                  return (adminInstallQuotation as any).visitLocation || (adminInstallQuotation as any).location || addressText || "N/A"
+                                                })()}
+                                              </span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="space-y-2 border-t border-border/60 pt-2">
+                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Product Specification</p>
+                                          <div className="space-y-1.5 text-xs">
+                                            {(() => {
+                                              const productSpec = getAdminInstallProductSpec(adminInstallQuotation)
+                                              return (
+                                                <>
+                                                  <div className="flex items-start justify-between gap-2">
+                                                    <span className="text-muted-foreground">System Type</span>
+                                                    <span className="font-medium text-right">{String(productSpec.systemType || "N/A")}</span>
+                                                  </div>
+                                                  <div className="flex items-start justify-between gap-2">
+                                                    <span className="text-muted-foreground">Panel Configuration</span>
+                                                    <span className="font-medium text-right">{`${String(productSpec.panelBrand || "N/A")} ${String(productSpec.panelSize || "")} x ${String(productSpec.panelQuantity || "0")}`}</span>
+                                                  </div>
+                                                  <div className="flex items-start justify-between gap-2">
+                                                    <span className="text-muted-foreground">Inverter</span>
+                                                    <span className="font-medium text-right">{`${String(productSpec.inverterBrand || "N/A")} - ${String(productSpec.inverterSize || "N/A")}`}</span>
+                                                  </div>
+                                                  <div className="flex items-start justify-between gap-2">
+                                                    <span className="text-muted-foreground">Phase</span>
+                                                    <span className="font-medium text-right">{String(productSpec.phase || "N/A")}</span>
+                                                  </div>
+                                                  <div className="flex items-start justify-between gap-2">
+                                                    <span className="text-muted-foreground">Structure</span>
+                                                    <span className="font-medium text-right">{`${String(productSpec.structureType || "N/A")} - ${String(productSpec.structureSize || "N/A")}`}</span>
+                                                  </div>
+                                                </>
+                                              )
+                                            })()}
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </CardContent>
+                            </Card>
+                          )
+                        })}
+                      </div>
+                    )
+                  })()
+                ) : sortedQuotations.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                     <p>No quotations found</p>
@@ -2012,6 +3477,28 @@ export default function AdminPanelPage() {
                                 <SelectItem value="completed">Completed</SelectItem>
                               </SelectContent>
                             </Select>
+                            <Select
+                              value={getOperationalStage(quotation) || "unset"}
+                              onValueChange={(value) => {
+                                if (value === "unset") return
+                                void updateOperationalStage(quotation.id, value as AdminOperationalStage)
+                              }}
+                            >
+                              <SelectTrigger className="w-full h-9 text-xs">
+                                <SelectValue placeholder="Operational stage" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="unset">Operational stage</SelectItem>
+                                {ADMIN_OPERATIONAL_STAGES.map((stage) => (
+                                  <SelectItem key={stage} value={stage}>
+                                    {stage.replaceAll("_", " ")}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-[10px] text-muted-foreground leading-snug">
+                              Ops: {getOperationalStage(quotation) ? getOperationalStage(quotation).replaceAll("_", " ") : "Not set"}
+                            </p>
                             
                             <div className="flex gap-2">
                               <Button
@@ -2079,7 +3566,7 @@ export default function AdminPanelPage() {
                             </th>
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">Amount</th>
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
-                              Status
+                              Status / Ops
                             </th>
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
                               File login
@@ -2157,6 +3644,28 @@ export default function AdminPanelPage() {
                                   >
                                     {(quotation.status || "pending").charAt(0).toUpperCase() +
                                       (quotation.status || "pending").slice(1)}
+                                  </Badge>
+                                  <Select
+                                    value={getOperationalStage(quotation) || "unset"}
+                                    onValueChange={(value) => {
+                                      if (value === "unset") return
+                                      void updateOperationalStage(quotation.id, value as AdminOperationalStage)
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-full min-w-0 h-8 text-xs">
+                                      <SelectValue placeholder="Ops stage" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="unset">Operational stage</SelectItem>
+                                      {ADMIN_OPERATIONAL_STAGES.map((stage) => (
+                                        <SelectItem key={stage} value={stage}>
+                                          {stage.replaceAll("_", " ")}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Badge variant="outline" className="text-[10px] w-full justify-center capitalize">
+                                    {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
                                   </Badge>
                                 </div>
                               </td>
@@ -5803,6 +7312,173 @@ export default function AdminPanelPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={adminMeteringModalOpen} onOpenChange={setAdminMeteringModalOpen}>
+          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Metering Details</DialogTitle>
+              <DialogDescription>
+                Save the same details and document used in the Metering dashboard.
+              </DialogDescription>
+            </DialogHeader>
+            {adminMeteringSelectedQuotation ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Discom Name</Label>
+                    <Input
+                      value={adminMeteringDraft.discomName}
+                      onChange={(e) =>
+                        setAdminMeteringDraft((prev) => ({ ...prev, discomName: e.target.value }))
+                      }
+                      placeholder="Enter discom name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Meter Type</Label>
+                    <Select
+                      value={adminMeteringDraft.meterType || "__none__"}
+                      onValueChange={(value) =>
+                        setAdminMeteringDraft((prev) => ({
+                          ...prev,
+                          meterType: value === "__none__" ? "" : (value as AdminMeteringModalDraft["meterType"]),
+                        }))
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select meter type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Select meter type</SelectItem>
+                        <SelectItem value="solar">Solar</SelectItem>
+                        <SelectItem value="net">Net</SelectItem>
+                        <SelectItem value="both">Both</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {adminMeteringDraft.meterType === "both" ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label>Solar Meter No</Label>
+                      <Input
+                        value={adminMeteringDraft.solarMeterNo}
+                        onChange={(e) =>
+                          setAdminMeteringDraft((prev) => ({ ...prev, solarMeterNo: e.target.value }))
+                        }
+                        placeholder="Enter solar meter number"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Net Meter No</Label>
+                      <Input
+                        value={adminMeteringDraft.netMeterNo}
+                        onChange={(e) =>
+                          setAdminMeteringDraft((prev) => ({ ...prev, netMeterNo: e.target.value }))
+                        }
+                        placeholder="Enter net meter number"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label>Meter No</Label>
+                    <Input
+                      value={adminMeteringDraft.meterNo}
+                      onChange={(e) =>
+                        setAdminMeteringDraft((prev) => ({ ...prev, meterNo: e.target.value }))
+                      }
+                      placeholder="Enter meter number"
+                    />
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label>Meter Document (image/pdf)</Label>
+                  <Input
+                    type="file"
+                    accept="image/*,.pdf"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null
+                      if (!adminMeteringQuotationId) return
+                      setAdminMeteringDocByQuotation((prev) => ({ ...prev, [adminMeteringQuotationId]: file }))
+                    }}
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setAdminMeteringModalOpen(false)} disabled={adminMeteringSaving}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => void saveAdminMeteringDetails()} disabled={adminMeteringSaving}>
+                    {adminMeteringSaving ? "Saving..." : "Save Details"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={adminMcoDocsModalOpen} onOpenChange={setAdminMcoDocsModalOpen}>
+          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>MCO Completion Documents</DialogTitle>
+              <DialogDescription>
+                Upload Work Complete Report, Meter Installed Photo, and Complete DCR Report.
+              </DialogDescription>
+            </DialogHeader>
+            {adminMcoDocsQuotationId ? (
+              <div className="space-y-3">
+                {[
+                  { key: "work", label: "Work Complete Report", accept: "image/*" },
+                  { key: "meter", label: "Meter Installed Photo", accept: "image/*" },
+                  { key: "dcr", label: "Complete DCR Report", accept: "image/*" },
+                ].map((item) => {
+                  const row = sortedQuotations.find((q) => q.id === adminMcoDocsQuotationId) as any
+                  const currentName =
+                    item.key === "work"
+                      ? adminWorkCompleteReportByQuotation[adminMcoDocsQuotationId]?.name ||
+                        row?.workCompleteReportImageName ||
+                        row?.work_complete_report_image_name
+                      : item.key === "meter"
+                        ? adminMeterInstalledPhotoByQuotation[adminMcoDocsQuotationId]?.name ||
+                          row?.meterInstalledPhotoName ||
+                          row?.meter_installed_photo_name
+                        : adminCompleteDcrReportByQuotation[adminMcoDocsQuotationId]?.name ||
+                          row?.completeDcrReportImageName ||
+                          row?.complete_dcr_report_image_name
+                  return (
+                    <div className="space-y-2" key={item.key}>
+                      <Label>{item.label}</Label>
+                      <Input
+                        type="file"
+                        accept={item.accept}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null
+                          if (!adminMcoDocsQuotationId) return
+                          if (item.key === "work") {
+                            setAdminWorkCompleteReportByQuotation((prev) => ({ ...prev, [adminMcoDocsQuotationId]: file }))
+                          } else if (item.key === "meter") {
+                            setAdminMeterInstalledPhotoByQuotation((prev) => ({ ...prev, [adminMcoDocsQuotationId]: file }))
+                          } else {
+                            setAdminCompleteDcrReportByQuotation((prev) => ({ ...prev, [adminMcoDocsQuotationId]: file }))
+                          }
+                        }}
+                      />
+                      <p className="text-[11px] text-muted-foreground truncate">{currentName || "No file selected"}</p>
+                    </div>
+                  )
+                })}
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setAdminMcoDocsModalOpen(false)} disabled={adminMcoDocsSaving}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => void saveAdminMcoDocuments()} disabled={adminMcoDocsSaving || !adminMcoDocsQuotationId}>
+                    {adminMcoDocsSaving ? "Saving..." : "Save Documents"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={!!statusHistoryQuotation} onOpenChange={(open) => !open && setStatusHistoryQuotation(null)}>
           <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
             <DialogHeader>
@@ -5870,6 +7546,8 @@ export default function AdminPanelPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        
       </main>
     </div>
   )

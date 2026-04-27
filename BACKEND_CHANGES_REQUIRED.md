@@ -946,6 +946,113 @@ Compatibility fallback (optional):
 - If you cannot add the route above immediately, support:
   - `POST /api/quotations/{quotationId}/metering-details`
 
+#### K) MCO completion docs + move to Baldev confirmation
+
+When a quotation is in **MCO** tab, frontend now requires 3 image uploads before allowing move to confirmation:
+- `workCompleteReportImage` (image)
+- `meterInstalledPhoto` (image)
+- `completeDcrReportImage` (image)
+
+Recommended endpoint:
+- `POST /api/metering/quotations/{quotationId}/mco-documents` (`multipart/form-data`)
+
+Compatibility fallbacks accepted by frontend:
+- `POST /api/metering/quotations/{quotationId}/documents`
+- `POST /api/quotations/{quotationId}/metering-mco-documents`
+
+Response/list payload should include (camelCase or snake_case):
+- `workCompleteReportImageUrl` / `work_complete_report_image_url`
+- `meterInstalledPhotoUrl` / `meter_installed_photo_url`
+- `completeDcrReportImageUrl` / `complete_dcr_report_image_url`
+- corresponding names if available
+
+Transition to Baldev confirmation:
+- After all 3 MCO docs are present, frontend calls status update with `action=mark_completed`.
+- Backend should persist status as `pending_baldev` (or mapped Baldev-confirmation status).
+- Once status becomes Baldev stage, quotation should exit metering tabs and appear in Baldev login queue.
+
+#### L) Admin control for Installation + Metering + Confirmation
+
+Admin UI now exposes an **Operational Stage** selector for each quotation. Backend must allow admin to read + update these stages.
+
+Implement at least one admin update endpoint:
+- `PATCH /api/admin/quotations/{quotationId}/installation-status` (preferred)
+- `PATCH /api/admin/quotations/{quotationId}/workflow-status`
+- or support existing status patch routes with operational stage fields in body
+
+Accepted stage values:
+- `pending_installer`
+- `installer_in_progress`
+- `installer_approved`
+- `pending_metering`
+- `metering_in_progress`
+- `metering_approved`
+- `mco`
+- `pending_baldev`
+- `baldev_approved`
+
+Request body compatibility (frontend may send one or more keys):
+```json
+{
+  "installationStatus": "pending_metering",
+  "installation_status": "pending_metering",
+  "meteringStatus": "pending_metering",
+  "metering_status": "pending_metering",
+  "status": "pending_metering"
+}
+```
+
+Persist + return on quotation row/list:
+- `installationStatus` / `installation_status`
+- optional mirrors: `meteringStatus` / `metering_status`, `mcoStatus` / `mco_status`
+- `meteringApprovedAt` / `metering_approved_at` when stage becomes `metering_approved`
+- `mcoAt` / `mco_at` when stage becomes `mco`
+
+Admin list requirement:
+- `GET /api/admin/quotations` must include these operational fields so admin can view/manipulate installer, metering, and confirmation stages in one screen.
+
+RBAC for this section:
+- `admin` must be authorized to update operational stage.
+- `metering` must be authorized on metering detail save + MCO docs upload routes.
+- `baldev` must be authorized to read/manage `pending_baldev` confirmation queue.
+
+#### M) Final Confirmation document uploads (Admin + Baldev) — files only
+
+Final confirmation now includes a per-customer **Update Final Details** upload panel in both:
+- `Admin > Final confirmation`
+- `Baldev Confirmation Dashboard`
+
+This panel is **document-only** (no warranty text inputs). Backend should accept PDF/JPG uploads for:
+- `customerFinalBillFile`
+- `panelWarrantyFile`
+- `inverterWarrantyFile`
+- `workCompletionWarrantyFile`
+
+Recommended endpoint already used by frontend:
+- `PATCH /api/quotations/{quotationId}/documents` (`multipart/form-data`)
+
+Auth/RBAC:
+- `admin` and `baldev` must be allowed to upload these final-confirmation documents.
+- Keep dealer/account-management permissions as per your existing KYC document policy, but do not block the two roles above.
+
+Storage/persistence:
+- Upload all files to S3/object storage.
+- Persist stable URL/key/name for each uploaded file.
+- Keep existing KYC fields backward compatible; do not break old document keys while adding these new keys.
+
+Response/list payload should include these fields (camelCase or snake_case):
+- `customerFinalBillFileUrl` / `customer_final_bill_file_url`
+- `panelWarrantyFileUrl` / `panel_warranty_file_url`
+- `inverterWarrantyFileUrl` / `inverter_warranty_file_url`
+- `workCompletionWarrantyFileUrl` / `work_completion_warranty_file_url`
+- optional corresponding names:
+  - `customerFinalBillFileName`, `panelWarrantyFileName`, `inverterWarrantyFileName`, `workCompletionWarrantyFileName`
+
+Validation:
+- Accept partial save (any one or more files) to support incremental uploads.
+- Reject unsupported mime/extension with clear validation error (`VAL_001` style).
+- Return role errors as `AUTH_004` with descriptive message.
+
 ---
 
 ### 6.5 Frontend Compatibility Requirements
@@ -972,6 +1079,14 @@ For metering dashboard specifically:
   - `solarMeterNo`
   - `netMeterNo`
   - `meterDocumentImageUrl` (or document object under `documents` with `docType=meter_doc`)
+
+For final confirmation (Admin + Baldev) document UI:
+- Include final-confirmation file URL/name fields in list/detail payload so previously uploaded files can be shown without re-upload:
+  - `customerFinalBillFileUrl` / `customer_final_bill_file_url`
+  - `panelWarrantyFileUrl` / `panel_warranty_file_url`
+  - `inverterWarrantyFileUrl` / `inverter_warranty_file_url`
+  - `workCompletionWarrantyFileUrl` / `work_completion_warranty_file_url`
+- These fields should be returned for quotations in `pending_baldev`, `baldev_approved`, and `completed` states.
 
 For installer listing UI requirements:
 - support oldest-first ordering (`sortBy=approvedAt&sortOrder=asc`) so old approved jobs appear first

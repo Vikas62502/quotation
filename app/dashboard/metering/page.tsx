@@ -30,6 +30,12 @@ type MeteringWorkflowItem = {
   netMeterNo?: string
   meterDocumentName?: string
   meterDocumentUrl?: string
+  workCompleteReportImageName?: string
+  workCompleteReportImageUrl?: string
+  meterInstalledPhotoName?: string
+  meterInstalledPhotoUrl?: string
+  completeDcrReportImageName?: string
+  completeDcrReportImageUrl?: string
 }
 
 type MeteringQuotation = {
@@ -62,6 +68,18 @@ type MeteringQuotation = {
   netMeterNo?: string
   meterDocumentUrl?: string
   meter_document_url?: string
+  workCompleteReportImageUrl?: string
+  work_complete_report_image_url?: string
+  workCompleteReportImageName?: string
+  work_complete_report_image_name?: string
+  meterInstalledPhotoUrl?: string
+  meter_installed_photo_url?: string
+  meterInstalledPhotoName?: string
+  meter_installed_photo_name?: string
+  completeDcrReportImageUrl?: string
+  complete_dcr_report_image_url?: string
+  completeDcrReportImageName?: string
+  complete_dcr_report_image_name?: string
   phase?: string
   products?: { phase?: string }
 }
@@ -106,6 +124,8 @@ function stageFromBackend(q: MeteringQuotation): MeteringStage | null {
       "",
   ).toLowerCase()
   if (raw === "mco" || raw.includes("mco")) return "mco"
+  // Once moved to Baldev confirmation, it should leave metering tabs.
+  if (raw === "pending_baldev" || raw === "baldev_approved" || raw.includes("baldev")) return null
   if (raw === "metering_approved" || raw === "approved" || (raw.includes("approved") && !raw.includes("pending"))) return "approved"
   if (
     raw === "pending_metering" ||
@@ -113,8 +133,6 @@ function stageFromBackend(q: MeteringQuotation): MeteringStage | null {
     raw === "pending_installer" ||
     raw === "installer_in_progress" ||
     raw === "installer_approved" ||
-    raw === "pending_baldev" ||
-    raw === "baldev_approved" ||
     raw.includes("processing") ||
     raw.includes("pending")
   ) {
@@ -148,6 +166,22 @@ export default function MeteringDashboardPage() {
     netMeterNo: "",
   })
   const [savingDetails, setSavingDetails] = useState(false)
+  const [mcoDocsModalOpen, setMcoDocsModalOpen] = useState(false)
+  const [mcoDocsQuotationId, setMcoDocsQuotationId] = useState<string | null>(null)
+  const [savingMcoDocs, setSavingMcoDocs] = useState(false)
+  const [workCompleteReportByQuotation, setWorkCompleteReportByQuotation] = useState<Record<string, File | null>>({})
+  const [meterInstalledPhotoByQuotation, setMeterInstalledPhotoByQuotation] = useState<Record<string, File | null>>({})
+  const [completeDcrReportByQuotation, setCompleteDcrReportByQuotation] = useState<Record<string, File | null>>({})
+  const [mcoPreviewByQuotation, setMcoPreviewByQuotation] = useState<
+    Record<
+      string,
+      {
+        workCompleteReportImage?: string
+        meterInstalledPhoto?: string
+        completeDcrReportImage?: string
+      }
+    >
+  >({})
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
@@ -157,8 +191,16 @@ export default function MeteringDashboardPage() {
           URL.revokeObjectURL(url)
         } catch {}
       })
+      Object.values(mcoPreviewByQuotation).forEach((preview) => {
+        ;[preview.workCompleteReportImage, preview.meterInstalledPhoto, preview.completeDcrReportImage].forEach((url) => {
+          if (!url || !url.startsWith("blob:")) return
+          try {
+            URL.revokeObjectURL(url)
+          } catch {}
+        })
+      })
     }
-  }, [meterDocumentPreviewByQuotation])
+  }, [meterDocumentPreviewByQuotation, mcoPreviewByQuotation])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -218,9 +260,11 @@ export default function MeteringDashboardPage() {
     void load()
   }, [toast, useApi])
 
-  const getMeteringStage = (q: MeteringQuotation): MeteringStage => {
+  const getMeteringStage = (q: MeteringQuotation): MeteringStage | null => {
     const fromApi = stageFromBackend(q)
     if (fromApi) return fromApi
+    const raw = String(q.installationStatus || q.installation_status || q.meteringStage || q.metering_status || "").toLowerCase()
+    if (raw.includes("baldev")) return null
     return "processing"
   }
 
@@ -428,6 +472,194 @@ export default function MeteringDashboardPage() {
     }
   }
 
+  const hasRequiredMcoDocuments = (quotationId: string) => {
+    const details = workflowMap[quotationId]
+    const q = quotations.find((row) => row.id === quotationId) as any
+    return (
+      !!workCompleteReportByQuotation[quotationId] ||
+      !!meterInstalledPhotoByQuotation[quotationId] ||
+      !!completeDcrReportByQuotation[quotationId] ||
+      !!details?.workCompleteReportImageUrl ||
+      !!details?.meterInstalledPhotoUrl ||
+      !!details?.completeDcrReportImageUrl ||
+      !!q?.workCompleteReportImageUrl ||
+      !!q?.work_complete_report_image_url ||
+      !!q?.meterInstalledPhotoUrl ||
+      !!q?.meter_installed_photo_url ||
+      !!q?.completeDcrReportImageUrl ||
+      !!q?.complete_dcr_report_image_url
+    ) &&
+      (
+        !!workCompleteReportByQuotation[quotationId] ||
+        !!details?.workCompleteReportImageUrl ||
+        !!q?.workCompleteReportImageUrl ||
+        !!q?.work_complete_report_image_url
+      ) &&
+      (
+        !!meterInstalledPhotoByQuotation[quotationId] ||
+        !!details?.meterInstalledPhotoUrl ||
+        !!q?.meterInstalledPhotoUrl ||
+        !!q?.meter_installed_photo_url
+      ) &&
+      (
+        !!completeDcrReportByQuotation[quotationId] ||
+        !!details?.completeDcrReportImageUrl ||
+        !!q?.completeDcrReportImageUrl ||
+        !!q?.complete_dcr_report_image_url
+      )
+  }
+
+  const openMcoDocsModal = (quotationId: string) => {
+    const row = quotations.find((q) => q.id === quotationId) as any
+    setMcoDocsQuotationId(quotationId)
+    updateWorkflowMeta(quotationId, {
+      workCompleteReportImageName:
+        row?.workCompleteReportImageName || row?.work_complete_report_image_name || workflowMap[quotationId]?.workCompleteReportImageName,
+      workCompleteReportImageUrl:
+        row?.workCompleteReportImageUrl || row?.work_complete_report_image_url || workflowMap[quotationId]?.workCompleteReportImageUrl,
+      meterInstalledPhotoName:
+        row?.meterInstalledPhotoName || row?.meter_installed_photo_name || workflowMap[quotationId]?.meterInstalledPhotoName,
+      meterInstalledPhotoUrl:
+        row?.meterInstalledPhotoUrl || row?.meter_installed_photo_url || workflowMap[quotationId]?.meterInstalledPhotoUrl,
+      completeDcrReportImageName:
+        row?.completeDcrReportImageName || row?.complete_dcr_report_image_name || workflowMap[quotationId]?.completeDcrReportImageName,
+      completeDcrReportImageUrl:
+        row?.completeDcrReportImageUrl || row?.complete_dcr_report_image_url || workflowMap[quotationId]?.completeDcrReportImageUrl,
+    })
+    setMcoDocsModalOpen(true)
+  }
+
+  const saveMcoDocuments = async () => {
+    if (!mcoDocsQuotationId) return
+    const workFile = workCompleteReportByQuotation[mcoDocsQuotationId] || null
+    const meterFile = meterInstalledPhotoByQuotation[mcoDocsQuotationId] || null
+    const dcrFile = completeDcrReportByQuotation[mcoDocsQuotationId] || null
+
+    if (!workFile && !meterFile && !dcrFile) {
+      toast({
+        title: "Upload required",
+        description: "Please upload at least one MCO document to save changes.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    try {
+      setSavingMcoDocs(true)
+      const response: any = await api.metering.uploadMcoDocuments(mcoDocsQuotationId, {
+        workCompleteReportImage: workFile,
+        meterInstalledPhoto: meterFile,
+        completeDcrReportImage: dcrFile,
+      })
+      const saved = response?.data || response || {}
+      const workUrl = saved.workCompleteReportImageUrl || saved.work_complete_report_image_url
+      const workName =
+        saved.workCompleteReportImageName ||
+        saved.work_complete_report_image_name ||
+        workFile?.name ||
+        workflowMap[mcoDocsQuotationId]?.workCompleteReportImageName
+      const meterUrl = saved.meterInstalledPhotoUrl || saved.meter_installed_photo_url
+      const meterName =
+        saved.meterInstalledPhotoName ||
+        saved.meter_installed_photo_name ||
+        meterFile?.name ||
+        workflowMap[mcoDocsQuotationId]?.meterInstalledPhotoName
+      const dcrUrl = saved.completeDcrReportImageUrl || saved.complete_dcr_report_image_url
+      const dcrName =
+        saved.completeDcrReportImageName ||
+        saved.complete_dcr_report_image_name ||
+        dcrFile?.name ||
+        workflowMap[mcoDocsQuotationId]?.completeDcrReportImageName
+
+      updateWorkflowMeta(mcoDocsQuotationId, {
+        workCompleteReportImageUrl: workUrl || workflowMap[mcoDocsQuotationId]?.workCompleteReportImageUrl,
+        workCompleteReportImageName: workName,
+        meterInstalledPhotoUrl: meterUrl || workflowMap[mcoDocsQuotationId]?.meterInstalledPhotoUrl,
+        meterInstalledPhotoName: meterName,
+        completeDcrReportImageUrl: dcrUrl || workflowMap[mcoDocsQuotationId]?.completeDcrReportImageUrl,
+        completeDcrReportImageName: dcrName,
+      })
+
+      setMcoPreviewByQuotation((prev) => ({
+        ...prev,
+        [mcoDocsQuotationId]: {
+          workCompleteReportImage: workUrl || prev[mcoDocsQuotationId]?.workCompleteReportImage,
+          meterInstalledPhoto: meterUrl || prev[mcoDocsQuotationId]?.meterInstalledPhoto,
+          completeDcrReportImage: dcrUrl || prev[mcoDocsQuotationId]?.completeDcrReportImage,
+        },
+      }))
+
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === mcoDocsQuotationId
+            ? {
+                ...q,
+                workCompleteReportImageUrl: workUrl || (q as any).workCompleteReportImageUrl,
+                work_complete_report_image_url: workUrl || (q as any).work_complete_report_image_url,
+                meterInstalledPhotoUrl: meterUrl || (q as any).meterInstalledPhotoUrl,
+                meter_installed_photo_url: meterUrl || (q as any).meter_installed_photo_url,
+                completeDcrReportImageUrl: dcrUrl || (q as any).completeDcrReportImageUrl,
+                complete_dcr_report_image_url: dcrUrl || (q as any).complete_dcr_report_image_url,
+              }
+            : q,
+        ),
+      )
+
+      setWorkCompleteReportByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: null }))
+      setMeterInstalledPhotoByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: null }))
+      setCompleteDcrReportByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: null }))
+
+      toast({ title: "Saved", description: "MCO documents saved to backend." })
+    } catch (error) {
+      toast({
+        title: "Save failed",
+        description: error instanceof Error ? error.message : "Could not save MCO documents.",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingMcoDocs(false)
+    }
+  }
+
+  const moveToBaldevConfirmation = async (quotationId: string) => {
+    if (!hasRequiredMeteringDetails(quotationId) || !hasRequiredMcoDocuments(quotationId)) {
+      toast({
+        title: "Required uploads missing",
+        description:
+          "Complete Metering Details and upload Work Complete Report, Meter Installed Photo, and Complete DCR Report before moving to Baldev confirmation.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      await api.metering.updateStatus(quotationId, "mark_completed")
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === quotationId
+            ? {
+                ...q,
+                installationStatus: "pending_baldev",
+                installation_status: "pending_baldev",
+              }
+            : q,
+        ),
+      )
+      toast({
+        title: "Moved to Confirmation",
+        description: "Quotation moved to Baldev confirmation queue.",
+      })
+    } catch (error) {
+      toast({
+        title: "Move failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Could not move quotation to Baldev confirmation.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const getAdminApprovedDate = (q: MeteringQuotation) =>
     (q as any).approvedAt || (q as any).approvedDate || (q as any).statusUpdatedAt || q.createdAt
 
@@ -584,9 +816,21 @@ export default function MeteringDashboardPage() {
               </>
             )}
             {tab === "mco" && (
-              <Button variant="outline" size="sm" onClick={() => void setStage(q.id, "approved")}>
-                Back to Approved
-              </Button>
+              <>
+                <Button variant="outline" size="sm" onClick={() => openMcoDocsModal(q.id)}>
+                  Upload MCO Docs
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => void moveToBaldevConfirmation(q.id)}
+                  disabled={!hasRequiredMeteringDetails(q.id) || !hasRequiredMcoDocuments(q.id)}
+                >
+                  Move to Confirmation (Baldev)
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void setStage(q.id, "approved")}>
+                  Back to Approved
+                </Button>
+              </>
             )}
           </div>
         </div>
@@ -852,6 +1096,118 @@ export default function MeteringDashboardPage() {
               </Button>
               <Button onClick={saveMeteringDetails} disabled={savingDetails || !detailsQuotationId}>
                 {savingDetails ? "Saving..." : "Save Details"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={mcoDocsModalOpen} onOpenChange={setMcoDocsModalOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>MCO Completion Documents</DialogTitle>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground">
+              Upload all 3 images before moving this quotation to Baldev confirmation.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {[
+                { key: "work", label: "Work Complete Report", accept: "image/*" },
+                { key: "meter", label: "Meter Installed Photo", accept: "image/*" },
+                { key: "dcr", label: "Complete DCR Report (Image)", accept: "image/*" },
+              ].map((item) => {
+                if (!mcoDocsQuotationId) return null
+                const row = quotations.find((q) => q.id === mcoDocsQuotationId) as any
+                const workflow = workflowMap[mcoDocsQuotationId] || {}
+                const currentName =
+                  item.key === "work"
+                    ? workCompleteReportByQuotation[mcoDocsQuotationId]?.name ||
+                      workflow.workCompleteReportImageName ||
+                      row?.workCompleteReportImageName ||
+                      row?.work_complete_report_image_name
+                    : item.key === "meter"
+                      ? meterInstalledPhotoByQuotation[mcoDocsQuotationId]?.name ||
+                        workflow.meterInstalledPhotoName ||
+                        row?.meterInstalledPhotoName ||
+                        row?.meter_installed_photo_name
+                      : completeDcrReportByQuotation[mcoDocsQuotationId]?.name ||
+                        workflow.completeDcrReportImageName ||
+                        row?.completeDcrReportImageName ||
+                        row?.complete_dcr_report_image_name
+                const previewSrc =
+                  item.key === "work"
+                    ? mcoPreviewByQuotation[mcoDocsQuotationId]?.workCompleteReportImage ||
+                      workflow.workCompleteReportImageUrl ||
+                      row?.workCompleteReportImageUrl ||
+                      row?.work_complete_report_image_url
+                    : item.key === "meter"
+                      ? mcoPreviewByQuotation[mcoDocsQuotationId]?.meterInstalledPhoto ||
+                        workflow.meterInstalledPhotoUrl ||
+                        row?.meterInstalledPhotoUrl ||
+                        row?.meter_installed_photo_url
+                      : mcoPreviewByQuotation[mcoDocsQuotationId]?.completeDcrReportImage ||
+                        workflow.completeDcrReportImageUrl ||
+                        row?.completeDcrReportImageUrl ||
+                        row?.complete_dcr_report_image_url
+                return (
+                  <div className="space-y-1" key={item.key}>
+                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{item.label}</p>
+                    <Input
+                      type="file"
+                      accept={item.accept}
+                      className="h-9 text-sm"
+                      onChange={(e) => {
+                        if (!mcoDocsQuotationId) return
+                        const file = e.target.files?.[0] || null
+                        const newUrl = file ? URL.createObjectURL(file) : undefined
+                        setMcoPreviewByQuotation((prev) => {
+                          const current = prev[mcoDocsQuotationId] || {}
+                          const oldUrl =
+                            item.key === "work"
+                              ? current.workCompleteReportImage
+                              : item.key === "meter"
+                                ? current.meterInstalledPhoto
+                                : current.completeDcrReportImage
+                          if (oldUrl && oldUrl.startsWith("blob:")) {
+                            try {
+                              URL.revokeObjectURL(oldUrl)
+                            } catch {}
+                          }
+                          return {
+                            ...prev,
+                            [mcoDocsQuotationId]: {
+                              ...current,
+                              ...(item.key === "work"
+                                ? { workCompleteReportImage: newUrl || current.workCompleteReportImage }
+                                : item.key === "meter"
+                                  ? { meterInstalledPhoto: newUrl || current.meterInstalledPhoto }
+                                  : { completeDcrReportImage: newUrl || current.completeDcrReportImage }),
+                            },
+                          }
+                        })
+                        if (item.key === "work") {
+                          setWorkCompleteReportByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: file }))
+                          updateWorkflowMeta(mcoDocsQuotationId, { workCompleteReportImageName: file?.name || currentName || "" })
+                        } else if (item.key === "meter") {
+                          setMeterInstalledPhotoByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: file }))
+                          updateWorkflowMeta(mcoDocsQuotationId, { meterInstalledPhotoName: file?.name || currentName || "" })
+                        } else {
+                          setCompleteDcrReportByQuotation((prev) => ({ ...prev, [mcoDocsQuotationId]: file }))
+                          updateWorkflowMeta(mcoDocsQuotationId, { completeDcrReportImageName: file?.name || currentName || "" })
+                        }
+                      }}
+                    />
+                    <p className="text-[11px] text-muted-foreground truncate">{currentName || "No file selected"}</p>
+                    {previewSrc && <img src={previewSrc} alt={`${item.label} preview`} className="h-24 w-auto rounded border object-cover" />}
+                  </div>
+                )
+              })}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setMcoDocsModalOpen(false)} disabled={savingMcoDocs}>
+                Cancel
+              </Button>
+              <Button onClick={saveMcoDocuments} disabled={savingMcoDocs || !mcoDocsQuotationId}>
+                {savingMcoDocs ? "Saving..." : "Save Documents"}
               </Button>
             </DialogFooter>
           </DialogContent>
