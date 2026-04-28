@@ -297,6 +297,9 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
     try {
       if (useApi) {
+        const normalizeMobile = (value: string) => String(value || "").replace(/\D/g, "")
+        const currentMobileNormalized = normalizeMobile(currentCustomer.mobile)
+
         // First, create or get customer
         let customerId: string
         try {
@@ -346,6 +349,42 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           }
           
           throw new Error(errorMessage)
+        }
+
+        // Prevent duplicate fresh quotation generation for the same customer mobile.
+        try {
+          const existingQuotationsResponse = await api.quotations.getAll({
+            search: currentCustomer.mobile,
+            page: 1,
+            limit: 1000,
+          })
+          const list: any[] = Array.isArray(existingQuotationsResponse)
+            ? existingQuotationsResponse
+            : Array.isArray((existingQuotationsResponse as any)?.quotations)
+              ? (existingQuotationsResponse as any).quotations
+              : Array.isArray((existingQuotationsResponse as any)?.data?.quotations)
+                ? (existingQuotationsResponse as any).data.quotations
+                : []
+          const hasSameMobileQuotation = list.some((row: any) => {
+            const rowMobile = normalizeMobile(
+              row?.customer?.mobile || row?.mobile || row?.customerMobile || row?.customer_mobile || "",
+            )
+            return rowMobile && rowMobile === currentMobileNormalized
+          })
+          if (hasSameMobileQuotation) {
+            throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+          }
+        } catch (dupErr) {
+          if (dupErr instanceof Error && dupErr.message.includes("already exists for this mobile")) {
+            throw dupErr
+          }
+          // If duplicate-check endpoint behavior is unavailable, fail-safe with loaded dealer quotations.
+          const hasDuplicateInLoadedData = quotations.some(
+            (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
+          )
+          if (hasDuplicateInLoadedData) {
+            throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+          }
         }
 
         // Calculate pricing values - matching backend controller logic
@@ -661,6 +700,16 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Fallback to localStorage
+        const normalizeMobile = (value: string) => String(value || "").replace(/\D/g, "")
+        const currentMobileNormalized = normalizeMobile(currentCustomer.mobile)
+        const existingAllQuotations: Quotation[] = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const hasDuplicateMobile = existingAllQuotations.some(
+          (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
+        )
+        if (hasDuplicateMobile) {
+          throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+        }
+
         // totalAmount is now subtotal (total project cost)
         const totalProjectCost = validatedSubtotalValue
         const centralSubsidy = currentProducts.centralSubsidy || 0
@@ -686,7 +735,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           status: "pending",
         }
 
-        const existing = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const existing = existingAllQuotations
         existing.push(quotation)
         localStorage.setItem("quotations", JSON.stringify(existing))
         setQuotations(existing.filter((q: Quotation) => q.dealerId === dealer.id))
