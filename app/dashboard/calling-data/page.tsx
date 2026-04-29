@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
@@ -348,13 +348,15 @@ export default function CallingDataPage() {
   >("all")
   const [editableLeadDetails, setEditableLeadDetails] = useState<EditableLeadDetails | null>(null)
   const [isEditingLead, setIsEditingLead] = useState(false)
-  const [flowTab, setFlowTab] = useState<"current_lead" | "dialled" | "connected" | "not_connected">("current_lead")
+  const [flowTab, setFlowTab] = useState<"current_lead" | "scheduled" | "dialled" | "connected" | "not_connected">("current_lead")
   const [analyticsRange, setAnalyticsRange] = useState<
     "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_year" | "custom"
   >("today")
   const [analyticsFromDate, setAnalyticsFromDate] = useState("")
   const [analyticsToDate, setAnalyticsToDate] = useState("")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const previousCurrentLeadIdRef = useRef<string | null>(null)
+  const shownScheduledReminderRef = useRef<Record<string, true>>({})
 
   const syncRescheduleForStatus = (nextStatus: string) => {
     const shouldReschedule = FOLLOW_UP_STATUSES.has(nextStatus)
@@ -751,20 +753,41 @@ export default function CallingDataPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useApi])
 
+  useEffect(() => {
+    const checkScheduledReminders = () => {
+      const now = Date.now()
+      for (const lead of scheduledLeads) {
+        if (lead.assignedDealerId !== dealer?.id) continue
+        if (!lead.nextFollowUpAt) continue
+        const followUpTimeMs = new Date(lead.nextFollowUpAt).getTime()
+        if (Number.isNaN(followUpTimeMs) || followUpTimeMs > now) continue
+        const reminderKey = `${lead.id}-${lead.nextFollowUpAt}`
+        if (shownScheduledReminderRef.current[reminderKey]) continue
+        shownScheduledReminderRef.current[reminderKey] = true
+        toast({
+          title: "Scheduled call reminder",
+          description: `${lead.name || "Lead"} (${lead.mobile || "No mobile"}) is due for call now.`,
+        })
+      }
+    }
+
+    checkScheduledReminders()
+    const intervalId = window.setInterval(checkScheduledReminders, 30000)
+    return () => window.clearInterval(intervalId)
+  }, [scheduledLeads, dealer?.id, toast])
+
   const getLeadSortTime = (lead: CallingLead) => {
     if (lead.status === "rescheduled" && lead.nextFollowUpAt) return new Date(lead.nextFollowUpAt).getTime()
     return new Date(lead.assignedAt || lead.createdAt).getTime()
   }
 
   const dealerAssignedQueue = useMemo(() => {
-    const now = Date.now()
     return leads
       .filter((lead) => {
         if (lead.assignedDealerId !== dealer?.id) return false
         if (lead.status === "completed" || lead.status === "queued") return false
-        if (lead.status === "rescheduled" && lead.nextFollowUpAt) {
-          return new Date(lead.nextFollowUpAt).getTime() <= now
-        }
+        // Keep scheduled follow-ups out of Current Lead.
+        if (lead.status === "rescheduled") return false
         return true
       })
       .sort((a, b) => getLeadSortTime(a) - getLeadSortTime(b))
@@ -794,18 +817,24 @@ export default function CallingDataPage() {
 
   const filteredScheduledLeads = useMemo(() => {
     const term = scheduledSearchTerm.trim().toLowerCase()
+    const now = new Date()
+    const startOfToday = new Date(now)
+    startOfToday.setHours(0, 0, 0, 0)
+    const endOfToday = new Date(startOfToday)
+    endOfToday.setDate(endOfToday.getDate() + 1)
+    const nowMs = now.getTime()
     return scheduledLeads.filter((lead) => {
+      if (lead.assignedDealerId !== dealer?.id) return false
       const nextAt = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
-      const now = new Date()
+      if (!nextAt || Number.isNaN(nextAt.getTime())) return false
+      const nextAtMs = nextAt.getTime()
       const matchesTime =
         scheduledTimeFilter === "all" ||
-        (nextAt &&
-          !Number.isNaN(nextAt.getTime()) &&
-          (scheduledTimeFilter === "today"
-            ? nextAt.toDateString() === now.toDateString()
-            : scheduledTimeFilter === "next7"
-              ? nextAt.getTime() >= now.getTime() && nextAt.getTime() <= now.getTime() + 7 * 24 * 60 * 60 * 1000
-              : nextAt.getTime() >= now.getTime() && nextAt.getTime() <= now.getTime() + 30 * 24 * 60 * 60 * 1000))
+        (scheduledTimeFilter === "today"
+          ? nextAt >= startOfToday && nextAt < endOfToday
+          : scheduledTimeFilter === "next7"
+            ? nextAtMs >= nowMs && nextAtMs <= nowMs + 7 * 24 * 60 * 60 * 1000
+            : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
       if (!matchesTime) return false
       if (!term) return true
       const haystack = [lead.name, lead.mobile, lead.kNumber, lead.address, lead.city, lead.state, lead.callRemark]
@@ -814,7 +843,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter])
+  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, dealer?.id])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
@@ -933,8 +962,13 @@ export default function CallingDataPage() {
     if (!currentLead) {
       setEditableLeadDetails(null)
       setIsEditingLead(false)
+      previousCurrentLeadIdRef.current = null
       return
     }
+    const hasLeadChanged = previousCurrentLeadIdRef.current !== currentLead.id
+    if (!hasLeadChanged) return
+
+    previousCurrentLeadIdRef.current = currentLead.id
     setEditableLeadDetails({
       name: currentLead.name || "",
       mobile: currentLead.mobile || "",
@@ -952,6 +986,8 @@ export default function CallingDataPage() {
     setDecisionReason(DECISION_PENDING_REASONS[0])
     setDecisionOverride("pending")
     setDealClosed(false)
+    setCallRemark("")
+    setRescheduleAt("")
   }, [currentLead])
 
   const submitAction = async (
@@ -1140,11 +1176,12 @@ export default function CallingDataPage() {
           <Tabs
             value={flowTab}
             onValueChange={(value) =>
-              setFlowTab(value as "current_lead" | "dialled" | "connected" | "not_connected")
+              setFlowTab(value as "current_lead" | "scheduled" | "dialled" | "connected" | "not_connected")
             }
           >
             <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/70 to-orange-50/70 p-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
               <TabsTrigger value="current_lead" className="shrink-0 text-xs sm:text-sm">Current Lead</TabsTrigger>
+              <TabsTrigger value="scheduled" className="shrink-0 text-xs sm:text-sm">Scheduled</TabsTrigger>
               <TabsTrigger value="dialled" className="shrink-0 text-xs sm:text-sm">Dialled</TabsTrigger>
               <TabsTrigger value="connected" className="shrink-0 text-xs sm:text-sm">Connected</TabsTrigger>
               <TabsTrigger value="not_connected" className="shrink-0 text-xs sm:text-sm">Not Connected</TabsTrigger>
@@ -1152,7 +1189,53 @@ export default function CallingDataPage() {
           </Tabs>
         </div>
 
-        {flowTab === "dialled" ? (
+        {flowTab === "scheduled" ? (
+          <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
+            <CardHeader>
+              <div className="flex flex-col gap-3">
+                <CardTitle className="text-base">Scheduled Follow Ups</CardTitle>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    value={scheduledSearchTerm}
+                    onChange={(e) => setScheduledSearchTerm(e.target.value)}
+                    placeholder="Search by name, mobile, K number..."
+                    className="w-full sm:w-80"
+                  />
+                  <Select value={scheduledTimeFilter} onValueChange={(value) => setScheduledTimeFilter(value as typeof scheduledTimeFilter)}>
+                    <SelectTrigger className="w-full sm:w-48">
+                      <SelectValue placeholder="Filter by follow-up time" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Time</SelectItem>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="next7">Next 7 Days</SelectItem>
+                      <SelectItem value="next30">Next 30 Days</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {filteredScheduledLeads.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No scheduled follow-ups available.</p>
+              ) : (
+                <div className="space-y-2">
+                  {filteredScheduledLeads.map((lead) => (
+                    <div
+                      key={`flow-scheduled-${lead.id}-${lead.nextFollowUpAt || "na"}`}
+                      className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm"
+                    >
+                      <p className="font-medium">{lead.name} • {lead.mobile}</p>
+                      <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
+                      <p className="text-xs text-muted-foreground">K No: {lead.kNumber || "N/A"}</p>
+                      <p className="text-xs text-muted-foreground">Address: {lead.address || "N/A"}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : flowTab === "dialled" ? (
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Dialled Data</CardTitle>
