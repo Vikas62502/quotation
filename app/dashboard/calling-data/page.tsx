@@ -853,12 +853,7 @@ export default function CallingDataPage() {
     return () => window.clearInterval(intervalId)
   }, [scheduledLeads, currentDealerId, toast])
 
-  const getNormalizedAction = (lead: CallingLead) => String(lead.action || "").trim().toLowerCase()
   const getNormalizedStatus = (lead: CallingLead) => String(lead.status || "").trim().toLowerCase()
-  const isLeadActioned = (lead: CallingLead) => {
-    const action = getNormalizedAction(lead)
-    return ["called", "follow_up", "not_interested", "rescheduled"].includes(action)
-  }
   const isLeadCallableNow = (lead: CallingLead) => {
     const status = getNormalizedStatus(lead)
     const nextMs = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).getTime() : NaN
@@ -890,15 +885,17 @@ export default function CallingDataPage() {
       return false
     }
 
+    const leadOrder = new Map(leads.map((lead, index) => [lead.id, index]))
+
     return leads
       .filter((lead) => {
         if (!belongsToCurrentDealer(lead)) return false
         return isLeadCallableNow(lead)
       })
       .sort((a, b) => {
-        const aActioned = isLeadActioned(a)
-        const bActioned = isLeadActioned(b)
-        if (aActioned !== bActioned) return aActioned ? 1 : -1
+        const aOrder = leadOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER
+        const bOrder = leadOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER
+        if (aOrder !== bOrder) return aOrder - bOrder
         return getLeadSortTime(a) - getLeadSortTime(b)
       })
   }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
