@@ -1221,14 +1221,134 @@ export default function CallingDataPage() {
               ) : (
                 <div className="space-y-2">
                   {filteredScheduledLeads.map((lead) => (
-                    <div
-                      key={`flow-scheduled-${lead.id}-${lead.nextFollowUpAt || "na"}`}
-                      className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm"
-                    >
-                      <p className="font-medium">{lead.name} • {lead.mobile}</p>
-                      <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
-                      <p className="text-xs text-muted-foreground">K No: {lead.kNumber || "N/A"}</p>
-                      <p className="text-xs text-muted-foreground">Address: {lead.address || "N/A"}</p>
+                    <div key={lead.id} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                      <div>
+                        <p className="font-medium">{lead.name} • {lead.mobile}</p>
+                        <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
+                      </div>
+                      <div className="w-full space-y-2 md:max-w-3xl">
+                        {(() => {
+                          const statusGroup = scheduledStatusGroups[lead.id] ?? STATUS_GROUPS[0].key
+                          const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
+                          const status = scheduledStatuses[lead.id] ?? getDefaultStatusByGroup(statusGroup)
+                          const otherReason = scheduledOtherReasons[lead.id] ?? ""
+                          const isReschedule = scheduledRescheduleChecks[lead.id] ?? false
+                          const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
+                          return (
+                            <>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <Select
+                                  value={statusGroup}
+                                  onValueChange={(value) => {
+                                    const nextKey = value as StatusGroupKey
+                                    setScheduledStatusGroups((prev) => ({ ...prev, [lead.id]: nextKey }))
+                                    setScheduledStatuses((prev) => ({ ...prev, [lead.id]: getDefaultStatusByGroup(nextKey) }))
+                                    setScheduledOtherReasons((prev) => ({ ...prev, [lead.id]: "" }))
+                                  }}
+                                >
+                                  <SelectTrigger className="h-8">
+                                    <SelectValue placeholder="Status category" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {STATUS_GROUPS.map((group) => (
+                                      <SelectItem key={group.key} value={group.key}>
+                                        {group.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                <Select value={status} onValueChange={(value) => setScheduledStatuses((prev) => ({ ...prev, [lead.id]: value }))}>
+                                  <SelectTrigger className="h-8">
+                                    <SelectValue placeholder="Status" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {groupConfig.options.map((option) => (
+                                      <SelectItem key={option} value={option}>
+                                        {option}
+                                      </SelectItem>
+                                    ))}
+                                    <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              {status === OTHER_STATUS_VALUE ? (
+                                <Input
+                                  className="h-8"
+                                  placeholder="Enter other reason"
+                                  value={otherReason}
+                                  onChange={(e) => setScheduledOtherReasons((prev) => ({ ...prev, [lead.id]: e.target.value }))}
+                                />
+                              ) : null}
+                              <Input
+                                className="h-8"
+                                placeholder="Remark (optional)"
+                                value={scheduledRemarks[lead.id] ?? ""}
+                                onChange={(e) => setScheduledRemarks((prev) => ({ ...prev, [lead.id]: e.target.value }))}
+                              />
+                              <div className="flex items-center gap-2">
+                                <Checkbox
+                                  id={`scheduled-reschedule-flow-${lead.id}`}
+                                  checked={isReschedule}
+                                  onCheckedChange={(checked) =>
+                                    setScheduledRescheduleChecks((prev) => ({ ...prev, [lead.id]: checked === true }))
+                                  }
+                                />
+                                <label htmlFor={`scheduled-reschedule-flow-${lead.id}`} className="text-xs text-muted-foreground cursor-pointer">
+                                  Reschedule
+                                </label>
+                              </div>
+                              {isReschedule ? (
+                                <Input
+                                  type="datetime-local"
+                                  value={scheduledEditTimes[lead.id] ?? formatForDatetimeLocal(lead.nextFollowUpAt)}
+                                  onChange={(e) => setScheduledEditTimes((prev) => ({ ...prev, [lead.id]: e.target.value }))}
+                                  className="h-8"
+                                />
+                              ) : null}
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                                  onClick={() => {
+                                    if (!finalStatus) {
+                                      toast({
+                                        title: "Reason required",
+                                        description: "Please select status or add other reason.",
+                                        variant: "destructive",
+                                      })
+                                      return
+                                    }
+                                    const nextFollowUpRaw = scheduledEditTimes[lead.id] ?? formatForDatetimeLocal(lead.nextFollowUpAt)
+                                    if (isReschedule && !nextFollowUpRaw) {
+                                      toast({
+                                        title: "Select follow-up time",
+                                        description: "Please choose date and time before rescheduling.",
+                                        variant: "destructive",
+                                      })
+                                      return
+                                    }
+                                    const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
+                                    submitAction(lead.id, {
+                                      action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                                      nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
+                                      callRemark: remark,
+                                      actionAt: new Date().toISOString(),
+                                    })
+                                  }}
+                                >
+                                  Submit Status
+                                </Button>
+                                <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => submitAction(lead.id, { action: "start" })}>
+                                  Start Call
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
+                                  New Quotation
+                                </Button>
+                              </div>
+                            </>
+                          )
+                        })()}
+                      </div>
                     </div>
                   ))}
                 </div>
