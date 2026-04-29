@@ -33,6 +33,9 @@ type ParsedCsvRow = {
   customerNote?: string
   city?: string
   state?: string
+  assignedDealerId?: string
+  assignedDealerName?: string
+  assignmentStatus?: string
   raw: Record<string, string>
 }
 
@@ -180,6 +183,22 @@ const normalizeName = (value?: string) =>
     .trim()
     .toLowerCase()
     .replace(/\s+/g, " ")
+
+const prettifyAssignmentStatus = (value?: string) => {
+  const status = String(value || "").trim().toLowerCase()
+  if (!status) return "Pending"
+  if (status === "assigned") return "Assigned"
+  if (status === "in_progress") return "In Progress"
+  if (status === "rescheduled") return "Rescheduled"
+  if (status === "completed") return "Completed"
+  if (status === "queued") return "Queued"
+  return status.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())
+}
+
+const isCompletedAssignmentStatus = (value?: string) => {
+  const status = String(value || "").trim().toLowerCase()
+  return status === "completed" || status === "done" || status === "closed"
+}
 
 const getDateRangeParams = (range: "daily" | "weekly" | "monthly" | "last_month" | "all") => {
   if (range === "all") return {}
@@ -344,6 +363,27 @@ export default function HrDashboardPage() {
     if (!Array.isArray(rows)) return []
     return rows.map((row: any) => {
       const raw = row?.raw && typeof row.raw === "object" ? row.raw : {}
+      const assignedDealerId =
+        row?.assignedDealerId ||
+        row?.assigned_dealer_id ||
+        row?.dealerId ||
+        row?.dealer_id ||
+        ""
+      const assignedDealerNameRaw =
+        row?.assignedDealerName ||
+        row?.assigned_dealer_name ||
+        row?.dealerName ||
+        row?.dealer_name ||
+        row?.assignedTo ||
+        row?.assigned_to ||
+        ""
+      const assignmentStatusRaw =
+        row?.assignmentStatus ||
+        row?.assignment_status ||
+        row?.status ||
+        row?.leadStatus ||
+        row?.lead_status ||
+        ""
       return {
         name: row?.name || row?.customerName || "",
         mobile: normalizeMobile(String(row?.mobile || row?.customerMobile || "")),
@@ -353,13 +393,24 @@ export default function HrDashboardPage() {
         customerNote: row?.customerNote || row?.note || "",
         city: row?.city || "",
         state: row?.state || "",
+        assignedDealerId: assignedDealerId || undefined,
+        assignedDealerName: assignedDealerNameRaw || undefined,
+        assignmentStatus: assignmentStatusRaw || undefined,
         raw,
       }
     })
   }
 
   const normalizeUploadedLeadBatch = (item: any, fallbackDealers: DealerOption[], index: number): UploadedLeadBatch => {
-    const rows = normalizeBatchRows(item?.rows || item?.leads || item?.items || [])
+    const fallbackRows = item?.rows || item?.leads || item?.items || []
+    const rows = normalizeBatchRows(fallbackRows).map((row) => {
+      const byId = row.assignedDealerId ? fallbackDealers.find((d) => d.id === row.assignedDealerId) : undefined
+      const dealerName = row.assignedDealerName || (byId ? `${byId.firstName} ${byId.lastName}`.trim() : "")
+      return {
+        ...row,
+        assignedDealerName: dealerName || undefined,
+      }
+    })
     const dealerValues: string[] = Array.isArray(item?.dealers)
       ? item.dealers
       : Array.isArray(item?.dealerIds)
@@ -946,15 +997,32 @@ export default function HrDashboardPage() {
                                 <th className="py-1 pr-3">Mobile</th>
                                 <th className="py-1 pr-3">K Number</th>
                                 <th className="py-1 pr-3">Address</th>
+                                <th className="py-1 pr-3">Assigned Dealer</th>
+                                <th className="py-1 pr-3">Status</th>
                               </tr>
                             </thead>
                             <tbody>
                               {batch.rows.map((row, idx) => (
                                 <tr key={`${batch.id}-${row.mobile}-${idx}`} className="border-t border-border/40">
+                                  {(() => {
+                                    const completed = isCompletedAssignmentStatus(row.assignmentStatus)
+                                    const shownDealerName = completed ? row.assignedDealerName || "Unassigned" : "Unassigned"
+                                    const shownStatus = completed ? prettifyAssignmentStatus(row.assignmentStatus || "completed") : "Pending"
+                                    return (
+                                      <>
                                   <td className="py-1 pr-3">{row.name || "N/A"}</td>
                                   <td className="py-1 pr-3">{row.mobile || "N/A"}</td>
                                   <td className="py-1 pr-3">{row.kNumber || "N/A"}</td>
                                   <td className="py-1 pr-3">{row.address || "N/A"}</td>
+                                  <td className="py-1 pr-3">{shownDealerName}</td>
+                                  <td className="py-1 pr-3">
+                                    <Badge variant="outline">
+                                      {shownStatus}
+                                    </Badge>
+                                  </td>
+                                      </>
+                                    )
+                                  })()}
                                 </tr>
                               ))}
                             </tbody>

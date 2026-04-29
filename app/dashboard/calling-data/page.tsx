@@ -357,6 +357,9 @@ export default function CallingDataPage() {
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const previousCurrentLeadIdRef = useRef<string | null>(null)
   const shownScheduledReminderRef = useRef<Record<string, true>>({})
+  const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
+  const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
+  const currentDealerFullName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim().toLowerCase()
 
   const syncRescheduleForStatus = (nextStatus: string) => {
     const shouldReschedule = FOLLOW_UP_STATUSES.has(nextStatus)
@@ -386,41 +389,67 @@ export default function CallingDataPage() {
   }, [isAuthenticated, role, router])
 
   const normalizeApiLead = (lead: any): CallingLead => {
+    const source = lead?.lead || lead?.customerLead || lead
     return {
-      id: lead?.id || `lead-${Date.now()}`,
-      name: lead?.name || "Unknown",
-      mobile: lead?.mobile || "",
-      altMobile: lead?.altMobile || lead?.alternateMobile || "",
-      kNumber: lead?.kNumber || lead?.k_number || "",
-      address: lead?.address || "",
-      customerNote: lead?.customerNote || lead?.note || "",
-      city: lead?.city || "",
-      state: lead?.state || "",
-      assignedDealerId: lead?.assignedDealerId || lead?.dealerId || dealer?.id || "",
-      assignedDealerName: lead?.assignedDealerName || lead?.dealerName || "",
-      createdAt: lead?.createdAt || lead?.assignedAt || new Date().toISOString(),
-      assignedAt: lead?.assignedAt,
-      queuedAt: lead?.queuedAt,
-      status: lead?.status || "assigned",
-      action: lead?.action,
-      actionAt: lead?.actionAt,
-      nextFollowUpAt: lead?.nextFollowUpAt,
-      callRemark: lead?.callRemark || "",
+      id: source?.id || source?._id || source?.leadId || source?.lead_id || `lead-${Date.now()}`,
+      name: source?.name || source?.customerName || "Unknown",
+      mobile: source?.mobile || source?.phone || "",
+      altMobile: source?.altMobile || source?.alternateMobile || source?.alt_mobile || "",
+      kNumber: source?.kNumber || source?.k_number || "",
+      address: source?.address || "",
+      customerNote: source?.customerNote || source?.customer_note || source?.note || "",
+      city: source?.city || "",
+      state: source?.state || "",
+      assignedDealerId:
+        source?.assignedDealerId ||
+        source?.assigned_dealer_id ||
+        source?.dealerId ||
+        source?.dealer_id ||
+        source?.assignedToDealerId ||
+        source?.assigned_to_dealer_id ||
+        source?.assignedTo ||
+        source?.assigned_to ||
+        source?.assignedToUsername ||
+        source?.assigned_to_username ||
+        currentDealerId ||
+        "",
+      assignedDealerName:
+        source?.assignedDealerName ||
+        source?.assigned_dealer_name ||
+        source?.dealerName ||
+        source?.dealer_name ||
+        source?.assignedToName ||
+        source?.assigned_to_name ||
+        source?.assignedToUsername ||
+        source?.assigned_to_username ||
+        source?.assignedToName ||
+        "",
+      createdAt: source?.createdAt || source?.created_at || source?.assignedAt || source?.assigned_at || new Date().toISOString(),
+      assignedAt: source?.assignedAt || source?.assigned_at,
+      queuedAt: source?.queuedAt || source?.queued_at,
+      status: source?.status || source?.leadStatus || source?.lead_status || "assigned",
+      action: source?.action,
+      actionAt: source?.actionAt || source?.action_at,
+      nextFollowUpAt: source?.nextFollowUpAt || source?.next_follow_up_at,
+      callRemark: source?.callRemark || source?.call_remark || "",
     }
   }
 
   const normalizeActionLog = (entry: any): ActionLogItem => {
     const lead = entry?.lead || entry
     return {
-      id: entry?.id || `${lead?.id || "lead"}-${entry?.actionAt || entry?.updatedAt || Date.now()}`,
-      leadId: entry?.leadId || lead?.id || "",
+      id:
+        entry?.id ||
+        entry?._id ||
+        `${lead?.id || lead?._id || lead?.leadId || "lead"}-${entry?.actionAt || entry?.action_at || entry?.updatedAt || Date.now()}`,
+      leadId: entry?.leadId || entry?.lead_id || lead?.id || lead?._id || "",
       name: entry?.name || lead?.name || "Unknown",
-      mobile: entry?.mobile || lead?.mobile || "",
+      mobile: entry?.mobile || lead?.mobile || lead?.phone || "",
       action: entry?.action || lead?.action,
-      actionAt: entry?.actionAt || lead?.actionAt || entry?.updatedAt,
-      callRemark: entry?.callRemark || lead?.callRemark || "",
-      nextFollowUpAt: entry?.nextFollowUpAt || lead?.nextFollowUpAt,
-      status: entry?.status || lead?.status,
+      actionAt: entry?.actionAt || entry?.action_at || lead?.actionAt || lead?.action_at || entry?.updatedAt,
+      callRemark: entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
+      nextFollowUpAt: entry?.nextFollowUpAt || entry?.next_follow_up_at || lead?.nextFollowUpAt || lead?.next_follow_up_at,
+      status: entry?.status || lead?.status || lead?.lead_status,
       kNumber: entry?.kNumber || lead?.kNumber || lead?.k_number || "",
       address: entry?.address || lead?.address || "",
       city: entry?.city || lead?.city || "",
@@ -630,24 +659,71 @@ export default function CallingDataPage() {
   }
 
   const applyQueueResponse = (response: any) => {
-    const rawLead = response?.lead || response?.nextLead || response?.currentLead || null
-    const normalizedLead = rawLead ? normalizeApiLead(rawLead) : null
-    setLeads(normalizedLead ? [normalizedLead] : [])
-    const scheduledSource = response?.scheduledLeads || response?.upcomingFollowUps || response?.followUps || []
-    const normalizedScheduled = Array.isArray(scheduledSource)
-      ? scheduledSource
-          .map(normalizeApiLead)
-          .filter((lead) => !!lead.nextFollowUpAt)
-          .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
-      : []
+    const readArray = (value: any): any[] => {
+      if (Array.isArray(value)) return value
+      if (Array.isArray(value?.items)) return value.items
+      if (Array.isArray(value?.rows)) return value.rows
+      if (Array.isArray(value?.data)) return value.data
+      return []
+    }
+
+    const queueCandidates = [
+      ...readArray(response?.leads),
+      ...readArray(response?.queue),
+      ...readArray(response?.pendingLeads),
+      ...readArray(response?.assignedLeads),
+      ...readArray(response?.currentQueue),
+    ]
+    const rawLead =
+      response?.lead ||
+      response?.nextLead ||
+      response?.currentLead ||
+      response?.activeLead ||
+      queueCandidates[0] ||
+      null
+    const mergedLeadMap = new Map<string, CallingLead>()
+    ;[rawLead, ...queueCandidates]
+      .filter(Boolean)
+      .map(normalizeApiLead)
+      .forEach((lead) => {
+        if (!lead?.id) return
+        mergedLeadMap.set(lead.id, lead)
+      })
+    setLeads(Array.from(mergedLeadMap.values()))
+
+    const scheduledSource = [
+      ...readArray(response?.scheduledLeads),
+      ...readArray(response?.upcomingFollowUps),
+      ...readArray(response?.followUps),
+      ...readArray(response?.scheduled),
+      ...readArray(response?.scheduledData),
+      ...readArray(response?.scheduledItems),
+      ...readArray(response?.rescheduledLeads),
+    ]
+    const normalizedScheduled = scheduledSource
+      .map(normalizeApiLead)
+      .filter((lead) => !!lead.nextFollowUpAt)
+      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
     setScheduledLeads(normalizedScheduled)
 
-    const actionSource = response?.recentActions || response?.actionHistory || response?.completedActions || []
-    const normalizedActions = Array.isArray(actionSource)
-      ? actionSource
-          .map(normalizeActionLog)
-          .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
-      : []
+    const actionSource = [
+      ...readArray(response?.recentActions),
+      ...readArray(response?.actionHistory),
+      ...readArray(response?.completedActions),
+      ...readArray(response?.dialledActions),
+      ...readArray(response?.connectedActions),
+      ...readArray(response?.notConnectedActions),
+      ...readArray(response?.actions),
+      ...readArray(response?.callingActions),
+    ]
+    const normalizedActionsMap = new Map<string, ActionLogItem>()
+    actionSource.map(normalizeActionLog).forEach((action) => {
+      if (!action?.id) return
+      normalizedActionsMap.set(action.id, action)
+    })
+    const normalizedActions = Array.from(normalizedActionsMap.values()).sort(
+      (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+    )
     setRecentActions(normalizedActions)
     setBackendCounts({
       pending: response?.pendingCount ?? response?.counts?.pending,
@@ -757,7 +833,8 @@ export default function CallingDataPage() {
     const checkScheduledReminders = () => {
       const now = Date.now()
       for (const lead of scheduledLeads) {
-        if (lead.assignedDealerId !== dealer?.id) continue
+        const assignedId = String(lead.assignedDealerId || "").trim()
+        if (currentDealerId && assignedId && assignedId !== currentDealerId) continue
         if (!lead.nextFollowUpAt) continue
         const followUpTimeMs = new Date(lead.nextFollowUpAt).getTime()
         if (Number.isNaN(followUpTimeMs) || followUpTimeMs > now) continue
@@ -774,37 +851,88 @@ export default function CallingDataPage() {
     checkScheduledReminders()
     const intervalId = window.setInterval(checkScheduledReminders, 30000)
     return () => window.clearInterval(intervalId)
-  }, [scheduledLeads, dealer?.id, toast])
+  }, [scheduledLeads, currentDealerId, toast])
 
+  const getNormalizedAction = (lead: CallingLead) => String(lead.action || "").trim().toLowerCase()
+  const getNormalizedStatus = (lead: CallingLead) => String(lead.status || "").trim().toLowerCase()
+  const isLeadActioned = (lead: CallingLead) => {
+    const action = getNormalizedAction(lead)
+    return ["called", "follow_up", "not_interested", "rescheduled"].includes(action)
+  }
+  const isLeadCallableNow = (lead: CallingLead) => {
+    const status = getNormalizedStatus(lead)
+    const nextMs = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).getTime() : NaN
+    const isDueReschedule = status === "rescheduled" && Number.isFinite(nextMs) && nextMs <= Date.now()
+    if (isDueReschedule) return true
+    if (["completed", "closed"].includes(status)) return false
+    if (status === "rescheduled") return false
+    return true
+  }
   const getLeadSortTime = (lead: CallingLead) => {
-    if (lead.status === "rescheduled" && lead.nextFollowUpAt) return new Date(lead.nextFollowUpAt).getTime()
+    if (getNormalizedStatus(lead) === "rescheduled" && lead.nextFollowUpAt) return new Date(lead.nextFollowUpAt).getTime()
     return new Date(lead.assignedAt || lead.createdAt).getTime()
   }
 
   const dealerAssignedQueue = useMemo(() => {
+    const belongsToCurrentDealer = (lead: CallingLead) => {
+      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
+      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
+      if (!assignedId && !assignedName) return true
+      if (currentDealerId && assignedId) {
+        const currentId = currentDealerId.toLowerCase()
+        if (assignedId === currentId) return true
+      }
+      if (currentDealerUsername) {
+        if (assignedId === currentDealerUsername) return true
+        if (assignedName.includes(currentDealerUsername)) return true
+      }
+      if (currentDealerFullName && assignedName.includes(currentDealerFullName)) return true
+      return false
+    }
+
     return leads
       .filter((lead) => {
-        if (lead.assignedDealerId !== dealer?.id) return false
-        if (lead.status === "completed" || lead.status === "queued") return false
-        // Keep scheduled follow-ups out of Current Lead.
-        if (lead.status === "rescheduled") return false
-        return true
+        if (!belongsToCurrentDealer(lead)) return false
+        return isLeadCallableNow(lead)
       })
-      .sort((a, b) => getLeadSortTime(a) - getLeadSortTime(b))
-  }, [leads, dealer?.id])
+      .sort((a, b) => {
+        const aActioned = isLeadActioned(a)
+        const bActioned = isLeadActioned(b)
+        if (aActioned !== bActioned) return aActioned ? 1 : -1
+        return getLeadSortTime(a) - getLeadSortTime(b)
+      })
+  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
 
   const queuedCount = useMemo(() => {
-    return leads.filter((lead) => lead.assignedDealerId === dealer?.id && lead.status === "queued").length
-  }, [leads, dealer?.id])
+    return leads.filter((lead) => {
+      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
+      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
+      const matchesDealer =
+        (!assignedId && !assignedName) ||
+        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
+        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
+        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
+      if (!matchesDealer) return false
+      return lead.status === "queued"
+    }).length
+  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
 
   const scheduledCount = useMemo(() => {
     const now = Date.now()
     return leads.filter((lead) => {
-      if (lead.assignedDealerId !== dealer?.id || lead.status !== "rescheduled") return false
+      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
+      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
+      const matchesDealer =
+        (!assignedId && !assignedName) ||
+        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
+        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
+        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
+      if (!matchesDealer) return false
+      if (lead.status !== "rescheduled") return false
       if (!lead.nextFollowUpAt) return false
       return new Date(lead.nextFollowUpAt).getTime() > now
     }).length
-  }, [leads, dealer?.id])
+  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
 
   const interestedActions = useMemo(
     () =>
@@ -824,10 +952,18 @@ export default function CallingDataPage() {
     endOfToday.setDate(endOfToday.getDate() + 1)
     const nowMs = now.getTime()
     return scheduledLeads.filter((lead) => {
-      if (lead.assignedDealerId !== dealer?.id) return false
+      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
+      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
+      const matchesDealer =
+        (!assignedId && !assignedName) ||
+        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
+        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
+        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
+      if (!matchesDealer) return false
       const nextAt = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
       if (!nextAt || Number.isNaN(nextAt.getTime())) return false
       const nextAtMs = nextAt.getTime()
+      if (nextAtMs <= nowMs) return false
       const matchesTime =
         scheduledTimeFilter === "all" ||
         (scheduledTimeFilter === "today"
@@ -843,7 +979,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, dealer?.id])
+  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, currentDealerId, currentDealerUsername, currentDealerFullName])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
