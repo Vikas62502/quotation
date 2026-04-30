@@ -346,6 +346,16 @@ export default function CallingDataPage() {
   const [connectedOutcomeFilter, setConnectedOutcomeFilter] = useState<
     "all" | "interested" | "not_interested" | "decision_pending"
   >("all")
+  const [dialledSearchTerm, setDialledSearchTerm] = useState("")
+  const [dialledActionFilter, setDialledActionFilter] = useState<"all" | "called" | "follow_up" | "not_interested" | "rescheduled">("all")
+  const [connectedSearchTerm, setConnectedSearchTerm] = useState("")
+  const [notConnectedSearchTerm, setNotConnectedSearchTerm] = useState("")
+  const [notConnectedReasonFilter, setNotConnectedReasonFilter] = useState<string>("all")
+  const [scheduledPage, setScheduledPage] = useState(1)
+  const [dialledPage, setDialledPage] = useState(1)
+  const [connectedPage, setConnectedPage] = useState(1)
+  const [notConnectedPage, setNotConnectedPage] = useState(1)
+  const [flowPageSize, setFlowPageSize] = useState(10)
   const [editableLeadDetails, setEditableLeadDetails] = useState<EditableLeadDetails | null>(null)
   const [isEditingLead, setIsEditingLead] = useState(false)
   const [flowTab, setFlowTab] = useState<"current_lead" | "scheduled" | "dialled" | "connected" | "not_connected">("current_lead")
@@ -1026,6 +1036,20 @@ export default function CallingDataPage() {
     [recentActions],
   )
 
+  const filteredFlowDialledActions = useMemo(() => {
+    const term = dialledSearchTerm.trim().toLowerCase()
+    return flowDialledActions.filter((item) => {
+      const action = String(item.action || "").toLowerCase()
+      if (dialledActionFilter !== "all" && action !== dialledActionFilter) return false
+      if (!term) return true
+      const haystack = [item.name, item.mobile, item.kNumber, item.address, item.callRemark]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return haystack.includes(term)
+    })
+  }, [flowDialledActions, dialledSearchTerm, dialledActionFilter])
+
   const flowConnectedActions = useMemo(
     () =>
       recentActions.filter((item) => {
@@ -1046,22 +1070,125 @@ export default function CallingDataPage() {
   }
 
   const filteredFlowConnectedActions = useMemo(() => {
-    if (connectedOutcomeFilter === "all") return flowConnectedActions
-    return flowConnectedActions.filter((item) => {
+    const term = connectedSearchTerm.trim().toLowerCase()
+    const afterOutcomeFilter =
+      connectedOutcomeFilter === "all"
+        ? flowConnectedActions
+        : flowConnectedActions.filter((item) => {
+            const parsed = parseTaggedRemark(item.callRemark)
+            const status = (parsed.status || "").trim()
+            if (!status) return false
+            return getConnectedOutcomeForStatus(status) === connectedOutcomeFilter
+          })
+    return afterOutcomeFilter.filter((item) => {
+      if (!term) return true
       const parsed = parseTaggedRemark(item.callRemark)
-      const status = (parsed.status || "").trim()
-      if (!status) return false
-      return getConnectedOutcomeForStatus(status) === connectedOutcomeFilter
+      const haystack = [item.name, item.mobile, item.kNumber, item.address, parsed.status, parsed.remark]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return haystack.includes(term)
     })
-  }, [flowConnectedActions, connectedOutcomeFilter])
+  }, [flowConnectedActions, connectedOutcomeFilter, connectedSearchTerm])
 
   const flowNotConnectedActions = useMemo(
     () =>
       recentActions.filter((item) => {
-        const parsed = parseTaggedRemark(item.callRemark)
+      const parsed = parseTaggedRemark(item.callRemark)
         return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
       }),
     [recentActions],
+  )
+  const filteredFlowNotConnectedActions = useMemo(() => {
+    const term = notConnectedSearchTerm.trim().toLowerCase()
+    return flowNotConnectedActions.filter((item) => {
+      const parsed = parseTaggedRemark(item.callRemark)
+      const reason = (parsed.status || "").trim()
+      if (notConnectedReasonFilter !== "all" && reason !== notConnectedReasonFilter) return false
+      if (!term) return true
+      const haystack = [item.name, item.mobile, item.kNumber, item.address, reason, parsed.remark]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return haystack.includes(term)
+    })
+  }, [flowNotConnectedActions, notConnectedSearchTerm, notConnectedReasonFilter])
+
+  const paginateItems = <T,>(items: T[], page: number, pageSize: number) => {
+    const totalPages = Math.max(1, Math.ceil(items.length / pageSize))
+    const safePage = Math.min(Math.max(1, page), totalPages)
+    const start = (safePage - 1) * pageSize
+    return {
+      totalPages,
+      safePage,
+      items: items.slice(start, start + pageSize),
+    }
+  }
+
+  const pagedScheduled = useMemo(
+    () => paginateItems(filteredScheduledLeads, scheduledPage, flowPageSize),
+    [filteredScheduledLeads, scheduledPage, flowPageSize],
+  )
+  const pagedDialled = useMemo(
+    () => paginateItems(filteredFlowDialledActions, dialledPage, flowPageSize),
+    [filteredFlowDialledActions, dialledPage, flowPageSize],
+  )
+  const pagedConnected = useMemo(
+    () => paginateItems(filteredFlowConnectedActions, connectedPage, flowPageSize),
+    [filteredFlowConnectedActions, connectedPage, flowPageSize],
+  )
+  const pagedNotConnected = useMemo(
+    () => paginateItems(filteredFlowNotConnectedActions, notConnectedPage, flowPageSize),
+    [filteredFlowNotConnectedActions, notConnectedPage, flowPageSize],
+  )
+  useEffect(() => {
+    if (scheduledPage !== pagedScheduled.safePage) setScheduledPage(pagedScheduled.safePage)
+  }, [scheduledPage, pagedScheduled.safePage])
+  useEffect(() => {
+    if (dialledPage !== pagedDialled.safePage) setDialledPage(pagedDialled.safePage)
+  }, [dialledPage, pagedDialled.safePage])
+  useEffect(() => {
+    if (connectedPage !== pagedConnected.safePage) setConnectedPage(pagedConnected.safePage)
+  }, [connectedPage, pagedConnected.safePage])
+  useEffect(() => {
+    if (notConnectedPage !== pagedNotConnected.safePage) setNotConnectedPage(pagedNotConnected.safePage)
+  }, [notConnectedPage, pagedNotConnected.safePage])
+
+  const renderFlowPagination = (
+    page: number,
+    totalPages: number,
+    totalItems: number,
+    setPage: (next: number) => void,
+  ) => (
+    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+      <p className="text-xs text-muted-foreground">
+        Showing page {page} of {totalPages} • Total {totalItems}
+      </p>
+      <div className="flex items-center gap-2">
+        <Select
+          value={String(flowPageSize)}
+          onValueChange={(value) => {
+            setFlowPageSize(Number(value))
+            setPage(1)
+          }}
+        >
+          <SelectTrigger className="h-8 w-20">
+            <SelectValue placeholder="Rows" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="10">10</SelectItem>
+            <SelectItem value="20">20</SelectItem>
+            <SelectItem value="50">50</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button size="sm" variant="outline" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+          Previous
+        </Button>
+        <Button size="sm" variant="outline" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+          Next
+        </Button>
+      </div>
+    </div>
   )
   const leadForView = editableLeadDetails || {
     name: currentLead?.name || "",
@@ -1363,7 +1490,7 @@ export default function CallingDataPage() {
                 <p className="text-sm text-muted-foreground">No scheduled follow-ups available.</p>
               ) : (
                 <div className="space-y-2">
-                  {filteredScheduledLeads.map((lead) => (
+                  {pagedScheduled.items.map((lead) => (
                     <div key={lead.id} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                       <div>
                         <p className="font-medium">{lead.name} • {lead.mobile}</p>
@@ -1494,6 +1621,12 @@ export default function CallingDataPage() {
                       </div>
                     </div>
                   ))}
+                  {renderFlowPagination(
+                    pagedScheduled.safePage,
+                    pagedScheduled.totalPages,
+                    filteredScheduledLeads.length,
+                    setScheduledPage,
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1501,14 +1634,45 @@ export default function CallingDataPage() {
         ) : flowTab === "dialled" ? (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Dialled Data</CardTitle>
+              <div className="flex flex-col gap-2">
+                <CardTitle className="text-base">Dialled Data</CardTitle>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    value={dialledSearchTerm}
+                    onChange={(e) => {
+                      setDialledSearchTerm(e.target.value)
+                      setDialledPage(1)
+                    }}
+                    placeholder="Search by name, mobile, K number..."
+                    className="w-full sm:w-80"
+                  />
+                  <Select
+                    value={dialledActionFilter}
+                    onValueChange={(value: "all" | "called" | "follow_up" | "not_interested" | "rescheduled") => {
+                      setDialledActionFilter(value)
+                      setDialledPage(1)
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-56">
+                      <SelectValue placeholder="Filter action" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Actions</SelectItem>
+                      <SelectItem value="called">Called</SelectItem>
+                      <SelectItem value="follow_up">Follow Up</SelectItem>
+                      <SelectItem value="not_interested">Not Interested</SelectItem>
+                      <SelectItem value="rescheduled">Rescheduled</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {flowDialledActions.length === 0 ? (
+              {filteredFlowDialledActions.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No dialled data found.</p>
               ) : (
                 <div className="space-y-2">
-                  {flowDialledActions.map((item) => {
+                  {pagedDialled.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const rowKey = actionRowKey(item)
                     const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
@@ -1611,6 +1775,12 @@ export default function CallingDataPage() {
                       </div>
                     )
                   })}
+                  {renderFlowPagination(
+                    pagedDialled.safePage,
+                    pagedDialled.totalPages,
+                    filteredFlowDialledActions.length,
+                    setDialledPage,
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1623,9 +1793,10 @@ export default function CallingDataPage() {
                 <div className="w-full sm:w-64">
                   <Select
                     value={connectedOutcomeFilter}
-                    onValueChange={(value: "all" | "interested" | "not_interested" | "decision_pending") =>
+                    onValueChange={(value: "all" | "interested" | "not_interested" | "decision_pending") => {
                       setConnectedOutcomeFilter(value)
-                    }
+                      setConnectedPage(1)
+                    }}
                   >
                     <SelectTrigger className="h-8">
                       <SelectValue placeholder="Filter connected outcome" />
@@ -1638,6 +1809,15 @@ export default function CallingDataPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                <Input
+                  value={connectedSearchTerm}
+                  onChange={(e) => {
+                    setConnectedSearchTerm(e.target.value)
+                    setConnectedPage(1)
+                  }}
+                  placeholder="Search by name, mobile, reason..."
+                  className="w-full sm:w-72"
+                />
               </div>
             </CardHeader>
             <CardContent>
@@ -1645,7 +1825,7 @@ export default function CallingDataPage() {
                 <p className="text-sm text-muted-foreground">No connected data found.</p>
               ) : (
                 <div className="space-y-2">
-                  {filteredFlowConnectedActions.map((item) => {
+                  {pagedConnected.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const transferReasonText = extractTransferReason(parsed.remark)
                     const rowKey = actionRowKey(item)
@@ -1739,6 +1919,12 @@ export default function CallingDataPage() {
                       </div>
                     )
                   })}
+                  {renderFlowPagination(
+                    pagedConnected.safePage,
+                    pagedConnected.totalPages,
+                    filteredFlowConnectedActions.length,
+                    setConnectedPage,
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1746,14 +1932,46 @@ export default function CallingDataPage() {
         ) : flowTab === "not_connected" ? (
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Not Connected Data</CardTitle>
+              <div className="flex flex-col gap-2">
+                <CardTitle className="text-base">Not Connected Data</CardTitle>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    value={notConnectedSearchTerm}
+                    onChange={(e) => {
+                      setNotConnectedSearchTerm(e.target.value)
+                      setNotConnectedPage(1)
+                    }}
+                    placeholder="Search by name, mobile, K number..."
+                    className="w-full sm:w-80"
+                  />
+                  <Select
+                    value={notConnectedReasonFilter}
+                    onValueChange={(value) => {
+                      setNotConnectedReasonFilter(value)
+                      setNotConnectedPage(1)
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-56">
+                      <SelectValue placeholder="Filter not connected reason" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Reasons</SelectItem>
+                      {NOT_CONNECTED_REASONS.map((option) => (
+                        <SelectItem key={`filter-${option}`} value={option}>
+                          {option}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
-              {flowNotConnectedActions.length === 0 ? (
+              {filteredFlowNotConnectedActions.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No not-connected data found.</p>
               ) : (
                 <div className="space-y-2">
-                  {flowNotConnectedActions.map((item) => {
+                  {pagedNotConnected.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const transferReasonText = extractTransferReason(parsed.remark)
                     const rowKey = actionRowKey(item)
@@ -1929,6 +2147,12 @@ export default function CallingDataPage() {
                       </div>
                     )
                   })}
+                  {renderFlowPagination(
+                    pagedNotConnected.safePage,
+                    pagedNotConnected.totalPages,
+                    filteredFlowNotConnectedActions.length,
+                    setNotConnectedPage,
+                  )}
                 </div>
               )}
             </CardContent>

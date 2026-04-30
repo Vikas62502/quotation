@@ -13,7 +13,8 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Upload, LogOut, Users, FileSpreadsheet } from "lucide-react"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 type DealerOption = {
@@ -58,6 +59,8 @@ type UploadedLeadBatch = {
   uploadedAt: string
   fileName: string
   rowCount: number
+  assignedCount: number
+  unassignedCount: number
   dealers: string[]
   rows: ParsedCsvRow[]
 }
@@ -200,6 +203,11 @@ const isCompletedAssignmentStatus = (value?: string) => {
   return status === "completed" || status === "done" || status === "closed"
 }
 
+const isAssignedAssignmentStatus = (value?: string) => {
+  const status = String(value || "").trim().toLowerCase()
+  return ["assigned", "in_progress", "rescheduled", "completed", "done", "closed"].includes(status)
+}
+
 const getDateRangeParams = (range: "daily" | "weekly" | "monthly" | "last_month" | "all") => {
   if (range === "all") return {}
   const now = new Date()
@@ -247,6 +255,13 @@ export default function HrDashboardPage() {
   const [activeTab, setActiveTab] = useState("assignment")
   const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
+  const [isBatchModalOpen, setIsBatchModalOpen] = useState(false)
+  const [activeBatch, setActiveBatch] = useState<UploadedLeadBatch | null>(null)
+  const [activeBatchRows, setActiveBatchRows] = useState<ParsedCsvRow[]>([])
+  const [activeBatchPage, setActiveBatchPage] = useState(1)
+  const [activeBatchLimit, setActiveBatchLimit] = useState(50)
+  const [activeBatchTotalRows, setActiveBatchTotalRows] = useState(0)
+  const [isLoadingBatchRows, setIsLoadingBatchRows] = useState(false)
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
   const [callingDealerFilter, setCallingDealerFilter] = useState("all")
@@ -434,12 +449,25 @@ export default function HrDashboardPage() {
       .filter(Boolean)
 
     const rowCountFromApi = Number(item?.rowCount || item?.totalRows || item?.count || 0)
+  const assignedCountFromApi = Number(
+    item?.assignedCount ?? item?.assigned ?? item?.counts?.assigned ?? item?.summary?.assigned ?? 0,
+  )
+  const unassignedCountFromApi = Number(
+    item?.unassignedCount ?? item?.pending ?? item?.counts?.unassigned ?? item?.summary?.unassigned ?? 0,
+  )
+  const assignedCountComputed = rows.filter((row) => isAssignedAssignmentStatus(row.assignmentStatus)).length
+  const rowCountResolved = rowCountFromApi > 0 ? rowCountFromApi : rows.length
+  const assignedCountResolved = assignedCountFromApi > 0 ? assignedCountFromApi : assignedCountComputed
+  const unassignedCountResolved =
+    unassignedCountFromApi > 0 ? unassignedCountFromApi : Math.max(0, rowCountResolved - assignedCountResolved)
 
     return {
       id: item?.id || item?.batchId || item?.uploadId || `batch-${index}`,
       uploadedAt: item?.uploadedAt || item?.createdAt || item?.updatedAt || new Date().toISOString(),
       fileName: item?.fileName || item?.originalFileName || item?.csvFileName || "uploaded.csv",
-      rowCount: rowCountFromApi > 0 ? rowCountFromApi : rows.length,
+    rowCount: rowCountResolved,
+    assignedCount: assignedCountResolved,
+    unassignedCount: unassignedCountResolved,
       dealers: normalizedDealers,
       rows,
     }
@@ -745,6 +773,88 @@ export default function HrDashboardPage() {
     }
   }
 
+  const loadBatchPreviewPage = async (batch: UploadedLeadBatch, page: number, limit: number) => {
+    setIsLoadingBatchRows(true)
+    try {
+      if (!useApi) {
+        const allRows = batch.rows || []
+        const start = (page - 1) * limit
+        const pagedRows = allRows.slice(start, start + limit)
+        setActiveBatchRows(pagedRows)
+        setActiveBatchTotalRows(allRows.length)
+        return
+      }
+      const response = await api.hr.uploadedLeads.getById(batch.id, { page, limit })
+      const rawBatch =
+        response?.batch ||
+        response?.upload ||
+        response?.item ||
+        response?.data?.batch ||
+        response?.data?.upload ||
+        response?.data ||
+        null
+      const rowsSource =
+        response?.rows ||
+        response?.items ||
+        response?.leads ||
+        response?.data?.rows ||
+        response?.data?.items ||
+        response?.data?.leads ||
+        null
+      const totalRowsFromResponse = Number(
+        response?.totalRows ||
+          response?.total ||
+          response?.pagination?.total ||
+          response?.meta?.total ||
+          response?.data?.totalRows ||
+          response?.data?.total ||
+          response?.data?.pagination?.total ||
+          0,
+      )
+      if (rawBatch) {
+        const normalized = normalizeUploadedLeadBatch(rawBatch, dealers, 0)
+        setActiveBatch((prev) => (prev ? { ...prev, ...normalized } : normalized))
+        if (Array.isArray(rowsSource)) {
+          setActiveBatchRows(normalizeBatchRows(rowsSource))
+        } else {
+          setActiveBatchRows(normalized.rows || [])
+        }
+        setActiveBatchTotalRows(totalRowsFromResponse > 0 ? totalRowsFromResponse : normalized.rowCount || normalized.rows.length)
+      } else {
+        if (Array.isArray(rowsSource)) {
+          const normalizedRows = normalizeBatchRows(rowsSource)
+          setActiveBatchRows(normalizedRows)
+          setActiveBatchTotalRows(totalRowsFromResponse > 0 ? totalRowsFromResponse : normalizedRows.length)
+        } else {
+          const allRows = batch.rows || []
+          const start = (page - 1) * limit
+          setActiveBatchRows(allRows.slice(start, start + limit))
+          setActiveBatchTotalRows(allRows.length)
+        }
+      }
+    } catch {
+      // Fallback: if detail endpoint is unavailable, show already available rows.
+      const allRows = batch.rows || []
+      const start = (page - 1) * limit
+      setActiveBatchRows(allRows.slice(start, start + limit))
+      setActiveBatchTotalRows(allRows.length)
+    } finally {
+      setIsLoadingBatchRows(false)
+    }
+  }
+
+  const openBatchPreview = async (batch: UploadedLeadBatch) => {
+    const firstPage = 1
+    setIsBatchModalOpen(true)
+    setActiveBatch(batch)
+    setActiveBatchRows([])
+    setActiveBatchPage(firstPage)
+    setActiveBatchTotalRows(batch.rowCount || batch.rows.length || 0)
+    await loadBatchPreviewPage(batch, firstPage, activeBatchLimit)
+  }
+
+  const activeBatchTotalPages = Math.max(1, Math.ceil(activeBatchTotalRows / activeBatchLimit))
+
   const getCallingRangeBounds = () => {
     const now = new Date()
     if (callingRange === "all") return null
@@ -981,52 +1091,19 @@ export default function HrDashboardPage() {
                               Uploaded: {new Date(batch.uploadedAt).toLocaleString()} • Rows: {batch.rowCount}
                             </p>
                           </div>
-                          <div className="flex flex-wrap gap-1">
+                          <div className="ml-auto flex items-center gap-2">
+                            <div className="flex flex-wrap gap-1 justify-end">
                             {batch.dealers.map((name) => (
                               <Badge key={`${batch.id}-${name}`} variant="outline">
                                 {name}
                               </Badge>
                             ))}
+                            </div>
+                            <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={() => openBatchPreview(batch)}>
+                              <Eye className="w-4 h-4" />
+                              View
+                            </Button>
                           </div>
-                        </div>
-                        <div className="overflow-x-auto">
-                          <table className="w-full min-w-[640px] text-sm">
-                            <thead>
-                              <tr className="text-left text-muted-foreground">
-                                <th className="py-1 pr-3">Name</th>
-                                <th className="py-1 pr-3">Mobile</th>
-                                <th className="py-1 pr-3">K Number</th>
-                                <th className="py-1 pr-3">Address</th>
-                                <th className="py-1 pr-3">Assigned Dealer</th>
-                                <th className="py-1 pr-3">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {batch.rows.map((row, idx) => (
-                                <tr key={`${batch.id}-${row.mobile}-${idx}`} className="border-t border-border/40">
-                                  {(() => {
-                                    const completed = isCompletedAssignmentStatus(row.assignmentStatus)
-                                    const shownDealerName = completed ? row.assignedDealerName || "Unassigned" : "Unassigned"
-                                    const shownStatus = completed ? prettifyAssignmentStatus(row.assignmentStatus || "completed") : "Pending"
-                                    return (
-                                      <>
-                                  <td className="py-1 pr-3">{row.name || "N/A"}</td>
-                                  <td className="py-1 pr-3">{row.mobile || "N/A"}</td>
-                                  <td className="py-1 pr-3">{row.kNumber || "N/A"}</td>
-                                  <td className="py-1 pr-3">{row.address || "N/A"}</td>
-                                  <td className="py-1 pr-3">{shownDealerName}</td>
-                                  <td className="py-1 pr-3">
-                                    <Badge variant="outline">
-                                      {shownStatus}
-                                    </Badge>
-                                  </td>
-                                      </>
-                                    )
-                                  })()}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
                         </div>
                       </div>
                     ))}
@@ -1141,6 +1218,115 @@ export default function HrDashboardPage() {
           </TabsContent>
         </Tabs>
       </main>
+
+      <Dialog open={isBatchModalOpen} onOpenChange={setIsBatchModalOpen}>
+        <DialogContent className="!w-[96vw] !max-w-[96vw] sm:!max-w-[96vw] max-h-[90vh] overflow-auto">
+          <DialogHeader>
+            <DialogTitle>{activeBatch?.fileName || "Batch details"}</DialogTitle>
+            <DialogDescription>
+              Uploaded {activeBatch?.uploadedAt ? new Date(activeBatch.uploadedAt).toLocaleString() : "N/A"} •
+              {" "}Rows: {activeBatch?.rowCount ?? 0} • Assigned: {activeBatch?.assignedCount ?? 0} • Unassigned: {activeBatch?.unassignedCount ?? 0}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="border rounded-md">
+            {isLoadingBatchRows ? (
+              <div className="py-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading batch rows...
+              </div>
+            ) : activeBatchRows.length === 0 ? (
+              <p className="py-10 text-center text-sm text-muted-foreground">No rows found for this batch.</p>
+            ) : (
+              <table className="w-full table-fixed text-sm">
+                <thead className="sticky top-0 bg-background z-10">
+                  <tr className="text-left text-muted-foreground border-b">
+                    <th className="py-2 px-3 w-[16%]">Name</th>
+                    <th className="py-2 px-3 w-[12%]">Mobile</th>
+                    <th className="py-2 px-3 w-[14%]">K Number</th>
+                    <th className="py-2 px-3 w-[34%]">Address</th>
+                    <th className="py-2 px-3 w-[14%]">Assigned Dealer</th>
+                    <th className="py-2 px-3 w-[10%]">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {activeBatchRows.map((row, idx) => (
+                    <tr key={`${activeBatch?.id || "batch"}-${row.mobile}-${idx}`} className="border-t border-border/40">
+                      {(() => {
+                        const completed = isCompletedAssignmentStatus(row.assignmentStatus)
+                        const shownDealerName = completed ? row.assignedDealerName || "Unassigned" : "Unassigned"
+                        const shownStatus = completed ? prettifyAssignmentStatus(row.assignmentStatus || "completed") : "Pending"
+                        return (
+                          <>
+                            <td className="py-2 px-3 break-words whitespace-normal">{row.name || "N/A"}</td>
+                            <td className="py-2 px-3 break-all whitespace-normal">{row.mobile || "N/A"}</td>
+                            <td className="py-2 px-3 break-all whitespace-normal">{row.kNumber || "N/A"}</td>
+                            <td className="py-2 px-3 break-words whitespace-normal">{row.address || "N/A"}</td>
+                            <td className="py-2 px-3 break-words whitespace-normal">{shownDealerName}</td>
+                            <td className="py-2 px-3 break-words whitespace-normal">
+                              <Badge variant="outline">{shownStatus}</Badge>
+                            </td>
+                          </>
+                        )
+                      })()}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+          {activeBatch ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+              <p className="text-muted-foreground">
+                Showing page {activeBatchPage} of {activeBatchTotalPages} • Total rows: {activeBatchTotalRows}
+              </p>
+              <div className="flex items-center gap-2">
+                <Select
+                  value={String(activeBatchLimit)}
+                  onValueChange={async (value) => {
+                    const nextLimit = Number(value)
+                    setActiveBatchLimit(nextLimit)
+                    setActiveBatchPage(1)
+                    await loadBatchPreviewPage(activeBatch, 1, nextLimit)
+                  }}
+                >
+                  <SelectTrigger className="w-24 h-8">
+                    <SelectValue placeholder="Rows" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={activeBatchPage <= 1 || isLoadingBatchRows}
+                  onClick={async () => {
+                    const nextPage = Math.max(1, activeBatchPage - 1)
+                    setActiveBatchPage(nextPage)
+                    await loadBatchPreviewPage(activeBatch, nextPage, activeBatchLimit)
+                  }}
+                >
+                  Previous
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={activeBatchPage >= activeBatchTotalPages || isLoadingBatchRows}
+                  onClick={async () => {
+                    const nextPage = Math.min(activeBatchTotalPages, activeBatchPage + 1)
+                    setActiveBatchPage(nextPage)
+                    await loadBatchPreviewPage(activeBatch, nextPage, activeBatchLimit)
+                  }}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

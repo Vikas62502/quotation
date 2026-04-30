@@ -1351,6 +1351,38 @@ export const api = {
 
         throw lastError
       },
+      getById: async (batchId: string, params?: { page?: number; limit?: number }) => {
+        const safeBatchId = encodeURIComponent(batchId)
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        const querySuffix = query ? `?${query}` : ""
+        const endpoints = [
+          `/hr/leads/uploads/${safeBatchId}${querySuffix}`,
+          `/hr/calling-uploads/${safeBatchId}${querySuffix}`,
+          `/hr/uploads/${safeBatchId}${querySuffix}`,
+          `/admin/leads/uploads/${safeBatchId}${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const isMissingEndpoint =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isMissingEndpoint) throw error
+          }
+        }
+
+        throw lastError
+      },
     },
 
     callingActions: {
