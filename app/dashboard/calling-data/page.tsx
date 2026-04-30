@@ -958,7 +958,32 @@ export default function CallingDataPage() {
     const endOfToday = new Date(startOfToday)
     endOfToday.setDate(endOfToday.getDate() + 1)
     const nowMs = now.getTime()
+    const latestActionByLeadId = new Map<string, ActionLogItem>()
+    recentActions
+      .slice()
+      .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+      .forEach((item) => {
+        const leadId = String(item.leadId || "").trim()
+        if (!leadId || latestActionByLeadId.has(leadId)) return
+        latestActionByLeadId.set(leadId, item)
+      })
     return scheduledLeads.filter((lead) => {
+      const normalizedStatus = String(lead.status || "").trim().toLowerCase()
+      if (normalizedStatus !== "rescheduled") return false
+      const latestAction = latestActionByLeadId.get(String(lead.id || "").trim())
+      const latestActionType = String(latestAction?.action || "").trim().toLowerCase()
+      const latestParsed = parseTaggedRemark(latestAction?.callRemark || "")
+      const latestStatusText = String(latestParsed.status || "").trim()
+      const isDecisionPendingStatus =
+        !latestStatusText ||
+        latestStatusText === "Rescheduled" ||
+        DECISION_PENDING_REASONS.includes(latestStatusText) ||
+        FOLLOW_UP_STATUSES.has(latestStatusText)
+
+      // Scheduled tab should only keep Decision Pending / Follow-up style leads.
+      // If lead was moved to Interested or Not Interested, remove it from Scheduled tab.
+      if (latestActionType === "called" || latestActionType === "not_interested") return false
+      if (!isDecisionPendingStatus) return false
       const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
       const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
       const matchesDealer =
@@ -986,7 +1011,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, currentDealerId, currentDealerUsername, currentDealerFullName])
+  }, [scheduledLeads, recentActions, scheduledSearchTerm, scheduledTimeFilter, currentDealerId, currentDealerUsername, currentDealerFullName])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
