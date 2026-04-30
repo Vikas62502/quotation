@@ -1145,9 +1145,19 @@ export default function CallingDataPage() {
           innerError instanceof ApiError &&
           (innerError.code === "LEAD_005" || /invalid lead action transition/i.test(innerError.message || ""))
 
+        // Many backends require `start` (assigned/queued → in_progress) before called / not_interested / etc.
+        if (isInvalidTransition && payload.action !== "start" && payload.action !== "rescheduled") {
+          try {
+            await api.dealers.updateCallingLeadAction(leadId, { action: "start", actionAt })
+            response = await api.dealers.updateCallingLeadAction(leadId, payload)
+          } catch {
+            // fall through to rescheduled fallback below
+          }
+        }
+
         // Backend often blocks direct transition for older/recent cards.
         // Fallback to a valid rescheduled transition so status edits still persist.
-        if (isInvalidTransition && payload.action !== "rescheduled") {
+        if (!response && isInvalidTransition && payload.action !== "rescheduled") {
           const fallbackNextFollowUpAt =
             payload.nextFollowUpAt ||
             new Date(Date.now() + 60 * 60 * 1000).toISOString()
@@ -1157,7 +1167,7 @@ export default function CallingDataPage() {
             nextFollowUpAt: fallbackNextFollowUpAt,
             actionAt,
           })
-        } else {
+        } else if (!response) {
           throw innerError
         }
       }
@@ -2104,7 +2114,7 @@ export default function CallingDataPage() {
               </div>
 
               <div className="space-y-3 pt-2 border-t border-orange-200/70">
-                {currentLead.status === "assigned" ? (
+                {currentLead.status === "assigned" || currentLead.status === "queued" ? (
                   <Button
                     variant="outline"
                     onClick={() =>
