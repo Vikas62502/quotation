@@ -53,6 +53,8 @@ import { cn } from "@/lib/utils"
 import {
   getInstallationWorkflowStatus,
   INSTALLER_RELEASE_MAP_KEY,
+  readInstallationScheduledMap,
+  setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
   flattenWrappedQuotationRow,
   isQuotationReleasedToInstaller,
@@ -114,6 +116,29 @@ type CallingActionRecord = {
 }
 
 type ApprovalPaymentType = "loan" | "cash" | "mix"
+
+/** YYYY-MM-DD, local calendar (avoids UTC shifting calendar day). */
+function addCalendarDaysFromDateString(dateStr: string, days: number): string {
+  const base = new Date(dateStr)
+  if (Number.isNaN(base.getTime())) return ""
+  const d = new Date(base.getFullYear(), base.getMonth(), base.getDate() + days)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function toYmdFromStored(stored: string | undefined): string {
+  if (!stored) return ""
+  const t = stored.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t
+  const d = new Date(t)
+  if (Number.isNaN(d.getTime())) return ""
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
 
 const GOVERNMENT_BANK_OPTIONS = [
   "State Bank of India",
@@ -488,9 +513,18 @@ export default function AdminPanelPage() {
             metering_approved_at: q.metering_approved_at ?? q.meteringApprovedAt,
             mcoAt: q.mcoAt ?? q.mco_at,
             mco_at: q.mco_at ?? q.mcoAt,
+            installationReadyForInstaller: q.installationReadyForInstaller ?? q.installation_ready_for_installer,
+            installationReleasedAt: q.installationReleasedAt ?? q.installation_released_at,
+            installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
           }
         })
-        setQuotations(quotationsList)
+        const scheduledLocal = readInstallationScheduledMap()
+        setQuotations(
+          quotationsList.map((q: any) => ({
+            ...q,
+            installationScheduledAt: q.installationScheduledAt || scheduledLocal[q.id],
+          })),
+        )
 
         // Match Installer dashboard visibility exactly by using the same queue source.
         try {
@@ -684,10 +718,13 @@ export default function AdminPanelPage() {
         // Fallback to localStorage
         // Load all quotations and ensure they have status
         const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const scheduledLocalFallback = readInstallationScheduledMap()
         const quotationsWithStatus = allQuotations.map((q: Quotation) => ({
           ...q,
           status: q.status || "pending",
           subtotal: (q as any).subtotal ?? q.totalAmount ?? 0,
+          installationScheduledAt:
+            (q as any).installationScheduledAt || scheduledLocalFallback[q.id],
         }))
         setQuotations(quotationsWithStatus)
         setInstallerQueueIds(new Set(quotationsWithStatus.map((q: Quotation) => q.id)))
@@ -3228,8 +3265,21 @@ export default function AdminPanelPage() {
                       <div className="space-y-3">
                         {installerList.map((quotation) => {
                           const installerStatus = getInstallerQueueStatusForAdmin(quotation)
-                          const approvedDate =
-                            (quotation as any).approvedAt || (quotation as any).approvedDate || (quotation as any).statusUpdatedAt || quotation.createdAt
+                          const qAny = quotation as any
+                          const sentToInstallationAt =
+                            qAny.installationReleasedAt || qAny.installation_released_at
+                          const installationListDate =
+                            sentToInstallationAt ||
+                            qAny.approvedAt ||
+                            qAny.approvedDate ||
+                            qAny.statusUpdatedAt ||
+                            quotation.createdAt
+                          const sentBaseStr = installationListDate ? String(installationListDate) : ""
+                          const sentParsedOk = sentBaseStr ? !Number.isNaN(new Date(sentBaseStr).getTime()) : false
+                          const defaultInstallYmd =
+                            sentParsedOk ? addCalendarDaysFromDateString(sentBaseStr, 7) : ""
+                          const storedInstallYmd = toYmdFromStored(qAny.installationScheduledAt as string | undefined)
+                          const installationDateInputValue = storedInstallYmd || defaultInstallYmd
                           return (
                             <Card key={quotation.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
                               <CardContent className="p-4">
@@ -3241,15 +3291,59 @@ export default function AdminPanelPage() {
                                     <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
                                   </div>
                                   <div className="min-w-[140px]">
-                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved date</p>
+                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sent to installation</p>
                                     <p className="text-xs font-medium flex items-center gap-1">
                                       <Calendar className="w-3 h-3 text-muted-foreground" />
-                                      {approvedDate ? new Date(approvedDate as string).toLocaleDateString("en-IN") : "N/A"}
+                                      {installationListDate
+                                        ? new Date(installationListDate as string).toLocaleDateString("en-IN")
+                                        : "N/A"}
                                     </p>
                                   </div>
-                                  <div className="min-w-[120px]">
-                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                    <p className="text-sm font-semibold">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                                  <div className="min-w-[170px]">
+                                    <Label htmlFor={`install-date-${quotation.id}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                      Installation date
+                                    </Label>
+                                    <Input
+                                      id={`install-date-${quotation.id}`}
+                                      type="date"
+                                      className="h-8 text-xs mt-0.5"
+                                      value={installationDateInputValue}
+                                      disabled={!sentParsedOk}
+                                      onChange={(e) => {
+                                        const v = e.target.value
+                                        const id = quotation.id
+                                        setQuotations((prev) =>
+                                          prev.map((q) =>
+                                            q.id === id ? { ...q, installationScheduledAt: v || undefined } : q,
+                                          ),
+                                        )
+                                        setInstallationScheduledDateInLocalMap(id, v || undefined)
+                                        try {
+                                          const all = JSON.parse(localStorage.getItem("quotations") || "[]")
+                                          const next = Array.isArray(all)
+                                            ? all.map((qRow: any) =>
+                                                qRow?.id === id
+                                                  ? { ...qRow, installationScheduledAt: v || undefined }
+                                                  : qRow,
+                                              )
+                                            : all
+                                          localStorage.setItem("quotations", JSON.stringify(next))
+                                        } catch {
+                                          // no-op
+                                        }
+                                        void (async () => {
+                                          if (!useApi) return
+                                          try {
+                                            await api.admin.quotations.updateInstallationScheduledDate(id, v || null)
+                                          } catch {
+                                            // Local map + quotations JSON already updated; API route may not exist yet.
+                                          }
+                                        })()
+                                      }}
+                                    />
+                                    {!sentParsedOk ? (
+                                      <p className="text-[10px] text-muted-foreground mt-0.5">Set release date first</p>
+                                    ) : null}
                                   </div>
                                   <div className="min-w-[140px]">
                                     <Badge variant="outline" className="text-xs capitalize">

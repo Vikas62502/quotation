@@ -1,6 +1,31 @@
 /** Shared with installer + metering dashboards: account-management "send to installation" gate. */
 export const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 
+/** Admin Installation tab: optional override for planned install date (YYYY-MM-DD), keyed by quotation id. */
+export const ADMIN_INSTALLATION_SCHEDULED_MAP_KEY = "installationScheduledDateMap"
+
+export function readInstallationScheduledMap(): Record<string, string> {
+  if (typeof window === "undefined") return {}
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADMIN_INSTALLATION_SCHEDULED_MAP_KEY) || "{}")
+    return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {}
+  } catch {
+    return {}
+  }
+}
+
+export function setInstallationScheduledDateInLocalMap(quotationId: string, ymd: string | undefined) {
+  if (typeof window === "undefined") return
+  try {
+    const map = readInstallationScheduledMap()
+    if (ymd) map[quotationId] = ymd
+    else delete map[quotationId]
+    localStorage.setItem(ADMIN_INSTALLATION_SCHEDULED_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
 /** Local-only metering pipeline stages (until backend exposes metering workflow). */
 export const METERING_WORKFLOW_MAP_KEY = "meteringWorkflowMap"
 

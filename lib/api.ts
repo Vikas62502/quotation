@@ -894,6 +894,7 @@ export const api = {
         midLegFeet?: number
         frontLegFeet?: number
         rowDiagramImage?: string
+        meterImage?: string
       },
     ) => {
       return apiRequest(`/visits/${visitId}/complete`, {
@@ -920,9 +921,11 @@ export const api = {
         frontLegFeet?: number
         existingImages?: string[]
         existingRowDiagramImage?: string
+        existingMeterImage?: string
       },
       siteImageFiles: File[],
       rowDiagramFile?: File | null,
+      meterImageFile?: File | null,
     ) => {
       const formData = new FormData()
       formData.append("length", String(completeData.length))
@@ -941,12 +944,18 @@ export const api = {
       if (completeData.existingRowDiagramImage) {
         formData.append("existingRowDiagramImage", completeData.existingRowDiagramImage)
       }
+      if (completeData.existingMeterImage) {
+        formData.append("existingMeterImage", completeData.existingMeterImage)
+      }
 
       siteImageFiles.forEach((file) => {
         formData.append("images", file)
       })
       if (rowDiagramFile) {
         formData.append("rowDiagramImage", rowDiagramFile)
+      }
+      if (meterImageFile) {
+        formData.append("meterImage", meterImageFile)
       }
 
       return multipartRequest(`/visits/${visitId}/complete`, "PATCH", formData)
@@ -1646,6 +1655,35 @@ export const api = {
           method: "PATCH",
           body,
         })
+      },
+
+      /**
+       * Planned installation date (YYYY-MM-DD). Retries alternate paths until backend exposes one.
+       */
+      updateInstallationScheduledDate: async (quotationId: string, installationScheduledAt: string | null) => {
+        const body =
+          installationScheduledAt === null || installationScheduledAt === ""
+            ? { installationScheduledAt: null, installation_scheduled_at: null }
+            : { installationScheduledAt, installation_scheduled_at: installationScheduledAt }
+        const endpoints = [
+          `/admin/quotations/${quotationId}/installation-scheduled-at`,
+          `/quotations/${quotationId}/installation-scheduled-at`,
+          `/admin/quotations/${quotationId}/installation-schedule`,
+          `/quotations/${quotationId}/installation-schedule`,
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "PATCH", body })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
       },
     },
 

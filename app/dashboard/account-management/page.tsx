@@ -67,6 +67,8 @@ interface CustomerPayment {
   quotationId: string
   customerName: string
   customerMobile: string
+  dealerName?: string
+  dealerMobile?: string
   /** Payment cap: quotation subtotal / set price (not installment sum). */
   subtotal: number
   totalAmount: number
@@ -867,6 +869,10 @@ export default function AccountManagementPage() {
           quotationId: q.id || "",
           customerName: formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown"),
           customerMobile: q.customer?.mobile || "",
+          dealerName: q.dealer
+            ? formatPersonName(q.dealer.firstName, q.dealer.lastName, "Unassigned")
+            : "Unassigned",
+          dealerMobile: q.dealer?.mobile || "",
           subtotal,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
@@ -1908,9 +1914,35 @@ export default function AccountManagementPage() {
                           >
                             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-12 gap-x-4 gap-y-3 items-start lg:items-center">
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
-                                <p className="text-sm font-semibold leading-tight">{payment.customerName}</p>
+                                <p className="text-sm font-semibold leading-tight">
+                                  Customer: {payment.customerName}
+                                </p>
                                 <p className="text-xs text-muted-foreground mt-0.5">
-                                  {payment.customerMobile} • {payment.quotationId}
+                                  Customer No: {payment.customerMobile || "N/A"}
+                                </p>
+                                <p className="text-xs text-muted-foreground mt-0.5">
+                                  Dealer: {payment.dealerName || "Unassigned"} • {payment.dealerMobile || "No contact"}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                                <p className="text-sm font-semibold">₹{payment.subtotal.toLocaleString()}</p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                                <p className="text-sm font-semibold">₹{paidAmount.toLocaleString()}</p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
+                                <p
+                                  className={`text-sm font-semibold ${
+                                    remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
+                                  }`}
+                                >
+                                  ₹{Math.max(remainingAmount, 0).toLocaleString()}
                                 </p>
                               </div>
 
@@ -1944,27 +1976,6 @@ export default function AccountManagementPage() {
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
                                 <p className="text-sm font-medium break-words leading-snug">
                                   {getFinancingBankDisplay(payment)}
-                                </p>
-                              </div>
-
-                              <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                <p className="text-sm font-semibold">₹{payment.subtotal.toLocaleString()}</p>
-                              </div>
-
-                              <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
-                                <p className="text-sm font-semibold">₹{paidAmount.toLocaleString()}</p>
-                              </div>
-
-                              <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
-                                <p
-                                  className={`text-sm font-semibold ${
-                                    remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
-                                  }`}
-                                >
-                                  ₹{Math.max(remainingAmount, 0).toLocaleString()}
                                 </p>
                               </div>
 
@@ -2049,9 +2060,12 @@ export default function AccountManagementPage() {
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <div>
-                  <p className="text-sm font-semibold">{activePayment.customerName}</p>
+                  <p className="text-sm font-semibold">Customer: {activePayment.customerName}</p>
                   <p className="text-xs text-muted-foreground">
-                    {activePayment.customerMobile} • {activePayment.quotationId}
+                    Customer No: {activePayment.customerMobile || "N/A"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Dealer: {activePayment.dealerName || "Unassigned"} • {activePayment.dealerMobile || "No contact"}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                     <span>

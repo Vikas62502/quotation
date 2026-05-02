@@ -114,6 +114,8 @@ export interface Quotation {
   /** Account Management release flag: shown in installer queue only after this is true. */
   installationReadyForInstaller?: boolean
   installationReleasedAt?: string
+  /** Planned installation date (YYYY-MM-DD). Default UI: 7 days after sent-to-installation until overridden. */
+  installationScheduledAt?: string
   /** When quotation became approved (server or admin action) */
   statusApprovedAt?: string
   /** Ordered status transitions for admin audit */

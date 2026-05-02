@@ -69,6 +69,7 @@ interface Visit {
   frontLegFeet?: number
   unit?: "feet" | "cm"
   rowDiagramImage?: string
+  meterImage?: string
   images?: string[]
   visitors?: Array<{
     visitorId: string
@@ -89,6 +90,17 @@ interface VisitWithQuotation extends Visit {
 
 const getVisitStartTime = (timeRange: string) => (timeRange || "").split("-")[0]?.trim()
 const getVisitEndTime = (timeRange: string) => (timeRange || "").split("-")[1]?.trim()
+const normalizeVisitStatus = (value?: string): VisitStatus => {
+  const raw = String(value || "").trim().toLowerCase().replace(/\s+/g, "_")
+  if (!raw) return "pending"
+  if (raw === "approve" || raw === "approved") return "approved"
+  if (raw === "complete" || raw === "completed") return "completed"
+  if (raw === "incomplete" || raw === "partially_completed") return "incomplete"
+  if (raw === "reschedule" || raw === "rescheduled") return "rescheduled"
+  if (raw === "reject" || raw === "rejected") return "rejected"
+  if (raw === "pending") return "pending"
+  return "pending"
+}
 const resolveVisitTimeRange = (visit: any) => {
   const start = (visit?.visitStartTime || visit?.startTime || "").trim()
   const end = (visit?.visitEndTime || visit?.endTime || "").trim()
@@ -196,6 +208,8 @@ export default function VisitorDashboardPage() {
   const [statusFilter, setStatusFilter] = useState<VisitStatus | "all">("all")
   const [dateFilter, setDateFilter] = useState("all")
   const [activeStatusTab, setActiveStatusTab] = useState<VisitStatusTab>("pending")
+  const [currentPage, setCurrentPage] = useState(1)
+  const VISITS_PER_PAGE = 10
   const [approveOutcome, setApproveOutcome] = useState<"completed" | "incomplete" | "rescheduled" | null>(null)
   const [approvedVisits, setApprovedVisits] = useState<Set<string>>(new Set())
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
@@ -209,6 +223,8 @@ export default function VisitorDashboardPage() {
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
   const [rowDiagramFile, setRowDiagramFile] = useState<File | null>(null)
   const [rowDiagramPreview, setRowDiagramPreview] = useState<string | null>(null)
+  const [meterImageFile, setMeterImageFile] = useState<File | null>(null)
+  const [meterImagePreview, setMeterImagePreview] = useState<string | null>(null)
   /** Count of site images already on the visit when the complete dialog opens (URL strings). */
   const [persistedSiteImageCount, setPersistedSiteImageCount] = useState(0)
   const [reason, setReason] = useState("")
@@ -220,6 +236,10 @@ export default function VisitorDashboardPage() {
     "rescheduled",
   )
   const [isLoadingVisits, setIsLoadingVisits] = useState(false)
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, agentFilter, statusFilter, dateFilter, activeStatusTab])
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -245,7 +265,9 @@ export default function VisitorDashboardPage() {
     setIsLoadingVisits(true)
     try {
       if (useApi) {
-        const response = await api.visitors.getAssignedVisits()
+        // Some backends default this endpoint to pending-only when status is omitted.
+        // Request all statuses explicitly so all tabs (approved/completed/etc) can populate.
+        const response = await api.visitors.getAssignedVisits({ status: "all" })
         const visitsList = Array.isArray(response?.visits)
           ? response.visits
           : Array.isArray(response)
@@ -267,6 +289,16 @@ export default function VisitorDashboardPage() {
               v.documents?.rowDiagram ||
               v.documents?.row_diagram,
           )
+          const meterImage = normalizeMediaUrl(
+            v.meterImage ||
+              v.meter_image ||
+              completion.meterImage ||
+              completion.meter_image ||
+              v.documents?.meterImage ||
+              v.documents?.meter_image ||
+              v.documents?.meterPhoto ||
+              v.documents?.meter_photo,
+          )
           const normalizedImages = extractImageList(v)
           return {
             id: v.id,
@@ -275,7 +307,7 @@ export default function VisitorDashboardPage() {
             location: v.location || v.visitLocation || "",
             locationLink: v.locationLink || v.location_link,
             notes: v.notes || completion.notes,
-            status: v.status,
+            status: normalizeVisitStatus(v.status || v.visitStatus || v.visit_status),
             feedback: v.feedback,
             rejectionReason: v.rejectionReason || v.rejection_reason,
             length: pickFirstNumber(v.length, v.lengthFeet, v.length_feet, dimensions.length, dimensions.lengthFeet, dimensions.length_feet),
@@ -286,6 +318,7 @@ export default function VisitorDashboardPage() {
             frontLegFeet: pickFirstNumber(v.frontLegFeet, v.front_leg_feet, dimensions.frontLegFeet, dimensions.front_leg_feet),
             unit: (v.unit || dimensions.unit || completion.unit || "feet") as "feet" | "cm",
             rowDiagramImage: rowDiagram,
+            meterImage,
             images: normalizedImages,
             visitors: v.otherVisitors?.map((ov: any) => ({
               visitorId: ov.visitorId,
@@ -540,6 +573,8 @@ export default function VisitorDashboardPage() {
       setPersistedSiteImageCount(targetVisit.images?.length ?? 0)
       setRowDiagramFile(null)
       setRowDiagramPreview(targetVisit.rowDiagramImage || null)
+      setMeterImageFile(null)
+      setMeterImagePreview(targetVisit.meterImage || null)
       setCompleteNotes(targetVisit.notes || "")
       setCompleteDialogOpen(true)
     } else {
@@ -619,6 +654,17 @@ export default function VisitorDashboardPage() {
         rowDiagramImage = rowDiagramPreview
       }
 
+      let meterImage: string | undefined
+      if (meterImageFile) {
+        meterImage = await new Promise<string>((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (e) => resolve(e.target?.result as string)
+          reader.readAsDataURL(meterImageFile)
+        })
+      } else if (meterImagePreview) {
+        meterImage = meterImagePreview
+      }
+
       const completePayload = {
         length: L,
         width: W,
@@ -630,6 +676,7 @@ export default function VisitorDashboardPage() {
         images: allImages,
         notes: completeNotes.trim() || undefined,
         ...(rowDiagramImage ? { rowDiagramImage } : {}),
+        ...(meterImage ? { meterImage } : {}),
       }
 
       let syncedWithApi = false
@@ -649,9 +696,11 @@ export default function VisitorDashboardPage() {
               notes: completeNotes.trim() || undefined,
               existingImages: persistedImages,
               existingRowDiagramImage: rowDiagramFile ? undefined : rowDiagramPreview || undefined,
+              existingMeterImage: meterImageFile ? undefined : meterImagePreview || undefined,
             },
             images,
             rowDiagramFile,
+            meterImageFile,
           )
           syncedWithApi = true
           await loadAssignedVisits()
@@ -677,6 +726,7 @@ export default function VisitorDashboardPage() {
         midLegFeet: midLegFeet.trim() !== "" ? mid : undefined,
         frontLegFeet: front || undefined,
         rowDiagramImage: rowDiagramImage || undefined,
+        meterImage: meterImage || undefined,
         images: allImages.length > 0 ? allImages : undefined,
         notes: completeNotes.trim() || undefined,
       }
@@ -724,6 +774,8 @@ export default function VisitorDashboardPage() {
       setPersistedSiteImageCount(0)
       setRowDiagramFile(null)
       setRowDiagramPreview(null)
+      setMeterImageFile(null)
+      setMeterImagePreview(null)
       setCompleteNotes("")
     } catch (error) {
       console.error("Error completing visit:", error)
@@ -876,6 +928,21 @@ export default function VisitorDashboardPage() {
     setRowDiagramPreview(null)
   }
 
+  const handleMeterImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file) return
+    setMeterImageFile(file)
+    const reader = new FileReader()
+    reader.onload = (ev) => setMeterImagePreview(ev.target?.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  const clearMeterImage = () => {
+    setMeterImageFile(null)
+    setMeterImagePreview(null)
+  }
+
 
   const getStatusColor = (status?: VisitStatus) => {
     switch (status) {
@@ -974,6 +1041,7 @@ export default function VisitorDashboardPage() {
                         setStatusFilter("all")
                         setDateFilter("all")
                         setActiveStatusTab("pending")
+                        setCurrentPage(1)
                       }}
                       className="sm:w-auto"
                     >
@@ -1070,11 +1138,12 @@ export default function VisitorDashboardPage() {
             }
 
             // Filter by status
+            const currentStatus = normalizeVisitStatus(visit.status)
             if (statusFilter !== "all") {
-              if (visit.status !== statusFilter) return false
+              if (currentStatus !== statusFilter) return false
             }
             if (activeStatusTab !== "all") {
-              if ((visit.status || "pending") !== activeStatusTab) return false
+              if (currentStatus !== activeStatusTab) return false
             }
 
             // Filter by date
@@ -1109,8 +1178,8 @@ export default function VisitorDashboardPage() {
           })
 
           const sortedFilteredVisits = [...filteredVisits].sort((a, b) => {
-            const aPending = (a.status || "pending") === "pending"
-            const bPending = (b.status || "pending") === "pending"
+            const aPending = normalizeVisitStatus(a.status) === "pending"
+            const bPending = normalizeVisitStatus(b.status) === "pending"
 
             // Always keep pending visits at the top.
             if (aPending !== bPending) {
@@ -1141,6 +1210,7 @@ export default function VisitorDashboardPage() {
                         setStatusFilter("all")
                         setDateFilter("all")
                         setActiveStatusTab("pending")
+                        setCurrentPage(1)
                       }}
                       className="mt-2"
                     >
@@ -1152,9 +1222,14 @@ export default function VisitorDashboardPage() {
             )
           }
 
+          const totalPages = Math.max(1, Math.ceil(sortedFilteredVisits.length / VISITS_PER_PAGE))
+          const safePage = Math.min(currentPage, totalPages)
+          const startIndex = (safePage - 1) * VISITS_PER_PAGE
+          const pagedVisits = sortedFilteredVisits.slice(startIndex, startIndex + VISITS_PER_PAGE)
+
           return (
             <div className="space-y-4">
-              {sortedFilteredVisits.map((visit) => {
+              {pagedVisits.map((visit) => {
               const myAvailability = getMyAvailability(visit)
               const isPast = isPastVisit(visit)
 
@@ -1310,6 +1385,7 @@ export default function VisitorDashboardPage() {
                       visit.backLegFeet != null ||
                       visit.midLegFeet != null ||
                       visit.frontLegFeet != null ||
+                      visit.meterImage ||
                       (visit.images && visit.images.length > 0) ||
                       visit.rowDiagramImage) && (
                       <div className="bg-blue-50 rounded-md p-3 border border-blue-200 space-y-3">
@@ -1382,6 +1458,36 @@ export default function VisitorDashboardPage() {
                                 className="px-3 py-2 text-xs rounded-md border bg-white text-blue-700"
                               >
                                 Open row diagram document
+                              </span>
+                            </a>
+                          </div>
+                        )}
+
+                        {visit.meterImage && (
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-2">Meter image</p>
+                            <a
+                              href={visit.meterImage}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-block"
+                              title="Open meter image"
+                            >
+                              <img
+                                src={visit.meterImage}
+                                alt="Meter"
+                                className="h-28 w-auto rounded-md border object-contain bg-white"
+                                onError={(e) => {
+                                  e.currentTarget.style.display = "none"
+                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
+                                  if (fallback) fallback.style.display = "inline-flex"
+                                }}
+                              />
+                              <span
+                                style={{ display: "none" }}
+                                className="px-3 py-2 text-xs rounded-md border bg-white text-blue-700"
+                              >
+                                Open meter image
                               </span>
                             </a>
                           </div>
@@ -1585,6 +1691,33 @@ export default function VisitorDashboardPage() {
                 </Card>
               )
             })}
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
+                <p className="text-xs text-muted-foreground">
+                  Showing {Math.min(startIndex + 1, sortedFilteredVisits.length)}-
+                  {Math.min(startIndex + VISITS_PER_PAGE, sortedFilteredVisits.length)} of {sortedFilteredVisits.length}
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={safePage <= 1}
+                    onClick={() => setCurrentPage(Math.max(safePage - 1, 1))}
+                  >
+                    Previous
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Page {safePage} / {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setCurrentPage(Math.min(safePage + 1, totalPages))}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
             </div>
           )
         })()}
@@ -1802,6 +1935,40 @@ export default function VisitorDashboardPage() {
             </div>
 
             <div>
+              <Label htmlFor="meter-image-upload">Meter image *</Label>
+              <div className="mt-2 border-2 border-dashed border-border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <p className="text-sm text-muted-foreground">Upload clear meter photo (PNG, JPG up to 10MB).</p>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Input
+                    id="meter-image-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleMeterImageUpload}
+                    className="hidden"
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById("meter-image-upload")?.click()}>
+                    <Upload className="w-4 h-4 mr-2" />
+                    Select
+                  </Button>
+                  {meterImagePreview && (
+                    <Button type="button" variant="ghost" size="sm" onClick={clearMeterImage}>
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {meterImagePreview && (
+                <div className="mt-3 relative inline-block group">
+                  <img
+                    src={meterImagePreview}
+                    alt="Meter image preview"
+                    className="max-h-40 rounded-lg border object-contain"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
               <Label htmlFor="complete-notes">Notes (Optional)</Label>
               <Textarea
                 id="complete-notes"
@@ -1827,7 +1994,8 @@ export default function VisitorDashboardPage() {
                   !widthFeet ||
                   !backLegFeet ||
                   !frontLegFeet ||
-                  imagePreviews.length === 0
+                  imagePreviews.length === 0 ||
+                  !meterImagePreview
                 }
                 className="bg-blue-600 hover:bg-blue-700"
               >
