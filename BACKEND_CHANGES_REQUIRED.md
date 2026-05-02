@@ -1809,6 +1809,97 @@ Modal prefill/edit contract (important for current UI):
 
 ---
 
+# Installation release & planned installation date
+
+## Goal
+- **Account Management “Send to installer”** must persist a **release timestamp** so Admin **Installation** shows **Sent to installation** correctly after refresh (not only quotation approval dates).
+- **Admin Installation** tab lets ops set a **planned installation date** (`YYYY-MM-DD`). Frontend defaults to **7 calendar days after** the release/sent anchor until the user overrides; backend should store overrides.
+
+## Quotation fields (persist & return)
+
+| Field (camelCase) | Alternative (snake_case) | Type | Notes |
+|-------------------|-------------------------|------|--------|
+| `installationReadyForInstaller` | `installation_ready_for_installer` | boolean | `true` when released to installer queue |
+| `installationReleasedAt` | `installation_released_at` | string (ISO 8601) | Set when AM sends to installer |
+| `installationScheduledAt` | `installation_scheduled_at` | string (`YYYY-MM-DD`) | Optional; admin-planned install date |
+
+Frontend accepts either naming style on **GET** responses (`GET /admin/quotations`, `GET /quotations/:id`, installer queue payloads with nested `quotation`).
+
+---
+
+## A) PATCH — release to installer (Account Management)
+
+The client tries these in order until one succeeds (see `lib/api.ts` → `releaseForInstallation`):
+
+1. `PATCH /api/quotations/{quotationId}/installation-release` **(preferred)**
+2. `PATCH /api/quotations/{quotationId}/installation/ready`
+3. `PATCH /api/quotations/{quotationId}/payment-details` (legacy fallback; only merge known fields)
+
+**Request body (JSON):**
+
+```json
+{
+  "installationReadyForInstaller": true,
+  "installationReleasedAt": "2026-05-02T12:30:00.000Z"
+}
+```
+
+**Backend behavior**
+- Upsert quotation: set `installation_ready_for_installer = true` and `installation_released_at` to the provided ISO string (or server `NOW()` if body omits `installationReleasedAt` but that weakens audit—prefer trusting client timestamp or storing server time explicitly).
+- Do **not** clear `installationReleasedAt` on unrelated PATCHes.
+- Response: return updated quotation fragment or full quotation including these fields.
+
+**Auth:** account-management (or equivalent role allowed to release installs).
+
+---
+
+## B) PATCH — planned installation date (Admin Installation tab)
+
+The client tries these in order until one succeeds (see `lib/api.ts` → `admin.quotations.updateInstallationScheduledDate`):
+
+1. `PATCH /api/admin/quotations/{quotationId}/installation-scheduled-at` **(preferred)**
+2. `PATCH /api/quotations/{quotationId}/installation-scheduled-at`
+3. `PATCH /api/admin/quotations/{quotationId}/installation-schedule`
+4. `PATCH /api/quotations/{quotationId}/installation-schedule`
+
+**Set / update:**
+
+```json
+{
+  "installationScheduledAt": "2026-05-09",
+  "installation_scheduled_at": "2026-05-09"
+}
+```
+
+**Clear (user cleared date in UI):**
+
+```json
+{
+  "installationScheduledAt": null,
+  "installation_scheduled_at": null
+}
+```
+
+**Backend behavior**
+- Validate `YYYY-MM-DD` when non-null.
+- Persist on quotation row; return updated fields in response body.
+- Default “+7 days” is **frontend-only** when this field is null—backend does not need to compute it.
+
+**Auth:** admin (or role that uses Admin → Installation).
+
+---
+
+## C) GET — list & detail must echo fields
+
+Ensure **`installationReadyForInstaller`**, **`installationReleasedAt`**, and **`installationScheduledAt`** appear on:
+
+- `GET /api/admin/quotations` (each item in `quotations[]` or equivalent)
+- `GET /api/quotations/{quotationId}` (and any variant the app uses for quotation detail)
+
+Installer queue endpoints should include the same on nested quotation objects when applicable, so dashboards stay consistent after reload.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
