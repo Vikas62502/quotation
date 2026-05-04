@@ -21,6 +21,7 @@ import {
   getInstallationWorkflowStatus,
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
+import { getInstallationTeamIdForQuotation } from "@/lib/installation-teams"
 
 type InstallerQuotation = {
   id: string
@@ -53,6 +54,8 @@ type InstallerQuotation = {
   installationReleasedAt?: string
   installation_ready_for_installer?: boolean
   installation_released_at?: string
+  installationTeamId?: string
+  installation_team_id?: string
   readyForInstallation?: boolean
   ready_for_installation?: boolean
   releaseToInstaller?: boolean
@@ -191,7 +194,7 @@ const installerQuotationFromApiRecord = (raw: unknown): InstallerQuotation => {
 
 export default function InstallerDashboardPage() {
   const router = useRouter()
-  const { isAuthenticated, role, installer, logout } = useAuth()
+  const { isAuthenticated, role, installer, installationTeamUser, logout } = useAuth()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState("pending")
@@ -215,7 +218,7 @@ export default function InstallerDashboardPage() {
       router.push("/installer-login")
       return
     }
-    if (role !== "installer") {
+    if (role !== "installer" && role !== "installation-team") {
       router.push("/login")
     }
   }, [isAuthenticated, role, router])
@@ -258,15 +261,27 @@ export default function InstallerDashboardPage() {
             list = extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 }))
           }
           const normalizedList = list.map((q) => installerQuotationFromApiRecord(q))
-          setQuotations(normalizedList.filter((q) => isQuotationReleasedToInstaller(q as any, localReleaseMap)))
+          let released = normalizedList.filter((q) => isQuotationReleasedToInstaller(q as any, localReleaseMap))
+          if (role === "installation-team" && installationTeamUser?.teamId) {
+            released = released.filter(
+              (q) => getInstallationTeamIdForQuotation(q.id, q as any) === installationTeamUser.teamId,
+            )
+          }
+          setQuotations(released)
         } else {
           const localQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
-          const approved = localQuotations
+          let approved = localQuotations
             .filter(
               (q: InstallerQuotation & { status?: string }) =>
                 (String(q.status || "").toLowerCase() === "approved" || isQuotationReleasedToInstaller(q as any, localReleaseMap)),
             )
             .map((q: unknown) => installerQuotationFromApiRecord(q))
+          if (role === "installation-team" && installationTeamUser?.teamId) {
+            approved = approved.filter(
+              (q: InstallerQuotation) =>
+                getInstallationTeamIdForQuotation(q.id, q as any) === installationTeamUser.teamId,
+            )
+          }
           setQuotations(approved)
         }
       } catch {
@@ -281,7 +296,7 @@ export default function InstallerDashboardPage() {
       }
     }
     loadApprovedFromAdmin()
-  }, [toast, useApi])
+  }, [toast, useApi, role, installationTeamUser?.teamId])
 
   const getQuotationAmount = (q: InstallerQuotation) =>
     Math.abs(q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0)
@@ -845,10 +860,21 @@ export default function InstallerDashboardPage() {
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
             <Wrench className="w-4 h-4 text-primary" />
           </div>
-          <h1 className="text-xl font-semibold">Installer Dashboard</h1>
+          <h1 className="text-xl font-semibold">
+            {role === "installation-team" ? "Installation team" : "Installer Dashboard"}
+          </h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Welcome, {installer?.firstName || "Installer"}. Process pending jobs and upload completion proof.
+          {role === "installation-team" ? (
+            <>
+              Signed in as <span className="font-medium text-foreground">{installationTeamUser?.teamName || installationTeamUser?.username}</span>
+              . You only see jobs assigned to your team by admin.
+            </>
+          ) : (
+            <>
+              Welcome, {installer?.firstName || "Installer"}. Process pending jobs and upload completion proof.
+            </>
+          )}
         </p>
 
         <Card className="border-border/60 bg-card/90 shadow-sm">

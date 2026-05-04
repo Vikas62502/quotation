@@ -1822,6 +1822,7 @@ Modal prefill/edit contract (important for current UI):
 | `installationReadyForInstaller` | `installation_ready_for_installer` | boolean | `true` when released to installer queue |
 | `installationReleasedAt` | `installation_released_at` | string (ISO 8601) | Set when AM sends to installer |
 | `installationScheduledAt` | `installation_scheduled_at` | string (`YYYY-MM-DD`) | Optional; admin-planned install date |
+| `installationTeamId` | `installation_team_id` | string (UUID) | Optional; field **installation team** assigned by admin; team logins filter the installer queue to matching rows |
 
 Frontend accepts either naming style on **GET** responses (`GET /admin/quotations`, `GET /quotations/:id`, installer queue payloads with nested `quotation`).
 
@@ -1891,12 +1892,12 @@ The client tries these in order until one succeeds (see `lib/api.ts` → `admin.
 
 ## C) GET — list & detail must echo fields
 
-Ensure **`installationReadyForInstaller`**, **`installationReleasedAt`**, and **`installationScheduledAt`** appear on:
+Ensure **`installationReadyForInstaller`**, **`installationReleasedAt`**, **`installationScheduledAt`**, and **`installationTeamId`** appear on:
 
 - `GET /api/admin/quotations` (each item in `quotations[]` or equivalent)
 - `GET /api/quotations/{quotationId}` (and any variant the app uses for quotation detail)
 
-Installer queue endpoints should include the same on nested quotation objects when applicable, so dashboards stay consistent after reload.
+Installer queue endpoints should include the same on nested quotation objects when applicable, so dashboards stay consistent after reload. **Installation team** JWTs rely on **`installationTeamId`** on each queue row to filter client-side; server-side filtering of the installer queue for that role is optional but recommended.
 
 ---
 
@@ -1929,10 +1930,248 @@ Return updated visit (or success envelope) so the UI can refresh the visit list.
 
 ---
 
+# Dealer calling queue — assignee fields & unassigned pool
+
+**Frontend:** `app/dashboard/calling-data/page.tsx` → `normalizeApiLead`, `applyQueueResponse`, `dealerAssignedQueue`. **API client:** `lib/api.ts` → `api.dealers.getCallingQueueNext()` (`GET /api/dealers/me/calling-queue/next`, fallback `.../calling-queue/current`).
+
+## Problem this contract avoids
+
+- **`dealerId` / `dealer_id` / `dealerName` / `dealer_name`** on a lead often mean **uploader**, **account owner**, or **customer’s dealer** — **not** “which dealer this lead is assigned to for the calling workflow.”
+- If the queue payload puts those into the same fields the UI treats as **calling assignee**, dealers see **no current lead** (everything looks assigned to someone else) while **analytics** still show their historical actions.
+
+The UI now maps **only explicit calling-assignee fields** and treats **empty assignee** as **pool / unassigned** (visible to the logged-in dealer along with rows explicitly assigned to them).
+
+---
+
+## A) `GET /api/dealers/me/calling-queue/next` (or `/current`)
+
+**Auth:** dealer JWT (`/dealers/me/...`).
+
+**Response:** flexible envelope; frontend merges arrays from (non-exhaustive):
+
+- `leads`, `queue`, `pendingLeads`, `assignedLeads`, `currentQueue`
+- plus single-object keys: `lead`, `nextLead`, `currentLead`, `activeLead`
+
+Scheduled / history keys may include: `scheduledLeads`, `upcomingFollowUps`, `recentActions`, `actionHistory`, `callingActions`, etc.
+
+Each **lead** in those lists should use **consistent** semantics below.
+
+---
+
+## B) Calling assignee vs “record dealer”
+
+| Concept | Use these fields (camel or snake) | Do **not** overload |
+|--------|-------------------------------------|----------------------|
+| **Who must call / owns this lead in the queue** | `assignedDealerId`, `assigned_dealer_id`, `assignedToDealerId`, `assigned_to_dealer_id`, `assignedTo`, `assigned_to`, `assignedToUsername`, `assigned_to_username` (only if they hold the **assignee** id or username) | **`dealerId` / `dealer_id` / `dealerName` / `dealer_name`** for assignee |
+| **Uploader / CRM owner / other** | Keep `dealerId`, `dealerName`, etc. as **separate** properties | Do not expect the SPA to infer calling assignment from them |
+
+---
+
+## C) Unassigned / pool leads
+
+For leads available to **any** dealer in the pool (or your org’s pool rules):
+
+- Set **calling assignee** id and name to **`null`**, **`""`**, or omit them.
+- Optional explicit sentinels the UI treats as unassigned (normalized to empty): `unassigned`, `null`, `none`, `-`, `na`, `n/a`, `pool`, `open` (case-insensitive).
+
+Then every dealer’s **Current Lead** queue can include that row (subject to status / reschedule time rules in the app).
+
+---
+
+## D) Explicitly assigned leads
+
+When a lead is for **one** dealer only:
+
+- Set **`assigned_dealer_id`** (or equivalent) to that dealer’s **UUID** (must match `dealers.id` used in JWT / profile), **or**
+- Set **`assigned_to_username`** / name fields to a value the dealer can match (less reliable than id).
+
+Other dealers’ clients will hide the row from their **current** queue.
+
+---
+
+## E) `PATCH /api/dealers/me/calling-queue/{leadId}/action`
+
+Continue returning an updated queue snapshot or enough data for the next `GET` so the UI can refetch and show the next lead.
+
+---
+
+## F) Regression check for backend QA
+
+1. Create a **pool** lead with **`dealerId` = HR/uploader** but **no** `assigned_dealer_id`.
+2. Dealer login → **Current Lead** should still show the lead (after this frontend change).
+3. Assign lead to dealer B → dealer A should no longer see it in current queue; B should.
+
+---
+
+# Installation field teams & team login
+
+Aligned with: **`lib/installation-teams.ts`**, **`lib/auth-context.tsx`** (`loginInstallationTeam`), **`app/dashboard/admin/page.tsx`** (teams + row assignment), **`app/dashboard/installer/page.tsx`** (filter by `installationTeamId`), **`app/installation-team-login/page.tsx`**.
+
+## Goals
+1. **Admin** defines **installation teams** (display name + login credentials) and assigns each installation/quotation to **one** team or **unassigned**.
+2. **Team users** log in at **`/installation-team-login`**; they only see installer-queue rows where **`installationTeamId`** matches their team.
+3. **Admin / legacy installer** users see the full queue (unchanged).
+
+---
+
+## A) Auth — login response for installation team users
+
+Use your existing **`POST /api/auth/login`** (or equivalent). When the account is an installation team login, set **`user.role`** to one of (frontend accepts any of these after lowercasing):
+
+- `installation-team`
+- `installation_team`
+- `installationteam`
+- `field_team`
+- `field-team`
+
+**User object fields the UI reads:**
+
+| Field | Alternative (snake_case) | Required | Notes |
+|-------|-------------------------|----------|--------|
+| `id` | — | Yes | Account id |
+| `username` | — | Yes | Login |
+| `installationTeamId` | `installation_team_id` | **Strongly required** | UUID of the **team**; must match `quotation.installationTeamId` for rows this user may see. Frontend falls back to `user.id` only if team id is missing—set **`installationTeamId`** explicitly. |
+| `teamName` | `team_name` | Recommended | Dashboard greeting |
+| `firstName`, `lastName` | — | Optional | Display |
+| `isActive` | `is_active` | Optional | Default true; reject login when false |
+
+**Example `user` fragment:**
+
+```json
+{
+  "id": "membership-or-user-uuid",
+  "username": "north_crew",
+  "role": "installation-team",
+  "installationTeamId": "team-uuid-1",
+  "teamName": "North Zone Crew",
+  "firstName": "North Zone Crew",
+  "lastName": "",
+  "isActive": true
+}
+```
+
+Store **password hashes** only; never return passwords in JSON.
+
+---
+
+## B) Entity: installation team (admin-managed)
+
+Suggested columns:
+
+| Column | Type | Notes |
+|--------|------|--------|
+| `id` | UUID PK | Same value stored on quotations as `installation_team_id` |
+| `name` | string | Display name |
+| `username` | string unique | Used with `POST /auth/login` |
+| `password_hash` | string | |
+| `created_by` | string / UUID optional | Admin who created the row |
+| `created_at` | timestamptz | |
+| `is_active` | boolean | When false, reject login |
+
+---
+
+## C) Admin API — teams CRUD
+
+Base path example: **`/api/admin/installation-teams`**.
+
+### `GET /api/admin/installation-teams`
+
+**Auth:** admin (or role allowed to manage Installation tab).
+
+**Response:** `{ "success": true, "data": { "teams": [ { "id", "name", "username", "isActive", "createdAt", "createdBy" } ] } }` — **no** password fields.
+
+### `POST /api/admin/installation-teams`
+
+**Auth:** admin.
+
+**Body:**
+
+```json
+{
+  "name": "North Zone Crew",
+  "username": "north_crew",
+  "password": "<plaintext only over TLS>"
+}
+```
+
+**Behavior:** unique username; hash password; return **`201`** + created team `id` (no password).
+
+**Errors:** `409` duplicate username; `400` validation.
+
+### `PATCH /api/admin/installation-teams/{teamId}` (optional)
+
+Update `name`, rotate `password`, or `isActive`.
+
+### `DELETE /api/admin/installation-teams/{teamId}`
+
+**Auth:** admin.
+
+**Behavior:** delete or soft-delete team; set **`installation_team_id`** to **NULL** on all quotations that referenced this team.
+
+---
+
+## D) Admin API — assign team to quotation
+
+**Preferred:** `PATCH /api/admin/quotations/{quotationId}/installation-team`
+
+**Body (assign):**
+
+```json
+{
+  "installationTeamId": "team-uuid-1",
+  "installation_team_id": "team-uuid-1"
+}
+```
+
+**Body (unassign):**
+
+```json
+{
+  "installationTeamId": null,
+  "installation_team_id": null
+}
+```
+
+**Auth:** admin.
+
+**Validation:** non-null id must reference an existing **active** team.
+
+**Response:** include updated quotation with **`installationTeamId`** echoed.
+
+*(Frontend today persists assignment locally until these routes exist; add matching calls in `lib/api.ts` when ready.)*
+
+---
+
+## E) GET — must echo `installationTeamId`
+
+Include **`installationTeamId` / `installation_team_id`** on every quotation returned from:
+
+- `GET /api/admin/quotations`
+- `GET /api/quotations/{quotationId}`
+- **Installer queue** endpoints used by `lib/api.ts` → `installer.getQueue` (nested `quotation` objects included)
+
+After assignment **PATCH**, subsequent **GET** must return the new value so **`installation-team`** users see correct rows after refresh (no reliance on browser `localStorage` in production).
+
+---
+
+## F) Installer queue — optional server-side filter
+
+For JWT role **`installation-team`**, you may return only rows with `installation_team_id = <team from token>` for defense in depth. The app **also filters client-side** when each row includes **`installationTeamId`**.
+
+---
+
+## G) Local-only mode
+
+When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps are stored in **`localStorage`** (`installationTeams`, `installationTeamAssignmentsByQuotationId`). Production API should replace this with DB-backed endpoints above.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
 - Frontend API client: `lib/api.ts`
+- Dealer calling queue & lead assignee normalization: `app/dashboard/calling-data/page.tsx`, `api.dealers.getCallingQueueNext` / `updateCallingLeadAction` in `lib/api.ts`
+- Installation teams (storage, login, admin assignment, installer filter): `lib/installation-teams.ts`, `lib/auth-context.tsx`, `app/dashboard/admin/page.tsx`, `app/dashboard/installer/page.tsx`, `app/installation-team-login/page.tsx`
 - Metering dashboard save/status handlers: `app/dashboard/metering/page.tsx`
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

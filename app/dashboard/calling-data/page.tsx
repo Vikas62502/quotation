@@ -36,6 +36,9 @@ type CallingLead = {
   actionAt?: string
   nextFollowUpAt?: string
   callRemark?: string
+  /** HR / calling upload batch — used with eligibleDealerIds or dealer profile batch ids for pool visibility. */
+  uploadBatchId?: string
+  eligibleDealerIds?: string[]
 }
 
 type ActionLogItem = {
@@ -292,6 +295,70 @@ const DECISION_PENDING_REASONS = [
   "Not Picking on Follow-up",
 ]
 
+/** Backend often sends dealerId / dealerName for uploader — not "assigned for calling". */
+const UNASSIGNED_ASSIGNMENT_TOKENS = new Set([
+  "",
+  "unassigned",
+  "null",
+  "none",
+  "-",
+  "na",
+  "n/a",
+  "pool",
+  "open",
+])
+
+function normalizeCallingAssigneeToken(raw: unknown): string {
+  const s = String(raw ?? "").trim()
+  if (UNASSIGNED_ASSIGNMENT_TOKENS.has(s.toLowerCase())) return ""
+  return s
+}
+
+function leadHasExplicitCallingAssigneeId(lead: Pick<CallingLead, "assignedDealerId">): boolean {
+  const id = String(lead.assignedDealerId || "").trim().toLowerCase()
+  return Boolean(id && !UNASSIGNED_ASSIGNMENT_TOKENS.has(id))
+}
+
+type CallingLeadDealerVisibilityCtx = {
+  currentDealerId: string
+  currentDealerUsername: string
+  currentDealerFullName: string
+  dealerCallingBatchIds: string[]
+}
+
+/** Explicit assignee match, else pool / HR batch-unassigned (name may be batch label, not empty). */
+function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVisibilityCtx): boolean {
+  const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
+  const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
+
+  if (leadHasExplicitCallingAssigneeId(lead)) {
+    if (ctx.currentDealerId && assignedId === ctx.currentDealerId.toLowerCase()) return true
+    if (ctx.currentDealerUsername) {
+      if (assignedId === ctx.currentDealerUsername) return true
+      if (assignedName.includes(ctx.currentDealerUsername)) return true
+    }
+    if (ctx.currentDealerFullName && assignedName.includes(ctx.currentDealerFullName)) return true
+    return false
+  }
+
+  if (ctx.currentDealerUsername && assignedName.includes(ctx.currentDealerUsername)) return true
+  if (ctx.currentDealerFullName && assignedName.includes(ctx.currentDealerFullName)) return true
+
+  const eligible = lead.eligibleDealerIds
+  if (Array.isArray(eligible) && eligible.length > 0) {
+    if (!ctx.currentDealerId) return false
+    const cur = ctx.currentDealerId.toLowerCase()
+    return eligible.some((id) => String(id).trim().toLowerCase() === cur)
+  }
+
+  const bid = String(lead.uploadBatchId || "").trim()
+  if (bid && ctx.dealerCallingBatchIds.length > 0) {
+    return ctx.dealerCallingBatchIds.includes(bid)
+  }
+
+  return true
+}
+
 export default function CallingDataPage() {
   const router = useRouter()
   const { isAuthenticated, dealer, role } = useAuth()
@@ -370,6 +437,29 @@ export default function CallingDataPage() {
   const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
   const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
   const currentDealerFullName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim().toLowerCase()
+  const dealerCallingBatchIds = useMemo(() => {
+    const d = dealer as Record<string, unknown> | null | undefined
+    if (!d) return [] as string[]
+    const raw =
+      d.callingBatchIds ??
+      d.calling_batch_ids ??
+      d.uploadBatchIds ??
+      d.upload_batch_ids ??
+      d.hrUploadBatchIds ??
+      d.hr_upload_batch_ids
+    if (!Array.isArray(raw)) return [] as string[]
+    return raw.map((x) => String(x).trim()).filter(Boolean)
+  }, [dealer])
+
+  const callingVisibilityCtx = useMemo<CallingLeadDealerVisibilityCtx>(
+    () => ({
+      currentDealerId,
+      currentDealerUsername,
+      currentDealerFullName,
+      dealerCallingBatchIds,
+    }),
+    [currentDealerId, currentDealerUsername, currentDealerFullName, dealerCallingBatchIds],
+  )
 
   const syncRescheduleForStatus = (nextStatus: string) => {
     const shouldReschedule = FOLLOW_UP_STATUSES.has(nextStatus)
@@ -410,30 +500,28 @@ export default function CallingDataPage() {
       customerNote: source?.customerNote || source?.customer_note || source?.note || "",
       city: source?.city || "",
       state: source?.state || "",
-      assignedDealerId:
+      // Only explicit "calling assignee" fields — do not use dealerId/dealerName (often = uploader / account owner).
+      // Pool rows: empty assignee id after normalize; name may still be a batch label — visibility uses eligibleDealerIds / uploadBatchId.
+      assignedDealerId: normalizeCallingAssigneeToken(
         source?.assignedDealerId ||
-        source?.assigned_dealer_id ||
-        source?.dealerId ||
-        source?.dealer_id ||
-        source?.assignedToDealerId ||
-        source?.assigned_to_dealer_id ||
-        source?.assignedTo ||
-        source?.assigned_to ||
-        source?.assignedToUsername ||
-        source?.assigned_to_username ||
-        currentDealerId ||
-        "",
-      assignedDealerName:
+          source?.assigned_dealer_id ||
+          source?.assignedToDealerId ||
+          source?.assigned_to_dealer_id ||
+          source?.assignedTo ||
+          source?.assigned_to ||
+          source?.assignedToUsername ||
+          source?.assigned_to_username ||
+          "",
+      ),
+      assignedDealerName: normalizeCallingAssigneeToken(
         source?.assignedDealerName ||
-        source?.assigned_dealer_name ||
-        source?.dealerName ||
-        source?.dealer_name ||
-        source?.assignedToName ||
-        source?.assigned_to_name ||
-        source?.assignedToUsername ||
-        source?.assigned_to_username ||
-        source?.assignedToName ||
-        "",
+          source?.assigned_dealer_name ||
+          source?.assignedToName ||
+          source?.assigned_to_name ||
+          source?.assignedToUsername ||
+          source?.assigned_to_username ||
+          "",
+      ),
       createdAt: source?.createdAt || source?.created_at || source?.assignedAt || source?.assigned_at || new Date().toISOString(),
       assignedAt: source?.assignedAt || source?.assigned_at,
       queuedAt: source?.queuedAt || source?.queued_at,
@@ -442,6 +530,32 @@ export default function CallingDataPage() {
       actionAt: source?.actionAt || source?.action_at,
       nextFollowUpAt: source?.nextFollowUpAt || source?.next_follow_up_at,
       callRemark: source?.callRemark || source?.call_remark || "",
+      uploadBatchId: (() => {
+        const v = String(
+          source?.uploadBatchId ||
+            source?.upload_batch_id ||
+            source?.batchId ||
+            source?.batch_id ||
+            source?.hrUploadBatchId ||
+            source?.hr_upload_batch_id ||
+            source?.callingUploadId ||
+            source?.calling_upload_id ||
+            "",
+        ).trim()
+        return v || undefined
+      })(),
+      eligibleDealerIds: (() => {
+        const raw =
+          source?.eligibleDealerIds ||
+          source?.eligible_dealer_ids ||
+          source?.batchDealerIds ||
+          source?.batch_dealer_ids ||
+          source?.dealerIdsInBatch ||
+          source?.dealer_ids_in_batch
+        if (!Array.isArray(raw)) return undefined
+        const ids = raw.map((x: unknown) => String(x).trim()).filter(Boolean)
+        return ids.length ? ids : undefined
+      })(),
     }
   }
 
@@ -843,8 +957,7 @@ export default function CallingDataPage() {
     const checkScheduledReminders = () => {
       const now = Date.now()
       for (const lead of scheduledLeads) {
-        const assignedId = String(lead.assignedDealerId || "").trim()
-        if (currentDealerId && assignedId && assignedId !== currentDealerId) continue
+        if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) continue
         if (!lead.nextFollowUpAt) continue
         const followUpTimeMs = new Date(lead.nextFollowUpAt).getTime()
         if (Number.isNaN(followUpTimeMs) || followUpTimeMs > now) continue
@@ -861,7 +974,7 @@ export default function CallingDataPage() {
     checkScheduledReminders()
     const intervalId = window.setInterval(checkScheduledReminders, 30000)
     return () => window.clearInterval(intervalId)
-  }, [scheduledLeads, currentDealerId, toast])
+  }, [scheduledLeads, callingVisibilityCtx, toast])
 
   const getNormalizedStatus = (lead: CallingLead) => String(lead.status || "").trim().toLowerCase()
   const isLeadCallableNow = (lead: CallingLead) => {
@@ -879,27 +992,11 @@ export default function CallingDataPage() {
   }
 
   const dealerAssignedQueue = useMemo(() => {
-    const belongsToCurrentDealer = (lead: CallingLead) => {
-      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
-      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
-      if (!assignedId && !assignedName) return true
-      if (currentDealerId && assignedId) {
-        const currentId = currentDealerId.toLowerCase()
-        if (assignedId === currentId) return true
-      }
-      if (currentDealerUsername) {
-        if (assignedId === currentDealerUsername) return true
-        if (assignedName.includes(currentDealerUsername)) return true
-      }
-      if (currentDealerFullName && assignedName.includes(currentDealerFullName)) return true
-      return false
-    }
-
     const leadOrder = new Map(leads.map((lead, index) => [lead.id, index]))
 
     return leads
       .filter((lead) => {
-        if (!belongsToCurrentDealer(lead)) return false
+        if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
         return isLeadCallableNow(lead)
       })
       .sort((a, b) => {
@@ -908,38 +1005,24 @@ export default function CallingDataPage() {
         if (aOrder !== bOrder) return aOrder - bOrder
         return getLeadSortTime(a) - getLeadSortTime(b)
       })
-  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
+  }, [leads, callingVisibilityCtx])
 
   const queuedCount = useMemo(() => {
     return leads.filter((lead) => {
-      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
-      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
-      const matchesDealer =
-        (!assignedId && !assignedName) ||
-        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
-        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
-        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
-      if (!matchesDealer) return false
+      if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
       return lead.status === "queued"
     }).length
-  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
+  }, [leads, callingVisibilityCtx])
 
   const scheduledCount = useMemo(() => {
     const now = Date.now()
     return leads.filter((lead) => {
-      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
-      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
-      const matchesDealer =
-        (!assignedId && !assignedName) ||
-        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
-        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
-        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
-      if (!matchesDealer) return false
+      if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
       if (lead.status !== "rescheduled") return false
       if (!lead.nextFollowUpAt) return false
       return new Date(lead.nextFollowUpAt).getTime() > now
     }).length
-  }, [leads, currentDealerId, currentDealerUsername, currentDealerFullName])
+  }, [leads, callingVisibilityCtx])
 
   const interestedActions = useMemo(
     () =>
@@ -959,14 +1042,7 @@ export default function CallingDataPage() {
     endOfToday.setDate(endOfToday.getDate() + 1)
     const nowMs = now.getTime()
     return scheduledLeads.filter((lead) => {
-      const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
-      const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
-      const matchesDealer =
-        (!assignedId && !assignedName) ||
-        (!!currentDealerId && assignedId === currentDealerId.toLowerCase()) ||
-        (!!currentDealerUsername && (assignedId === currentDealerUsername || assignedName.includes(currentDealerUsername))) ||
-        (!!currentDealerFullName && assignedName.includes(currentDealerFullName))
-      if (!matchesDealer) return false
+      if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
       const nextAt = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
       if (!nextAt || Number.isNaN(nextAt.getTime())) return false
       const nextAtMs = nextAt.getTime()
@@ -986,7 +1062,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, currentDealerId, currentDealerUsername, currentDealerFullName])
+  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, callingVisibilityCtx])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()

@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
 import { api, ApiError } from "./api"
+import { readInstallationTeams } from "./installation-teams"
 import { disconnectRealtime, initRealtime } from "./realtime"
 
 // asd
@@ -101,12 +102,24 @@ export interface HrUser {
   createdAt?: string
 }
 
+/** Logged-in field installation team (separate from legacy installer users). */
+export interface InstallationTeamUser {
+  id: string
+  teamId: string
+  teamName: string
+  username: string
+  firstName: string
+  lastName: string
+  isActive?: boolean
+}
+
 export type UserRole =
   | "dealer"
   | "visitor"
   | "admin"
   | "account-management"
   | "installer"
+  | "installation-team"
   | "metering"
   | "baldev"
   | "hr"
@@ -116,6 +129,7 @@ interface AuthContextType {
   visitor: Visitor | null
   accountManager: AccountManager | null
   installer: InstallerUser | null
+  installationTeamUser: InstallationTeamUser | null
   meteringUser: MeteringUser | null
   baldev: BaldevUser | null
   hrUser: HrUser | null
@@ -124,6 +138,7 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<boolean>
   loginAccountManagement: (username: string, password: string) => Promise<boolean>
   loginInstaller: (username: string, password: string) => Promise<boolean>
+  loginInstallationTeam: (username: string, password: string) => Promise<boolean>
   loginMetering: (username: string, password: string) => Promise<boolean>
   loginBaldev: (username: string, password: string) => Promise<boolean>
   loginHr: (username: string, password: string) => Promise<boolean>
@@ -138,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [visitor, setVisitor] = useState<Visitor | null>(null)
   const [accountManager, setAccountManager] = useState<AccountManager | null>(null)
   const [installer, setInstaller] = useState<InstallerUser | null>(null)
+  const [installationTeamUser, setInstallationTeamUser] = useState<InstallationTeamUser | null>(null)
   const [meteringUser, setMeteringUser] = useState<MeteringUser | null>(null)
   const [baldev, setBaldev] = useState<BaldevUser | null>(null)
   const [hrUser, setHrUser] = useState<HrUser | null>(null)
@@ -170,6 +186,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token && savedUser) {
       try {
         const user = JSON.parse(savedUser)
+        setInstallationTeamUser(null)
         if (user.role === "visitor") {
           setVisitor(user)
           setRole("visitor")
@@ -188,6 +205,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setBaldev(null)
           setVisitor(null)
           setDealer(null)
+        } else if (user.role === "installation-team" || user.role === "installation_team") {
+          const itData: InstallationTeamUser = {
+            id: String(user.id || user.teamId || ""),
+            teamId: String(user.teamId || user.installationTeamId || user.installation_team_id || user.id || ""),
+            teamName: String(user.teamName || user.team_name || user.username || "Team"),
+            username: user.username,
+            firstName: user.firstName || String(user.teamName || user.team_name || ""),
+            lastName: user.lastName || "",
+            isActive: user.isActive !== false,
+          }
+          setInstallationTeamUser(itData)
+          setRole("installation-team")
+          setInstaller(null)
+          setDealer(null)
+          setVisitor(null)
+          setAccountManager(null)
+          setMeteringUser(null)
+          setBaldev(null)
+          setHrUser(null)
         } else if (user.role === "installer") {
           setInstaller(user)
           setRole("installer")
@@ -252,6 +288,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("userRole")
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("installationTeamUser")
         localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
@@ -262,6 +299,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const savedVisitor = localStorage.getItem("visitor")
       const savedAccountManager = localStorage.getItem("accountManager")
       const savedInstaller = localStorage.getItem("installerUser")
+      const savedInstallationTeam = localStorage.getItem("installationTeamUser")
       const savedMeteringUser = localStorage.getItem("meteringUser")
       const savedBaldev = localStorage.getItem("baldevUser")
       const savedHrUser = localStorage.getItem("hrUser")
@@ -286,6 +324,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setInstaller(null)
         setMeteringUser(null)
         setBaldev(null)
+      } else if (savedInstallationTeam) {
+        setInstallationTeamUser(JSON.parse(savedInstallationTeam))
+        setRole("installation-team")
+        setIsAuthenticated(true)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setInstaller(null)
+        setMeteringUser(null)
+        setBaldev(null)
+        setHrUser(null)
       } else if (savedInstaller) {
         setInstaller(JSON.parse(savedInstaller))
         setRole("installer")
@@ -293,6 +342,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setDealer(null)
         setVisitor(null)
         setAccountManager(null)
+        setInstallationTeamUser(null)
         setMeteringUser(null)
         setBaldev(null)
         setHrUser(null)
@@ -534,6 +584,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVisitor(null)
     setAccountManager(null)
     setInstaller(null)
+    setInstallationTeamUser(null)
     setMeteringUser(null)
     setBaldev(null)
     setHrUser(null)
@@ -543,6 +594,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("visitor")
     localStorage.removeItem("accountManager")
     localStorage.removeItem("installerUser")
+    localStorage.removeItem("installationTeamUser")
     localStorage.removeItem("meteringUser")
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("hrUser")
@@ -685,7 +737,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         const backendRole = String(user.role || "").toLowerCase()
         // Temporary compatibility: some backends still return account-management for operational users.
-        const allowedInstallerRoles = ["installer", "installation", "installation-team", "account-management", "accountmanager"]
+        const allowedInstallerRoles = ["installer", "installation", "account-management", "accountmanager"]
         if (!allowedInstallerRoles.includes(backendRole)) {
           console.error("Login rejected: User role is not installer")
           return false
@@ -710,6 +762,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         setInstaller(installerData)
+        setInstallationTeamUser(null)
         setDealer(null)
         setVisitor(null)
         setAccountManager(null)
@@ -722,6 +775,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("user", JSON.stringify({ ...user, role: "installer" }))
         localStorage.setItem("userRole", "installer")
         localStorage.setItem("installerUser", JSON.stringify(installerData))
+        localStorage.removeItem("installationTeamUser")
         localStorage.removeItem("accountManager")
         localStorage.removeItem("meteringUser")
         localStorage.removeItem("baldevUser")
@@ -748,6 +802,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const { password: _, ...installerData } = foundInstaller
     setInstaller(installerData)
+    setInstallationTeamUser(null)
     setDealer(null)
     setVisitor(null)
     setAccountManager(null)
@@ -759,6 +814,105 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("installerUser", JSON.stringify(installerData))
     localStorage.setItem("userRole", "installer")
     localStorage.setItem("user", JSON.stringify({ ...installerData, role: "installer" }))
+    localStorage.removeItem("installationTeamUser")
+    localStorage.removeItem("accountManager")
+    localStorage.removeItem("meteringUser")
+    localStorage.removeItem("baldevUser")
+    localStorage.removeItem("hrUser")
+    localStorage.removeItem("dealer")
+    localStorage.removeItem("visitor")
+    return true
+  }
+
+  const loginInstallationTeam = async (username: string, password: string): Promise<boolean> => {
+    const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+    if (useApi) {
+      try {
+        const response = await api.auth.login(username, password)
+        const user = response.user
+        const backendRole = String(user.role || "").toLowerCase()
+        const allowed = ["installation-team", "installation_team", "installationteam", "field_team", "field-team"]
+        if (!allowed.includes(backendRole)) {
+          console.error("Login rejected: User role is not installation-team")
+          return false
+        }
+
+        if (response.token) {
+          localStorage.setItem("authToken", response.token)
+        }
+        if (response.refreshToken) {
+          localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        const itData: InstallationTeamUser = {
+          id: String(user.id || ""),
+          teamId: String((user as any).installationTeamId || (user as any).installation_team_id || user.id || ""),
+          teamName: String((user as any).teamName || (user as any).team_name || user.username || "Installation team"),
+          username: user.username,
+          firstName: user.firstName || String((user as any).teamName || ""),
+          lastName: user.lastName || "",
+          isActive: (user as any).isActive !== false,
+        }
+
+        setInstallationTeamUser(itData)
+        setInstaller(null)
+        setDealer(null)
+        setVisitor(null)
+        setAccountManager(null)
+        setMeteringUser(null)
+        setBaldev(null)
+        setHrUser(null)
+        setRole("installation-team")
+        setIsAuthenticated(true)
+
+        localStorage.setItem("user", JSON.stringify({ ...user, role: "installation-team", teamId: itData.teamId, teamName: itData.teamName }))
+        localStorage.setItem("userRole", "installation-team")
+        localStorage.setItem("installationTeamUser", JSON.stringify(itData))
+        localStorage.removeItem("installerUser")
+        localStorage.removeItem("accountManager")
+        localStorage.removeItem("meteringUser")
+        localStorage.removeItem("baldevUser")
+        localStorage.removeItem("hrUser")
+        localStorage.removeItem("dealer")
+        localStorage.removeItem("visitor")
+        return true
+      } catch (error) {
+        console.error("Installation team login error:", error)
+        return false
+      }
+    }
+
+    const teams = readInstallationTeams()
+    const found = teams.find(
+      (t) => String(t.username || "").toLowerCase() === username.trim().toLowerCase() && t.password === password && t.isActive !== false,
+    )
+    if (!found) return false
+
+    const itData: InstallationTeamUser = {
+      id: found.id,
+      teamId: found.id,
+      teamName: found.name,
+      username: found.username,
+      firstName: found.name,
+      lastName: "Team",
+      isActive: true,
+    }
+
+    setInstallationTeamUser(itData)
+    setInstaller(null)
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setMeteringUser(null)
+    setBaldev(null)
+    setHrUser(null)
+    setRole("installation-team")
+    setIsAuthenticated(true)
+    localStorage.setItem("installationTeamUser", JSON.stringify(itData))
+    localStorage.setItem("userRole", "installation-team")
+    localStorage.setItem("user", JSON.stringify({ ...itData, role: "installation-team" }))
+    localStorage.removeItem("installerUser")
     localStorage.removeItem("accountManager")
     localStorage.removeItem("meteringUser")
     localStorage.removeItem("baldevUser")
@@ -813,6 +967,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setVisitor(null)
         setAccountManager(null)
         setInstaller(null)
+        setInstallationTeamUser(null)
         setBaldev(null)
         setHrUser(null)
         setRole("metering")
@@ -823,6 +978,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.setItem("meteringUser", JSON.stringify(meteringData))
         localStorage.removeItem("accountManager")
         localStorage.removeItem("installerUser")
+        localStorage.removeItem("installationTeamUser")
         localStorage.removeItem("baldevUser")
         localStorage.removeItem("hrUser")
         localStorage.removeItem("dealer")
@@ -851,6 +1007,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setVisitor(null)
     setAccountManager(null)
     setInstaller(null)
+    setInstallationTeamUser(null)
     setBaldev(null)
     setHrUser(null)
     setRole("metering")
@@ -860,6 +1017,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("user", JSON.stringify({ ...meteringData, role: "metering" }))
     localStorage.removeItem("accountManager")
     localStorage.removeItem("installerUser")
+    localStorage.removeItem("installationTeamUser")
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("hrUser")
     localStorage.removeItem("dealer")
@@ -1106,6 +1264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         visitor,
         accountManager,
         installer,
+        installationTeamUser,
         meteringUser,
         baldev,
         hrUser,
@@ -1114,6 +1273,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         login,
         loginAccountManagement,
         loginInstaller,
+        loginInstallationTeam,
         loginMetering,
         loginBaldev,
         loginHr,

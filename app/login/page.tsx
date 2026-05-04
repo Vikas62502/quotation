@@ -35,6 +35,8 @@ function LoginForm() {
         router.push("/dashboard/hr")
       } else if (role === "installer") {
         router.push("/dashboard/installer")
+      } else if (role === "installation-team") {
+        router.push("/dashboard/installer")
       } else if (role === "metering") {
         router.push("/dashboard/metering")
       } else if (role === "baldev") {
@@ -85,6 +87,8 @@ function LoginForm() {
           } else if (userRole === "hr") {
             router.push("/dashboard/hr")
           } else if (userRole === "installer") {
+            router.push("/dashboard/installer")
+          } else if (userRole === "installation-team") {
             router.push("/dashboard/installer")
           } else if (userRole === "metering") {
             router.push("/dashboard/metering")

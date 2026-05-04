@@ -116,6 +116,8 @@ export interface Quotation {
   installationReleasedAt?: string
   /** Planned installation date (YYYY-MM-DD). Default UI: 7 days after sent-to-installation until overridden. */
   installationScheduledAt?: string
+  /** Admin-assigned installation team (id); team logins only see matching rows. */
+  installationTeamId?: string
   /** When quotation became approved (server or admin action) */
   statusApprovedAt?: string
   /** Ordered status transitions for admin audit */

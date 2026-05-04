@@ -59,6 +59,14 @@ import {
   flattenWrappedQuotationRow,
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
+import {
+  createInstallationTeam,
+  deleteInstallationTeam,
+  getInstallationTeamIdForQuotation,
+  readInstallationTeams,
+  readTeamAssignments,
+  setTeamAssignment,
+} from "@/lib/installation-teams"
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
@@ -177,6 +185,9 @@ export default function AdminPanelPage() {
   const [quotationFiltersOpen, setQuotationFiltersOpen] = useState(false)
   const [operationalTab, setOperationalTab] = useState<AdminOperationalTab>("all")
   const [operationalProgressTab, setOperationalProgressTab] = useState<AdminOperationalProgressTab>("all")
+  const [installationTeamsDialogOpen, setInstallationTeamsDialogOpen] = useState(false)
+  const [installationTeamForm, setInstallationTeamForm] = useState({ name: "", username: "", password: "" })
+  const [installationTeamsRefresh, setInstallationTeamsRefresh] = useState(0)
   const [installerQueueIds, setInstallerQueueIds] = useState<Set<string>>(new Set())
   const [adminInstallExpandedId, setAdminInstallExpandedId] = useState<string | null>(null)
   const [adminInstallQuotation, setAdminInstallQuotation] = useState<Quotation | null>(null)
@@ -325,6 +336,27 @@ export default function AdminPanelPage() {
     const current = getOperationsRoleOverrides()
     current[key] = roleValue
     localStorage.setItem("operationsRoleOverrides", JSON.stringify(current))
+  }
+
+  const persistInstallationTeamAssignment = (quotationId: string, teamId: string) => {
+    const normalized = teamId.trim() || undefined
+    setTeamAssignment(quotationId, normalized)
+    setQuotations((prev) =>
+      prev.map((q) => (q.id === quotationId ? ({ ...q, installationTeamId: normalized } as Quotation) : q)),
+    )
+    try {
+      const all = JSON.parse(localStorage.getItem("quotations") || "[]")
+      const next = Array.isArray(all)
+        ? all.map((row: any) => (row?.id === quotationId ? { ...row, installationTeamId: normalized } : row))
+        : all
+      localStorage.setItem("quotations", JSON.stringify(next))
+    } catch {
+      // no-op
+    }
+    toast({
+      title: "Team assignment updated",
+      description: normalized ? "This installation is linked to a team." : "Team unassigned for this row.",
+    })
   }
 
   const normalizeCallingAction = (item: any, fallbackDealers: Dealer[], index: number): CallingActionRecord => {
@@ -517,13 +549,16 @@ export default function AdminPanelPage() {
             installationReadyForInstaller: q.installationReadyForInstaller ?? q.installation_ready_for_installer,
             installationReleasedAt: q.installationReleasedAt ?? q.installation_released_at,
             installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
+            installationTeamId: q.installationTeamId ?? q.installation_team_id,
           }
         })
         const scheduledLocal = readInstallationScheduledMap()
+        const teamAssignLocal = readTeamAssignments()
         setQuotations(
           quotationsList.map((q: any) => ({
             ...q,
             installationScheduledAt: q.installationScheduledAt || scheduledLocal[q.id],
+            installationTeamId: q.installationTeamId || teamAssignLocal[q.id],
           })),
         )
 
@@ -720,12 +755,14 @@ export default function AdminPanelPage() {
         // Load all quotations and ensure they have status
         const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
         const scheduledLocalFallback = readInstallationScheduledMap()
+        const teamAssignFallback = readTeamAssignments()
         const quotationsWithStatus = allQuotations.map((q: Quotation) => ({
           ...q,
           status: q.status || "pending",
           subtotal: (q as any).subtotal ?? q.totalAmount ?? 0,
           installationScheduledAt:
             (q as any).installationScheduledAt || scheduledLocalFallback[q.id],
+          installationTeamId: (q as any).installationTeamId || teamAssignFallback[q.id],
         }))
         setQuotations(quotationsWithStatus)
         setInstallerQueueIds(new Set(quotationsWithStatus.map((q: Quotation) => q.id)))
@@ -2978,8 +3015,119 @@ export default function AdminPanelPage() {
                     <Download className="w-4 h-4 mr-2" />
                     Download ({sortedQuotations.length})
                   </Button>
+                  {operationalTab === "installation" ? (
+                    <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setInstallationTeamsDialogOpen(true)}>
+                      <Users className="w-4 h-4 mr-2" />
+                      Installation teams
+                    </Button>
+                  ) : null}
                 </div>
               </CardHeader>
+              <Dialog open={installationTeamsDialogOpen} onOpenChange={setInstallationTeamsDialogOpen}>
+                <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>Installation teams</DialogTitle>
+                    <DialogDescription>
+                      Create team logins and assign each installation row to a team. Teams sign in at{" "}
+                      <span className="font-mono text-xs">/installation-team-login</span> and only see jobs assigned to them.
+                      Admins and the main admin account continue to see all installations here.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 pt-2">
+                    <div className="rounded-md border border-border p-3 space-y-2">
+                      <p className="text-xs font-semibold">Create team</p>
+                      <div className="space-y-2">
+                        <Label className="text-xs">Team name</Label>
+                        <Input
+                          value={installationTeamForm.name}
+                          onChange={(e) => setInstallationTeamForm((p) => ({ ...p, name: e.target.value }))}
+                          placeholder="e.g. North Zone Crew"
+                        />
+                        <Label className="text-xs">Login username</Label>
+                        <Input
+                          value={installationTeamForm.username}
+                          onChange={(e) => setInstallationTeamForm((p) => ({ ...p, username: e.target.value }))}
+                          placeholder="Unique login id"
+                        />
+                        <Label className="text-xs">Password</Label>
+                        <Input
+                          type="password"
+                          value={installationTeamForm.password}
+                          onChange={(e) => setInstallationTeamForm((p) => ({ ...p, password: e.target.value }))}
+                          placeholder="Team password"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => {
+                            const created = createInstallationTeam({
+                              name: installationTeamForm.name,
+                              username: installationTeamForm.username,
+                              password: installationTeamForm.password,
+                              createdBy: dealer?.username,
+                            })
+                            if (!created) {
+                              toast({
+                                title: "Could not create team",
+                                description: "Fill all fields and use a unique username.",
+                                variant: "destructive",
+                              })
+                              return
+                            }
+                            setInstallationTeamForm({ name: "", username: "", password: "" })
+                            setInstallationTeamsRefresh((n) => n + 1)
+                            toast({ title: "Team created", description: "Share credentials with the field team." })
+                          }}
+                        >
+                          Create team
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2" key={installationTeamsRefresh}>
+                      <p className="text-xs font-semibold">Existing teams</p>
+                      {readInstallationTeams().length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No teams yet.</p>
+                      ) : (
+                        readInstallationTeams().map((t) => (
+                          <div key={t.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                            <div>
+                              <p className="font-medium">{t.name}</p>
+                              <p className="text-xs text-muted-foreground">@{t.username}</p>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-destructive"
+                              onClick={() => {
+                                deleteInstallationTeam(t.id)
+                                setInstallationTeamsRefresh((n) => n + 1)
+                                setQuotations((prev) =>
+                                  prev.map((q) => {
+                                    const tid = getInstallationTeamIdForQuotation(q.id, q as any)
+                                    if (tid === t.id) {
+                                      const next = { ...q } as any
+                                      delete next.installationTeamId
+                                      return next as Quotation
+                                    }
+                                    return q
+                                  }),
+                                )
+                                toast({
+                                  title: "Team removed",
+                                  description: "Assignments to this team were cleared locally.",
+                                })
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </DialogContent>
+              </Dialog>
               <CardContent>
                 {operationalTab === "metering" ? (
                   (() => {
@@ -3345,6 +3493,28 @@ export default function AdminPanelPage() {
                                     {!sentParsedOk ? (
                                       <p className="text-[10px] text-muted-foreground mt-0.5">Set release date first</p>
                                     ) : null}
+                                  </div>
+                                  <div className="min-w-[150px]">
+                                    <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Team</Label>
+                                    <Select
+                                      key={`inst-team-${quotation.id}-${installationTeamsRefresh}`}
+                                      value={getInstallationTeamIdForQuotation(quotation.id, qAny) || "__none__"}
+                                      onValueChange={(v) =>
+                                        persistInstallationTeamAssignment(quotation.id, v === "__none__" ? "" : v)
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8 text-xs mt-0.5">
+                                        <SelectValue placeholder="Unassigned" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">Unassigned</SelectItem>
+                                        {readInstallationTeams().map((t) => (
+                                          <SelectItem key={t.id} value={t.id}>
+                                            {t.name}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </div>
                                   <div className="min-w-[140px]">
                                     <Badge variant="outline" className="text-xs capitalize">
