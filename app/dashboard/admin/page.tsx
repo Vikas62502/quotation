@@ -153,6 +153,7 @@ const GOVERNMENT_BANK_OPTIONS = [
   "Bank of Maharashtra",
   "Indian Overseas Bank",
   "Punjab & Sind Bank",
+  "RMGB Bank",
 ] as const
 
 export default function AdminPanelPage() {
