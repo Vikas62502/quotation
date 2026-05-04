@@ -205,5 +205,3 @@ export default function ForgotPasswordPage() {
     </div>
   )
 }
-
-//live
