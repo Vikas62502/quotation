@@ -968,6 +968,10 @@ export const api = {
       })
     },
 
+    /**
+     * Reschedule a visit. Tries role-scoped routes: generic `/visits/...` (often visitor-only),
+     * then dealer routes, then quotation-nested reschedule when `quotationId` is provided.
+     */
     reschedule: async (
       visitId: string,
       rescheduleData:
@@ -980,22 +984,57 @@ export const api = {
             visitEndTime?: string
             visitTimeRange?: string
           },
+      ctx?: { quotationId?: string },
     ) => {
-      const payload =
-        typeof rescheduleData === "string"
-          ? { reason: rescheduleData }
-          : {
-              reason: rescheduleData.reason,
-              ...(rescheduleData.visitDate ? { visitDate: rescheduleData.visitDate } : {}),
-              ...(rescheduleData.visitTime ? { visitTime: rescheduleData.visitTime } : {}),
-              ...(rescheduleData.visitStartTime ? { visitStartTime: rescheduleData.visitStartTime } : {}),
-              ...(rescheduleData.visitEndTime ? { visitEndTime: rescheduleData.visitEndTime } : {}),
-              ...(rescheduleData.visitTimeRange ? { visitTimeRange: rescheduleData.visitTimeRange } : {}),
-            }
-      return apiRequest(`/visits/${visitId}/reschedule`, {
-        method: "PATCH",
-        body: payload,
-      })
+      const src = typeof rescheduleData === "string" ? { reason: rescheduleData } : rescheduleData
+      const body: Record<string, unknown> = { reason: src.reason }
+      if (src.visitDate) {
+        body.visitDate = src.visitDate
+        body.visit_date = src.visitDate
+      }
+      if (src.visitTime) {
+        body.visitTime = src.visitTime
+        body.visit_time = src.visitTime
+      }
+      if (src.visitStartTime) {
+        body.visitStartTime = src.visitStartTime
+        body.visit_start_time = src.visitStartTime
+      }
+      if (src.visitEndTime) {
+        body.visitEndTime = src.visitEndTime
+        body.visit_end_time = src.visitEndTime
+      }
+      if (src.visitTimeRange) {
+        body.visitTimeRange = src.visitTimeRange
+        body.visit_time_range = src.visitTimeRange
+      }
+
+      const attempts: string[] = [
+        `/visits/${visitId}/reschedule`,
+        `/dealers/visits/${visitId}/reschedule`,
+        `/dealers/me/visits/${visitId}/reschedule`,
+      ]
+      if (ctx?.quotationId) {
+        attempts.push(`/quotations/${ctx.quotationId}/visits/${visitId}/reschedule`)
+      }
+
+      let lastError: unknown = null
+      for (const endpoint of attempts) {
+        try {
+          return await apiRequest(endpoint, { method: "PATCH", body })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" ||
+              error.code === "HTTP_405" ||
+              error.code === "HTTP_501" ||
+              error.code === "HTTP_403" ||
+              error.code === "AUTH_004")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
     },
 
     reject: async (visitId: string, rejectionReason: string) => {

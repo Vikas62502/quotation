@@ -407,14 +407,18 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
 
     try {
       if (useApi) {
-        await api.visits.reschedule(rescheduleVisit.id, {
-          reason: rescheduleReason.trim(),
-          visitDate: rescheduleDate,
-          visitTime: timeRange,
-          visitStartTime: startTime,
-          visitEndTime: endTime,
-          visitTimeRange: timeRange,
-        })
+        await api.visits.reschedule(
+          rescheduleVisit.id,
+          {
+            reason: rescheduleReason.trim(),
+            visitDate: rescheduleDate,
+            visitTime: timeRange,
+            visitStartTime: startTime,
+            visitEndTime: endTime,
+            visitTimeRange: timeRange,
+          },
+          quotation?.id ? { quotationId: quotation.id } : undefined,
+        )
         await loadVisits()
       } else {
         const updatedVisits = visits.map((v) =>

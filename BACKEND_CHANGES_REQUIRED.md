@@ -1900,6 +1900,35 @@ Installer queue endpoints should include the same on nested quotation objects wh
 
 ---
 
+# Visit reschedule — dealer quotations (403 Insufficient permissions)
+
+## Symptom
+- Dealer opens **Visit Management** on `/dashboard/quotations`, submits **Reschedule Visit**, and receives **`Insufficient permissions`** (often `AUTH_004` / HTTP 403).
+- Same payload often works for **visitor** JWT on `PATCH /api/visits/{visitId}/reschedule`.
+
+## Required backend behavior (pick one or more)
+
+1. **Preferred:** On `PATCH /api/visits/{visitId}/reschedule`, allow **dealer** (and **admin**) when the visit belongs to a quotation the user is allowed to manage (e.g. same `dealerId` as JWT, or admin override). Reject only when the visit is not in scope.
+
+2. **Alternative routes** (frontend now retries these after 403/404 on the generic route):
+   - `PATCH /api/dealers/visits/{visitId}/reschedule`
+   - `PATCH /api/dealers/me/visits/{visitId}/reschedule`
+   - `PATCH /api/quotations/{quotationId}/visits/{visitId}/reschedule` (when quotation is in scope for the dealer)
+
+## Request body (JSON)
+Same as visitor flow; frontend also sends snake_case mirrors for compatibility:
+
+- `reason` (string, required)
+- `visitDate` / `visit_date` (e.g. `2026-05-05`)
+- `visitTime` / `visit_time` (optional combined range string)
+- `visitStartTime` / `visit_start_time`, `visitEndTime` / `visit_end_time`
+- `visitTimeRange` / `visit_time_range`
+
+## Response
+Return updated visit (or success envelope) so the UI can refresh the visit list.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:

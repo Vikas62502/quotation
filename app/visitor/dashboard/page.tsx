@@ -817,14 +817,18 @@ export default function VisitorDashboardPage() {
             handleApproveOutcomeClick("completed", selectedVisit)
             return
           } else if (effectiveDecision === "rescheduled") {
-            await api.visits.reschedule(selectedVisit.id, {
-              reason: reason.trim(),
-              visitDate: rescheduleDate,
-              visitTime: `${startTime} - ${endTime}`,
-              visitStartTime: startTime,
-              visitEndTime: endTime,
-              visitTimeRange: `${startTime} - ${endTime}`,
-            })
+            await api.visits.reschedule(
+              selectedVisit.id,
+              {
+                reason: reason.trim(),
+                visitDate: rescheduleDate,
+                visitTime: `${startTime} - ${endTime}`,
+                visitStartTime: startTime,
+                visitEndTime: endTime,
+                visitTimeRange: `${startTime} - ${endTime}`,
+              },
+              selectedVisit.quotationId ? { quotationId: selectedVisit.quotationId } : undefined,
+            )
           }
           syncedWithApi = true
           await loadAssignedVisits()
