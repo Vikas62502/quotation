@@ -2276,6 +2276,76 @@ When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps ar
 
 ---
 
+## J) Field team login -> installer queue parity
+
+When user logs in from **`/installation-team-login`**, the dashboard route is still **`/dashboard/installer`**.  
+For that role, backend must return the same operational rows admin sees in Installation tab, filtered by assigned team.
+
+### Required behavior
+
+1. Team user JWT contains:
+   - `role = installation-team` (or accepted alias)
+   - `installationTeamId` / `installation_team_id` = team UUID
+2. Installer queue endpoints used by frontend (`api.installer.getQueue`) must include rows where:
+   - quotation is in installer workflow (`pending_installer`, `installer_in_progress`, `installer_approved`, etc.)
+   - and `installation_team_id` matches logged-in team id (for team role)
+3. Every queue row (or nested `quotation`) must echo:
+   - `installationTeamId` / `installation_team_id`
+   - installer workflow status fields (`installationStatus` / `installation_status`)
+4. Team users should not receive rows assigned to other teams.
+5. Admin/legacy installer users continue to receive full queue as per current permissions.
+6. Do **not** treat generic quotation `status = approved` alone as installer-queue eligibility.  
+   Installer dashboard should primarily reflect installer workflow states/flags used by Admin Installation tab.
+7. If API supports `status` query, return consistent sets for:
+   - `pending_installer`
+   - `installer_in_progress`
+   - `installer_approved`
+   - `pending_baldev`
+   and ensure merging these yields the same operational rows admin sees.
+
+### QA checks
+
+1. In Admin Installation tab, assign quotation to `team-A`.
+2. Login as `team-A` via `/installation-team-login`.
+3. Open `/dashboard/installer` -> assigned row appears with same status as admin Installation tab.
+4. Login as `team-B` -> same row does not appear.
+5. Move status in admin (`pending` -> `in progress`) and refresh team dashboard -> status stays in sync.
+6. Verify installer dashboard does **not** include unrelated plain `approved` quotations outside installer workflow.
+
+---
+
+## K) Calling dashboard action latency (Start/Submit)
+
+User-facing issue: **Start Call** and **Submit** can feel slow when backend responses are delayed or when frontend must do extra follow-up fetches.
+
+### Required backend behavior
+
+1. Optimize `PATCH` action endpoint used by frontend (`api.dealers.updateCallingLeadAction`) for low latency:
+   - target p95 response time near interactive UX range (ideally < 800ms on normal load).
+2. Return enough data in the action response so frontend can update queue immediately without waiting for an additional GET:
+   - one of: `nextLead`, `currentLead`, `lead`
+   - and queue counters: `counts` (`pending`, `queued`, `scheduled`, `completed` as available)
+3. Keep response keys stable (camelCase/snake_case aliases are fine, but be consistent across all transitions).
+4. If backend enforces transition order, support atomic transition handling for common submit paths:
+   - when action requires `start` first, backend should ideally handle this server-side in one request
+   - avoid forcing client to do `start` + final action as two sequential calls.
+5. Ensure idempotent safety for repeated clicks/network retries (same lead/action close in time should not create duplicate state churn).
+
+### QA checks
+
+1. Click **Start Call** on an assigned/queued lead:
+   - response returns quickly
+   - lead moves to in-progress/current state without waiting for extra fetch.
+2. Click **Submit** for called/not interested/rescheduled:
+   - response includes next queue context (`nextLead`/`currentLead`) and updated `counts`.
+3. Simulate rapid double click:
+   - backend should not produce duplicate conflicting transitions.
+4. Validate under load (multiple active dealers):
+   - no significant action latency spikes
+   - queue progression remains correct.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:

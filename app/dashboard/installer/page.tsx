@@ -193,6 +193,27 @@ const installerQuotationFromApiRecord = (raw: unknown): InstallerQuotation => {
   return { ...flat, products } as InstallerQuotation
 }
 
+const hasInstallerWorkflowSignal = (q: InstallerQuotation, localReleaseMap: Record<string, any>) => {
+  const workflowStatus = getInstallationWorkflowStatus(q as any)
+  const hasWorkflowStage = [
+    "pending_installer",
+    "installer_in_progress",
+    "installer_approved",
+    "pending_baldev",
+    "baldev_approved",
+    "completed",
+  ].includes(workflowStatus)
+  return (
+    hasWorkflowStage ||
+    (q as any).installationReadyForInstaller === true ||
+    (q as any).installation_ready_for_installer === true ||
+    (q as any).readyForInstallation === true ||
+    (q as any).ready_for_installation === true ||
+    (q as any).releaseToInstaller === true ||
+    localReleaseMap?.[q.id]?.installationReadyForInstaller === true
+  )
+}
+
 export default function InstallerDashboardPage() {
   const router = useRouter()
   const { isAuthenticated, role, installer, installationTeamUser, logout } = useAuth()
@@ -251,18 +272,32 @@ export default function InstallerDashboardPage() {
       }
       try {
         if (useApi) {
-          // Prefer installer queue endpoint; fall back to generic quotations inside API layer.
-          let list = extractQuotationListFromApiResponse(
-            await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
+          // Match Admin Installation tab behavior: load all installer-stage rows, not just first non-empty status.
+          const workflowStatuses = ["pending_installer", "installer_in_progress", "installer_approved", "pending_baldev"] as const
+          const settled = await Promise.allSettled(
+            workflowStatuses.map((status) => api.installer.getQueue({ status, page: 1, limit: 1000 })),
           )
+          let list = settled
+            .filter((result): result is PromiseFulfilledResult<any> => result.status === "fulfilled")
+            .flatMap((result) => extractQuotationListFromApiResponse(result.value))
+
           if (list.length === 0) {
-            list = extractQuotationListFromApiResponse(await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }))
-          }
-          if (list.length === 0) {
+            // Fallback to backend default listing if status-filtered routes are sparse.
             list = extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 }))
           }
-          const normalizedList = list.map((q) => installerQuotationFromApiRecord(q))
+
+          const deduped = new Map<string, any>()
+          list.forEach((row) => {
+            const q = installerQuotationFromApiRecord(row)
+            const id = String(q.id || "").trim()
+            if (!id) return
+            deduped.set(id, q)
+          })
+          const normalizedList = Array.from(deduped.values())
           let released = normalizedList.filter((q) => isQuotationReleasedToInstaller(q as any, localReleaseMap))
+          // Avoid showing all generic "approved" quotations that are not in installer workflow;
+          // keeps installer dashboard aligned with Admin -> Installation tab rows.
+          released = released.filter((q) => hasInstallerWorkflowSignal(q, localReleaseMap))
           if (role === "installation-team" && installationTeamUser?.teamId) {
             const want = String(installationTeamUser.teamId).trim()
             released = released.filter((q) => {
@@ -310,6 +345,19 @@ export default function InstallerDashboardPage() {
 
   const getInstallationDate = (q: InstallerQuotation) =>
     (q as any).installationScheduledAt || (q as any).installation_scheduled_at || ""
+
+  const getTeamDisplayName = (q: InstallerQuotation) => {
+    const anyQ = q as any
+    const directName = String(anyQ.installationTeamName || anyQ.installation_team_name || "").trim()
+    if (directName) return directName
+    const teamId = String(getInstallationTeamIdForQuotation(q.id, anyQ) || "").trim()
+    if (!teamId) return "Unassigned"
+    if (role === "installation-team") {
+      const loggedInTeamName = String(installationTeamUser?.teamName || installationTeamUser?.username || "").trim()
+      if (loggedInTeamName) return loggedInTeamName
+    }
+    return teamId
+  }
 
   const toTimestamp = (date?: string) => {
     if (!date) return 0
@@ -963,22 +1011,40 @@ export default function InstallerDashboardPage() {
                           {getInstallationDate(q) ? new Date(getInstallationDate(q)).toLocaleDateString("en-IN") : "N/A"}
                         </p>
                       </div>
+                      <div className="min-w-[140px]">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Team</p>
+                        <p className="text-xs font-medium">{getTeamDisplayName(q)}</p>
+                      </div>
                       <div className="min-w-[150px]">
                         {installerStatus === "inprogress" ? (
-                          <Badge className="text-xs bg-amber-600 text-white">In Progress</Badge>
+                          <Badge className="text-xs bg-amber-600 text-white">Installer In Progress</Badge>
                         ) : (
                           <Badge variant="outline" className="text-xs">Pending Installation</Badge>
                         )}
                       </div>
-                      <div className="ml-auto">
+                      <div className="ml-auto flex gap-2">
                         {installerStatus === "pending" ? (
-                          <Button variant="outline" size="sm" onClick={() => setInProgress(q)}>
-                            <Clock3 className="w-3.5 h-3.5 mr-1" />
-                            Start In Progress
-                          </Button>
+                          <>
+                            <Button variant="outline" size="sm" onClick={() => setInProgress(q)}>
+                              <Clock3 className="w-3.5 h-3.5 mr-1" />
+                              Start In Progress
+                            </Button>
+                            <Button
+                              size="sm"
+                              onClick={() => {
+                                ensureInstallerDraftData(q)
+                                setExpandedQuotationId(expandedQuotationId === q.id ? null : q.id)
+                                if (expandedQuotationId !== q.id) {
+                                  void hydrateQuotationDetails(q)
+                                }
+                              }}
+                            >
+                              <Upload className="w-3.5 h-3.5 mr-1" />
+                              Upload
+                            </Button>
+                          </>
                         ) : (
                           <Button
-                            variant="outline"
                             size="sm"
                             onClick={() => {
                               ensureInstallerDraftData(q)
@@ -989,7 +1055,7 @@ export default function InstallerDashboardPage() {
                             }}
                           >
                             <Upload className="w-3.5 h-3.5 mr-1" />
-                            In Progress
+                            Upload
                           </Button>
                         )}
                       </div>

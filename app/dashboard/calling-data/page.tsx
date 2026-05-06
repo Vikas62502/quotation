@@ -14,7 +14,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
-import { PhoneCall, ArrowRightCircle, Pencil, Check, X } from "lucide-react"
+import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
 type CallingLead = {
   id: string
@@ -436,9 +436,12 @@ export default function CallingDataPage() {
   >("today")
   const [analyticsFromDate, setAnalyticsFromDate] = useState("")
   const [analyticsToDate, setAnalyticsToDate] = useState("")
+  const [submittingLeadMap, setSubmittingLeadMap] = useState<Record<string, boolean>>({})
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const previousCurrentLeadIdRef = useRef<string | null>(null)
   const shownScheduledReminderRef = useRef<Record<string, true>>({})
+  const submittingLeadIdsRef = useRef<Set<string>>(new Set())
+  const isLeadSubmitting = (leadId?: string) => !!(leadId && submittingLeadMap[leadId])
   const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
   const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
   const currentDealerFullName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim().toLowerCase()
@@ -1398,6 +1401,7 @@ export default function CallingDataPage() {
     leadId: string,
     payload: { action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"; callRemark?: string; nextFollowUpAt?: string; actionAt?: string },
   ) => {
+    if (submittingLeadIdsRef.current.has(leadId)) return
     if (!useApi) {
       toast({
         title: "API mode required",
@@ -1406,6 +1410,8 @@ export default function CallingDataPage() {
       })
       return
     }
+    submittingLeadIdsRef.current.add(leadId)
+    setSubmittingLeadMap((prev) => ({ ...prev, [leadId]: true }))
     try {
       const actionAt = payload.actionAt || new Date().toISOString()
       let response: any
@@ -1452,9 +1458,9 @@ export default function CallingDataPage() {
       if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
         applyQueueResponse(response)
       }
-      // GET is authoritative: always refetch so the next queued lead appears after submit
-      // even when PATCH returns a minimal body or field names we do not map.
-      await loadLeads()
+      // Refresh in background so button response feels instant.
+      // PATCH response already updates UI optimistically when it includes queue fields.
+      void loadLeads()
       if (wasCurrentQueueHead) {
         setFlowTab("current_lead")
       }
@@ -1465,6 +1471,14 @@ export default function CallingDataPage() {
         title: "Action failed",
         description: message,
         variant: "destructive",
+      })
+    } finally {
+      submittingLeadIdsRef.current.delete(leadId)
+      setSubmittingLeadMap((prev) => {
+        if (!prev[leadId]) return prev
+        const next = { ...prev }
+        delete next[leadId]
+        return next
       })
     }
   }
@@ -1723,6 +1737,7 @@ export default function CallingDataPage() {
                                 <Button
                                   size="sm"
                                   className="bg-blue-600 hover:bg-blue-700 text-white"
+                                  disabled={isLeadSubmitting(lead.id)}
                                   onClick={() => {
                                     if (!finalStatus) {
                                       toast({
@@ -1750,10 +1765,30 @@ export default function CallingDataPage() {
                                     })
                                   }}
                                 >
-                                  Submit Status
+                                  {isLeadSubmitting(lead.id) ? (
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      Submitting...
+                                    </span>
+                                  ) : (
+                                    "Submit Status"
+                                  )}
                                 </Button>
-                                <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => submitAction(lead.id, { action: "start" })}>
-                                  Start Call
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                                  disabled={isLeadSubmitting(lead.id)}
+                                  onClick={() => submitAction(lead.id, { action: "start" })}
+                                >
+                                  {isLeadSubmitting(lead.id) ? (
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                      Starting...
+                                    </span>
+                                  ) : (
+                                    "Start Call"
+                                  )}
                                 </Button>
                                 <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
                                   New Quotation
@@ -1902,7 +1937,7 @@ export default function CallingDataPage() {
                         <Button
                           size="sm"
                           className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId}
+                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
                           onClick={() => {
                             if (!finalStatus) return
                             if (isReschedule && !editedTime) return
@@ -1914,7 +1949,14 @@ export default function CallingDataPage() {
                             })
                           }}
                         >
-                          Update
+                          {isLeadSubmitting(item.leadId) ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Updating...
+                            </span>
+                          ) : (
+                            "Update"
+                          )}
                         </Button>
                       </div>
                     )
@@ -2033,7 +2075,7 @@ export default function CallingDataPage() {
                         <Button
                           size="sm"
                           className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId}
+                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
                           onClick={() => {
                             let groupKey: StatusGroupKey = "part_2_interest_qualification"
                             let finalStatus = "Interested"
@@ -2058,7 +2100,14 @@ export default function CallingDataPage() {
                             })
                           }}
                         >
-                          Update
+                          {isLeadSubmitting(item.leadId) ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Updating...
+                            </span>
+                          ) : (
+                            "Update"
+                          )}
                         </Button>
                       </div>
                     )
@@ -2239,7 +2288,7 @@ export default function CallingDataPage() {
                         <Button
                           size="sm"
                           className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId}
+                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
                           onClick={() => {
                             if (transferToConnected) {
                               if (!transferReason.trim()) {
@@ -2286,7 +2335,16 @@ export default function CallingDataPage() {
                             })
                           }}
                         >
-                          {transferToConnected ? "Move to Connected" : "Update"}
+                          {isLeadSubmitting(item.leadId) ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Updating...
+                            </span>
+                          ) : transferToConnected ? (
+                            "Move to Connected"
+                          ) : (
+                            "Update"
+                          )}
                         </Button>
                       </div>
                     )
@@ -2492,9 +2550,14 @@ export default function CallingDataPage() {
                       )
                     }
                     className="gap-2"
+                    disabled={isLeadSubmitting(currentLead.id)}
                   >
-                    <ArrowRightCircle className="w-4 h-4" />
-                    Start Call
+                    {isLeadSubmitting(currentLead.id) ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <ArrowRightCircle className="w-4 h-4" />
+                    )}
+                    {isLeadSubmitting(currentLead.id) ? "Starting..." : "Start Call"}
                   </Button>
                 ) : (
                   <>
@@ -2723,8 +2786,16 @@ export default function CallingDataPage() {
                               actionAt: new Date().toISOString(),
                             })
                           }}
+                          disabled={isLeadSubmitting(currentLead.id)}
                         >
-                          Submit
+                          {isLeadSubmitting(currentLead.id) ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Submitting...
+                            </span>
+                          ) : (
+                            "Submit"
+                          )}
                         </Button>
                       </div>
                     </div>
@@ -2856,6 +2927,7 @@ export default function CallingDataPage() {
                               <Button
                                 size="sm"
                                 className="bg-blue-600 hover:bg-blue-700 text-white"
+                                disabled={isLeadSubmitting(lead.id)}
                                 onClick={() => {
                                   if (!finalStatus) {
                                     toast({
@@ -2883,10 +2955,30 @@ export default function CallingDataPage() {
                                   })
                                 }}
                               >
-                                Submit Status
+                                {isLeadSubmitting(lead.id) ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Submitting...
+                                  </span>
+                                ) : (
+                                  "Submit Status"
+                                )}
                               </Button>
-                              <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => submitAction(lead.id, { action: "start" })}>
-                                Start Call
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-blue-300 text-blue-700 hover:bg-blue-50"
+                                disabled={isLeadSubmitting(lead.id)}
+                                onClick={() => submitAction(lead.id, { action: "start" })}
+                              >
+                                {isLeadSubmitting(lead.id) ? (
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    Starting...
+                                  </span>
+                                ) : (
+                                  "Start Call"
+                                )}
                               </Button>
                               <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
                                 New Quotation
