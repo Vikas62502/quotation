@@ -6,15 +6,14 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, Wrench, CheckCircle2, Clock3, Upload, Search, CalendarDays, Plus, Trash2 } from "lucide-react"
+import { LogOut, Wrench, CheckCircle2, Clock3, Upload, Search, CalendarDays } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { Label } from "@/components/ui/label"
 import { api, apiErrorToUserMessage } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
+import { InstallationCompletionPanel } from "@/components/installation-completion-panel"
 import {
   INSTALLER_RELEASE_MAP_KEY,
   extractQuotationListFromApiResponse,
@@ -54,6 +53,8 @@ type InstallerQuotation = {
   installationReleasedAt?: string
   installation_ready_for_installer?: boolean
   installation_released_at?: string
+  installationScheduledAt?: string
+  installation_scheduled_at?: string
   installationTeamId?: string
   installation_team_id?: string
   readyForInstallation?: boolean
@@ -263,9 +264,11 @@ export default function InstallerDashboardPage() {
           const normalizedList = list.map((q) => installerQuotationFromApiRecord(q))
           let released = normalizedList.filter((q) => isQuotationReleasedToInstaller(q as any, localReleaseMap))
           if (role === "installation-team" && installationTeamUser?.teamId) {
-            released = released.filter(
-              (q) => getInstallationTeamIdForQuotation(q.id, q as any) === installationTeamUser.teamId,
-            )
+            const want = String(installationTeamUser.teamId).trim()
+            released = released.filter((q) => {
+              const got = String(getInstallationTeamIdForQuotation(q.id, q as any) || "").trim()
+              return got === want
+            })
           }
           setQuotations(released)
         } else {
@@ -277,10 +280,11 @@ export default function InstallerDashboardPage() {
             )
             .map((q: unknown) => installerQuotationFromApiRecord(q))
           if (role === "installation-team" && installationTeamUser?.teamId) {
-            approved = approved.filter(
-              (q: InstallerQuotation) =>
-                getInstallationTeamIdForQuotation(q.id, q as any) === installationTeamUser.teamId,
-            )
+            const want = String(installationTeamUser.teamId).trim()
+            approved = approved.filter((q: InstallerQuotation) => {
+              const got = String(getInstallationTeamIdForQuotation(q.id, q as any) || "").trim()
+              return got === want
+            })
           }
           setQuotations(approved)
         }
@@ -298,11 +302,14 @@ export default function InstallerDashboardPage() {
     loadApprovedFromAdmin()
   }, [toast, useApi, role, installationTeamUser?.teamId])
 
-  const getQuotationAmount = (q: InstallerQuotation) =>
-    Math.abs(q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? q.finalAmount ?? q.pricing?.totalAmount ?? 0)
-
   const getAdminApprovedDate = (q: InstallerQuotation) =>
     (q as any).approvedAt || (q as any).approvedDate || (q as any).statusUpdatedAt || q.createdAt
+
+  const getSentToInstallationDate = (q: InstallerQuotation) =>
+    (q as any).installationReleasedAt || (q as any).installation_released_at || getAdminApprovedDate(q)
+
+  const getInstallationDate = (q: InstallerQuotation) =>
+    (q as any).installationScheduledAt || (q as any).installation_scheduled_at || ""
 
   const toTimestamp = (date?: string) => {
     if (!date) return 0
@@ -943,15 +950,18 @@ export default function InstallerDashboardPage() {
                         <p className="text-xs text-muted-foreground mt-0.5">{q.customer?.mobile || "No mobile"} • {q.id}</p>
                       </div>
                       <div className="min-w-[120px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved Date</p>
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sent to installation</p>
                         <p className="text-xs font-medium flex items-center gap-1">
                           <CalendarDays className="w-3 h-3 text-muted-foreground" />
-                          {getAdminApprovedDate(q) ? new Date(getAdminApprovedDate(q) as string).toLocaleDateString("en-IN") : "N/A"}
+                          {getSentToInstallationDate(q) ? new Date(getSentToInstallationDate(q) as string).toLocaleDateString("en-IN") : "N/A"}
                         </p>
                       </div>
-                      <div className="min-w-[120px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                        <p className="text-sm font-semibold">₹{getQuotationAmount(q).toLocaleString()}</p>
+                      <div className="min-w-[140px]">
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installation date</p>
+                        <p className="text-xs font-medium flex items-center gap-1">
+                          <CalendarDays className="w-3 h-3 text-muted-foreground" />
+                          {getInstallationDate(q) ? new Date(getInstallationDate(q)).toLocaleDateString("en-IN") : "N/A"}
+                        </p>
                       </div>
                       <div className="min-w-[150px]">
                         {installerStatus === "inprogress" ? (
@@ -986,302 +996,91 @@ export default function InstallerDashboardPage() {
                     </div>
 
                     {expandedQuotationId === q.id && (
-                      <div className="rounded-md border border-border/70 p-3 space-y-3">
-                        {loadingDetailsForId === q.id && (
-                          <p className="text-xs text-muted-foreground">Loading full customer/quotation details...</p>
-                        )}
-                        <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
-                          <div className="space-y-3">
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium">
-                                Installation Completion Images (required as marked *)
-                              </p>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                {INSTALLATION_IMAGE_FIELDS.map((field) => (
-                                  <div key={field.key} className="space-y-1.5">
-                                    <p className="text-xs text-muted-foreground">
-                                      {field.label}
-                                      {isImageFieldRequired(field) ? " *" : ""}
-                                    </p>
-                                    <Input
-                                      type="file"
-                                      accept="image/*"
-                                      multiple={isImageFieldMultiple(field)}
-                                      onChange={(e) => {
-                                        const files = Array.from(e.target.files || [])
-                                        setUploadFilesByQuotation((prev) => ({
-                                          ...prev,
-                                          [q.id]: {
-                                            ...(prev[q.id] || {}),
-                                            [field.key]: files,
-                                          },
-                                        }))
-                                      }}
-                                    />
-                                    <p className="text-[11px] text-muted-foreground truncate">
-                                      {(uploadFilesByQuotation[q.id]?.[field.key] || []).length > 0
-                                        ? `${(uploadFilesByQuotation[q.id]?.[field.key] || []).length} file(s) selected`
-                                        : "No file selected"}
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              <div className="space-y-1.5">
-                                <Label className="text-xs">PI Upload</Label>
-                                <Input
-                                  type="file"
-                                  accept="application/pdf,image/*"
-                                  onChange={(e) =>
-                                    setPiUploadByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
-                                  }
-                                />
-                                <p className="text-[11px] text-muted-foreground truncate">
-                                  {piUploadByQuotation[q.id]?.name || "No file selected"}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="space-y-2 rounded-md border border-border/60 p-3">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <Label className="text-xs font-medium">Extra expenses (optional)</Label>
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  className="h-8 text-xs gap-1"
-                                  onClick={() =>
-                                    setExtraExpenseLinesByQuotation((prev) => ({
-                                      ...prev,
-                                      [q.id]: [...(prev[q.id] || []), { id: newExpenseLineId(), description: "", amount: "" }],
-                                    }))
-                                  }
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  Add expense
-                                </Button>
-                              </div>
-                              {(extraExpenseLinesByQuotation[q.id] || []).length === 0 ? (
-                                <p className="text-[11px] text-muted-foreground">No extra expenses added.</p>
-                              ) : (
-                                <div className="space-y-2">
-                                  {(extraExpenseLinesByQuotation[q.id] || []).map((line) => (
-                                    <div key={line.id} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2 items-end">
-                                      <div className="space-y-1">
-                                        <Label className="text-[11px] text-muted-foreground">Description</Label>
-                                        <Input
-                                          className="h-9 text-sm"
-                                          placeholder="e.g. Transport, extra cable"
-                                          value={line.description}
-                                          onChange={(e) =>
-                                            setExtraExpenseLinesByQuotation((prev) => ({
-                                              ...prev,
-                                              [q.id]: (prev[q.id] || []).map((l) =>
-                                                l.id === line.id ? { ...l, description: e.target.value } : l,
-                                              ),
-                                            }))
-                                          }
-                                        />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <Label className="text-[11px] text-muted-foreground">Amount (₹)</Label>
-                                        <Input
-                                          className="h-9 text-sm"
-                                          type="number"
-                                          min="0"
-                                          step="0.01"
-                                          placeholder="0"
-                                          value={line.amount}
-                                          onChange={(e) =>
-                                            setExtraExpenseLinesByQuotation((prev) => ({
-                                              ...prev,
-                                              [q.id]: (prev[q.id] || []).map((l) =>
-                                                l.id === line.id ? { ...l, amount: e.target.value } : l,
-                                              ),
-                                            }))
-                                          }
-                                        />
-                                      </div>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-9 w-9 shrink-0 text-muted-foreground"
-                                        onClick={() =>
-                                          setExtraExpenseLinesByQuotation((prev) => ({
-                                            ...prev,
-                                            [q.id]: (prev[q.id] || []).filter((l) => l.id !== line.id),
-                                          }))
-                                        }
-                                        aria-label="Remove expense line"
-                                      >
-                                        <Trash2 className="w-4 h-4" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium">Site legs (cm) *</p>
-                              <p className="text-[11px] text-muted-foreground">
-                                Prefilled from the visitor site visit when available. Edits sync back to the visit when you complete installation.
-                              </p>
-                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                <div>
-                                  <Label className="text-xs">Back leg *</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={dimensionsByQuotation[q.id]?.length || ""}
-                                    onChange={(e) =>
-                                      setDimensionsByQuotation((prev) => ({
-                                        ...prev,
-                                        [q.id]: {
-                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
-                                          length: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                                <div>
-                                  <Label className="text-xs">Mid leg (optional)</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={dimensionsByQuotation[q.id]?.width || ""}
-                                    onChange={(e) =>
-                                      setDimensionsByQuotation((prev) => ({
-                                        ...prev,
-                                        [q.id]: {
-                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
-                                          width: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                                <div>
-                                  <Label className="text-xs">Front leg *</Label>
-                                  <Input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={dimensionsByQuotation[q.id]?.height || ""}
-                                    onChange={(e) =>
-                                      setDimensionsByQuotation((prev) => ({
-                                        ...prev,
-                                        [q.id]: {
-                                          ...(prev[q.id] || { length: "", width: "", height: "" }),
-                                          height: e.target.value,
-                                        },
-                                      }))
-                                    }
-                                  />
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <p className="text-xs font-medium">Notes (optional)</p>
-                              <Textarea
-                                rows={2}
-                                placeholder="Installation notes, material used, issues, etc."
-                                value={uploadNotes[q.id] || ""}
-                                onChange={(e) => setUploadNotes((prev) => ({ ...prev, [q.id]: e.target.value }))}
-                              />
-                            </div>
-                          </div>
-
-                          <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
-                            <div className="space-y-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Customer Details
-                              </p>
-                              {getCustomerInfoRows(q).length > 0 ? (
-                                <div className="space-y-1.5">
-                                  {getCustomerInfoRows(q).map((row) => (
-                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
-                                      <span className="text-muted-foreground">{row.label}</span>
-                                      <span className="font-medium text-right">{String(row.value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No customer details available.</p>
-                              )}
-                            </div>
-
-                            <div className="space-y-2 border-t border-border/60 pt-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Visitor / Location Details
-                              </p>
-                              {(() => {
-                                const visitorRows = [
-                                  ...getVisitorDetailsRows(q),
-                                  ...getVisitorLegRows(q, dimensionsByQuotation[q.id]),
-                                ]
-                                return visitorRows.length > 0 ? (
-                                  <div className="space-y-1.5">
-                                    {visitorRows.map((row) => (
-                                      <div key={row.label} className="text-xs flex items-start justify-between gap-2">
-                                        <span className="text-muted-foreground">{row.label}</span>
-                                        {row.label === "Location Link" ? (
-                                          <a
-                                            href={String(row.value)}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="font-medium text-right text-primary hover:underline break-all"
-                                          >
-                                            {String(row.value)}
-                                          </a>
-                                        ) : (
-                                          <span className="font-medium text-right">{String(row.value)}</span>
-                                        )}
-                                      </div>
-                                    ))}
-                                  </div>
+                      <InstallationCompletionPanel
+                        loadingText={loadingDetailsForId === q.id ? "Loading full customer/quotation details..." : undefined}
+                        imageFields={INSTALLATION_IMAGE_FIELDS}
+                        filesByField={uploadFilesByQuotation[q.id] || {}}
+                        onFilesChange={(fieldKey, files) =>
+                          setUploadFilesByQuotation((prev) => ({
+                            ...prev,
+                            [q.id]: {
+                              ...(prev[q.id] || {}),
+                              [fieldKey]: files,
+                            },
+                          }))
+                        }
+                        piFile={piUploadByQuotation[q.id] || null}
+                        onPiFileChange={(file) => setPiUploadByQuotation((prev) => ({ ...prev, [q.id]: file }))}
+                        extraExpenses={extraExpenseLinesByQuotation[q.id] || []}
+                        onAddExpense={() =>
+                          setExtraExpenseLinesByQuotation((prev) => ({
+                            ...prev,
+                            [q.id]: [...(prev[q.id] || []), { id: newExpenseLineId(), description: "", amount: "" }],
+                          }))
+                        }
+                        onExpenseChange={(id, patch) =>
+                          setExtraExpenseLinesByQuotation((prev) => ({
+                            ...prev,
+                            [q.id]: (prev[q.id] || []).map((line) => (line.id === id ? { ...line, ...patch } : line)),
+                          }))
+                        }
+                        onRemoveExpense={(id) =>
+                          setExtraExpenseLinesByQuotation((prev) => ({
+                            ...prev,
+                            [q.id]: (prev[q.id] || []).filter((line) => line.id !== id),
+                          }))
+                        }
+                        dimensions={dimensionsByQuotation[q.id] || { length: "", width: "", height: "" }}
+                        onDimensionsChange={(next) =>
+                          setDimensionsByQuotation((prev) => ({
+                            ...prev,
+                            [q.id]: {
+                              ...(prev[q.id] || { length: "", width: "", height: "" }),
+                              ...(next.length !== undefined ? { length: next.length } : {}),
+                              ...(next.width !== undefined ? { width: next.width } : {}),
+                              ...(next.height !== undefined ? { height: next.height } : {}),
+                            },
+                          }))
+                        }
+                        notes={uploadNotes[q.id] || ""}
+                        onNotesChange={(value) => setUploadNotes((prev) => ({ ...prev, [q.id]: value }))}
+                        infoSections={[
+                          {
+                            title: "Customer Details",
+                            rows: getCustomerInfoRows(q).map((row) => ({ label: row.label, value: String(row.value) })),
+                            emptyText: "No customer details available.",
+                          },
+                          {
+                            title: "Visitor / Location Details",
+                            rows: [...getVisitorDetailsRows(q), ...getVisitorLegRows(q, dimensionsByQuotation[q.id])].map((row) => ({
+                              label: row.label,
+                              value:
+                                row.label === "Location Link" ? (
+                                  <a
+                                    href={String(row.value)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-medium text-right text-primary hover:underline break-all"
+                                  >
+                                    {String(row.value)}
+                                  </a>
                                 ) : (
-                                  <p className="text-xs text-muted-foreground">No visitor/location details available.</p>
-                                )
-                              })()}
-                            </div>
-
-                            <div className="space-y-2 border-t border-border/60 pt-2">
-                              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                Product Specification
-                              </p>
-                              {getProductSpecRows(q).length > 0 ? (
-                                <div className="space-y-1.5">
-                                  {getProductSpecRows(q).map((row) => (
-                                    <div key={row.label} className="text-xs flex items-start justify-between gap-2">
-                                      <span className="text-muted-foreground">{row.label}</span>
-                                      <span className="font-medium text-right">{String(row.value)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No product specification available.</p>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setExpandedQuotationId(null)}>
-                            Cancel
-                          </Button>
-                          <Button size="sm" onClick={() => handleApproveInstallation(q)} disabled={savingId === q.id}>
-                            {savingId === q.id ? "Saving..." : "Complete & Mark as Approved"}
-                          </Button>
-                        </div>
-                      </div>
+                                  String(row.value)
+                                ),
+                            })),
+                            emptyText: "No visitor/location details available.",
+                          },
+                          {
+                            title: "Product Specification",
+                            rows: getProductSpecRows(q).map((row) => ({ label: row.label, value: String(row.value) })),
+                            emptyText: "No product specification available.",
+                          },
+                        ]}
+                        saveLabel="Complete & Mark as Approved"
+                        saving={savingId === q.id}
+                        onCancel={() => setExpandedQuotationId(null)}
+                        onSave={() => void handleApproveInstallation(q)}
+                      />
                     )}
                         </>
                       )
@@ -1304,8 +1103,6 @@ export default function InstallerDashboardPage() {
             ) : (
               approvedQuotations.map((q) => {
                 const wf = workflowMap[q.id]
-                const installerApprovedDate =
-                  (q as any).installerApprovedAt || wf?.updatedAt || getAdminApprovedDate(q)
                 return (
                   <Card key={q.id} className="border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm">
                     <CardContent className="p-4 space-y-2">
@@ -1319,15 +1116,18 @@ export default function InstallerDashboardPage() {
                           </p>
                         </div>
                         <div className="min-w-[120px]">
-                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approved Date</p>
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sent to installation</p>
                           <p className="text-xs font-medium flex items-center gap-1">
                             <CalendarDays className="w-3 h-3 text-muted-foreground" />
-                            {installerApprovedDate ? new Date(installerApprovedDate).toLocaleDateString("en-IN") : "N/A"}
+                            {getSentToInstallationDate(q) ? new Date(getSentToInstallationDate(q) as string).toLocaleDateString("en-IN") : "N/A"}
                           </p>
                         </div>
-                        <div className="min-w-[120px]">
-                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                          <p className="text-sm font-semibold">₹{getQuotationAmount(q).toLocaleString()}</p>
+                        <div className="min-w-[140px]">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installation date</p>
+                          <p className="text-xs font-medium flex items-center gap-1">
+                            <CalendarDays className="w-3 h-3 text-muted-foreground" />
+                            {getInstallationDate(q) ? new Date(getInstallationDate(q)).toLocaleDateString("en-IN") : "N/A"}
+                          </p>
                         </div>
                         <div className="min-w-[180px]">
                           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Images</p>

@@ -352,8 +352,13 @@ function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVis
   }
 
   const bid = String(lead.uploadBatchId || "").trim()
-  if (bid && ctx.dealerCallingBatchIds.length > 0) {
-    return ctx.dealerCallingBatchIds.includes(bid)
+  if (bid) {
+    if (ctx.dealerCallingBatchIds.length > 0) {
+      return ctx.dealerCallingBatchIds.includes(bid)
+    }
+    // Fail closed for batch-tagged unassigned leads when explicit eligibility is missing:
+    // prevents dealers outside that batch from seeing those rows.
+    return false
   }
 
   return true
@@ -548,6 +553,8 @@ export default function CallingDataPage() {
         const raw =
           source?.eligibleDealerIds ||
           source?.eligible_dealer_ids ||
+          source?.dealerIds ||
+          source?.dealer_ids ||
           source?.batchDealerIds ||
           source?.batch_dealer_ids ||
           source?.dealerIdsInBatch ||
@@ -869,8 +876,69 @@ export default function CallingDataPage() {
     }
 
     try {
-      const response = await api.dealers.getCallingQueueNext()
-      applyQueueResponse(response)
+      const [nextResult, currentResult] = await Promise.allSettled([
+        api.dealers.getCallingQueueNext(),
+        api.dealers.getCallingQueueCurrent(),
+      ])
+
+      const nextResponse = nextResult.status === "fulfilled" ? nextResult.value : null
+      const currentResponse = currentResult.status === "fulfilled" ? currentResult.value : null
+      if (!nextResponse && !currentResponse) {
+        const nextError = nextResult.status === "rejected" ? nextResult.reason : null
+        const currentError = currentResult.status === "rejected" ? currentResult.reason : null
+        throw nextError || currentError || new Error("Queue unavailable")
+      }
+
+      const toArray = (value: any): any[] => {
+        if (Array.isArray(value)) return value
+        if (Array.isArray(value?.items)) return value.items
+        if (Array.isArray(value?.rows)) return value.rows
+        if (Array.isArray(value?.data)) return value.data
+        return []
+      }
+      const mergeList = (key: string) => [...toArray((currentResponse as any)?.[key]), ...toArray((nextResponse as any)?.[key])]
+
+      const mergedResponse: any = {
+        ...(currentResponse || {}),
+        ...(nextResponse || {}),
+      }
+
+      ;[
+        "leads",
+        "queue",
+        "pendingLeads",
+        "assignedLeads",
+        "currentQueue",
+        "scheduledLeads",
+        "upcomingFollowUps",
+        "followUps",
+        "scheduled",
+        "scheduledData",
+        "scheduledItems",
+        "rescheduledLeads",
+        "recentActions",
+        "actionHistory",
+        "completedActions",
+        "dialledActions",
+        "connectedActions",
+        "notConnectedActions",
+        "actions",
+        "callingActions",
+      ].forEach((key) => {
+        const merged = mergeList(key)
+        if (merged.length > 0) mergedResponse[key] = merged
+      })
+
+      mergedResponse.lead =
+        (nextResponse as any)?.lead ||
+        (nextResponse as any)?.nextLead ||
+        (nextResponse as any)?.currentLead ||
+        (currentResponse as any)?.lead ||
+        (currentResponse as any)?.nextLead ||
+        (currentResponse as any)?.currentLead ||
+        mergedResponse.lead
+
+      applyQueueResponse(mergedResponse)
     } catch (error) {
       const message =
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Could not load calling queue from backend."

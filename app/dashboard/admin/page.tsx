@@ -45,6 +45,7 @@ import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
+import { InstallationCompletionPanel } from "@/components/installation-completion-panel"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
@@ -63,9 +64,11 @@ import {
   createInstallationTeam,
   deleteInstallationTeam,
   getInstallationTeamIdForQuotation,
+  type InstallationTeamRecord,
   readInstallationTeams,
   readTeamAssignments,
   setTeamAssignment,
+  writeInstallationTeams,
 } from "@/lib/installation-teams"
 
 // Admin username check
@@ -187,6 +190,9 @@ export default function AdminPanelPage() {
   const [operationalProgressTab, setOperationalProgressTab] = useState<AdminOperationalProgressTab>("all")
   const [installationTeamsDialogOpen, setInstallationTeamsDialogOpen] = useState(false)
   const [installationTeamForm, setInstallationTeamForm] = useState({ name: "", username: "", password: "" })
+  const [installationTeams, setInstallationTeams] = useState<InstallationTeamRecord[]>([])
+  const [installationTeamResetPasswordById, setInstallationTeamResetPasswordById] = useState<Record<string, string>>({})
+  const [installationTeamSubmitting, setInstallationTeamSubmitting] = useState(false)
   const [installationTeamsRefresh, setInstallationTeamsRefresh] = useState(0)
   const [installerQueueIds, setInstallerQueueIds] = useState<Set<string>>(new Set())
   const [adminInstallExpandedId, setAdminInstallExpandedId] = useState<string | null>(null)
@@ -323,6 +329,44 @@ export default function AdminPanelPage() {
   })
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  const normalizeInstallationTeamRow = (row: any): InstallationTeamRecord => ({
+    id: String(row?.id || row?._id || row?.teamId || row?.team_id || ""),
+    name: String(row?.name || row?.teamName || row?.team_name || row?.firstName || row?.username || "Installation team"),
+    username: String(row?.username || row?.login || "").trim().toLowerCase(),
+    password: String(row?.password || ""),
+    createdAt: String(row?.createdAt || row?.created_at || new Date().toISOString()),
+    createdBy: row?.createdBy || row?.created_by || "",
+    isActive: row?.isActive !== false,
+  })
+  const readInstallationTeamsFromBackendResponse = (response: any): InstallationTeamRecord[] => {
+    const raw = Array.isArray(response)
+      ? response
+      : Array.isArray(response?.teams)
+        ? response.teams
+        : Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response?.items)
+            ? response.items
+            : []
+    return raw.map(normalizeInstallationTeamRow).filter((t: InstallationTeamRecord) => t.id && t.username)
+  }
+  const loadInstallationTeams = async () => {
+    if (!useApi) {
+      setInstallationTeams(readInstallationTeams())
+      return
+    }
+    try {
+      const response = await api.admin.installationTeams.list()
+      const rows = readInstallationTeamsFromBackendResponse(response)
+      if (rows.length > 0) {
+        setInstallationTeams(rows)
+        return
+      }
+      setInstallationTeams(readInstallationTeams())
+    } catch {
+      setInstallationTeams(readInstallationTeams())
+    }
+  }
   const getOperationsRoleOverrides = (): Record<string, string> => {
     try {
       return JSON.parse(localStorage.getItem("operationsRoleOverrides") || "{}")
@@ -338,7 +382,136 @@ export default function AdminPanelPage() {
     localStorage.setItem("operationsRoleOverrides", JSON.stringify(current))
   }
 
-  const persistInstallationTeamAssignment = (quotationId: string, teamId: string) => {
+  useEffect(() => {
+    void loadInstallationTeams()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useApi])
+
+  useEffect(() => {
+    if (!installationTeamsDialogOpen) return
+    void loadInstallationTeams()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [installationTeamsDialogOpen, useApi])
+
+  const handleCreateInstallationTeam = async () => {
+    const name = installationTeamForm.name.trim()
+    const username = installationTeamForm.username.trim().toLowerCase()
+    const password = installationTeamForm.password
+    if (!name || !username || !password) {
+      toast({
+        title: "Could not create team",
+        description: "Fill all fields and use a unique username.",
+        variant: "destructive",
+      })
+      return
+    }
+    setInstallationTeamSubmitting(true)
+    try {
+      if (useApi) {
+        try {
+          await api.admin.installationTeams.create({ name, username, password })
+          await loadInstallationTeams()
+        } catch {
+          const created = createInstallationTeam({
+            name,
+            username,
+            password,
+            createdBy: dealer?.username,
+          })
+          if (!created) throw new Error("local_create_failed")
+          setInstallationTeams(readInstallationTeams())
+        }
+      } else {
+        const created = createInstallationTeam({
+          name,
+          username,
+          password,
+          createdBy: dealer?.username,
+        })
+        if (!created) throw new Error("local_create_failed")
+        setInstallationTeams(readInstallationTeams())
+      }
+      setInstallationTeamForm({ name: "", username: "", password: "" })
+      setInstallationTeamsRefresh((n) => n + 1)
+      toast({
+        title: "Team created",
+        description: "Credentials are saved. Team can login from /installation-team-login.",
+      })
+    } catch {
+      toast({
+        title: "Could not create team",
+        description: "Fill all fields and use a unique username.",
+        variant: "destructive",
+      })
+    } finally {
+      setInstallationTeamSubmitting(false)
+    }
+  }
+
+  const handleDeleteInstallationTeam = async (team: InstallationTeamRecord) => {
+    try {
+      if (useApi) {
+        try {
+          await api.admin.installationTeams.remove(team.id)
+        } catch {
+          deleteInstallationTeam(team.id)
+        }
+      } else {
+        deleteInstallationTeam(team.id)
+      }
+      setInstallationTeams((prev) => prev.filter((t) => t.id !== team.id))
+      setInstallationTeamsRefresh((n) => n + 1)
+      setQuotations((prev) =>
+        prev.map((q) => {
+          const tid = getInstallationTeamIdForQuotation(q.id, q as any)
+          if (tid === team.id) {
+            const next = { ...q } as any
+            delete next.installationTeamId
+            return next as Quotation
+          }
+          return q
+        }),
+      )
+      toast({
+        title: "Team removed",
+        description: "Assignments to this team were cleared.",
+      })
+    } catch {
+      toast({
+        title: "Could not remove team",
+        description: "Please try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleResetInstallationTeamPassword = async (team: InstallationTeamRecord) => {
+    const raw = installationTeamResetPasswordById[team.id] || ""
+    const nextPassword = raw.trim()
+    if (!nextPassword) {
+      toast({ title: "Enter new password", description: `Type a new password for ${team.name}.`, variant: "destructive" })
+      return
+    }
+    try {
+      if (useApi) {
+        await api.admin.installationTeams.resetPassword(team.id, nextPassword)
+      } else {
+        const local = readInstallationTeams()
+        const next = local.map((t) => (t.id === team.id ? { ...t, password: nextPassword } : t))
+        writeInstallationTeams(next)
+      }
+      setInstallationTeamResetPasswordById((prev) => ({ ...prev, [team.id]: "" }))
+      toast({ title: "Password reset", description: "Team can login with the new password now." })
+    } catch {
+      toast({
+        title: "Password reset failed",
+        description: "Backend reset endpoint is not available yet.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const persistInstallationTeamAssignment = async (quotationId: string, teamId: string) => {
     const normalized = teamId.trim() || undefined
     setTeamAssignment(quotationId, normalized)
     setQuotations((prev) =>
@@ -352,6 +525,21 @@ export default function AdminPanelPage() {
       localStorage.setItem("quotations", JSON.stringify(next))
     } catch {
       // no-op
+    }
+    if (useApi) {
+      try {
+        await api.admin.quotations.updateInstallationTeamAssignment(quotationId, normalized ?? null)
+      } catch (err) {
+        toast({
+          title: "Not saved on server",
+          description:
+            err instanceof ApiError
+              ? `${err.message} Add PATCH /admin/quotations/{id}/installation-team (BACKEND_CHANGES_REQUIRED.md). Until then, assignment exists only in this browser.`
+              : "Could not persist team on the server. Assignment exists only in this browser.",
+          variant: "destructive",
+        })
+        return
+      }
     }
     toast({
       title: "Team assignment updated",
@@ -3059,68 +3247,50 @@ export default function AdminPanelPage() {
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() => {
-                            const created = createInstallationTeam({
-                              name: installationTeamForm.name,
-                              username: installationTeamForm.username,
-                              password: installationTeamForm.password,
-                              createdBy: dealer?.username,
-                            })
-                            if (!created) {
-                              toast({
-                                title: "Could not create team",
-                                description: "Fill all fields and use a unique username.",
-                                variant: "destructive",
-                              })
-                              return
-                            }
-                            setInstallationTeamForm({ name: "", username: "", password: "" })
-                            setInstallationTeamsRefresh((n) => n + 1)
-                            toast({ title: "Team created", description: "Share credentials with the field team." })
-                          }}
+                          onClick={() => void handleCreateInstallationTeam()}
+                          disabled={installationTeamSubmitting}
                         >
-                          Create team
+                          {installationTeamSubmitting ? "Creating..." : "Create team"}
                         </Button>
                       </div>
                     </div>
                     <div className="space-y-2" key={installationTeamsRefresh}>
                       <p className="text-xs font-semibold">Existing teams</p>
-                      {readInstallationTeams().length === 0 ? (
+                      {installationTeams.length === 0 ? (
                         <p className="text-xs text-muted-foreground">No teams yet.</p>
                       ) : (
-                        readInstallationTeams().map((t) => (
-                          <div key={t.id} className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                        installationTeams.map((t) => (
+                          <div key={t.id} className="space-y-2 rounded-md border border-border px-3 py-2 text-sm">
                             <div>
                               <p className="font-medium">{t.name}</p>
                               <p className="text-xs text-muted-foreground">@{t.username}</p>
                             </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="text-destructive"
-                              onClick={() => {
-                                deleteInstallationTeam(t.id)
-                                setInstallationTeamsRefresh((n) => n + 1)
-                                setQuotations((prev) =>
-                                  prev.map((q) => {
-                                    const tid = getInstallationTeamIdForQuotation(q.id, q as any)
-                                    if (tid === t.id) {
-                                      const next = { ...q } as any
-                                      delete next.installationTeamId
-                                      return next as Quotation
-                                    }
-                                    return q
-                                  }),
-                                )
-                                toast({
-                                  title: "Team removed",
-                                  description: "Assignments to this team were cleared locally.",
-                                })
-                              }}
-                            >
-                              Delete
-                            </Button>
+                            <div className="flex items-center gap-2">
+                              <Input
+                                type="password"
+                                value={installationTeamResetPasswordById[t.id] || ""}
+                                onChange={(e) =>
+                                  setInstallationTeamResetPasswordById((prev) => ({
+                                    ...prev,
+                                    [t.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="New password"
+                                className="h-8 text-xs"
+                              />
+                              <Button type="button" variant="outline" size="sm" onClick={() => void handleResetInstallationTeamPassword(t)}>
+                                Reset
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive"
+                                onClick={() => void handleDeleteInstallationTeam(t)}
+                              >
+                                Delete
+                              </Button>
+                            </div>
                           </div>
                         ))
                       )}
@@ -3297,7 +3467,7 @@ export default function AdminPanelPage() {
                                     )}
                                   </div>
                                   {confirmationStage === "queue" ? (
-                                    <div className="ml-auto flex gap-2">
+                                    <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                                       <Button variant="outline" size="sm" onClick={() => toggleAdminFinalUpdate(quotation)}>
                                         <ChevronDown className="w-3.5 h-3.5 mr-1" />
                                         Update Final Details
@@ -3432,14 +3602,16 @@ export default function AdminPanelPage() {
                           return (
                             <Card key={quotation.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
                               <CardContent className="p-4">
-                                <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
-                                  <div className="min-w-[220px] flex-1">
+                                <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(200px,1fr)_130px_170px_150px_150px_auto] lg:items-center">
+                                  <div className="min-w-0">
                                     <p className="text-sm font-semibold leading-tight">
                                       {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                                     </p>
-                                    <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
+                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                      {quotation.customer.mobile || "No mobile"} • {quotation.id}
+                                    </p>
                                   </div>
-                                  <div className="min-w-[140px]">
+                                  <div className="min-w-0">
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sent to installation</p>
                                     <p className="text-xs font-medium flex items-center gap-1">
                                       <Calendar className="w-3 h-3 text-muted-foreground" />
@@ -3448,7 +3620,7 @@ export default function AdminPanelPage() {
                                         : "N/A"}
                                     </p>
                                   </div>
-                                  <div className="min-w-[170px]">
+                                  <div className="min-w-0">
                                     <Label htmlFor={`install-date-${quotation.id}`} className="text-[11px] uppercase tracking-wide text-muted-foreground">
                                       Installation date
                                     </Label>
@@ -3494,13 +3666,13 @@ export default function AdminPanelPage() {
                                       <p className="text-[10px] text-muted-foreground mt-0.5">Set release date first</p>
                                     ) : null}
                                   </div>
-                                  <div className="min-w-[150px]">
+                                  <div className="min-w-0">
                                     <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">Team</Label>
                                     <Select
                                       key={`inst-team-${quotation.id}-${installationTeamsRefresh}`}
                                       value={getInstallationTeamIdForQuotation(quotation.id, qAny) || "__none__"}
                                       onValueChange={(v) =>
-                                        persistInstallationTeamAssignment(quotation.id, v === "__none__" ? "" : v)
+                                        void persistInstallationTeamAssignment(quotation.id, v === "__none__" ? "" : v)
                                       }
                                     >
                                       <SelectTrigger className="h-8 text-xs mt-0.5">
@@ -3508,7 +3680,7 @@ export default function AdminPanelPage() {
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="__none__">Unassigned</SelectItem>
-                                        {readInstallationTeams().map((t) => (
+                                        {installationTeams.map((t) => (
                                           <SelectItem key={t.id} value={t.id}>
                                             {t.name}
                                           </SelectItem>
@@ -3516,7 +3688,7 @@ export default function AdminPanelPage() {
                                       </SelectContent>
                                     </Select>
                                   </div>
-                                  <div className="min-w-[140px]">
+                                  <div className="min-w-0">
                                     <Badge variant="outline" className="text-xs capitalize">
                                       {installerStatus === "approved"
                                         ? "Approved by Installer"
@@ -3525,7 +3697,7 @@ export default function AdminPanelPage() {
                                           : "Pending Installation"}
                                     </Badge>
                                   </div>
-                                  <div className="ml-auto flex gap-2">
+                                  <div className="flex flex-wrap items-center justify-start gap-2 lg:ml-auto lg:justify-end">
                                     {installerStatus === "pending" ? (
                                       <>
                                         <Button size="sm" variant="outline" onClick={() => void updateOperationalStage(quotation.id, "installer_in_progress")}>
@@ -3551,242 +3723,111 @@ export default function AdminPanelPage() {
                                   </div>
                                 </div>
                                 {adminInstallExpandedId === quotation.id && adminInstallQuotation?.id === quotation.id ? (
-                                  <div className="mt-4 rounded-md border border-border/70 p-3">
-                                    <div className="grid grid-cols-1 xl:grid-cols-[1fr_320px] gap-4">
-                                      <div className="space-y-4">
-                                        <div className="space-y-1.5">
-                                          <p className="text-xs font-semibold">Installation Completion Images (required as marked *)</p>
-                                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            {ADMIN_INSTALLATION_IMAGE_FIELDS.map((field) => (
-                                              <div className="space-y-1" key={field.key}>
-                                                <Label className="text-xs">
-                                                  {field.label}
-                                                  {isAdminImageFieldRequired(field) ? " *" : ""}
-                                                </Label>
-                                                <Input
-                                                  type="file"
-                                                  accept="image/*"
-                                                  multiple={isAdminImageFieldMultiple(field)}
-                                                  className="h-9 text-sm"
-                                                  onChange={(e) => {
-                                                    const files = Array.from(e.target.files || [])
-                                                    setAdminInstallFiles((prev) => ({ ...prev, [field.key]: files }))
-                                                  }}
-                                                />
-                                                <p className="text-[11px] text-muted-foreground">
-                                                  {(adminInstallFiles[field.key] || []).length > 0
-                                                    ? `${(adminInstallFiles[field.key] || []).length} file(s) selected`
-                                                    : "No file selected"}
-                                                </p>
-                                              </div>
-                                            ))}
-                                            <div className="space-y-1 md:col-span-2">
-                                              <Label className="text-xs">PI Upload</Label>
-                                              <Input
-                                                type="file"
-                                                className="h-9 text-sm"
-                                                onChange={(e) => setAdminInstallPiUpload(e.target.files?.[0] || null)}
-                                              />
-                                              <p className="text-[11px] text-muted-foreground">{adminInstallPiUpload?.name || "No file selected"}</p>
-                                            </div>
-                                          </div>
-                                        </div>
-
-                                        <div className="space-y-2 rounded-md border border-border/60 p-3">
-                                          <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <Label className="text-xs font-medium">Extra expenses (optional)</Label>
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              className="h-8 text-xs gap-1"
-                                              onClick={() =>
-                                                setAdminInstallExtraExpenses((prev) => [
-                                                  ...prev,
-                                                  { id: newAdminExpenseLineId(), description: "", amount: "" },
-                                                ])
-                                              }
-                                            >
-                                              <Plus className="w-3.5 h-3.5" />
-                                              Add expense
-                                            </Button>
-                                          </div>
-                                          {adminInstallExtraExpenses.length === 0 ? (
-                                            <p className="text-[11px] text-muted-foreground">No extra expenses added.</p>
-                                          ) : (
-                                            <div className="space-y-2">
-                                              {adminInstallExtraExpenses.map((line) => (
-                                                <div key={line.id} className="grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2 items-end">
-                                                  <div className="space-y-1">
-                                                    <Label className="text-[11px] text-muted-foreground">Description</Label>
-                                                    <Input
-                                                      className="h-9 text-sm"
-                                                      placeholder="e.g. Transport, extra cable"
-                                                      value={line.description}
-                                                      onChange={(e) =>
-                                                        setAdminInstallExtraExpenses((prev) =>
-                                                          prev.map((l) => (l.id === line.id ? { ...l, description: e.target.value } : l)),
-                                                        )
-                                                      }
-                                                    />
-                                                  </div>
-                                                  <div className="space-y-1">
-                                                    <Label className="text-[11px] text-muted-foreground">Amount (₹)</Label>
-                                                    <Input
-                                                      className="h-9 text-sm"
-                                                      type="number"
-                                                      min="0"
-                                                      step="0.01"
-                                                      value={line.amount}
-                                                      onChange={(e) =>
-                                                        setAdminInstallExtraExpenses((prev) =>
-                                                          prev.map((l) => (l.id === line.id ? { ...l, amount: e.target.value } : l)),
-                                                        )
-                                                      }
-                                                    />
-                                                  </div>
-                                                  <Button
-                                                    type="button"
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-9 w-9 shrink-0 text-muted-foreground"
-                                                    onClick={() => setAdminInstallExtraExpenses((prev) => prev.filter((l) => l.id !== line.id))}
-                                                  >
-                                                    <Trash2 className="w-4 h-4" />
-                                                  </Button>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-
-                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                                          <div>
-                                            <Label className="text-xs">Back leg (cm) *</Label>
-                                            <Input
-                                              type="number"
-                                              min="0"
-                                              step="0.01"
-                                              value={adminInstallDimensions.length}
-                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, length: e.target.value }))}
-                                            />
-                                          </div>
-                                          <div>
-                                            <Label className="text-xs">Mid leg (cm)</Label>
-                                            <Input
-                                              type="number"
-                                              min="0"
-                                              step="0.01"
-                                              value={adminInstallDimensions.width}
-                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, width: e.target.value }))}
-                                            />
-                                          </div>
-                                          <div>
-                                            <Label className="text-xs">Front leg (cm) *</Label>
-                                            <Input
-                                              type="number"
-                                              min="0"
-                                              step="0.01"
-                                              value={adminInstallDimensions.height}
-                                              onChange={(e) => setAdminInstallDimensions((prev) => ({ ...prev, height: e.target.value }))}
-                                            />
-                                          </div>
-                                        </div>
-                                        <div className="space-y-1">
-                                          <Label className="text-xs">Notes (optional)</Label>
-                                          <Textarea
-                                            rows={3}
-                                            placeholder="Installation notes, material used, issues, etc."
-                                            value={adminInstallNotes}
-                                            onChange={(e) => setAdminInstallNotes(e.target.value)}
-                                          />
-                                        </div>
-                                        <div className="flex justify-end gap-2">
-                                          <Button variant="outline" onClick={() => setAdminInstallExpandedId(null)} disabled={adminInstallSaving}>
-                                            Cancel
-                                          </Button>
-                                          <Button onClick={() => void submitAdminInstallationUpload()} disabled={adminInstallSaving}>
-                                            {adminInstallSaving ? "Saving..." : "Complete & Mark as Approved"}
-                                          </Button>
-                                        </div>
-                                      </div>
-
-                                      <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
-                                        <div className="space-y-2">
-                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Customer Details</p>
-                                          <div className="space-y-1.5 text-xs">
-                                            <div className="flex items-start justify-between gap-2">
-                                              <span className="text-muted-foreground">Customer</span>
-                                              <span className="font-medium text-right">
-                                                {formatPersonName(adminInstallQuotation.customer.firstName, adminInstallQuotation.customer.lastName, "N/A")}
-                                              </span>
-                                            </div>
-                                            <div className="flex items-start justify-between gap-2">
-                                              <span className="text-muted-foreground">Mobile</span>
-                                              <span className="font-medium text-right">{adminInstallQuotation.customer.mobile || "N/A"}</span>
-                                            </div>
-                                            <div className="flex items-start justify-between gap-2">
-                                              <span className="text-muted-foreground">Agent</span>
-                                              <span className="font-medium text-right">{getDealerName(adminInstallQuotation.dealerId)}</span>
-                                            </div>
-                                            <div className="flex items-start justify-between gap-2">
-                                              <span className="text-muted-foreground">Agent Mobile</span>
-                                              <span className="font-medium text-right">{getDealerMobile(adminInstallQuotation.dealerId)}</span>
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div className="space-y-2 border-t border-border/60 pt-2">
-                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Visitor / Location Details</p>
-                                          <div className="space-y-1.5 text-xs">
-                                            <div className="flex items-start justify-between gap-2">
-                                              <span className="text-muted-foreground">Visit Location</span>
-                                              <span className="font-medium text-right">
-                                                {(() => {
-                                                  const rawAddress = adminInstallQuotation.customer.address
-                                                  const addressText =
-                                                    rawAddress && typeof rawAddress === "object"
-                                                      ? [rawAddress.street, rawAddress.city, rawAddress.state, rawAddress.pincode].filter(Boolean).join(", ")
-                                                      : String(rawAddress || "")
-                                                  return (adminInstallQuotation as any).visitLocation || (adminInstallQuotation as any).location || addressText || "N/A"
-                                                })()}
-                                              </span>
-                                            </div>
-                                          </div>
-                                        </div>
-                                        <div className="space-y-2 border-t border-border/60 pt-2">
-                                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Product Specification</p>
-                                          <div className="space-y-1.5 text-xs">
-                                            {(() => {
-                                              const productSpec = getAdminInstallProductSpec(adminInstallQuotation)
-                                              return (
-                                                <>
-                                                  <div className="flex items-start justify-between gap-2">
-                                                    <span className="text-muted-foreground">System Type</span>
-                                                    <span className="font-medium text-right">{String(productSpec.systemType || "N/A")}</span>
-                                                  </div>
-                                                  <div className="flex items-start justify-between gap-2">
-                                                    <span className="text-muted-foreground">Panel Configuration</span>
-                                                    <span className="font-medium text-right">{`${String(productSpec.panelBrand || "N/A")} ${String(productSpec.panelSize || "")} x ${String(productSpec.panelQuantity || "0")}`}</span>
-                                                  </div>
-                                                  <div className="flex items-start justify-between gap-2">
-                                                    <span className="text-muted-foreground">Inverter</span>
-                                                    <span className="font-medium text-right">{`${String(productSpec.inverterBrand || "N/A")} - ${String(productSpec.inverterSize || "N/A")}`}</span>
-                                                  </div>
-                                                  <div className="flex items-start justify-between gap-2">
-                                                    <span className="text-muted-foreground">Phase</span>
-                                                    <span className="font-medium text-right">{String(productSpec.phase || "N/A")}</span>
-                                                  </div>
-                                                  <div className="flex items-start justify-between gap-2">
-                                                    <span className="text-muted-foreground">Structure</span>
-                                                    <span className="font-medium text-right">{`${String(productSpec.structureType || "N/A")} - ${String(productSpec.structureSize || "N/A")}`}</span>
-                                                  </div>
-                                                </>
-                                              )
-                                            })()}
-                                          </div>
-                                        </div>
-                                      </div>
-                                    </div>
+                                  <div className="mt-4">
+                                    <InstallationCompletionPanel
+                                      imageFields={
+                                        ADMIN_INSTALLATION_IMAGE_FIELDS as readonly {
+                                          key: string
+                                          label: string
+                                          required?: boolean
+                                          multiple?: boolean
+                                        }[]
+                                      }
+                                      filesByField={adminInstallFiles}
+                                      onFilesChange={(fieldKey, files) =>
+                                        setAdminInstallFiles((prev) => ({ ...prev, [fieldKey]: files }))
+                                      }
+                                      piFile={adminInstallPiUpload}
+                                      onPiFileChange={setAdminInstallPiUpload}
+                                      extraExpenses={adminInstallExtraExpenses}
+                                      onAddExpense={() =>
+                                        setAdminInstallExtraExpenses((prev) => [
+                                          ...prev,
+                                          { id: newAdminExpenseLineId(), description: "", amount: "" },
+                                        ])
+                                      }
+                                      onExpenseChange={(id, patch) =>
+                                        setAdminInstallExtraExpenses((prev) =>
+                                          prev.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+                                        )
+                                      }
+                                      onRemoveExpense={(id) =>
+                                        setAdminInstallExtraExpenses((prev) => prev.filter((line) => line.id !== id))
+                                      }
+                                      dimensions={adminInstallDimensions}
+                                      onDimensionsChange={(next) =>
+                                        setAdminInstallDimensions((prev) => ({
+                                          ...prev,
+                                          ...(next.length !== undefined ? { length: next.length } : {}),
+                                          ...(next.width !== undefined ? { width: next.width } : {}),
+                                          ...(next.height !== undefined ? { height: next.height } : {}),
+                                        }))
+                                      }
+                                      notes={adminInstallNotes}
+                                      onNotesChange={setAdminInstallNotes}
+                                      infoSections={[
+                                        {
+                                          title: "Customer Details",
+                                          rows: [
+                                            {
+                                              label: "Customer",
+                                              value: formatPersonName(
+                                                adminInstallQuotation.customer.firstName,
+                                                adminInstallQuotation.customer.lastName,
+                                                "N/A",
+                                              ),
+                                            },
+                                            { label: "Mobile", value: adminInstallQuotation.customer.mobile || "N/A" },
+                                            { label: "Agent", value: getDealerName(adminInstallQuotation.dealerId) },
+                                            { label: "Agent Mobile", value: getDealerMobile(adminInstallQuotation.dealerId) },
+                                          ],
+                                        },
+                                        {
+                                          title: "Visitor / Location Details",
+                                          rows: [
+                                            {
+                                              label: "Visit Location",
+                                              value: (() => {
+                                                const rawAddress = adminInstallQuotation.customer.address
+                                                const addressText =
+                                                  rawAddress && typeof rawAddress === "object"
+                                                    ? [rawAddress.street, rawAddress.city, rawAddress.state, rawAddress.pincode]
+                                                        .filter(Boolean)
+                                                        .join(", ")
+                                                    : String(rawAddress || "")
+                                                return (adminInstallQuotation as any).visitLocation || (adminInstallQuotation as any).location || addressText || "N/A"
+                                              })(),
+                                            },
+                                          ],
+                                        },
+                                        {
+                                          title: "Product Specification",
+                                          rows: (() => {
+                                            const productSpec = getAdminInstallProductSpec(adminInstallQuotation)
+                                            return [
+                                              { label: "System Type", value: String(productSpec.systemType || "N/A") },
+                                              {
+                                                label: "Panel Configuration",
+                                                value: `${String(productSpec.panelBrand || "N/A")} ${String(productSpec.panelSize || "")} x ${String(productSpec.panelQuantity || "0")}`,
+                                              },
+                                              {
+                                                label: "Inverter",
+                                                value: `${String(productSpec.inverterBrand || "N/A")} - ${String(productSpec.inverterSize || "N/A")}`,
+                                              },
+                                              { label: "Phase", value: String(productSpec.phase || "N/A") },
+                                              {
+                                                label: "Structure",
+                                                value: `${String(productSpec.structureType || "N/A")} - ${String(productSpec.structureSize || "N/A")}`,
+                                              },
+                                            ]
+                                          })(),
+                                        },
+                                      ]}
+                                      saveLabel="Complete & Mark as Approved"
+                                      saving={adminInstallSaving}
+                                      onCancel={() => setAdminInstallExpandedId(null)}
+                                      onSave={() => void submitAdminInstallationUpload()}
+                                    />
                                   </div>
                                 ) : null}
                               </CardContent>

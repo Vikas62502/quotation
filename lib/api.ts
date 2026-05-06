@@ -509,6 +509,18 @@ export const api = {
       }
     },
 
+    getCallingQueueCurrent: async () => {
+      try {
+        return await apiRequest("/dealers/me/calling-queue/current")
+      } catch (error) {
+        // Backward compatibility if backend exposes only /next.
+        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+          return apiRequest("/dealers/me/calling-queue/next")
+        }
+        throw error
+      }
+    },
+
     updateCallingLeadAction: async (
       leadId: string,
       payload: {
@@ -1724,6 +1736,37 @@ export const api = {
         }
         throw lastError
       },
+
+      /**
+       * Persist which installation team owns a quotation row. Required for `/installation-team-login`:
+       * installer queue is loaded from the API on the team device — localStorage assignments from admin do not sync.
+       */
+      updateInstallationTeamAssignment: async (quotationId: string, installationTeamId: string | null | undefined) => {
+        const hasTeam = Boolean(installationTeamId && String(installationTeamId).trim())
+        const id = hasTeam ? String(installationTeamId).trim() : ""
+        const body = hasTeam
+          ? { installationTeamId: id, installation_team_id: id }
+          : { installationTeamId: null, installation_team_id: null }
+        const endpoints = [
+          `/admin/quotations/${quotationId}/installation-team`,
+          `/admin/quotations/${quotationId}/installation_team`,
+          `/quotations/${quotationId}/installation-team`,
+          `/quotations/${quotationId}/installation_team`,
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "PATCH", body })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
+      },
     },
 
     dealers: {
@@ -1755,6 +1798,104 @@ export const api = {
         return apiRequest(`/admin/dealers/${dealerId}/activate`, {
           method: "PATCH",
         })
+      },
+    },
+
+    installationTeams: {
+      list: async () => {
+        const endpoints = [
+          "/admin/installation-teams",
+          "/admin/installation/team-logins",
+          "/admin/installation-team-logins",
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
+      },
+
+      create: async (payload: { name: string; username: string; password: string }) => {
+        const body = {
+          name: payload.name,
+          teamName: payload.name,
+          team_name: payload.name,
+          username: payload.username,
+          password: payload.password,
+          role: "installation-team",
+        }
+        const endpoints = [
+          "/admin/installation-teams",
+          "/admin/installation/team-logins",
+          "/admin/installation-team-logins",
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "POST", body })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
+      },
+
+      resetPassword: async (teamId: string, newPassword: string) => {
+        const body = {
+          password: newPassword,
+          newPassword,
+        }
+        const endpoints = [
+          `/admin/installation-teams/${teamId}/password`,
+          `/admin/installation-teams/${teamId}/reset-password`,
+          `/admin/installation/team-logins/${teamId}/password`,
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "PATCH", body })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
+      },
+
+      remove: async (teamId: string) => {
+        const endpoints = [
+          `/admin/installation-teams/${teamId}`,
+          `/admin/installation/team-logins/${teamId}`,
+          `/admin/installation-team-logins/${teamId}`,
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "DELETE" })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
       },
     },
 

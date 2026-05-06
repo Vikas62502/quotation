@@ -612,9 +612,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           backgroundColor: "#ffffff",
           allowTaint: false,
           foreignObjectRendering: false,
-          onclone: (clonedDoc) => {
+          onclone: (clonedDoc: Document) => {
             try {
-              clonedDoc.querySelectorAll("*").forEach((el) => {
+              clonedDoc.querySelectorAll("*").forEach((el: Element) => {
                 const htmlEl = el as HTMLElement
                 if (!htmlEl?.style) return
                 try {
@@ -638,7 +638,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               console.warn("PDF onclone color fix:", e)
             }
           },
-        })
+        } as any)
       } finally {
         temp.remove()
       }
@@ -646,22 +646,21 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
     const addCanvasToPdf = (pdf: InstanceType<typeof jsPDF>, canvas: HTMLCanvasElement, addPageFirst: boolean) => {
       const imgData = canvas.toDataURL("image/jpeg", 0.95)
-      const imgWidth = 210
+      const pageWidth = 210
       const pageHeight = 297
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-      let heightLeft = imgHeight
-      let position = 0
+      const baseImgWidth = pageWidth
+      const baseImgHeight = (canvas.height * baseImgWidth) / canvas.width
+      // Each [data-pdf-sheet] is one logical page; fit-to-page avoids accidental
+      // extra blank pages when dynamic rows (e.g. state subsidy) slightly increase height.
+      const scale = Math.min(1, pageHeight / baseImgHeight)
+      const renderWidth = baseImgWidth * scale
+      const renderHeight = baseImgHeight * scale
+      const x = (pageWidth - renderWidth) / 2
+      const y = 0
       if (addPageFirst) {
         pdf.addPage()
       }
-      pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight)
-      heightLeft -= pageHeight
-      while (heightLeft > 10) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(imgData, "JPEG", 0, position, imgWidth, imgHeight)
-        heightLeft -= pageHeight
-      }
+      pdf.addImage(imgData, "JPEG", x, y, renderWidth, renderHeight)
     }
 
     try {

@@ -1956,6 +1956,14 @@ Scheduled / history keys may include: `scheduledLeads`, `upcomingFollowUps`, `re
 
 Each **lead** in those lists should use **consistent** semantics below.
 
+### `next` vs `current` parity (important)
+
+Frontend now reads both endpoints and merges payloads when available. To avoid missing unassigned rows and inconsistent dealer experience:
+
+- Keep `/next` and `/current` backed by the same queue source.
+- Return consistent lead sets (same dealer visibility rules) from both routes.
+- If one route is single-item and the other is list-style, ensure list keys (`queue`, `pendingLeads`, `currentQueue`, etc.) still include actionable unassigned rows for the dealer.
+
 ---
 
 ## B) Calling assignee vs “record dealer”
@@ -2000,6 +2008,20 @@ Continue returning an updated queue snapshot or enough data for the next `GET` s
 1. Create a **pool** lead with **`dealerId` = HR/uploader** but **no** `assigned_dealer_id`.
 2. Dealer login → **Current Lead** should still show the lead (after this frontend change).
 3. Assign lead to dealer B → dealer A should no longer see it in current queue; B should.
+4. With two dealers in same eligible pool, when one dealer is actively calling and another has no active lead, queue should not keep starving the idle dealer.
+5. `/next` and `/current` should both expose consistent availability for the same dealer session.
+
+---
+
+## G) Queue distribution fairness (backend)
+
+This cannot be solved reliably by frontend filtering. Implement queue allocation on server with fairness rules:
+
+- Prefer idle eligible dealer before giving consecutive leads to the same active dealer.
+- Use round-robin (or weighted round-robin) across eligible dealers in a batch/pool.
+- Add per-dealer soft cap for in-progress/current assignments (for example: max 1 active current lead unless all others are busy).
+- Rebalance on action updates (`called`, `follow_up`, `not_interested`, `rescheduled`) so next allocation considers latest dealer load.
+- Ensure unassigned pool rows remain visible/allocatable to all eligible dealers; do not lock pool rows to uploader `dealerId`.
 
 ---
 
@@ -2073,12 +2095,29 @@ Suggested columns:
 ## C) Admin API — teams CRUD
 
 Base path example: **`/api/admin/installation-teams`**.
+Frontend currently attempts these path variants (in order) for compatibility:
+
+- `GET/POST` one of:
+  - `/api/admin/installation-teams`
+  - `/api/admin/installation/team-logins`
+  - `/api/admin/installation-team-logins`
+- `DELETE` one of:
+  - `/api/admin/installation-teams/{teamId}`
+  - `/api/admin/installation/team-logins/{teamId}`
+  - `/api/admin/installation-team-logins/{teamId}`
 
 ### `GET /api/admin/installation-teams`
 
 **Auth:** admin (or role allowed to manage Installation tab).
 
-**Response:** `{ "success": true, "data": { "teams": [ { "id", "name", "username", "isActive", "createdAt", "createdBy" } ] } }` — **no** password fields.
+**Response:** return list in any of these envelopes (frontend accepts all), with **no password fields**:
+
+- `{ "success": true, "data": { "teams": [ ... ] } }`
+- `{ "success": true, "teams": [ ... ] }`
+- `{ "success": true, "data": [ ... ] }`
+- `[ ... ]`
+
+Each row should include: `id`, `name`, `username`, `isActive`, `createdAt`, `createdBy`.
 
 ### `POST /api/admin/installation-teams`
 
@@ -2102,6 +2141,26 @@ Base path example: **`/api/admin/installation-teams`**.
 
 Update `name`, rotate `password`, or `isActive`.
 
+### `PATCH /api/admin/installation-teams/{teamId}/password` (recommended for admin reset)
+
+**Auth:** admin.
+
+**Body:** frontend sends both keys for compatibility; backend may read either:
+
+```json
+{
+  "newPassword": "new-secret",
+  "password": "new-secret"
+}
+```
+
+**Behavior:** hash and store new password; keep team active state unchanged.
+
+**Accepted alternatives (if preferred):**
+
+- `PATCH /api/admin/installation-teams/{teamId}/reset-password`
+- `PATCH /api/admin/installation/team-logins/{teamId}/password`
+
 ### `DELETE /api/admin/installation-teams/{teamId}`
 
 **Auth:** admin.
@@ -2112,7 +2171,16 @@ Update `name`, rotate `password`, or `isActive`.
 
 ## D) Admin API — assign team to quotation
 
-**Preferred:** `PATCH /api/admin/quotations/{quotationId}/installation-team`
+**Why this exists:** Admin UI used to store team choice only in **browser `localStorage`**. Team users open **`/installation-team-login`** on another device and load **`installer.getQueue`** from the server. If **`installation_team_id`** is never persisted on the quotation row, the team portal filter finds **no rows** even when Admin shows “team1” assigned.
+
+**Frontend:** `lib/api.ts` → `api.admin.quotations.updateInstallationTeamAssignment(quotationId, installationTeamId | null)` (called from **`app/dashboard/admin/page.tsx`** when `NEXT_PUBLIC_USE_API` is not `"false"`). It sends **PATCH** with the same JSON body below and tries endpoints **in order** until one succeeds (`404` / `405` / `501` → try next):
+
+1. `PATCH /api/admin/quotations/{quotationId}/installation-team`
+2. `PATCH /api/admin/quotations/{quotationId}/installation_team`
+3. `PATCH /api/quotations/{quotationId}/installation-team`
+4. `PATCH /api/quotations/{quotationId}/installation_team`
+
+Implement **at least one** of these on the backend; prefer (1).
 
 **Body (assign):**
 
@@ -2132,13 +2200,15 @@ Update `name`, rotate `password`, or `isActive`.
 }
 ```
 
-**Auth:** admin.
+**Auth:** admin (or role allowed to manage Installation tab).
 
-**Validation:** non-null id must reference an existing **active** team.
+**Validation:** when non-null, id must reference an existing **active** installation team row (`installation_teams.id` or equivalent).
 
-**Response:** include updated quotation with **`installationTeamId`** echoed.
+**Persistence:** update the quotation’s **`installation_team_id`** (and keep camelCase alias in JSON if you use it).
 
-*(Frontend today persists assignment locally until these routes exist; add matching calls in `lib/api.ts` when ready.)*
+**Response:** `200` / `204` acceptable; if body is returned, include updated quotation with **`installationTeamId` / `installation_team_id`** set.
+
+**Id consistency (critical):** The value stored on the quotation must be the **team entity primary key** — the same value returned as **`user.installationTeamId` / `installation_team_id`** on **`POST /api/auth/login`** for that team’s login (see §A). Do not store only the auth “membership” or user row id unless it is identical to the team id the UI lists in Admin → Installation teams.
 
 ---
 
@@ -2152,6 +2222,8 @@ Include **`installationTeamId` / `installation_team_id`** on every quotation ret
 
 After assignment **PATCH**, subsequent **GET** must return the new value so **`installation-team`** users see correct rows after refresh (no reliance on browser `localStorage` in production).
 
+**Nested queue rows:** If installer queue returns `{ "quotation": { ... } }` (or similar), include **`installationTeamId` / `installation_team_id`** on that nested **`quotation`** object. The app flattens nested shapes but other clients may rely on the nested field.
+
 ---
 
 ## F) Installer queue — optional server-side filter
@@ -2160,9 +2232,47 @@ For JWT role **`installation-team`**, you may return only rows with `installatio
 
 ---
 
-## G) Local-only mode
+## G) Backend QA — team portal shows assigned jobs
+
+1. **Create team** via `POST /api/admin/installation-teams`; note returned **`id`** = `team-uuid`.
+2. **Assign quotation** `PATCH .../quotations/{qid}/installation-team` with `installation_team_id: "team-uuid"`.
+3. **GET installer queue** (same routes `installer.getQueue` uses) — row for `qid` must include **`installation_team_id`** (or camelCase) = `team-uuid`.
+4. **Login** as that team — **`user.installation_team_id`** (or camelCase) must equal **`team-uuid`** (not a different id).
+5. Open **`/dashboard/installer`** — that quotation should appear in the filtered list (and after hard refresh).
+
+If step 3 or 4 fails, the team portal will stay empty even when Admin UI shows a team selected.
+
+---
+
+## H) Local-only mode
 
 When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps are stored in **`localStorage`** (`installationTeams`, `installationTeamAssignmentsByQuotationId`). Production API should replace this with DB-backed endpoints above.
+
+---
+
+## I) Quotation PDF with subsidy rows
+
+### Status
+
+- The recent **blank middle page when State Subsidy is present** was a frontend PDF pagination issue and is now handled in `components/quotation-details-dialog.tsx`.
+- No mandatory backend endpoint change is required for that page-break bug alone.
+
+### Backend data contract (recommended to keep stable)
+
+- Keep subsidy/pricing fields numeric in quotation payloads:
+  - `stateSubsidy` / `state_subsidy`
+  - `centralSubsidy` / `central_subsidy`
+  - `totalSubsidy` / `total_subsidy`
+  - `amountAfterSubsidy` / `amount_after_subsidy`
+  - `finalAmount` / `final_amount`
+- Avoid sending long formatted strings (currency symbols, multiline text) for numeric pricing fields.
+- Return consistent keys on GET after updates so PDF values do not fluctuate between fallback calculations.
+
+### QA checks
+
+1. Create quotation with `stateSubsidy = 0` -> PDF has expected pages.
+2. Update same quotation with non-zero `stateSubsidy` -> PDF still has expected pages (no blank intermediate page).
+3. Verify subsidy values in PDF match API response values exactly.
 
 ---
 
@@ -2171,7 +2281,7 @@ When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps ar
 For questions or clarifications about these requirements, please refer to:
 - Frontend API client: `lib/api.ts`
 - Dealer calling queue & lead assignee normalization: `app/dashboard/calling-data/page.tsx`, `api.dealers.getCallingQueueNext` / `updateCallingLeadAction` in `lib/api.ts`
-- Installation teams (storage, login, admin assignment, installer filter): `lib/installation-teams.ts`, `lib/auth-context.tsx`, `app/dashboard/admin/page.tsx`, `app/dashboard/installer/page.tsx`, `app/installation-team-login/page.tsx`
+- Installation teams (storage, login, admin assignment, installer filter): `lib/installation-teams.ts`, `lib/auth-context.tsx`, `app/dashboard/admin/page.tsx`, `app/dashboard/installer/page.tsx`, `app/installation-team-login/page.tsx`; **persist assignment:** `api.admin.quotations.updateInstallationTeamAssignment` in `lib/api.ts`
 - Metering dashboard save/status handlers: `app/dashboard/metering/page.tsx`
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`
