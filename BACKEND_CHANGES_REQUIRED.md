@@ -2346,6 +2346,44 @@ User-facing issue: **Start Call** and **Submit** can feel slow when backend resp
 
 ---
 
+## L) Document submission prefill + file view links
+
+In Document Submission modal, text fields like phone/email/KNO are already expected to prefill.  
+Now uploaded document fields must also support **View existing file** without requiring re-upload.
+
+### Required backend behavior
+
+1. On quotation fetch (list/details), include previously saved document metadata in a stable object, e.g. `documents` (or consistently aliased equivalent).
+2. For each uploaded file field, return an HTTP-accessible URL (signed/public as per security policy) so UI can open it in a new tab:
+   - `aadharFront` / `aadhar_front`
+   - `aadharBack` / `aadhar_back`
+   - `panImage` / `pan_image`
+   - `electricityBillImage` / `electricity_bill_image`
+   - `bankPassbookImage` / `bank_passbook_image`
+   - `geotagRoofPhoto` / `geotag_roof_photo`
+   - `customerWithHousePhoto` / `customer_with_house_photo`
+   - `propertyDocumentPdf` / `property_document_pdf`
+   - compliant variants (`compliantAadharFront`, `compliantAadharBack`, `compliantPanImage`, `compliantBankPassbookImage`)
+3. Also echo saved scalar fields in same payload for reliable prefill:
+   - `phoneNumber` / `phone_number` (or `contactPhone`)
+   - `emailId` / `email_id` (or `contactEmail`)
+   - `electricityKno` / `electricity_kno`
+   - plus Aadhar/PAN/bank scalar values if stored.
+4. Keep response keys consistent across:
+   - `PATCH /quotations/{id}/documents` response
+   - `GET /quotations` and `GET /quotations/{id}` responses.
+5. If using signed URLs, ensure TTL is long enough for normal user review flow (open modal -> click View), or provide refreshable URLs.
+
+### QA checks
+
+1. Upload document set for a quotation and save.
+2. Reopen Document Submission modal from dashboard list.
+3. Verify fields prefill (`phone`, `email`, `KNO`, etc.) and each uploaded file has a working **View uploaded file** link.
+4. Hard refresh and repeat step 2/3 (no local cache dependency).
+5. Verify both image and PDF links open correctly, and users cannot access documents of unauthorized quotations.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:

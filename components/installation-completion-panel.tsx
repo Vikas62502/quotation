@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Image as ImageIcon, Plus, Trash2, Upload } from "lucide-react"
+import { Image as ImageIcon, Plus, Trash2, Upload, X } from "lucide-react"
 
 export type InstallationImageField = {
   readonly key: string
@@ -75,6 +75,7 @@ export function InstallationCompletionPanel({
   onCancel,
   onSave,
 }: Props) {
+  const [previewLoadErrorByField, setPreviewLoadErrorByField] = useState<Record<string, boolean>>({})
   const sampleBackgroundImageUrl =
     "https://img.freepik.com/premium-vector/house-front-view-home-facade-building-exterior_171867-73.jpg"
   const frontWithPersonBackgroundImageUrl =
@@ -85,6 +86,8 @@ export function InstallationCompletionPanel({
   const inverterWithSerialBackgroundImageUrl = "/install-guides/inverter-with-serial.png"
   const panelWithSerialBackgroundImageUrl = "/install-guides/panel-with-serial.png"
   const geotagWithPlantsBackgroundImageUrl = "/install-guides/geotag-with-plants.png"
+  const piTemplateBackgroundImageUrl =
+    "https://assets.refrens.com/442_Product_Quotation_Template_Word_2c06e58c5d.webp"
 
   const getImageGuide = (key: string) => {
     const k = String(key || "").toLowerCase()
@@ -139,6 +142,171 @@ export function InstallationCompletionPanel({
     }
   }, [uploadedFieldPreviewMap])
 
+  const piPreviewUrl = useMemo(() => {
+    if (!piFile) return ""
+    if (piFile.type?.startsWith("image/")) return URL.createObjectURL(piFile)
+    return ""
+  }, [piFile])
+
+  useEffect(() => {
+    return () => {
+      if (piPreviewUrl) URL.revokeObjectURL(piPreviewUrl)
+    }
+  }, [piPreviewUrl])
+
+  const renderImageFieldCard = (field: InstallationImageField) => {
+    const inputId = `install-image-${field.key}`
+    const key = String(field.key).toLowerCase()
+    const backgroundImageUrl = key.includes("homewithperson")
+      ? frontWithPersonBackgroundImageUrl
+      : key.includes("inverterwithcustomer")
+        ? inverterWithCustomerBackgroundImageUrl
+        : key.includes("plantwithcustomer")
+          ? plantWithCustomerBackgroundImageUrl
+          : key.includes("inverterserial")
+            ? inverterWithSerialBackgroundImageUrl
+            : key.includes("panelserial")
+              ? panelWithSerialBackgroundImageUrl
+              : key.includes("geotag")
+                ? geotagWithPlantsBackgroundImageUrl
+                : sampleBackgroundImageUrl
+    const uploadedCardPreviewUrl = uploadedFieldPreviewMap[field.key]
+    const hasUploadedPreview = Boolean(uploadedCardPreviewUrl) && !previewLoadErrorByField[field.key]
+
+    return (
+      <div key={field.key} className="space-y-1.5">
+        <p className="text-xs text-muted-foreground">
+          {field.label}
+          {field.required !== false ? " *" : ""}
+        </p>
+        <div
+          className="relative overflow-hidden rounded-md border border-dashed border-border/70 aspect-square"
+          style={{
+            backgroundImage: hasUploadedPreview ? undefined : `url(${backgroundImageUrl})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        >
+          {hasUploadedPreview ? (
+            <img
+              src={uploadedCardPreviewUrl}
+              alt={`${field.label} preview`}
+              className="absolute inset-0 h-full w-full object-cover"
+              onLoad={() =>
+                setPreviewLoadErrorByField((prev) =>
+                  prev[field.key] ? { ...prev, [field.key]: false } : prev,
+                )
+              }
+              onError={() =>
+                setPreviewLoadErrorByField((prev) => ({ ...prev, [field.key]: true }))
+              }
+            />
+          ) : null}
+          {((filesByField[field.key] || []).length > 0 || hasUploadedPreview) ? (
+            <button
+              type="button"
+              aria-label={`Remove ${field.label} image`}
+              className="absolute right-2 top-2 z-20 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm hover:bg-background"
+              onClick={() => {
+                setPreviewLoadErrorByField((prev) => ({ ...prev, [field.key]: false }))
+                onFilesChange(field.key, [])
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          <div className={`absolute inset-0 ${hasUploadedPreview ? "bg-background/20" : "bg-background/65"}`} />
+          <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
+            <div className="mt-0.5 rounded bg-background/80 p-1">
+              <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <p className={`text-[11px] leading-snug line-clamp-3 ${hasUploadedPreview ? "text-foreground" : "text-muted-foreground"}`}>
+              {getImageGuide(field.key)}
+            </p>
+          </div>
+          <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
+            <Label
+              htmlFor={inputId}
+              className="h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground cursor-pointer hover:bg-background"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Upload
+            </Label>
+          </div>
+        </div>
+        <Input
+          id={inputId}
+          type="file"
+          accept="image/*"
+          multiple={field.multiple === true}
+          className="hidden"
+          onChange={(e) => {
+            setPreviewLoadErrorByField((prev) => ({ ...prev, [field.key]: false }))
+            onFilesChange(field.key, Array.from(e.target.files || []))
+            // Allow selecting the same file again after replacing/removing.
+            e.currentTarget.value = ""
+          }}
+        />
+        <p className="text-[11px] text-muted-foreground truncate">
+          {(filesByField[field.key] || []).length > 0 ? `${(filesByField[field.key] || []).length} file(s) selected` : "No file selected"}
+        </p>
+        {previewLoadErrorByField[field.key] ? (
+          <p className="text-[11px] text-amber-700">
+            Preview unavailable for this image format in browser. Upload is still selected.
+          </p>
+        ) : null}
+      </div>
+    )
+  }
+
+  const renderPiUploadCard = () => {
+    return (
+      <div key="pi-upload-card" className="space-y-1.5">
+        <p className="text-xs text-muted-foreground">PI Upload</p>
+        <div
+          className="relative overflow-hidden rounded-md border border-dashed border-border/70 aspect-square"
+          style={{
+            backgroundImage: `url(${piPreviewUrl || piTemplateBackgroundImageUrl})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+          }}
+        >
+          <div className={`absolute inset-0 ${piPreviewUrl ? "bg-background/25" : "bg-background/55"}`} />
+          <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
+            <div className="mt-0.5 rounded bg-background/80 p-1">
+              <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+            </div>
+            <p className="text-[11px] leading-snug text-muted-foreground line-clamp-3">
+              Upload PI document or image. Template shown as guide background.
+            </p>
+          </div>
+          <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
+            <Label
+              htmlFor="install-pi-upload"
+              className="h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground cursor-pointer hover:bg-background"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              Upload PI
+            </Label>
+          </div>
+        </div>
+        <Input
+          id="install-pi-upload"
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            onPiFileChange(e.target.files?.[0] || null)
+            e.currentTarget.value = ""
+          }}
+        />
+        <p className="text-[11px] text-muted-foreground truncate">{piFile?.name || "No file selected"}</p>
+      </div>
+    )
+  }
+
+  const piSpacerCount = (3 - ((imageFields.length + 1) % 3)) % 3
+
   return (
     <div className="rounded-md border border-border/70 p-3 space-y-3">
       {loadingText ? <p className="text-xs text-muted-foreground">{loadingText}</p> : null}
@@ -146,76 +314,12 @@ export function InstallationCompletionPanel({
         <div className="space-y-3">
           <div className="space-y-1.5">
             <p className="text-xs font-medium">Installation Completion Images (required as marked *)</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {imageFields.map((field) => {
-                const inputId = `install-image-${field.key}`
-                const key = String(field.key).toLowerCase()
-                const backgroundImageUrl = key.includes("homewithperson")
-                  ? frontWithPersonBackgroundImageUrl
-                  : key.includes("inverterwithcustomer")
-                    ? inverterWithCustomerBackgroundImageUrl
-                    : key.includes("plantwithcustomer")
-                      ? plantWithCustomerBackgroundImageUrl
-                      : key.includes("inverterserial")
-                        ? inverterWithSerialBackgroundImageUrl
-                        : key.includes("panelserial")
-                          ? panelWithSerialBackgroundImageUrl
-                          : key.includes("geotag")
-                            ? geotagWithPlantsBackgroundImageUrl
-                            : sampleBackgroundImageUrl
-                const uploadedCardPreviewUrl = uploadedFieldPreviewMap[field.key]
-                return (
-                <div key={field.key} className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    {field.label}
-                    {field.required !== false ? " *" : ""}
-                  </p>
-                  <div
-                    className="relative overflow-hidden rounded-md border border-dashed border-border/70 aspect-square"
-                    style={{
-                      backgroundImage: `url(${uploadedCardPreviewUrl || backgroundImageUrl})`,
-                      backgroundSize: "cover",
-                      backgroundPosition: "center",
-                    }}
-                  >
-                    <div className={`absolute inset-0 ${uploadedCardPreviewUrl ? "bg-background/35" : "bg-background/65"}`} />
-                    <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
-                      <div className="mt-0.5 rounded bg-background/80 p-1">
-                        <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
-                      </div>
-                      <p className="text-[11px] leading-snug text-muted-foreground line-clamp-3">{getImageGuide(field.key)}</p>
-                    </div>
-                    <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
-                      <Label
-                        htmlFor={inputId}
-                        className="h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground cursor-pointer hover:bg-background"
-                      >
-                        <Upload className="w-3.5 h-3.5" />
-                        Upload
-                      </Label>
-                    </div>
-                  </div>
-                  <Input
-                    id={inputId}
-                    type="file"
-                    accept="image/*"
-                    multiple={field.multiple === true}
-                    className="hidden"
-                    onChange={(e) => onFilesChange(field.key, Array.from(e.target.files || []))}
-                  />
-                  <p className="text-[11px] text-muted-foreground truncate">
-                    {(filesByField[field.key] || []).length > 0 ? `${(filesByField[field.key] || []).length} file(s) selected` : "No file selected"}
-                  </p>
-                </div>
-              )})}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">PI Upload</Label>
-              <Input type="file" accept="application/pdf,image/*" onChange={(e) => onPiFileChange(e.target.files?.[0] || null)} />
-              <p className="text-[11px] text-muted-foreground truncate">{piFile?.name || "No file selected"}</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {imageFields.map((field) => renderImageFieldCard(field))}
+              {Array.from({ length: piSpacerCount }).map((_, idx) => (
+                <div key={`pi-spacer-${idx}`} className="hidden md:block" aria-hidden="true" />
+              ))}
+              {renderPiUploadCard()}
             </div>
           </div>
 
@@ -264,7 +368,7 @@ export function InstallationCompletionPanel({
           </div>
 
           <div className="space-y-1.5">
-            <p className="text-xs font-medium">Site legs (cm) *</p>
+            <p className="text-xs font-medium">Site legs (feet) *</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Back leg *</Label>
