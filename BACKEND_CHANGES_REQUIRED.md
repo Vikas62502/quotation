@@ -707,7 +707,7 @@ The installer dashboard sends **each completion image twice** (same file bytes):
 
 - **`installerCompletionImages`** — repeatable; each file is one site-completion image (required set is driven by UI; treat all received files as completion images).
 - **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
-  - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `otherImages`).
+  - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `panelSerialNumberPhoto` and `otherImages`).
 - **`piUpload`** — optional single file (PDF or image): proforma / PI document.
 
 ##### C.2 Site legs (dimensions) — **cm + feet**
@@ -2356,7 +2356,7 @@ Now uploaded document fields must also support **View existing file** without re
 1. On quotation fetch (list/details), include previously saved document metadata in a stable object, e.g. `documents` (or consistently aliased equivalent).
 2. For each uploaded file field, return an HTTP-accessible URL (signed/public as per security policy) so UI can open it in a new tab:
    - `aadharFront` / `aadhar_front`
-   - `aadharBack` / `aadhar_back`
+   - `aadharBack` / `aadhar_back`cc
    - `panImage` / `pan_image`
    - `electricityBillImage` / `electricity_bill_image`
    - `bankPassbookImage` / `bank_passbook_image`
@@ -2381,6 +2381,38 @@ Now uploaded document fields must also support **View existing file** without re
 3. Verify fields prefill (`phone`, `email`, `KNO`, etc.) and each uploaded file has a working **View uploaded file** link.
 4. Hard refresh and repeat step 2/3 (no local cache dependency).
 5. Verify both image and PDF links open correctly, and users cannot access documents of unauthorized quotations.
+
+---
+
+## M) Installation list source-of-truth (Accounts release only)
+
+Requirement clarification: quotation should appear in Installation/Installer operational lists **only after Account Management clicks "Send to installation"** (release step).  
+Manual installer-stage selection in admin list must not be treated as release trigger.
+
+### Required backend behavior
+
+1. Installer queue eligibility must be gated by release flags/timestamp from Accounts action:
+   - `installationReadyForInstaller` / `installation_ready_for_installer` = `true`
+   - and/or `installationReleasedAt` / `installation_released_at` present.
+2. Do **not** include non-released quotations in installer queue responses even if:
+   - `status = approved`, or
+   - installer stage/status field was set manually.
+3. Keep release semantics consistent across:
+   - Account Management release endpoint (`releaseForInstallation` flow),
+   - Installer queue GET endpoints,
+   - Admin Installation tab data feed.
+4. Treat installer-stage fields as workflow progress only (pending/in-progress/approved), not as visibility gate before release.
+5. If backend currently supports legacy fallback (`approved` => installer visibility), deprecate/disable that behavior.
+
+### QA checks
+
+1. Approve quotation but do **not** click send-to-installation:
+   - must **not** appear in installation/installer queue.
+2. Click send-to-installation:
+   - row appears in Admin Installation tab + installer dashboard.
+3. Change installer stage on a non-released quotation (if route exists):
+   - still must not appear until released.
+4. Verify same behavior after hard refresh and across roles.
 
 ---
 

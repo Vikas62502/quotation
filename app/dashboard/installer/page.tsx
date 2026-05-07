@@ -88,7 +88,7 @@ const INSTALLATION_IMAGE_FIELDS = [
   { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer" },
   { key: "plantWithCustomerPhoto", label: "Plant photo with Customer" },
   { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No" },
-  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No" },
+  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No", multiple: true },
   { key: "geoTagPlantPhoto", label: "GeoTag photo with plants" },
   { key: "otherImages", label: "Others Images", multiple: true, required: false },
 ] as const
@@ -696,20 +696,20 @@ export default function InstallerDashboardPage() {
     const backCm = dimensions.length.trim()
     const frontCm = dimensions.height.trim()
     const midCmRaw = dimensions.width.trim()
-    if (!backCm || !frontCm) {
+    const backN = backCm === "" ? undefined : parseFloat(backCm)
+    const frontN = frontCm === "" ? undefined : parseFloat(frontCm)
+    if (backCm !== "" && (!Number.isFinite(backN) || (backN as number) <= 0)) {
       toast({
-        title: "Site legs required",
-        description: "Please enter back leg and front leg (cm). Mid leg is optional.",
+        title: "Invalid back leg",
+        description: "Back leg must be a valid number greater than zero, or leave it empty.",
         variant: "destructive",
       })
       return
     }
-    const backN = parseFloat(backCm)
-    const frontN = parseFloat(frontCm)
-    if (!Number.isFinite(backN) || backN <= 0 || !Number.isFinite(frontN) || frontN <= 0) {
+    if (frontCm !== "" && (!Number.isFinite(frontN) || (frontN as number) <= 0)) {
       toast({
-        title: "Invalid dimensions",
-        description: "Back leg and front leg must be valid numbers greater than zero.",
+        title: "Invalid front leg",
+        description: "Front leg must be a valid number greater than zero, or leave it empty.",
         variant: "destructive",
       })
       return
@@ -775,12 +775,12 @@ export default function InstallerDashboardPage() {
         formData.append("siteLength", backCm)
         formData.append("siteWidth", midCmRaw === "" ? "" : midCmRaw)
         formData.append("siteHeight", frontCm)
-        formData.append("backLegCm", backCm)
+        if (backCm !== "") formData.append("backLegCm", backCm)
         if (midCmRaw !== "") formData.append("midLegCm", midCmRaw)
-        formData.append("frontLegCm", frontCm)
-        formData.append("backLegFeet", String(cmToFeet(backN)))
+        if (frontCm !== "") formData.append("frontLegCm", frontCm)
+        if (backN != null) formData.append("backLegFeet", String(cmToFeet(backN)))
         if (midN != null) formData.append("midLegFeet", String(cmToFeet(midN)))
-        formData.append("frontLegFeet", String(cmToFeet(frontN)))
+        if (frontN != null) formData.append("frontLegFeet", String(cmToFeet(frontN)))
         formData.append("installerRemarks", notes)
         formData.append("installationStatus", "installer_approved")
         await api.installer.uploadCompletionDocuments(quotation.id, formData)
@@ -801,14 +801,16 @@ export default function InstallerDashboardPage() {
           }
         }
         if (visitIdToPatch) {
-          const patchBody: Record<string, unknown> = {
-            unit: "cm",
-            length: backN,
-            height: frontN,
-            siteLength: backN,
-            siteHeight: frontN,
-            backLegFeet: cmToFeet(backN),
-            frontLegFeet: cmToFeet(frontN),
+          const patchBody: Record<string, unknown> = { unit: "cm" }
+          if (backN != null) {
+            patchBody.length = backN
+            patchBody.siteLength = backN
+            patchBody.backLegFeet = cmToFeet(backN)
+          }
+          if (frontN != null) {
+            patchBody.height = frontN
+            patchBody.siteHeight = frontN
+            patchBody.frontLegFeet = cmToFeet(frontN)
           }
           if (midN != null) {
             patchBody.width = midN
@@ -832,31 +834,29 @@ export default function InstallerDashboardPage() {
       uploadErrorMessage = apiErrorToUserMessage(err)
     } finally {
       setSavingId(null)
-      const backNum = parseFloat(dimensions.length)
-      const frontNum = parseFloat(dimensions.height)
+      const backNum = dimensions.length.trim() === "" ? undefined : parseFloat(dimensions.length)
+      const frontNum = dimensions.height.trim() === "" ? undefined : parseFloat(dimensions.height)
       const midStr = dimensions.width.trim()
       const midNum = midStr === "" ? undefined : parseFloat(midStr)
 
       if (apiSaved) {
-        if (Number.isFinite(backNum) && Number.isFinite(frontNum)) {
-          setQuotations((prev) =>
-            prev.map((it) => {
-              if (it.id !== quotation.id) return it
-              return {
-                ...it,
-                length: backNum,
-                height: frontNum,
-                siteLength: backNum,
-                siteHeight: frontNum,
-                backLegFeet: cmToFeet(backNum),
-                frontLegFeet: cmToFeet(frontNum),
-                ...(midNum != null && Number.isFinite(midNum)
-                  ? { width: midNum, siteWidth: midNum, midLegFeet: cmToFeet(midNum) }
-                  : {}),
-              }
-            }),
-          )
-        }
+        setQuotations((prev) =>
+          prev.map((it) => {
+            if (it.id !== quotation.id) return it
+            return {
+              ...it,
+              ...(backNum != null && Number.isFinite(backNum)
+                ? { length: backNum, siteLength: backNum, backLegFeet: cmToFeet(backNum) }
+                : {}),
+              ...(frontNum != null && Number.isFinite(frontNum)
+                ? { height: frontNum, siteHeight: frontNum, frontLegFeet: cmToFeet(frontNum) }
+                : {}),
+              ...(midNum != null && Number.isFinite(midNum)
+                ? { width: midNum, siteWidth: midNum, midLegFeet: cmToFeet(midNum) }
+                : {}),
+            }
+          }),
+        )
         setWorkflowMap((prev) => ({
           ...prev,
           [quotation.id]: {

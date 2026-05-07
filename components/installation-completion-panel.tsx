@@ -368,10 +368,10 @@ export function InstallationCompletionPanel({
           </div>
 
           <div className="space-y-1.5">
-            <p className="text-xs font-medium">Site legs (feet) *</p>
+            <p className="text-xs font-medium">Site legs (feet) (optional)</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <Label className="text-xs">Back leg *</Label>
+                <Label className="text-xs">Back leg</Label>
                 <Input type="number" min="0" step="0.01" value={dimensions.length} onChange={(e) => onDimensionsChange({ length: e.target.value })} />
               </div>
               <div>
@@ -379,7 +379,7 @@ export function InstallationCompletionPanel({
                 <Input type="number" min="0" step="0.01" value={dimensions.width} onChange={(e) => onDimensionsChange({ width: e.target.value })} />
               </div>
               <div>
-                <Label className="text-xs">Front leg *</Label>
+                <Label className="text-xs">Front leg</Label>
                 <Input type="number" min="0" step="0.01" value={dimensions.height} onChange={(e) => onDimensionsChange({ height: e.target.value })} />
               </div>
             </div>

@@ -43,6 +43,148 @@ export default function QuotationsPage() {
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
+  const createEmptyDocumentsForm = () => ({
+    isCompliantSenior: false,
+    aadharNumber: "",
+    aadharFront: null as File | string | null,
+    aadharBack: null as File | string | null,
+    compliantAadharNumber: "",
+    compliantAadharFront: null as File | string | null,
+    compliantAadharBack: null as File | string | null,
+    compliantContactPhone: "",
+    compliantPanNumber: "",
+    compliantPanImage: null as File | string | null,
+    compliantBankAccountNumber: "",
+    compliantBankIfsc: "",
+    compliantBankName: "",
+    compliantBankBranch: "",
+    compliantBankPassbookImage: null as File | string | null,
+    panNumber: "",
+    panImage: null as File | string | null,
+    electricityKno: "",
+    electricityBillImage: null as File | string | null,
+    bankAccountNumber: "",
+    bankIfsc: "",
+    bankName: "",
+    bankBranch: "",
+    bankPassbookImage: null as File | string | null,
+    geotagRoofPhoto: null as File | string | null,
+    customerWithHousePhoto: null as File | string | null,
+    propertyDocumentPdf: null as File | string | null,
+    contactPhone: "",
+    contactEmail: "",
+  })
+
+  const pickFirstValue = (sources: any[], aliases: string[]): any => {
+    for (const source of sources) {
+      if (!source || typeof source !== "object") continue
+      for (const key of aliases) {
+        const value = (source as any)[key]
+        if (value !== undefined && value !== null && value !== "") return value
+      }
+    }
+    return null
+  }
+
+  const seedDocumentsFormFromQuotation = (quotation: Quotation) => {
+    const q = quotation as any
+    const sources = [
+      q?.documents,
+      q?.documentDetails,
+      q?.document_details,
+      q?.customerDocuments,
+      q?.kycDocuments,
+      q?.kyc,
+      q?.customer?.documents,
+      q,
+    ]
+
+    const seeded = createEmptyDocumentsForm()
+    seeded.contactPhone = String(
+      pickFirstValue(sources, ["phoneNumber", "phone_number", "contactPhone", "contact_phone"]) ||
+      q?.customer?.mobile ||
+      "",
+    )
+    seeded.contactEmail = String(
+      pickFirstValue(sources, ["emailId", "email_id", "contactEmail", "contact_email", "email"]) ||
+      q?.customer?.email ||
+      "",
+    )
+    seeded.electricityKno = String(
+      pickFirstValue(sources, ["electricityKno", "electricity_kno", "kno", "kNo", "electricityBillKno"]) || "",
+    )
+    seeded.aadharNumber = String(pickFirstValue(sources, ["aadharNumber", "aadhar_number"]) || "")
+    seeded.panNumber = String(pickFirstValue(sources, ["panNumber", "pan_number"]) || "")
+
+    seeded.aadharFront = pickFirstValue(sources, ["aadharFront", "aadhar_front", "aadharFrontUrl", "aadhar_front_url"])
+    seeded.aadharBack = pickFirstValue(sources, ["aadharBack", "aadhar_back", "aadharBackUrl", "aadhar_back_url"])
+    seeded.panImage = pickFirstValue(sources, ["panImage", "pan_image", "panImageUrl", "pan_image_url"])
+    seeded.electricityBillImage = pickFirstValue(sources, [
+      "electricityBillImage",
+      "electricity_bill_image",
+      "electricityBillImageUrl",
+      "electricity_bill_image_url",
+    ])
+    seeded.bankPassbookImage = pickFirstValue(sources, [
+      "bankPassbookImage",
+      "bank_passbook_image",
+      "bankPassbookImageUrl",
+      "bank_passbook_image_url",
+    ])
+    seeded.propertyDocumentPdf = pickFirstValue(sources, [
+      "propertyDocumentPdf",
+      "property_document_pdf",
+      "propertyDocumentUrl",
+      "property_document_url",
+      "propertyDocumentPdfUrl",
+      "property_document_pdf_url",
+    ])
+    seeded.geotagRoofPhoto = pickFirstValue(sources, ["geotagRoofPhoto", "geotag_roof_photo", "geotagRoofPhotoUrl"])
+    seeded.customerWithHousePhoto = pickFirstValue(sources, [
+      "customerWithHousePhoto",
+      "customer_with_house_photo",
+      "customerWithHousePhotoUrl",
+    ])
+
+    return seeded
+  }
+
+  const openDocumentPreview = (value: unknown) => {
+    if (value instanceof File) {
+      const objectUrl = URL.createObjectURL(value)
+      window.open(objectUrl, "_blank", "noopener,noreferrer")
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+      return
+    }
+    if (typeof value === "string" && value.trim()) {
+      window.open(value, "_blank", "noopener,noreferrer")
+    }
+  }
+
+  const openDocumentsDialogForQuotation = (quotation: Quotation) => {
+    setDocumentsQuotation(quotation)
+    setDocumentsFormById((prev) => {
+      const existing = prev[quotation.id]
+      if (existing) return prev
+
+      let localDraft: Record<string, any> = {}
+      try {
+        localDraft = JSON.parse(localStorage.getItem(`quotation_documents_${quotation.id}`) || "{}")
+      } catch {
+        localDraft = {}
+      }
+
+      return {
+        ...prev,
+        [quotation.id]: {
+          ...seedDocumentsFormFromQuotation(quotation),
+          ...localDraft,
+        },
+      }
+    })
+    setDocumentsDialogOpen(true)
+  }
+
   useEffect(() => {
     if (!isAuthenticated) {
       router.push("/login")
@@ -276,39 +418,7 @@ export default function QuotationsPage() {
   }
 
   const getDocumentsForm = (quotationId: string) => {
-    return (
-      documentsFormById[quotationId] || {
-        isCompliantSenior: false,
-        aadharNumber: "",
-        aadharFront: null,
-        aadharBack: null,
-        compliantAadharNumber: "",
-        compliantAadharFront: null,
-        compliantAadharBack: null,
-        compliantContactPhone: "",
-        compliantPanNumber: "",
-        compliantPanImage: null,
-        compliantBankAccountNumber: "",
-        compliantBankIfsc: "",
-        compliantBankName: "",
-        compliantBankBranch: "",
-        compliantBankPassbookImage: null,
-        panNumber: "",
-        panImage: null,
-        electricityKno: "",
-        electricityBillImage: null,
-        bankAccountNumber: "",
-        bankIfsc: "",
-        bankName: "",
-        bankBranch: "",
-        bankPassbookImage: null,
-        geotagRoofPhoto: null,
-        customerWithHousePhoto: null,
-        propertyDocumentPdf: null,
-        contactPhone: "",
-        contactEmail: "",
-      }
-    )
+    return documentsFormById[quotationId] || createEmptyDocumentsForm()
   }
 
   const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
@@ -530,8 +640,7 @@ export default function QuotationsPage() {
                           variant="ghost"
                           size="icon"
                           onClick={() => {
-                            setDocumentsQuotation(quotation)
-                            setDocumentsDialogOpen(true)
+                            openDocumentsDialogForQuotation(quotation)
                           }}
                           title="Document Submission"
                         >
@@ -633,8 +742,7 @@ export default function QuotationsPage() {
                               variant="ghost"
                               size="icon"
                               onClick={() => {
-                                setDocumentsQuotation(quotation)
-                                setDocumentsDialogOpen(true)
+                                openDocumentsDialogForQuotation(quotation)
                               }}
                               title="Document Submission"
                             >
@@ -762,6 +870,11 @@ export default function QuotationsPage() {
                               updateDocumentsForm(documentsQuotation.id, { aadharFront: e.target.files?.[0] || null })
                             }
                           />
+                          {form.aadharFront ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.aadharFront)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                         <div>
                           <Label>Aadhar Back Image *</Label>
@@ -772,6 +885,11 @@ export default function QuotationsPage() {
                               updateDocumentsForm(documentsQuotation.id, { aadharBack: e.target.files?.[0] || null })
                             }
                           />
+                          {form.aadharBack ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.aadharBack)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -941,6 +1059,11 @@ export default function QuotationsPage() {
                               updateDocumentsForm(documentsQuotation.id, { panImage: e.target.files?.[0] || null })
                             }
                           />
+                          {form.panImage ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.panImage)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -969,6 +1092,11 @@ export default function QuotationsPage() {
                               })
                             }
                           />
+                          {form.electricityBillImage ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.electricityBillImage)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -1021,6 +1149,11 @@ export default function QuotationsPage() {
                               })
                             }
                           />
+                          {form.bankPassbookImage ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.bankPassbookImage)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -1078,6 +1211,11 @@ export default function QuotationsPage() {
                               })
                             }
                           />
+                          {form.propertyDocumentPdf ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.propertyDocumentPdf)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                       </div>
                     </div>

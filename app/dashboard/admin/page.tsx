@@ -58,7 +58,6 @@ import {
   setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
   flattenWrappedQuotationRow,
-  isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
 import {
   createInstallationTeam,
@@ -100,7 +99,7 @@ const ADMIN_INSTALLATION_IMAGE_FIELDS = [
   { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer" },
   { key: "plantWithCustomerPhoto", label: "Plant photo with Customer" },
   { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No" },
-  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No" },
+  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No", multiple: true },
   { key: "geoTagPlantPhoto", label: "GeoTag photo with plants" },
   { key: "otherImages", label: "Others Images", multiple: true, required: false },
 ] as const
@@ -1560,9 +1559,7 @@ export default function AdminPanelPage() {
   }
 
   function isInstallerVisible(quotation: Quotation) {
-    if (useApi && installerQueueIds.size > 0) {
-      return installerQueueIds.has(quotation.id)
-    }
+    const qAny = quotation as any
     let localReleaseMap: Record<string, any> = {}
     if (typeof window !== "undefined") {
       try {
@@ -1571,8 +1568,19 @@ export default function AdminPanelPage() {
         localReleaseMap = {}
       }
     }
-    // Keep Admin Installation list exactly aligned with Installer dashboard visibility.
-    return isQuotationReleasedToInstaller(quotation as any, localReleaseMap)
+    const releasedByAccounts =
+      qAny.installationReadyForInstaller === true ||
+      qAny.installation_ready_for_installer === true ||
+      qAny.readyForInstallation === true ||
+      qAny.ready_for_installation === true ||
+      qAny.releaseToInstaller === true ||
+      Boolean(qAny.installationReleasedAt || qAny.installation_released_at) ||
+      localReleaseMap?.[qAny.id]?.installationReadyForInstaller === true
+
+    if (useApi && installerQueueIds.size > 0) {
+      return installerQueueIds.has(quotation.id) && releasedByAccounts
+    }
+    return releasedByAccounts
   }
 
   function isMeteringVisible(quotation: Quotation) {
@@ -1950,21 +1958,20 @@ export default function AdminPanelPage() {
     const backCm = adminInstallDimensions.length.trim()
     const frontCm = adminInstallDimensions.height.trim()
     const midCmRaw = adminInstallDimensions.width.trim()
-    if (!backCm || !frontCm) {
+    const backN = backCm ? Number(backCm) : undefined
+    const frontN = frontCm ? Number(frontCm) : undefined
+    if (backCm && (!Number.isFinite(backN) || (backN as number) <= 0)) {
       toast({
-        title: "Site legs required",
-        description: "Please enter back leg and front leg (cm). Mid leg is optional.",
+        title: "Invalid back leg",
+        description: "Back leg must be a valid number greater than zero, or leave it empty.",
         variant: "destructive",
       })
       return
     }
-
-    const backN = Number(backCm)
-    const frontN = Number(frontCm)
-    if (!Number.isFinite(backN) || backN <= 0 || !Number.isFinite(frontN) || frontN <= 0) {
+    if (frontCm && (!Number.isFinite(frontN) || (frontN as number) <= 0)) {
       toast({
-        title: "Invalid dimensions",
-        description: "Back leg and front leg must be valid numbers greater than zero.",
+        title: "Invalid front leg",
+        description: "Front leg must be a valid number greater than zero, or leave it empty.",
         variant: "destructive",
       })
       return
@@ -2020,12 +2027,12 @@ export default function AdminPanelPage() {
       formData.append("siteLength", backCm)
       formData.append("siteWidth", midCmRaw === "" ? "" : midCmRaw)
       formData.append("siteHeight", frontCm)
-      formData.append("backLegCm", backCm)
+      if (backCm) formData.append("backLegCm", backCm)
       if (midCmRaw) formData.append("midLegCm", midCmRaw)
-      formData.append("frontLegCm", frontCm)
-      formData.append("backLegFeet", String(cmToFeet(backN)))
+      if (frontCm) formData.append("frontLegCm", frontCm)
+      if (backN != null) formData.append("backLegFeet", String(cmToFeet(backN)))
       if (midCmRaw) formData.append("midLegFeet", String(cmToFeet(Number(midCmRaw))))
-      formData.append("frontLegFeet", String(cmToFeet(frontN)))
+      if (frontN != null) formData.append("frontLegFeet", String(cmToFeet(frontN)))
       formData.append("installerRemarks", adminInstallNotes)
       formData.append("installationStatus", "installer_approved")
 
@@ -3933,25 +3940,9 @@ export default function AdminPanelPage() {
                                 <SelectItem value="completed">Completed</SelectItem>
                               </SelectContent>
                             </Select>
-                            <Select
-                              value={getOperationalStage(quotation) || "unset"}
-                              onValueChange={(value) => {
-                                if (value === "unset") return
-                                void updateOperationalStage(quotation.id, value as AdminOperationalStage)
-                              }}
-                            >
-                              <SelectTrigger className="w-full h-9 text-xs">
-                                <SelectValue placeholder="Operational stage" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="unset">Operational stage</SelectItem>
-                                {ADMIN_OPERATIONAL_STAGES.map((stage) => (
-                                  <SelectItem key={stage} value={stage}>
-                                    {stage.replaceAll("_", " ")}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <div className="h-9 rounded-md border border-border/70 px-2 flex items-center text-xs capitalize bg-muted/30">
+                              {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
+                            </div>
                             <p className="text-[10px] text-muted-foreground leading-snug">
                               Ops: {getOperationalStage(quotation) ? getOperationalStage(quotation).replaceAll("_", " ") : "Not set"}
                             </p>
@@ -4101,25 +4092,9 @@ export default function AdminPanelPage() {
                                     {(quotation.status || "pending").charAt(0).toUpperCase() +
                                       (quotation.status || "pending").slice(1)}
                                   </Badge>
-                                  <Select
-                                    value={getOperationalStage(quotation) || "unset"}
-                                    onValueChange={(value) => {
-                                      if (value === "unset") return
-                                      void updateOperationalStage(quotation.id, value as AdminOperationalStage)
-                                    }}
-                                  >
-                                    <SelectTrigger className="w-full min-w-0 h-8 text-xs">
-                                      <SelectValue placeholder="Ops stage" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="unset">Operational stage</SelectItem>
-                                      {ADMIN_OPERATIONAL_STAGES.map((stage) => (
-                                        <SelectItem key={stage} value={stage}>
-                                          {stage.replaceAll("_", " ")}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
+                                  <div className="w-full min-w-0 h-8 rounded-md border border-border/70 px-2 flex items-center text-xs capitalize bg-muted/30">
+                                    {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
+                                  </div>
                                   <Badge variant="outline" className="text-[10px] w-full justify-center capitalize">
                                     {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
                                   </Badge>
