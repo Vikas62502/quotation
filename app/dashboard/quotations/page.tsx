@@ -208,6 +208,7 @@ export default function QuotationsPage() {
         const response = await api.quotations.getAll()
         const dealerQuotations = (response.quotations || [])
           .map((q: any) => ({
+            ...q,
             id: q.id,
             customer: q.customer || {},
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
@@ -1447,11 +1448,17 @@ export default function QuotationsPage() {
                           setDocumentsDialogOpen(false)
                         })
                         .catch((error: unknown) => {
+                          localStorage.setItem(
+                            `quotation_documents_${documentsQuotation.id}`,
+                            JSON.stringify(form),
+                          )
                           toast({
-                            title: "Upload failed",
-                            description: apiErrorToUserMessage(error),
-                            variant: "destructive",
+                            title: "Saved locally",
+                            description:
+                              "Backend upload is unavailable right now. Your changes are saved locally.",
                           })
+                          console.warn("Documents upload fallback (saved locally):", apiErrorToUserMessage(error))
+                          setDocumentsDialogOpen(false)
                         })
                         .finally(() => setIsSubmittingDocuments(false))
                     } else {

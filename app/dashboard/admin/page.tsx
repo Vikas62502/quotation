@@ -2653,11 +2653,39 @@ export default function AdminPanelPage() {
         quotationWithDocuments?.quotationDocuments ||
         {}
 
+      const contactPhoneFallback =
+        quotationWithDocuments?.documents?.phoneNumber ||
+        quotationWithDocuments?.documents?.contactPhone ||
+        quotationWithDocuments?.documents?.phone_number ||
+        quotationWithDocuments?.customer?.mobile ||
+        quotationWithDocuments?.phoneNumber ||
+        quotationWithDocuments?.phone_number ||
+        ""
+      const contactEmailFallback =
+        quotationWithDocuments?.documents?.emailId ||
+        quotationWithDocuments?.documents?.contactEmail ||
+        quotationWithDocuments?.documents?.email_id ||
+        quotationWithDocuments?.customer?.email ||
+        quotationWithDocuments?.emailId ||
+        quotationWithDocuments?.email_id ||
+        ""
+      const electricityKnoFallback =
+        quotationWithDocuments?.documents?.electricityKno ||
+        quotationWithDocuments?.electricityKno ||
+        quotationWithDocuments?.electricity_kno ||
+        ""
+
+      const mapped = mapDocumentsToForm(documents)
+
       setDocumentsFormById((prev) => ({
         ...prev,
         [quotation.id]: {
           ...getDocumentsForm(quotation.id),
-          ...mapDocumentsToForm(documents),
+          ...mapped,
+          // Fallback prefill for B2C/inventory flows where backend may not echo KYC docs payload
+          contactPhone: String((mapped.contactPhone || contactPhoneFallback) || ""),
+          contactEmail: String((mapped.contactEmail || contactEmailFallback) || ""),
+          electricityKno: String((mapped.electricityKno || documents.electricityKno || electricityKnoFallback) || ""),
           ...(prev[quotation.id] || {}),
         },
       }))

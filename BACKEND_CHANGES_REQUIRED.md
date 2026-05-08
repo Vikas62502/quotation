@@ -2416,6 +2416,89 @@ Manual installer-stage selection in admin list must not be treated as release tr
 
 ---
 
+## N) Document submission live stability (avoid 500 on submit)
+
+Issue seen on production: document submit (`PATCH /quotations/{id}/documents`) intermittently returns **500 Internal Server Error**, while local works.
+
+### Required backend behavior
+
+1. `PATCH /quotations/{id}/documents` must accept mixed payload safely:
+   - scalar text fields (phone/email/KNO/Aadhar/PAN/bank fields)
+   - optional file fields (some may be omitted on edit)
+   - repeated multipart keys where applicable.
+2. Do not fail when only scalar fields are updated and no new files are sent.
+3. If existing document files are already stored, PATCH should preserve them unless explicitly replaced/cleared.
+4. Return a stable success body including latest document metadata (URLs + scalar values), e.g.:
+   - `documents` object with file URLs
+   - scalar values (`phoneNumber`, `emailId`, `electricityKno`, etc.)
+5. Error handling:
+   - avoid generic 500 for validation/storage issues
+   - return structured 4xx/5xx JSON with clear `code`, `message`, optional `details[]`.
+6. Storage layer hardening (common production 500 causes):
+   - invalid/missing bucket credentials
+   - ACL/policy denial
+   - unsupported MIME handling
+   - oversized file rejection without proper error mapping.
+7. Keep GET + PATCH contracts aligned:
+   - `GET /quotations` and `GET /quotations/{id}` should include saved `documents` metadata so frontend can show "View uploaded file" links after refresh.
+
+### Minimum response contract (recommended)
+
+On success:
+- `success: true`
+- `data.documents` (or `documents`) with URLs for uploaded files
+- scalar values echoed (`phoneNumber`, `emailId`, `electricityKno`, ...)
+
+On failure:
+- `success: false`
+- `error.code`
+- `error.message`
+- optional `error.details[]`
+
+### QA checks
+
+1. Submit only scalar updates (no files) -> should succeed.
+2. Submit with 1-2 files, then with full set -> should succeed.
+3. Reopen modal after save/hard refresh -> previously uploaded files available via view links.
+4. Invalid file type/size -> returns descriptive 4xx, not generic 500.
+5. Simulate storage outage -> returns structured error payload, no HTML/raw server dump.
+
+---
+
+## O) Inventory approvals (B2C/B2B) -> quotation + installation prefill
+
+Requirement: approvals done in the **Inventory** system (e.g. **B2C customer like "Chetan"**) must create/update a quotation in this system **using the same backend**, so that:
+- the selected **customer type** (B2C/B2B/...) is persisted
+- the selected **product/config** is persisted
+- Installation tab (PI upload panel) + Document Submission modal can **prefill phone/email/KNO** and show correct product info without re-selecting.
+
+### Required backend behavior
+
+1. When Inventory creates/updates a quotation, persist these fields in quotation record:
+   - `customerType` / `customer_type` (string, e.g. `b2c`, `b2b`)
+   - `products` (the same shape used by quotation flows: systemType, panel config, inverter config, etc.)
+   - customer contact: `customer.mobile`, `customer.email`
+   - billing identifier: `electricityKno` / `electricity_kno` (if available)
+2. Ensure `GET /quotations` and `GET /quotations/{id}` return those fields (do not strip them in list endpoints).
+3. Ensure Document Submission API can prefill from quotation/customer fields even if `documents` object is empty:
+   - return `customer.mobile`, `customer.email`, `electricityKno`
+4. If product selection is stored in a separate table (e.g. `quotationProduct`), still include a merged/normalized `products` object in GET responses for frontend rendering.
+5. Data consistency: Inventory approval update should be idempotent and safe to call multiple times (no duplicate quotations).
+
+### QA checks
+
+1. Approve a **B2C** record in Inventory and open the quotation here:
+   - customer shows correctly
+   - products show correctly (same as selected in Inventory)
+2. Open Admin Installation tab PI upload panel:
+   - phone/email/KNO are available for prefill (where applicable)
+3. Open Document Submission modal:
+   - phone/email/KNO prefilled without manual input
+4. Hard refresh:
+   - same fields still present (no local-only dependency).
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
