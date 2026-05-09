@@ -149,13 +149,36 @@ const normalizeMediaUrl = (raw: any): string | undefined => {
   if (!raw) return undefined
   const value = typeof raw === "string" ? raw.trim() : ""
   if (!value) return undefined
+
+  const normalizeLikelyDoubleEncodedS3Url = (urlStr: string) => {
+    try {
+      const parsed = new URL(urlStr)
+      const host = parsed.hostname.toLowerCase()
+      const isAwsHost = host.includes("amazonaws.com")
+      if (!isAwsHost) return urlStr
+
+      let nextPath = parsed.pathname
+      // Some backends send `%2520` (double-encoded). Decode a couple of passes max.
+      for (let i = 0; i < 2; i += 1) {
+        if (!nextPath.includes("%25")) break
+        nextPath = decodeURIComponent(nextPath)
+      }
+      if (nextPath !== parsed.pathname) {
+        parsed.pathname = nextPath
+        return parsed.toString()
+      }
+      return urlStr
+    } catch {
+      return urlStr
+    }
+  }
   if (
     value.startsWith("http://") ||
     value.startsWith("https://") ||
     value.startsWith("data:") ||
     value.startsWith("blob:")
   ) {
-    return value
+    return normalizeLikelyDoubleEncodedS3Url(value)
   }
   if (value.startsWith("//")) return `https:${value}`
   if (value.startsWith("/")) {

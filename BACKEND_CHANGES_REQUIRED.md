@@ -2658,8 +2658,9 @@ In Visitor completed cards, "Open uploaded file" links must work on production f
    - allow aliases like `site_images`, `row_diagram_image`, `meter_image`.
 2. If storage is private, return short-lived signed URLs (or provide a stable download proxy endpoint).
 3. Avoid returning raw internal keys only (e.g. just `uploads/abc.jpg`) unless frontend media base mapping is guaranteed.
-4. Keep URL fields present in both list and detail visit responses used by visitor dashboard.
-5. Ensure CORS/content-type for media URLs allow direct browser open in new tab.
+4. Do not return double-encoded keys/URLs (e.g. `%2520`); return canonical object URL or single-encoded key only.
+5. Keep URL fields present in both list and detail visit responses used by visitor dashboard.
+6. Ensure CORS/content-type for media URLs allow direct browser open in new tab.
 
 ### QA checks
 
