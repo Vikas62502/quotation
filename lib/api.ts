@@ -970,7 +970,29 @@ export const api = {
         formData.append("meterImage", meterImageFile)
       }
 
-      return multipartRequest(`/visits/${visitId}/complete`, "PATCH", formData)
+      const attempts = [
+        `/visits/${visitId}/complete`,
+        `/visitors/visits/${visitId}/complete`,
+        `/visitors/me/visits/${visitId}/complete`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of attempts) {
+        try {
+          return await multipartRequest(endpoint, "PATCH", cloneFormData(formData))
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" ||
+              error.code === "HTTP_405" ||
+              error.code === "HTTP_501" ||
+              error.code === "HTTP_403" ||
+              error.code === "AUTH_004")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
     },
 
     incomplete: async (visitId: string, reason: string) => {

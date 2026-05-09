@@ -166,17 +166,19 @@ export default function DashboardPage() {
       if (existing) return prev
 
       let localDraft: Record<string, any> = {}
-      try {
-        localDraft = JSON.parse(localStorage.getItem(`quotation_documents_${quotation.id}`) || "{}")
-      } catch {
-        localDraft = {}
+      if (!useApi) {
+        try {
+          localDraft = JSON.parse(localStorage.getItem(`quotation_documents_${quotation.id}`) || "{}")
+        } catch {
+          localDraft = {}
+        }
       }
 
       return {
         ...prev,
         [quotation.id]: {
           ...seedDocumentsFormFromQuotation(quotation),
-          ...localDraft,
+          ...(useApi ? {} : localDraft),
         },
       }
     })
@@ -1545,12 +1547,25 @@ export default function DashboardPage() {
                       const formData = buildDocumentsFormData(form)
                       api.quotations
                         .updateDocuments(documentsQuotation.id, formData)
-                        .then(() => {
+                        .then(async () => {
+                          try {
+                            const fullQuotation = await api.quotations.getById(documentsQuotation.id)
+                            const mergedQuotation = { ...documentsQuotation, ...fullQuotation } as Quotation
+                            setDocumentsQuotation(mergedQuotation)
+                            setDocumentsFormById((prev) => ({
+                              ...prev,
+                              [documentsQuotation.id]: {
+                                ...seedDocumentsFormFromQuotation(mergedQuotation),
+                                ...(prev[documentsQuotation.id] || {}),
+                              },
+                            }))
+                          } catch (refreshError) {
+                            console.warn("Could not refresh documents after submit:", refreshError)
+                          }
                           toast({
                             title: "Document details saved",
-                            description: "Documents uploaded successfully.",
+                            description: "Documents uploaded successfully and refreshed from backend.",
                           })
-                          setDocumentsDialogOpen(false)
                         })
                         .catch((error: unknown) => {
                           // Keep flow smooth on transient/live backend upload failures.

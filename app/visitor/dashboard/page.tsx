@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { api, ApiError } from "@/lib/api"
+import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
 import { API_CONFIG } from "@/lib/api-config"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -162,6 +162,19 @@ const normalizeMediaUrl = (raw: any): string | undefined => {
     if (typeof window !== "undefined") return `${window.location.origin}${value}`
     return value
   }
+  if (value.startsWith("s3://")) {
+    const withoutScheme = value.replace(/^s3:\/\//, "")
+    const slashIdx = withoutScheme.indexOf("/")
+    if (slashIdx > 0) {
+      const bucket = withoutScheme.slice(0, slashIdx)
+      const key = withoutScheme.slice(slashIdx + 1)
+      return `https://${bucket}.s3.amazonaws.com/${key}`
+    }
+  }
+  const mediaBase = String(process.env.NEXT_PUBLIC_MEDIA_BASE_URL || "").trim().replace(/\/+$/, "")
+  if (mediaBase) {
+    return `${mediaBase}/${value.replace(/^\/+/, "")}`
+  }
   const apiHost = API_CONFIG.baseURL.replace(/\/api\/?$/, "")
   return `${apiHost}/${value.replace(/^\/+/, "")}`
 }
@@ -236,6 +249,7 @@ export default function VisitorDashboardPage() {
     "rescheduled",
   )
   const [isLoadingVisits, setIsLoadingVisits] = useState(false)
+  const [isCompletingVisit, setIsCompletingVisit] = useState(false)
 
   useEffect(() => {
     setCurrentPage(1)
@@ -400,25 +414,27 @@ export default function VisitorDashboardPage() {
     setAssignedVisits((prev) => prev.map((v) => (v.id === visitId ? updater(v) : v)))
 
     // Best-effort local persistence so page reload preserves fallback update.
-    try {
-      const key = `visits_${quotationId}`
-      const storedVisits = JSON.parse(localStorage.getItem(key) || "[]")
-      if (Array.isArray(storedVisits) && storedVisits.length > 0) {
-        const updatedVisits = storedVisits.map((v: Visit) => {
-          if (v.id !== visitId) return v
-          const merged = updater({
-            ...v,
-            quotation: selectedVisit?.quotation as Quotation,
-            quotationId,
-            createdAt: v.createdAt || new Date().toISOString(),
-          } as VisitWithQuotation)
-          const { quotation, quotationId: _qid, dealer, ...plainVisit } = merged
-          return plainVisit as Visit
-        })
-        localStorage.setItem(key, JSON.stringify(updatedVisits))
+    if (!useApi) {
+      try {
+        const key = `visits_${quotationId}`
+        const storedVisits = JSON.parse(localStorage.getItem(key) || "[]")
+        if (Array.isArray(storedVisits) && storedVisits.length > 0) {
+          const updatedVisits = storedVisits.map((v: Visit) => {
+            if (v.id !== visitId) return v
+            const merged = updater({
+              ...v,
+              quotation: selectedVisit?.quotation as Quotation,
+              quotationId,
+              createdAt: v.createdAt || new Date().toISOString(),
+            } as VisitWithQuotation)
+            const { quotation, quotationId: _qid, dealer, ...plainVisit } = merged
+            return plainVisit as Visit
+          })
+          localStorage.setItem(key, JSON.stringify(updatedVisits))
+        }
+      } catch {
+        // ignore localStorage fallback errors
       }
-    } catch {
-      // ignore localStorage fallback errors
     }
   }
 
@@ -629,9 +645,11 @@ export default function VisitorDashboardPage() {
   }
 
   const handleCompleteVisit = async () => {
-    if (!selectedVisit) return
+    if (!selectedVisit || isCompletingVisit) return
 
+    setIsCompletingVisit(true)
     try {
+      const visitSnapshot = selectedVisit
       const L = parseFloat(lengthFeet) || 0
       const W = parseFloat(widthFeet) || 0
       const back = parseFloat(backLegFeet) || 0
@@ -640,51 +658,27 @@ export default function VisitorDashboardPage() {
       const front = parseFloat(frontLegFeet) || 0
       const legacyHeight = Math.max(back, mid, front)
 
-      // Previews already include persisted URLs and data URLs for newly selected files.
       const allImages = [...imagePreviews]
-
-      let rowDiagramImage: string | undefined
-      if (rowDiagramFile) {
-        rowDiagramImage = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = (e) => resolve(e.target?.result as string)
-          reader.readAsDataURL(rowDiagramFile)
-        })
-      } else if (rowDiagramPreview) {
-        rowDiagramImage = rowDiagramPreview
-      }
-
-      let meterImage: string | undefined
-      if (meterImageFile) {
-        meterImage = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onload = (e) => resolve(e.target?.result as string)
-          reader.readAsDataURL(meterImageFile)
-        })
-      } else if (meterImagePreview) {
-        meterImage = meterImagePreview
-      }
-
-      const completePayload = {
-        length: L,
-        width: W,
-        height: legacyHeight,
+      const visitPatch: Partial<VisitWithQuotation> = {
+        status: "completed" as const,
+        length: L || undefined,
+        width: W || undefined,
+        height: legacyHeight || undefined,
         unit: "feet" as const,
-        backLegFeet: back,
-        ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
-        frontLegFeet: front,
-        images: allImages,
+        backLegFeet: back || undefined,
+        midLegFeet: midLegFeet.trim() !== "" ? mid : undefined,
+        frontLegFeet: front || undefined,
+        rowDiagramImage: rowDiagramPreview || undefined,
+        meterImage: meterImagePreview || undefined,
+        images: allImages.length > 0 ? allImages : undefined,
         notes: completeNotes.trim() || undefined,
-        ...(rowDiagramImage ? { rowDiagramImage } : {}),
-        ...(meterImage ? { meterImage } : {}),
       }
 
-      let syncedWithApi = false
       if (useApi) {
         try {
           const persistedImages = imagePreviews.slice(0, persistedSiteImageCount)
           await api.visits.completeWithFiles(
-            selectedVisit.id,
+            visitSnapshot.id,
             {
               length: L,
               width: W,
@@ -702,64 +696,56 @@ export default function VisitorDashboardPage() {
             rowDiagramFile,
             meterImageFile,
           )
-          syncedWithApi = true
-          await loadAssignedVisits()
         } catch (error) {
           console.warn("Visitor complete multipart API failed, trying JSON fallback:", error)
-          try {
-            await api.visits.complete(selectedVisit.id, completePayload)
-            syncedWithApi = true
-            await loadAssignedVisits()
-          } catch (jsonError) {
-            console.warn("Visitor complete JSON API failed, applying local fallback:", jsonError)
-          }
+          const rowDiagramImage = rowDiagramFile
+            ? await new Promise<string>((resolve) => {
+                const reader = new FileReader()
+                reader.onload = (e) => resolve(e.target?.result as string)
+                reader.readAsDataURL(rowDiagramFile)
+              })
+            : rowDiagramPreview || undefined
+
+          const meterImage = meterImageFile
+            ? await new Promise<string>((resolve) => {
+                const reader = new FileReader()
+                reader.onload = (e) => resolve(e.target?.result as string)
+                reader.readAsDataURL(meterImageFile)
+              })
+            : meterImagePreview || undefined
+
+          await api.visits.complete(visitSnapshot.id, {
+            length: L,
+            width: W,
+            height: legacyHeight,
+            unit: "feet" as const,
+            backLegFeet: back,
+            ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
+            frontLegFeet: front,
+            images: allImages,
+            notes: completeNotes.trim() || undefined,
+            ...(rowDiagramImage ? { rowDiagramImage } : {}),
+            ...(meterImage ? { meterImage } : {}),
+          })
         }
-      }
-
-      const visitPatch = {
-        status: "completed" as const,
-        length: L || undefined,
-        width: W || undefined,
-        height: legacyHeight || undefined,
-        unit: "feet" as const,
-        backLegFeet: back || undefined,
-        midLegFeet: midLegFeet.trim() !== "" ? mid : undefined,
-        frontLegFeet: front || undefined,
-        rowDiagramImage: rowDiagramImage || undefined,
-        meterImage: meterImage || undefined,
-        images: allImages.length > 0 ? allImages : undefined,
-        notes: completeNotes.trim() || undefined,
-      }
-
-      if (!syncedWithApi) {
-        // Fallback to localStorage
-        const storedVisits = JSON.parse(localStorage.getItem(`visits_${selectedVisit.quotationId}`) || "[]")
+      } else {
+        // Local-only mode fallback
+        const storedVisits = JSON.parse(localStorage.getItem(`visits_${visitSnapshot.quotationId}`) || "[]")
         const updatedVisits = storedVisits.map((v: Visit) => {
-          if (v.id === selectedVisit.id) {
-            return {
-              ...v,
-              ...visitPatch,
-            }
+          if (v.id === visitSnapshot.id) {
+            return { ...v, ...visitPatch }
           }
           return v
         })
-        localStorage.setItem(`visits_${selectedVisit.quotationId}`, JSON.stringify(updatedVisits))
-        if (updatedVisits.length > 0) {
-          await loadAssignedVisits()
-        } else {
-          applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
-            ...v,
-            ...visitPatch,
-          }))
-        }
-      } else {
-        // Ensure Completed tab immediately reflects submitted details even if
-        // list API response is delayed/partial for completion fields.
-        applyVisitUpdateFallback(selectedVisit.quotationId, selectedVisit.id, (v) => ({
-          ...v,
-          ...visitPatch,
-        }))
+        localStorage.setItem(`visits_${visitSnapshot.quotationId}`, JSON.stringify(updatedVisits))
       }
+
+      // Success path: update UI quickly, then refresh authoritative server state.
+      applyVisitUpdateFallback(visitSnapshot.quotationId, visitSnapshot.id, (v) => ({
+        ...v,
+        ...visitPatch,
+      }))
+      if (useApi) void loadAssignedVisits()
 
       setCompleteDialogOpen(false)
       setSelectedVisit(null)
@@ -779,7 +765,16 @@ export default function VisitorDashboardPage() {
       setCompleteNotes("")
     } catch (error) {
       console.error("Error completing visit:", error)
-      alert(error instanceof ApiError ? error.message : "Failed to complete visit")
+      const message = apiErrorToUserMessage(error)
+      if (error instanceof ApiError && (error.code === "AUTH_004" || /insufficient permissions/i.test(message))) {
+        alert(
+          "Submit blocked by backend permissions for visitor complete endpoint. Please allow visitor role on visit complete API.",
+        )
+      } else {
+        alert(message || "Failed to complete visit")
+      }
+    } finally {
+      setIsCompletingVisit(false)
     }
   }
 
@@ -1994,6 +1989,7 @@ export default function VisitorDashboardPage() {
               <Button
                 onClick={handleCompleteVisit}
                 disabled={
+                  isCompletingVisit ||
                   !lengthFeet ||
                   !widthFeet ||
                   !backLegFeet ||
@@ -2004,7 +2000,7 @@ export default function VisitorDashboardPage() {
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
-                Complete Visit
+                {isCompletingVisit ? "Submitting..." : "Complete Visit"}
               </Button>
             </div>
           </div>

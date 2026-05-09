@@ -2499,6 +2499,178 @@ Requirement: approvals done in the **Inventory** system (e.g. **B2C customer lik
 
 ---
 
+## P) Visitor "Complete Visit" submit performance + reliability
+
+Issue: Visitor completes visit with dimensions + images, but submit can feel slow and sometimes appears unsaved.
+
+### Required backend behavior
+
+1. Prioritize multipart endpoint stability/performance for visit completion:
+   - `POST/PATCH /visits/{id}/complete` (or current equivalent used by `api.visits.completeWithFiles`)
+   - support mixed payload: dimensions + notes + existing image refs + new files.
+2. Target low-latency response for common payload sizes (few images):
+   - avoid long synchronous image post-processing in request thread;
+   - if heavy processing is required, persist first and process async.
+3. Ensure idempotency for duplicate/retry submits:
+   - repeated completion calls for same visit should not create duplicate records/files.
+4. Return canonical updated visit data in success response:
+   - `status`, dimensions (`length`,`width`,`height`,`backLegFeet`,`midLegFeet`,`frontLegFeet`),
+   - image URLs/names (`images`, `rowDiagramImage`, `meterImage`),
+   - `notes`, `updatedAt`.
+5. Preserve previously uploaded media when client sends `existingImages` / existing row/meter image refs and only updates partial files.
+6. Structured error responses (no generic HTML/opaque 500):
+   - `{ success:false, error:{ code, message, details? } }`
+7. Keep JSON fallback endpoint behavior aligned with multipart endpoint (same validation and response shape).
+
+### QA checks
+
+1. Submit completion with 3-5 images + row diagram + meter image -> success within acceptable UX time.
+2. Retry same submit (double click/network retry) -> no duplicate media or conflicting visit state.
+3. Submit with only dimension updates while keeping existing images -> existing media remains intact.
+4. Multipart failure path: JSON fallback should still save with consistent response structure.
+5. Hard refresh after submit -> visit remains completed with all uploaded assets.
+
+---
+
+## Q) Document modal data source = backend authoritative (API mode)
+
+Frontend behavior now: when API mode is enabled, Document Submission modal opens using **backend payload only** (no localStorage merge).
+
+### Required backend behavior
+
+1. `GET /quotations` and `GET /quotations/{id}` must return authoritative document-prefill data:
+   - `documents` (or stable equivalent object) with existing file URLs
+   - scalar fields needed in modal: `phoneNumber`, `emailId`, `electricityKno`, and related Aadhar/PAN/bank values if stored.
+2. Keep key names consistent (camel/snake aliases accepted, but stable across list/detail routes).
+3. After successful `PATCH /quotations/{id}/documents`, subsequent GET responses must immediately reflect updated values/files.
+4. Avoid partial list payloads that omit `documents` for some rows while detail endpoint includes it; if list is intentionally compact, ensure detail endpoint is always complete and fast.
+
+### QA checks
+
+1. Save document data for a quotation via PATCH.
+2. Reopen modal from dashboard list in API mode:
+   - values/files come from backend response.
+3. Hard refresh and reopen:
+   - same values still present without any local cache dependency.
+4. Verify consistency between list-open flow and detail-open flow.
+
+---
+
+## R) Post-upload read-after-write consistency (Document Submission)
+
+Frontend flow now: after successful `PATCH /quotations/{id}/documents`, client immediately calls `GET /quotations/{id}` to refresh the modal with backend data.
+
+### Required backend behavior
+
+1. Ensure **read-after-write consistency** for document updates:
+   - values/files saved by PATCH must be visible in the very next GET for same quotation id.
+2. PATCH success should only return after storage + DB metadata are committed.
+3. `GET /quotations/{id}` response should include:
+   - updated `documents` URLs/refs
+   - updated scalar fields (`phoneNumber`, `emailId`, `electricityKno`, etc.)
+4. Avoid delayed eventual consistency windows that return stale document payload immediately after PATCH.
+5. If async media processing is unavoidable, return stable placeholders/status fields so frontend can represent in-progress state explicitly.
+
+### QA checks
+
+1. Upload one/new file via PATCH.
+2. Immediately call GET by quotation id.
+3. Verify newly uploaded file URL + scalar updates are present on first GET.
+4. Repeat with multiple file fields and scalar-only edits.
+
+---
+
+## S) Visitor complete-visit API-first persistence (no local fallback dependency)
+
+Frontend expectation now: in API mode, "Complete Visit" should be treated as backend-authoritative save (S3 + DB), not local-only persistence.
+
+### Required backend behavior
+
+1. `completeWithFiles` route (multipart) must be production-ready and primary:
+   - accepts dimensions + notes + `existingImages` refs + new files
+   - stores files to S3 (or configured object storage)
+   - stores visit metadata and file refs in DB.
+2. JSON fallback route (`complete`) should remain compatible but ideally rarely needed.
+3. On success, backend must return canonical completed visit payload:
+   - `status: completed`
+   - dimensions/legs
+   - persisted media refs/URLs (`images`, `rowDiagramImage`, `meterImage`)
+   - timestamps (`updatedAt`, etc.).
+4. Avoid silent partial saves:
+   - if file upload fails, return structured error and do not report success.
+5. Ensure idempotency for retry submits (same visit completed multiple times quickly):
+   - no duplicate visit rows
+   - no uncontrolled duplicate media metadata.
+6. Keep "existing images" merge behavior deterministic:
+   - previously uploaded refs passed by client should remain unless explicitly removed.
+
+### QA checks
+
+1. Complete visit with multiple images + row diagram + meter image:
+   - all assets present in S3 and DB refs after submit.
+2. Refresh dashboard immediately:
+   - visit remains completed with same media refs.
+3. Retry same completion request:
+   - no duplicate records/media refs.
+4. Simulate one-file upload failure:
+   - API returns structured error, frontend stays unsaved.
+
+---
+
+## T) Visitor complete endpoint permissions (AUTH_004 fix)
+
+Observed error: **"Insufficient permissions"** when visitor submits Complete Visit with images.
+
+### Required backend behavior
+
+1. Allow visitor-authenticated JWT (`role = visitor`) to access at least one completion endpoint:
+   - `PATCH /visits/{visitId}/complete` (preferred), or
+   - `PATCH /visitors/visits/{visitId}/complete`, or
+   - `PATCH /visitors/me/visits/{visitId}/complete`.
+2. Endpoint must accept multipart payload used by frontend:
+   - numeric fields (`length`, `width`, `height`, `backLegFeet`, optional `midLegFeet`, `frontLegFeet`)
+   - optional `notes`
+   - repeatable image files (`images`)
+   - optional `rowDiagramImage`, `meterImage`
+   - optional `existingImages`/existing media refs.
+3. Do not gate this route behind admin/dealer middleware for visitor sessions.
+4. Return structured auth errors:
+   - use JSON (`code`, `message`) instead of generic HTML/opaque response.
+5. Keep role policy consistent across environments (local/staging/prod) to avoid “works local, fails live”.
+
+### QA checks
+
+1. Login as visitor and submit Complete Visit with images -> success (no AUTH_004).
+2. Repeat submit on prod-like environment -> same result.
+3. Confirm unauthorized roles still blocked as expected (negative test).
+4. Confirm completed visit data appears on subsequent visitor dashboard refresh.
+
+---
+
+## U) Public/signed media URLs for "Open uploaded file" (live)
+
+In Visitor completed cards, "Open uploaded file" links must work on production for site images, row diagram, and meter image.
+
+### Required backend behavior
+
+1. Return directly usable URLs in visit payloads whenever possible:
+   - `images[]`, `rowDiagramImage`, `meterImage`
+   - allow aliases like `site_images`, `row_diagram_image`, `meter_image`.
+2. If storage is private, return short-lived signed URLs (or provide a stable download proxy endpoint).
+3. Avoid returning raw internal keys only (e.g. just `uploads/abc.jpg`) unless frontend media base mapping is guaranteed.
+4. Keep URL fields present in both list and detail visit responses used by visitor dashboard.
+5. Ensure CORS/content-type for media URLs allow direct browser open in new tab.
+
+### QA checks
+
+1. Complete a visit with images and refresh page.
+2. Click each "Open uploaded file" link on live:
+   - image opens successfully (HTTP 200).
+3. Verify row diagram and meter image links also open.
+4. Verify expired signed URL handling strategy (re-fetch or regenerated link) if applicable.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
