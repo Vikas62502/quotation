@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
 import { API_CONFIG } from "@/lib/api-config"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
@@ -229,6 +229,145 @@ const extractImageList = (visit: any): string[] => {
   return result
 }
 
+const buildVisitQuotation = (visit: any, quotationOverride?: any): Quotation => {
+  const source = quotationOverride || visit?.quotation || {}
+  const customer = source.customer || visit?.customer || {}
+  return {
+    ...source,
+    id: String(source.id || visit?.quotation?.id || ""),
+    customer,
+    products: source.products || {},
+    discount: source.discount || 0,
+    subtotal:
+      source.subtotal ??
+      source.pricing?.subtotal ??
+      source.totalAmount ??
+      visit?.quotation?.finalAmount ??
+      0,
+    totalAmount:
+      source.totalAmount ??
+      source.pricing?.totalAmount ??
+      visit?.quotation?.finalAmount ??
+      0,
+    finalAmount:
+      source.finalAmount ??
+      source.pricing?.finalAmount ??
+      visit?.quotation?.finalAmount ??
+      0,
+    createdAt: source.createdAt || visit?.quotation?.createdAt || "",
+    dealerId: source.dealerId || visit?.dealer?.id || "",
+    status: source.status || "pending",
+  } as Quotation
+}
+
+const mapVisitApiRecord = (
+  visit: any,
+  options?: { includeDetails?: boolean; quotationOverride?: any },
+): VisitWithQuotation => {
+  const includeDetails = options?.includeDetails === true
+  const completion = includeDetails
+    ? visit?.completionDetails || visit?.completion_details || {}
+    : {}
+  const dimensions = includeDetails
+    ? visit?.siteDimensions ||
+      visit?.site_dimensions ||
+      completion.siteDimensions ||
+      completion.site_dimensions ||
+      {}
+    : {}
+  const rawVisitors = Array.isArray(visit?.visitors)
+    ? visit.visitors
+    : Array.isArray(visit?.otherVisitors)
+      ? visit.otherVisitors
+      : []
+
+  return {
+    id: String(visit?.id || ""),
+    date: String(visit?.visitDate || visit?.date || ""),
+    time: resolveVisitTimeRange(visit),
+    location: String(visit?.location || visit?.visitLocation || ""),
+    locationLink: visit?.locationLink || visit?.location_link,
+    notes: visit?.notes || (includeDetails ? completion.notes : undefined),
+    status: normalizeVisitStatus(visit?.status || visit?.visitStatus || visit?.visit_status),
+    feedback: visit?.feedback,
+    rejectionReason: visit?.rejectionReason || visit?.rejection_reason,
+    length: includeDetails
+      ? pickFirstNumber(
+          visit?.length,
+          visit?.lengthFeet,
+          visit?.length_feet,
+          dimensions.length,
+          dimensions.lengthFeet,
+          dimensions.length_feet,
+        )
+      : undefined,
+    width: includeDetails
+      ? pickFirstNumber(
+          visit?.width,
+          visit?.widthFeet,
+          visit?.width_feet,
+          dimensions.width,
+          dimensions.widthFeet,
+          dimensions.width_feet,
+        )
+      : undefined,
+    height: includeDetails
+      ? pickFirstNumber(visit?.height, dimensions.height, dimensions.heightFeet, dimensions.height_feet)
+      : undefined,
+    backLegFeet: includeDetails
+      ? pickFirstNumber(visit?.backLegFeet, visit?.back_leg_feet, dimensions.backLegFeet, dimensions.back_leg_feet)
+      : undefined,
+    midLegFeet: includeDetails
+      ? pickFirstNumber(visit?.midLegFeet, visit?.mid_leg_feet, dimensions.midLegFeet, dimensions.mid_leg_feet)
+      : undefined,
+    frontLegFeet: includeDetails
+      ? pickFirstNumber(visit?.frontLegFeet, visit?.front_leg_feet, dimensions.frontLegFeet, dimensions.front_leg_feet)
+      : undefined,
+    unit: includeDetails ? ((visit?.unit || dimensions.unit || completion.unit || "feet") as "feet" | "cm") : undefined,
+    rowDiagramImage: includeDetails
+      ? normalizeMediaUrl(
+          visit?.rowDiagramImage ||
+            visit?.row_diagram_image ||
+            completion.rowDiagramImage ||
+            completion.row_diagram_image ||
+            visit?.documents?.rowDiagramImage ||
+            visit?.documents?.row_diagram_image ||
+            visit?.documents?.rowDiagram ||
+            visit?.documents?.row_diagram,
+        )
+      : undefined,
+    meterImage: includeDetails
+      ? normalizeMediaUrl(
+          visit?.meterImage ||
+            visit?.meter_image ||
+            completion.meterImage ||
+            completion.meter_image ||
+            visit?.documents?.meterImage ||
+            visit?.documents?.meter_image ||
+            visit?.documents?.meterPhoto ||
+            visit?.documents?.meter_photo,
+        )
+      : undefined,
+    images: includeDetails ? extractImageList(visit) : undefined,
+    visitors: rawVisitors
+      .map((item: any) => ({
+        visitorId: String(item?.visitorId || item?.id || ""),
+        visitorName: String(item?.visitorName || item?.name || "").trim(),
+      }))
+      .filter((item: { visitorId: string; visitorName: string }) => item.visitorId || item.visitorName),
+    createdAt: visit?.createdAt || "",
+    quotation: buildVisitQuotation(visit, options?.quotationOverride),
+    quotationId: String(options?.quotationOverride?.id || visit?.quotation?.id || ""),
+    dealer: visit?.dealer
+      ? {
+          id: String(visit.dealer.id || ""),
+          firstName: String(visit.dealer.firstName || ""),
+          lastName: String(visit.dealer.lastName || ""),
+        }
+      : undefined,
+  }
+}
+
 export default function VisitorDashboardPage() {
   const { visitor, role, isAuthenticated, logout } = useAuth()
   const router = useRouter()
@@ -236,6 +375,10 @@ export default function VisitorDashboardPage() {
   const [assignedVisits, setAssignedVisits] = useState<VisitWithQuotation[]>([])
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [visitDetailsOpen, setVisitDetailsOpen] = useState(false)
+  const [visitDetailsLoading, setVisitDetailsLoading] = useState(false)
+  const [visitDetailsError, setVisitDetailsError] = useState<string | null>(null)
+  const [visitDetails, setVisitDetails] = useState<VisitWithQuotation | null>(null)
   const [statusDialogOpen, setStatusDialogOpen] = useState(false)
   const [selectedVisit, setSelectedVisit] = useState<VisitWithQuotation | null>(null)
   const [statusAction, setStatusAction] = useState<"approve" | "reject" | null>(null)
@@ -312,78 +455,8 @@ export default function VisitorDashboardPage() {
             : Array.isArray(response?.data?.visits)
               ? response.data.visits
               : []
-        
-        const visits: VisitWithQuotation[] = visitsList.map((v: any) => {
-          const completion = v.completionDetails || v.completion_details || {}
-          const dimensions = v.siteDimensions || v.site_dimensions || completion.siteDimensions || completion.site_dimensions || {}
-          const rowDiagram = normalizeMediaUrl(
-            v.rowDiagramImage ||
-              v.row_diagram_image ||
-              completion.rowDiagramImage ||
-              completion.row_diagram_image ||
-              v.documents?.rowDiagramImage ||
-              v.documents?.row_diagram_image ||
-              v.documents?.rowDiagram ||
-              v.documents?.row_diagram,
-          )
-          const meterImage = normalizeMediaUrl(
-            v.meterImage ||
-              v.meter_image ||
-              completion.meterImage ||
-              completion.meter_image ||
-              v.documents?.meterImage ||
-              v.documents?.meter_image ||
-              v.documents?.meterPhoto ||
-              v.documents?.meter_photo,
-          )
-          const normalizedImages = extractImageList(v)
-          return {
-            id: v.id,
-            date: v.visitDate || v.date || "",
-            time: resolveVisitTimeRange(v),
-            location: v.location || v.visitLocation || "",
-            locationLink: v.locationLink || v.location_link,
-            notes: v.notes || completion.notes,
-            status: normalizeVisitStatus(v.status || v.visitStatus || v.visit_status),
-            feedback: v.feedback,
-            rejectionReason: v.rejectionReason || v.rejection_reason,
-            length: pickFirstNumber(v.length, v.lengthFeet, v.length_feet, dimensions.length, dimensions.lengthFeet, dimensions.length_feet),
-            width: pickFirstNumber(v.width, v.widthFeet, v.width_feet, dimensions.width, dimensions.widthFeet, dimensions.width_feet),
-            height: pickFirstNumber(v.height, dimensions.height, dimensions.heightFeet, dimensions.height_feet),
-            backLegFeet: pickFirstNumber(v.backLegFeet, v.back_leg_feet, dimensions.backLegFeet, dimensions.back_leg_feet),
-            midLegFeet: pickFirstNumber(v.midLegFeet, v.mid_leg_feet, dimensions.midLegFeet, dimensions.mid_leg_feet),
-            frontLegFeet: pickFirstNumber(v.frontLegFeet, v.front_leg_feet, dimensions.frontLegFeet, dimensions.front_leg_feet),
-            unit: (v.unit || dimensions.unit || completion.unit || "feet") as "feet" | "cm",
-            rowDiagramImage: rowDiagram,
-            meterImage,
-            images: normalizedImages,
-            visitors: v.otherVisitors?.map((ov: any) => ({
-              visitorId: ov.visitorId,
-              visitorName: ov.visitorName,
-            })),
-            createdAt: v.createdAt,
-            quotation: {
-              id: v.quotation.id,
-              customer: v.customer,
-              products: {} as any,
-              discount: 0,
-              totalAmount: v.quotation.finalAmount || 0,
-              finalAmount: v.quotation.finalAmount || 0,
-              createdAt: v.quotation.createdAt,
-              dealerId: v.dealer?.id || "",
-              status: "pending",
-            },
-            quotationId: v.quotation.id,
-            dealer: v.dealer
-              ? {
-                  id: v.dealer.id || "",
-                  firstName: v.dealer.firstName || "",
-                  lastName: v.dealer.lastName || "",
-                }
-              : undefined,
-          }
-        })
-        
+        const visits: VisitWithQuotation[] = visitsList.map((v: any) => mapVisitApiRecord(v))
+
         setAssignedVisits(visits)
       } else {
         // Fallback to localStorage
@@ -421,6 +494,67 @@ export default function VisitorDashboardPage() {
       console.error("Error loading assigned visits:", error)
     } finally {
       setIsLoadingVisits(false)
+    }
+  }
+
+  const extractVisitRecords = (payload: any): any[] => {
+    if (Array.isArray(payload?.visits)) return payload.visits
+    if (Array.isArray(payload?.data?.visits)) return payload.data.visits
+    if (Array.isArray(payload)) return payload
+    if (payload && typeof payload === "object" && payload.id) return [payload]
+    return []
+  }
+
+  const fetchDetailedVisitRecord = async (visit: VisitWithQuotation): Promise<VisitWithQuotation> => {
+    if (!useApi) return visit
+
+    const [visitResult, quotationResult] = await Promise.allSettled([
+      api.visits.getByQuotation(visit.quotationId),
+      api.quotations.getById(visit.quotationId),
+    ])
+
+    const quotationPayload =
+      quotationResult.status === "fulfilled" && quotationResult.value && typeof quotationResult.value === "object"
+        ? quotationResult.value
+        : undefined
+    const visitPayload = visitResult.status === "fulfilled" ? visitResult.value : undefined
+    const candidates = extractVisitRecords(visitPayload)
+    const matched =
+      candidates.find((item) => String(item?.id || "") === visit.id) ||
+      candidates.find((item) => String(item?.quotation?.id || "") === visit.quotationId) ||
+      null
+
+    if (!matched && quotationPayload) {
+      return {
+        ...visit,
+        quotation: buildVisitQuotation({}, quotationPayload),
+      }
+    }
+
+    if (!matched) return visit
+    return mapVisitApiRecord(matched, {
+      includeDetails: true,
+      quotationOverride: quotationPayload,
+    })
+  }
+
+  const openVisitDetails = async (visit: VisitWithQuotation) => {
+    setVisitDetails(visit)
+    setVisitDetailsError(null)
+    setSelectedQuotation(visit.quotation)
+    setVisitDetailsOpen(true)
+
+    if (!useApi) return
+
+    setVisitDetailsLoading(true)
+    try {
+      const detailed = await fetchDetailedVisitRecord(visit)
+      setVisitDetails(detailed)
+      setSelectedQuotation(detailed.quotation)
+    } catch (error) {
+      setVisitDetailsError(apiErrorToUserMessage(error))
+    } finally {
+      setVisitDetailsLoading(false)
     }
   }
 
@@ -1135,11 +1269,32 @@ export default function VisitorDashboardPage() {
         )}
 
         {isLoadingVisits ? (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              Loading assigned visits...
-            </CardContent>
-          </Card>
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <Card key={index}>
+                <CardContent className="py-4">
+                  <div className="animate-pulse grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr_auto] gap-3 items-center">
+                    <div className="space-y-2">
+                      <div className="h-4 w-40 rounded bg-muted" />
+                      <div className="h-3 w-28 rounded bg-muted" />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-3 w-24 rounded bg-muted" />
+                      <div className="h-3 w-32 rounded bg-muted" />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="h-3 w-24 rounded bg-muted" />
+                      <div className="h-3 w-36 rounded bg-muted" />
+                    </div>
+                    <div className="flex gap-2">
+                      <div className="h-8 w-24 rounded bg-muted" />
+                      <div className="h-8 w-24 rounded bg-muted" />
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         ) : (() => {
           // Filter visits by search term, agent filter, status, and date
           const filteredVisits = assignedVisits.filter((visit) => {
@@ -1262,467 +1417,144 @@ export default function VisitorDashboardPage() {
           return (
             <div className="space-y-4">
               {pagedVisits.map((visit) => {
-              const myAvailability = getMyAvailability(visit)
-              const isPast = isPastVisit(visit)
+                const isPast = isPastVisit(visit)
+                const visitStatus = normalizeVisitStatus(visit.status)
 
-              return (
-                <Card
-                  key={visit.id}
-                  className={`border-l-4 ${
-                    visit.status ? getStatusColor(visit.status) : isPast ? "border-muted-foreground/50 bg-muted/30" : "border-primary"
-                  }`}
-                >
-                  <CardHeader>
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
-                          <CardTitle className="text-lg">
-                            Visit for {visit.quotation.customer.firstName} {visit.quotation.customer.lastName}
-                          </CardTitle>
-                          {getStatusBadge(visit.status)}
-                        </div>
-                        <div className="flex items-center gap-2 flex-wrap mb-2">
-                          <Badge
-                            variant={isPast ? "secondary" : "default"}
-                            className="flex items-center gap-1"
-                          >
-                            <Calendar className="w-3 h-3" />
-                            {formatDate(visit.date)}
-                          </Badge>
-                          <Badge
-                            variant={isPast ? "secondary" : "default"}
-                            className="flex items-center gap-1"
-                          >
-                            <Clock className="w-3 h-3" />
-                            {formatTime(visit.time)}
-                          </Badge>
-                          {isPast && (
-                            <Badge variant="outline" className="text-xs">
-                              Past Visit
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <UserCircle className="w-4 h-4" />
-                          <span>Agent: {getDealerName(visit.quotation.dealerId, visit)}</span>
-                        </div>
-                      </div>
-                      <Badge variant="outline" className="text-xs">
-                        {visit.quotation.id}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {/* Location with Contact Info */}
-                    <div className="bg-primary/5 rounded-lg p-4 border border-primary/20">
-                      {/* Show locationLink if available, otherwise show location */}
-                      {visit.locationLink && visit.locationLink.trim() ? (
-                        <div className="flex items-start gap-2 group">
-                          <Link className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-xs text-muted-foreground mb-1">Current Location Link</p>
-                            <a
-                              href={visit.locationLink}
-                              onClick={(e) => {
-                                e.preventDefault()
-                                openLocationLink(visit.locationLink!)
-                              }}
-                              className="text-sm font-medium text-primary hover:underline text-left transition-colors cursor-pointer break-all"
-                              title="Click to open location in map"
-                            >
-                              {visit.locationLink.length > 60 
-                                ? `${visit.locationLink.substring(0, 60)}...` 
-                                : visit.locationLink}
-                            </a>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex items-start gap-2 group">
-                          <MapPin className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-                          <div className="flex-1">
-                            <p className="text-xs text-muted-foreground mb-1">Visit Location</p>
-                            <button
-                              onClick={() => openLocationInMaps(visit.location)}
-                              className="text-sm font-medium text-foreground hover:text-primary hover:underline text-left transition-colors cursor-pointer"
-                              title="Click to open in Google Maps with directions"
-                            >
-                              {visit.location}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      <div className="mt-3 pt-3 border-t border-primary/20 flex items-center gap-4 flex-wrap">
-                        <div className="flex items-center gap-2">
-                          <User className="w-4 h-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Customer</p>
-                            <p className="text-sm font-medium">
+                return (
+                  <Card
+                    key={visit.id}
+                    className={`border-l-4 ${
+                      visit.status ? getStatusColor(visit.status) : isPast ? "border-muted-foreground/50 bg-muted/30" : "border-primary"
+                    }`}
+                  >
+                    <CardContent className="py-4">
+                      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto] gap-4 items-start">
+                        <div className="min-w-0 space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm sm:text-base font-semibold truncate">
                               {visit.quotation.customer.firstName} {visit.quotation.customer.lastName}
                             </p>
+                            {getStatusBadge(visit.status)}
+                            {isPast ? <Badge variant="outline" className="text-xs">Past Visit</Badge> : null}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <Badge variant="outline" className="text-[11px]">{visit.quotation.id}</Badge>
+                            <span className="truncate max-w-full">Agent: {getDealerName(visit.quotation.dealerId, visit)}</span>
+                            {visit.quotation.customer.mobile ? (
+                              <a href={`tel:${visit.quotation.customer.mobile}`} className="text-primary hover:underline">
+                                {visit.quotation.customer.mobile}
+                              </a>
+                            ) : null}
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Phone className="w-4 h-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-xs text-muted-foreground">Contact</p>
-                            <a
-                              href={`tel:${visit.quotation.customer.mobile}`}
-                              className="text-sm font-medium text-primary hover:underline"
-                              title="Click to call"
-                            >
-                              {visit.quotation.customer.mobile}
-                            </a>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
 
-                    {myAvailability && (
-                      <div className="bg-primary/10 rounded-md p-3 border border-primary/20">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Users className="w-4 h-4 text-primary" />
-                          <p className="text-sm font-semibold text-primary">Assigned Visitor:</p>
-                        </div>
-                        <p className="text-sm font-medium">{myAvailability.visitorName}</p>
-                      </div>
-                    )}
-
-                    {visit.visitors && visit.visitors.length > 1 && (
-                      <div className="bg-muted/50 rounded-md p-3">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Users className="w-3 h-3 text-muted-foreground" />
-                          <p className="text-xs font-semibold text-muted-foreground">Other Visitors:</p>
-                        </div>
                         <div className="space-y-1">
-                          {visit.visitors
-                            .filter((v) => v.visitorId !== visitor.id)
-                            .map((v, idx) => (
-                              <div key={idx} className="text-xs">
-                                <span className="font-medium">{v.visitorName}</span>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {visit.notes && (
-                      <div className="bg-muted/50 rounded-md p-3">
-                        <p className="text-xs text-muted-foreground mb-1">Notes:</p>
-                        <p className="text-sm">{visit.notes}</p>
-                      </div>
-                    )}
-
-                    {(visit.length != null ||
-                      visit.width != null ||
-                      visit.backLegFeet != null ||
-                      visit.midLegFeet != null ||
-                      visit.frontLegFeet != null ||
-                      visit.meterImage ||
-                      (visit.images && visit.images.length > 0) ||
-                      visit.rowDiagramImage) && (
-                      <div className="bg-blue-50 rounded-md p-3 border border-blue-200 space-y-3">
-                        <div className="flex items-center gap-2">
-                          <ImageIcon className="w-4 h-4 text-blue-700" />
-                          <p className="text-xs font-semibold text-blue-800">Completion Details</p>
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Schedule</p>
+                          <p className="text-sm font-medium">{formatDate(visit.date)}</p>
+                          <p className="text-xs text-muted-foreground">{formatTime(visit.time)}</p>
                         </div>
 
-                        {(visit.length != null ||
-                          visit.width != null ||
-                          visit.backLegFeet != null ||
-                          visit.midLegFeet != null ||
-                          visit.frontLegFeet != null) && (
-                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                            {visit.length != null && (
-                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
-                                <p className="text-[11px] text-muted-foreground">Length ({visit.unit === "cm" ? "cm" : "ft"})</p>
-                                <p className="text-sm font-semibold">{visit.length}</p>
-                              </div>
-                            )}
-                            {visit.width != null && (
-                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
-                                <p className="text-[11px] text-muted-foreground">Width ({visit.unit === "cm" ? "cm" : "ft"})</p>
-                                <p className="text-sm font-semibold">{visit.width}</p>
-                              </div>
-                            )}
-                            {visit.backLegFeet != null && (
-                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
-                                <p className="text-[11px] text-muted-foreground">Back leg (ft)</p>
-                                <p className="text-sm font-semibold">{visit.backLegFeet}</p>
-                              </div>
-                            )}
-                            {visit.midLegFeet != null && (
-                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
-                                <p className="text-[11px] text-muted-foreground">Mid leg (ft)</p>
-                                <p className="text-sm font-semibold">{visit.midLegFeet}</p>
-                              </div>
-                            )}
-                            {visit.frontLegFeet != null && (
-                              <div className="rounded-md bg-white/80 border border-blue-100 p-2">
-                                <p className="text-[11px] text-muted-foreground">Front leg (ft)</p>
-                                <p className="text-sm font-semibold">{visit.frontLegFeet}</p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {visit.rowDiagramImage && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-2">Row diagram document</p>
-                            <a
-                              href={visit.rowDiagramImage}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-block"
-                              title="Open row diagram"
+                        <div className="space-y-1 min-w-0">
+                          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Location</p>
+                          <p className="text-sm font-medium truncate">{visit.location || "No location"}</p>
+                          {visit.locationLink ? (
+                            <button
+                              type="button"
+                              onClick={() => openLocationLink(visit.locationLink!)}
+                              className="text-xs text-primary hover:underline"
                             >
-                              <img
-                                src={visit.rowDiagramImage}
-                                alt="Row diagram"
-                                className="h-28 w-auto rounded-md border object-contain bg-white"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = "none"
-                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                                  if (fallback) fallback.style.display = "inline-flex"
-                                }}
-                              />
-                              <span
-                                style={{ display: "none" }}
-                                className="px-3 py-2 text-xs rounded-md border bg-white text-blue-700"
-                              >
-                                Open row diagram document
-                              </span>
-                            </a>
-                          </div>
-                        )}
-
-                        {visit.meterImage && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-2">Meter image</p>
-                            <a
-                              href={visit.meterImage}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-block"
-                              title="Open meter image"
+                              Open map
+                            </button>
+                          ) : visit.location ? (
+                            <button
+                              type="button"
+                              onClick={() => openLocationInMaps(visit.location)}
+                              className="text-xs text-primary hover:underline"
                             >
-                              <img
-                                src={visit.meterImage}
-                                alt="Meter"
-                                className="h-28 w-auto rounded-md border object-contain bg-white"
-                                onError={(e) => {
-                                  e.currentTarget.style.display = "none"
-                                  const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                                  if (fallback) fallback.style.display = "inline-flex"
-                                }}
-                              />
-                              <span
-                                style={{ display: "none" }}
-                                className="px-3 py-2 text-xs rounded-md border bg-white text-blue-700"
-                              >
-                                Open meter image
-                              </span>
-                            </a>
-                          </div>
-                        )}
+                              Open directions
+                            </button>
+                          ) : null}
+                        </div>
 
-                        {visit.images && visit.images.length > 0 && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-2">Uploaded site images ({visit.images.length})</p>
-                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                              {visit.images.map((img, idx) => (
-                                <a
-                                  key={`${visit.id}_site_img_${idx}`}
-                                  href={img}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="block"
-                                  title="Open uploaded image"
-                                >
-                                  <img
-                                    src={img}
-                                    alt={`Site image ${idx + 1}`}
-                                    className="w-full h-24 rounded-md border object-cover bg-white"
-                                    onError={(e) => {
-                                      e.currentTarget.style.display = "none"
-                                      const fallback = e.currentTarget.nextElementSibling as HTMLElement | null
-                                      if (fallback) fallback.style.display = "inline-flex"
-                                    }}
-                                  />
-                                  <span
-                                    style={{ display: "none" }}
-                                    className="w-full h-24 rounded-md border bg-white text-xs text-blue-700 items-center justify-center p-2 text-center"
+                        <div className="flex flex-col gap-2 xl:min-w-[240px]">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void openVisitDetails(visit)}
+                            className="w-full"
+                          >
+                            <User className="w-4 h-4 mr-2" />
+                            View Details
+                          </Button>
+
+                          {visitStatus !== "approved" &&
+                            visitStatus !== "completed" &&
+                            visitStatus !== "incomplete" &&
+                            visitStatus !== "rejected" &&
+                            visitStatus !== "rescheduled" && (
+                            <div className="space-y-2">
+                              {!approvedVisits.has(visit.id) ? (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleStatusAction(visit, "approve")}
+                                    className="bg-green-600 hover:bg-green-700"
                                   >
-                                    Open uploaded file
-                                  </span>
-                                </a>
-                              ))}
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    onClick={() => handleStatusAction(visit, "reject")}
+                                  >
+                                    Reject
+                                  </Button>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="bg-blue-600 hover:bg-blue-700">
+                                      Complete
+                                    </Button>
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="bg-orange-600 hover:bg-orange-700">
+                                      Incomplete
+                                    </Button>
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="bg-purple-600 hover:bg-purple-700">
+                                      Reschedule
+                                    </Button>
+                                  </div>
+                                  <Button size="sm" variant="destructive" onClick={() => handleStatusAction(visit, "reject")} className="w-full">
+                                    Reject
+                                  </Button>
+                                </>
+                              )}
                             </div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                          )}
 
-                    {/* Feedback Display */}
-                    {visit.feedback && (
-                      <div className="bg-green-50 rounded-md p-3 border border-green-200">
-                        <div className="flex items-center gap-2 mb-2">
-                          <MessageSquare className="w-4 h-4 text-green-600" />
-                          <p className="text-xs font-semibold text-green-800">Customer Feedback:</p>
-                        </div>
-                        <p className="text-sm text-green-700">{visit.feedback}</p>
-                      </div>
-                    )}
-
-                    {/* Rejection Reason Display */}
-                    {visit.rejectionReason && (
-                      <div className="bg-red-50 rounded-md p-3 border border-red-200">
-                        <div className="flex items-center gap-2 mb-2">
-                          <XCircle className="w-4 h-4 text-red-600" />
-                          <p className="text-xs font-semibold text-red-800">Rejection Reason:</p>
-                        </div>
-                        <p className="text-sm text-red-700">{visit.rejectionReason}</p>
-                      </div>
-                    )}
-
-                    {/* Action Buttons */}
-                    <div className="flex flex-col gap-2 pt-2 border-t">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedQuotation(visit.quotation)
-                          setDialogOpen(true)
-                        }}
-                        className="w-full"
-                      >
-                        <User className="w-4 h-4 mr-2" />
-                        View Details
-                      </Button>
-                      {/* Show buttons for pending visits */}
-                      {visit.status !== "approved" &&
-                        visit.status !== "completed" &&
-                        visit.status !== "incomplete" &&
-                        visit.status !== "rejected" &&
-                        visit.status !== "rescheduled" && (
-                        <div className="space-y-2">
-                          {!approvedVisits.has(visit.id) ? (
-                            <div className="flex flex-col sm:flex-row gap-2">
-                              <Button
-                                size="sm"
-                                onClick={() => handleStatusAction(visit, "approve")}
-                                className="flex-1 bg-green-600 hover:bg-green-700"
-                              >
-                                <CheckCircle className="w-4 h-4 mr-2" />
-                                Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => handleStatusAction(visit, "reject")}
-                                className="flex-1"
-                              >
-                                <XCircle className="w-4 h-4 mr-2" />
-                                Reject
-                              </Button>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="flex flex-col sm:flex-row gap-2">
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    handleApproveOutcomeClick("completed", visit)
-                                  }}
-                                  className="flex-1 bg-blue-600 hover:bg-blue-700"
-                                >
-                                  <CheckCircle className="w-4 h-4 mr-2" />
+                          {(visitStatus === "approved" || visitStatus === "rescheduled") && (
+                            <div className="space-y-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="bg-blue-600 hover:bg-blue-700">
                                   Complete
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    handleApproveOutcomeClick("incomplete", visit)
-                                  }}
-                                  className="flex-1 bg-orange-600 hover:bg-orange-700"
-                                >
-                                  <XCircle className="w-4 h-4 mr-2" />
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="bg-orange-600 hover:bg-orange-700">
                                   Incomplete
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => {
-                                    handleApproveOutcomeClick("rescheduled", visit)
-                                  }}
-                                  className="flex-1 bg-purple-600 hover:bg-purple-700"
-                                >
-                                  <Calendar className="w-4 h-4 mr-2" />
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="bg-purple-600 hover:bg-purple-700">
                                   Reschedule
                                 </Button>
                               </div>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => handleStatusAction(visit, "reject")}
-                                className="w-full"
-                              >
-                                <XCircle className="w-4 h-4 mr-2" />
+                              <Button size="sm" variant="destructive" onClick={() => handleStatusAction(visit, "reject")} className="w-full">
                                 Reject
                               </Button>
-                            </>
+                            </div>
                           )}
                         </div>
-                      )}
-                      {/* Show action buttons for approved/rescheduled visits */}
-                      {(visit.status === "approved" || visit.status === "rescheduled") && (
-                        <div className="space-y-2">
-                          <div className="flex flex-col sm:flex-row gap-2">
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                handleApproveOutcomeClick("completed", visit)
-                              }}
-                              className="flex-1 bg-blue-600 hover:bg-blue-700"
-                            >
-                              <CheckCircle className="w-4 h-4 mr-2" />
-                              Complete
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                handleApproveOutcomeClick("incomplete", visit)
-                              }}
-                              className="flex-1 bg-orange-600 hover:bg-orange-700"
-                            >
-                              <XCircle className="w-4 h-4 mr-2" />
-                              Incomplete
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                handleApproveOutcomeClick("rescheduled", visit)
-                              }}
-                              className="flex-1 bg-purple-600 hover:bg-purple-700"
-                            >
-                              <Calendar className="w-4 h-4 mr-2" />
-                              Reschedule
-                            </Button>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            onClick={() => handleStatusAction(visit, "reject")}
-                            className="w-full"
-                          >
-                            <XCircle className="w-4 h-4 mr-2" />
-                            Reject
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              )
-            })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
                 <p className="text-xs text-muted-foreground">
                   Showing {Math.min(startIndex + 1, sortedFilteredVisits.length)}-
@@ -1754,6 +1586,244 @@ export default function VisitorDashboardPage() {
           )
         })()}
       </main>
+
+      <Dialog
+        open={visitDetailsOpen}
+        onOpenChange={(open) => {
+          setVisitDetailsOpen(open)
+          if (!open) {
+            setVisitDetailsLoading(false)
+            setVisitDetailsError(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Visit Details</DialogTitle>
+            <DialogDescription>
+              View full visit information, completion media, and quotation context on demand.
+            </DialogDescription>
+          </DialogHeader>
+
+          {visitDetails ? (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                {getStatusBadge(visitDetails.status)}
+                <Badge variant="outline">{visitDetails.quotation.id}</Badge>
+                <Badge variant="secondary">{formatDate(visitDetails.date)}</Badge>
+                <Badge variant="secondary">{formatTime(visitDetails.time)}</Badge>
+              </div>
+
+              {visitDetailsLoading ? (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                  Loading full visit details...
+                </div>
+              ) : null}
+
+              {visitDetailsError ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {visitDetailsError}
+                </div>
+              ) : null}
+
+              <div className="grid gap-4 lg:grid-cols-2">
+                <div className="rounded-lg border p-4 space-y-3">
+                  <p className="text-sm font-semibold">Customer & Location</p>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex items-start gap-2">
+                      <User className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">
+                          {visitDetails.quotation.customer.firstName} {visitDetails.quotation.customer.lastName}
+                        </p>
+                        {visitDetails.quotation.customer.mobile ? (
+                          <a
+                            href={`tel:${visitDetails.quotation.customer.mobile}`}
+                            className="text-primary hover:underline"
+                          >
+                            {visitDetails.quotation.customer.mobile}
+                          </a>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <UserCircle className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div>
+                        <p className="font-medium">Agent</p>
+                        <p>{getDealerName(visitDetails.quotation.dealerId, visitDetails)}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <MapPin className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <p className="font-medium">Visit location</p>
+                        <p className="break-words">{visitDetails.location || "No location provided"}</p>
+                        {visitDetails.locationLink ? (
+                          <button
+                            type="button"
+                            onClick={() => openLocationLink(visitDetails.locationLink!)}
+                            className="text-primary hover:underline"
+                          >
+                            Open map
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border p-4 space-y-3">
+                  <p className="text-sm font-semibold">Visit Notes</p>
+                  {visitDetails.notes ? (
+                    <div className="rounded-md bg-muted/40 p-3 text-sm">{visitDetails.notes}</div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">No visit notes available.</p>
+                  )}
+
+                  {visitDetails.feedback ? (
+                    <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                      <p className="font-medium text-green-800">Customer feedback</p>
+                      <p className="mt-1 text-green-700">{visitDetails.feedback}</p>
+                    </div>
+                  ) : null}
+
+                  {visitDetails.rejectionReason ? (
+                    <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm">
+                      <p className="font-medium text-red-800">Rejection reason</p>
+                      <p className="mt-1 text-red-700">{visitDetails.rejectionReason}</p>
+                    </div>
+                  ) : null}
+
+                  {visitDetails.visitors && visitDetails.visitors.length > 0 ? (
+                    <div className="rounded-md border p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Assigned Visitors</p>
+                      <div className="mt-2 space-y-1 text-sm">
+                        {visitDetails.visitors.map((item, index) => (
+                          <p key={`${item.visitorId}-${index}`}>{item.visitorName || item.visitorId}</p>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {(visitDetails.length != null ||
+                visitDetails.width != null ||
+                visitDetails.backLegFeet != null ||
+                visitDetails.midLegFeet != null ||
+                visitDetails.frontLegFeet != null ||
+                visitDetails.rowDiagramImage ||
+                visitDetails.meterImage ||
+                (visitDetails.images && visitDetails.images.length > 0)) ? (
+                <div className="rounded-lg border border-blue-200 bg-blue-50/60 p-4 space-y-4">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4 text-blue-700" />
+                    <p className="text-sm font-semibold text-blue-900">Completion Details</p>
+                  </div>
+
+                  {(visitDetails.length != null ||
+                    visitDetails.width != null ||
+                    visitDetails.backLegFeet != null ||
+                    visitDetails.midLegFeet != null ||
+                    visitDetails.frontLegFeet != null) && (
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                      {visitDetails.length != null ? (
+                        <div className="rounded-md border bg-white p-3">
+                          <p className="text-[11px] text-muted-foreground">Length</p>
+                          <p className="text-sm font-semibold">{visitDetails.length}</p>
+                        </div>
+                      ) : null}
+                      {visitDetails.width != null ? (
+                        <div className="rounded-md border bg-white p-3">
+                          <p className="text-[11px] text-muted-foreground">Width</p>
+                          <p className="text-sm font-semibold">{visitDetails.width}</p>
+                        </div>
+                      ) : null}
+                      {visitDetails.backLegFeet != null ? (
+                        <div className="rounded-md border bg-white p-3">
+                          <p className="text-[11px] text-muted-foreground">Back leg (ft)</p>
+                          <p className="text-sm font-semibold">{visitDetails.backLegFeet}</p>
+                        </div>
+                      ) : null}
+                      {visitDetails.midLegFeet != null ? (
+                        <div className="rounded-md border bg-white p-3">
+                          <p className="text-[11px] text-muted-foreground">Mid leg (ft)</p>
+                          <p className="text-sm font-semibold">{visitDetails.midLegFeet}</p>
+                        </div>
+                      ) : null}
+                      {visitDetails.frontLegFeet != null ? (
+                        <div className="rounded-md border bg-white p-3">
+                          <p className="text-[11px] text-muted-foreground">Front leg (ft)</p>
+                          <p className="text-sm font-semibold">{visitDetails.frontLegFeet}</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    {visitDetails.rowDiagramImage ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-2">Row diagram</p>
+                        <a href={visitDetails.rowDiagramImage} target="_blank" rel="noreferrer">
+                          <img
+                            src={visitDetails.rowDiagramImage}
+                            alt="Row diagram"
+                            className="max-h-44 rounded-md border bg-white object-contain"
+                          />
+                        </a>
+                      </div>
+                    ) : null}
+
+                    {visitDetails.meterImage ? (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-2">Meter image</p>
+                        <a href={visitDetails.meterImage} target="_blank" rel="noreferrer">
+                          <img
+                            src={visitDetails.meterImage}
+                            alt="Meter"
+                            className="max-h-44 rounded-md border bg-white object-contain"
+                          />
+                        </a>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {visitDetails.images && visitDetails.images.length > 0 ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-2">Uploaded site images ({visitDetails.images.length})</p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {visitDetails.images.map((img, idx) => (
+                          <a key={`${visitDetails.id}-${idx}`} href={img} target="_blank" rel="noreferrer">
+                            <img
+                              src={img}
+                              alt={`Site image ${idx + 1}`}
+                              className="h-28 w-full rounded-md border bg-white object-cover"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (visitDetails.quotation) {
+                      setSelectedQuotation(visitDetails.quotation)
+                      setDialogOpen(true)
+                    }
+                  }}
+                >
+                  Open Quotation
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* Quotation Details Dialog */}
       <QuotationDetailsDialog
