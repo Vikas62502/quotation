@@ -13,7 +13,10 @@ import { Badge } from "@/components/ui/badge"
 import { api, apiErrorToUserMessage } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
-import { InstallationCompletionPanel } from "@/components/installation-completion-panel"
+import {
+  InstallationCompletionPanel,
+  type InstallationUploadedFile,
+} from "@/components/installation-completion-panel"
 import {
   INSTALLER_RELEASE_MAP_KEY,
   extractQuotationListFromApiResponse,
@@ -224,8 +227,10 @@ export default function InstallerDashboardPage() {
   const [quotations, setQuotations] = useState<InstallerQuotation[]>([])
   const [expandedQuotationId, setExpandedQuotationId] = useState<string | null>(null)
   const [uploadNotes, setUploadNotes] = useState<Record<string, string>>({})
-  const [uploadFilesByQuotation, setUploadFilesByQuotation] = useState<Record<string, Partial<Record<InstallationImageFieldKey, File[]>>>>({})
-  const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, File | null>>({})
+  const [uploadFilesByQuotation, setUploadFilesByQuotation] = useState<
+    Record<string, Partial<Record<InstallationImageFieldKey, InstallationUploadedFile[]>>>
+  >({})
+  const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, InstallationUploadedFile | null>>({})
   const [extraExpenseLinesByQuotation, setExtraExpenseLinesByQuotation] = useState<Record<string, ExtraExpenseLine[]>>({})
   const [dimensionsByQuotation, setDimensionsByQuotation] = useState<
     Record<string, { length: string; width: string; height: string }>
@@ -233,6 +238,7 @@ export default function InstallerDashboardPage() {
   const [savingId, setSavingId] = useState<string | null>(null)
   const [loadingDetailsForId, setLoadingDetailsForId] = useState<string | null>(null)
   const [workflowMap, setWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
+  const [uploadingAssetKey, setUploadingAssetKey] = useState<string | null>(null)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   useEffect(() => {
@@ -672,17 +678,97 @@ export default function InstallerDashboardPage() {
     void hydrateQuotationDetails(quotation)
   }
 
+  const toLocalUploadedFile = (file: File): InstallationUploadedFile => ({
+    name: file.name,
+    url: URL.createObjectURL(file),
+  })
+
+  const uploadInstallerFieldFiles = async (
+    quotationId: string,
+    fieldKey: InstallationImageFieldKey,
+    files: File[],
+  ) => {
+    if (files.length === 0) {
+      setUploadFilesByQuotation((prev) => ({
+        ...prev,
+        [quotationId]: {
+          ...(prev[quotationId] || {}),
+          [fieldKey]: [],
+        },
+      }))
+      return
+    }
+
+    const targetKey = `${quotationId}:${fieldKey}`
+    setUploadingAssetKey(targetKey)
+    try {
+      const uploadedFiles: InstallationUploadedFile[] = []
+      for (const file of files) {
+        const url = useApi
+          ? await api.installer.uploadCompletionAsset(quotationId, fieldKey, file)
+          : toLocalUploadedFile(file).url
+        uploadedFiles.push({ name: file.name, url })
+      }
+      setUploadFilesByQuotation((prev) => ({
+        ...prev,
+        [quotationId]: {
+          ...(prev[quotationId] || {}),
+          [fieldKey]: uploadedFiles,
+        },
+      }))
+    } catch (error) {
+      toast({
+        title: "Upload failed",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAssetKey((current) => (current === targetKey ? null : current))
+    }
+  }
+
+  const uploadInstallerPiFile = async (quotationId: string, file: File | null) => {
+    if (!file) {
+      setPiUploadByQuotation((prev) => ({ ...prev, [quotationId]: null }))
+      return
+    }
+
+    const targetKey = `${quotationId}:piUpload`
+    setUploadingAssetKey(targetKey)
+    try {
+      const url = useApi
+        ? await api.installer.uploadCompletionAsset(quotationId, "piUpload", file)
+        : toLocalUploadedFile(file).url
+      setPiUploadByQuotation((prev) => ({ ...prev, [quotationId]: { name: file.name, url } }))
+    } catch (error) {
+      toast({
+        title: "PI upload failed",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAssetKey((current) => (current === targetKey ? null : current))
+    }
+  }
+
   const handleApproveInstallation = async (quotation: InstallerQuotation) => {
     const filesByField = uploadFilesByQuotation[quotation.id] || {}
     const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => isImageFieldRequired(field))
-    const files = INSTALLATION_IMAGE_FIELDS
-      .flatMap((field) => filesByField[field.key] || [])
-      .filter((file): file is File => file instanceof File)
+    const uploadedFiles = INSTALLATION_IMAGE_FIELDS.flatMap((field) => filesByField[field.key] || [])
     const notes = uploadNotes[quotation.id] || ""
     const dimensions = dimensionsByQuotation[quotation.id] || { length: "", width: "", height: "" }
     const piUpload = piUploadByQuotation[quotation.id]
     const rawExpenseLines = extraExpenseLinesByQuotation[quotation.id] || []
     const expenseLines = rawExpenseLines.filter((l) => l.description.trim() !== "" || l.amount.trim() !== "")
+
+    if (uploadingAssetKey?.startsWith(`${quotation.id}:`)) {
+      toast({
+        title: "Upload in progress",
+        description: "Wait for all completion files to finish uploading before saving.",
+        variant: "destructive",
+      })
+      return
+    }
 
     const missingFields = requiredFields.filter((field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0))
     if (missingFields.length > 0) {
@@ -753,13 +839,12 @@ export default function InstallerDashboardPage() {
         INSTALLATION_IMAGE_FIELDS.forEach((field) => {
           const fieldFiles = filesByField[field.key] || []
           fieldFiles.forEach((file) => {
-            if (!(file instanceof File)) return
-            formData.append("installerCompletionImages", file)
-            formData.append(field.key, file)
+            formData.append("installerCompletionImages", file.url)
+            formData.append(field.key, file.url)
           })
         })
-        if (piUpload instanceof File) {
-          formData.append("piUpload", piUpload)
+        if (piUpload?.url) {
+          formData.append("piUpload", piUpload.url)
         }
         if (expenseLines.length > 0) {
           const payload = expenseLines.map(({ description, amount }) => ({
@@ -863,8 +948,8 @@ export default function InstallerDashboardPage() {
             status: "approved",
             notes,
             imageNames: [
-              ...files.map((f) => f.name),
-              ...(piUpload instanceof File ? [piUpload.name] : []),
+              ...uploadedFiles.map((f) => f.name),
+              ...(piUpload ? [piUpload.name] : []),
             ],
             updatedAt: new Date().toISOString(),
           },
@@ -1066,17 +1151,14 @@ export default function InstallerDashboardPage() {
                         loadingText={loadingDetailsForId === q.id ? "Loading full customer/quotation details..." : undefined}
                         imageFields={INSTALLATION_IMAGE_FIELDS}
                         filesByField={uploadFilesByQuotation[q.id] || {}}
-                        onFilesChange={(fieldKey, files) =>
-                          setUploadFilesByQuotation((prev) => ({
-                            ...prev,
-                            [q.id]: {
-                              ...(prev[q.id] || {}),
-                              [fieldKey]: files,
-                            },
-                          }))
-                        }
+                        onFilesChange={(fieldKey, files) => uploadInstallerFieldFiles(q.id, fieldKey as InstallationImageFieldKey, files)}
                         piFile={piUploadByQuotation[q.id] || null}
-                        onPiFileChange={(file) => setPiUploadByQuotation((prev) => ({ ...prev, [q.id]: file }))}
+                        onPiFileChange={(file) => uploadInstallerPiFile(q.id, file)}
+                        uploadingKey={
+                          uploadingAssetKey?.startsWith(`${q.id}:`)
+                            ? uploadingAssetKey.slice(`${q.id}:`.length)
+                            : null
+                        }
                         extraExpenses={extraExpenseLinesByQuotation[q.id] || []}
                         onAddExpense={() =>
                           setExtraExpenseLinesByQuotation((prev) => ({

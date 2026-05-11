@@ -1,5 +1,6 @@
 // API Configuration and Service Layer
 import { API_CONFIG } from "./api-config"
+import { parseQuotationDocumentUploadUrl } from "./quotation-documents-form"
 
 const API_BASE_URL = API_CONFIG.baseURL
 
@@ -369,6 +370,37 @@ async function multipartRequest<T = any>(endpoint: string, method: "POST" | "PAT
   }
 
   return response as any
+}
+
+function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): string | null {
+  const root = payload?.data ?? payload
+  if (!root || typeof root !== "object") return null
+
+  const directKeys = [
+    "url",
+    "fileUrl",
+    "file_url",
+    "location",
+    "path",
+    ...preferredKeys,
+  ]
+  for (const key of directKeys) {
+    const value = root[key]
+    if (typeof value === "string" && value.trim()) return value.trim()
+  }
+
+  const nestedDocs = [root.documents, root.document, root.file]
+  for (const nested of nestedDocs) {
+    if (!nested || typeof nested !== "object") continue
+    for (const key of preferredKeys) {
+      const value = nested[key]
+      if (typeof value === "string" && value.trim()) return value.trim()
+      const urlValue = nested[`${key}Url`]
+      if (typeof urlValue === "string" && urlValue.trim()) return urlValue.trim()
+    }
+  }
+
+  return null
 }
 
 // API Service Methods
@@ -829,6 +861,63 @@ export const api = {
       throw new ApiError(String(message), code, details)
     },
 
+    /**
+     * Upload one KYC / property file to the server (server stores on S3 and returns a public or presigned URL).
+     * Expected route: POST /quotations/:quotationId/documents/upload — multipart field `field` (logical key) + `file`.
+     */
+    uploadQuotationDocumentFile: async (quotationId: string, field: string, file: File): Promise<string> => {
+      const formData = new FormData()
+      formData.append("field", field)
+      formData.append("file", file)
+      const token = getAuthToken()
+      const url = `${API_BASE_URL}/quotations/${quotationId}/documents/upload`
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: formData,
+      })
+
+      const raw = await response.text().catch(() => "")
+      let payload: any = null
+      if (raw) {
+        try {
+          payload = JSON.parse(raw)
+        } catch {
+          payload = null
+        }
+      }
+
+      const success = response.ok && (payload == null || payload.success !== false)
+      if (success) {
+        const parsedUrl = parseQuotationDocumentUploadUrl(payload, field)
+        if (parsedUrl) return parsedUrl
+        throw new ApiError(
+          "Upload succeeded but the response did not include a file URL. Check POST /quotations/…/documents/upload response shape.",
+          "MISSING_UPLOAD_URL",
+        )
+      }
+
+      const errObj =
+        payload && typeof payload === "object" && payload.error && typeof payload.error === "object"
+          ? payload.error
+          : null
+      const jsonMessage =
+        (typeof errObj?.message === "string" && errObj.message) ||
+        (typeof payload?.message === "string" && payload.message) ||
+        undefined
+      const details = Array.isArray(errObj?.details) ? errObj.details : undefined
+      const code = (typeof errObj?.code === "string" && errObj.code) || `HTTP_${response.status}`
+      const message =
+        jsonMessage ||
+        (response.status === 404
+          ? "Document upload endpoint not found (POST /quotations/{id}/documents/upload)."
+          : raw.replace(/\s+/g, " ").trim().slice(0, 400) || response.statusText || `HTTP_${response.status}`)
+
+      throw new ApiError(String(message), code, details)
+    },
+
     downloadPDF: async (quotationId: string) => {
       const token = getAuthToken()
       const url = `${API_BASE_URL}/quotations/${quotationId}/pdf`
@@ -992,6 +1081,45 @@ export const api = {
           if (!retryable) throw error
         }
       }
+      throw lastError
+    },
+
+    uploadCompletionAsset: async (
+      visitId: string,
+      field: "images" | "rowDiagramImage" | "meterImage",
+      file: File,
+    ): Promise<string> => {
+      const formData = new FormData()
+      formData.append("field", field)
+      formData.append("file", file)
+
+      const attempts = [
+        `/visits/${visitId}/upload`,
+        `/visits/${visitId}/media-upload`,
+        `/visits/${visitId}/complete/upload`,
+        `/visitors/visits/${visitId}/upload`,
+        `/visitors/me/visits/${visitId}/upload`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of attempts) {
+        try {
+          const payload = await multipartRequest(endpoint, "POST", cloneFormData(formData))
+          const url = parseUploadUrlCandidate(payload, [field, `${field}Url`, `${field}_url`])
+          if (url) return url
+          throw new ApiError(
+            "Upload succeeded but no file URL was returned by the visit upload endpoint.",
+            "MISSING_UPLOAD_URL",
+          )
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+
       throw lastError
     },
 
@@ -1187,6 +1315,43 @@ export const api = {
         )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents, that accepts the installer multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
         "HTTP_404",
       )
+    },
+
+    uploadCompletionAsset: async (
+      quotationId: string,
+      field: string,
+      file: File,
+    ): Promise<string> => {
+      const formData = new FormData()
+      formData.append("field", field)
+      formData.append("file", file)
+
+      const endpoints = [
+        `/installer/quotations/${quotationId}/documents/upload`,
+        `/installer/quotations/${quotationId}/upload`,
+        `/quotations/${quotationId}/installer-documents/upload`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          const payload = await multipartRequest(endpoint, "POST", cloneFormData(formData))
+          const url = parseUploadUrlCandidate(payload, [field, `${field}Url`, `${field}_url`])
+          if (url) return url
+          throw new ApiError(
+            "Upload succeeded but no file URL was returned by the installer upload endpoint.",
+            "MISSING_UPLOAD_URL",
+          )
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+
+      throw lastError
     },
   },
 

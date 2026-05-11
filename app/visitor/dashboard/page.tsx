@@ -38,6 +38,7 @@ import type { Dealer } from "@/lib/auth-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+import { useToast } from "@/hooks/use-toast"
 import {
   Dialog,
   DialogContent,
@@ -231,6 +232,7 @@ const extractImageList = (visit: any): string[] => {
 export default function VisitorDashboardPage() {
   const { visitor, role, isAuthenticated, logout } = useAuth()
   const router = useRouter()
+  const { toast } = useToast()
   const [assignedVisits, setAssignedVisits] = useState<VisitWithQuotation[]>([])
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -255,11 +257,8 @@ export default function VisitorDashboardPage() {
   const [backLegFeet, setBackLegFeet] = useState("")
   const [midLegFeet, setMidLegFeet] = useState("")
   const [frontLegFeet, setFrontLegFeet] = useState("")
-  const [images, setImages] = useState<File[]>([])
   const [imagePreviews, setImagePreviews] = useState<string[]>([])
-  const [rowDiagramFile, setRowDiagramFile] = useState<File | null>(null)
   const [rowDiagramPreview, setRowDiagramPreview] = useState<string | null>(null)
-  const [meterImageFile, setMeterImageFile] = useState<File | null>(null)
   const [meterImagePreview, setMeterImagePreview] = useState<string | null>(null)
   /** Count of site images already on the visit when the complete dialog opens (URL strings). */
   const [persistedSiteImageCount, setPersistedSiteImageCount] = useState(0)
@@ -273,6 +272,7 @@ export default function VisitorDashboardPage() {
   )
   const [isLoadingVisits, setIsLoadingVisits] = useState(false)
   const [isCompletingVisit, setIsCompletingVisit] = useState(false)
+  const [isUploadingCompleteAsset, setIsUploadingCompleteAsset] = useState(false)
 
   useEffect(() => {
     setCurrentPage(1)
@@ -607,12 +607,9 @@ export default function VisitorDashboardPage() {
       )
       setMidLegFeet(targetVisit.midLegFeet?.toString() || "")
       setFrontLegFeet(targetVisit.frontLegFeet?.toString() || "")
-      setImages([])
       setImagePreviews(targetVisit.images || [])
       setPersistedSiteImageCount(targetVisit.images?.length ?? 0)
-      setRowDiagramFile(null)
       setRowDiagramPreview(targetVisit.rowDiagramImage || null)
-      setMeterImageFile(null)
       setMeterImagePreview(targetVisit.meterImage || null)
       setCompleteNotes(targetVisit.notes || "")
       setCompleteDialogOpen(true)
@@ -669,6 +666,14 @@ export default function VisitorDashboardPage() {
 
   const handleCompleteVisit = async () => {
     if (!selectedVisit || isCompletingVisit) return
+    if (isUploadingCompleteAsset) {
+      toast({
+        title: "Upload in progress",
+        description: "Wait for the image uploads to finish before submitting the visit.",
+        variant: "destructive",
+      })
+      return
+    }
 
     setIsCompletingVisit(true)
     try {
@@ -698,59 +703,19 @@ export default function VisitorDashboardPage() {
       }
 
       if (useApi) {
-        try {
-          const persistedImages = imagePreviews.slice(0, persistedSiteImageCount)
-          await api.visits.completeWithFiles(
-            visitSnapshot.id,
-            {
-              length: L,
-              width: W,
-              height: legacyHeight,
-              unit: "feet",
-              backLegFeet: back,
-              ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
-              frontLegFeet: front,
-              notes: completeNotes.trim() || undefined,
-              existingImages: persistedImages,
-              existingRowDiagramImage: rowDiagramFile ? undefined : rowDiagramPreview || undefined,
-              existingMeterImage: meterImageFile ? undefined : meterImagePreview || undefined,
-            },
-            images,
-            rowDiagramFile,
-            meterImageFile,
-          )
-        } catch (error) {
-          console.warn("Visitor complete multipart API failed, trying JSON fallback:", error)
-          const rowDiagramImage = rowDiagramFile
-            ? await new Promise<string>((resolve) => {
-                const reader = new FileReader()
-                reader.onload = (e) => resolve(e.target?.result as string)
-                reader.readAsDataURL(rowDiagramFile)
-              })
-            : rowDiagramPreview || undefined
-
-          const meterImage = meterImageFile
-            ? await new Promise<string>((resolve) => {
-                const reader = new FileReader()
-                reader.onload = (e) => resolve(e.target?.result as string)
-                reader.readAsDataURL(meterImageFile)
-              })
-            : meterImagePreview || undefined
-
-          await api.visits.complete(visitSnapshot.id, {
-            length: L,
-            width: W,
-            height: legacyHeight,
-            unit: "feet" as const,
-            backLegFeet: back,
-            ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
-            frontLegFeet: front,
-            images: allImages,
-            notes: completeNotes.trim() || undefined,
-            ...(rowDiagramImage ? { rowDiagramImage } : {}),
-            ...(meterImage ? { meterImage } : {}),
-          })
-        }
+        await api.visits.complete(visitSnapshot.id, {
+          length: L,
+          width: W,
+          height: legacyHeight,
+          unit: "feet" as const,
+          backLegFeet: back,
+          ...(midLegFeet.trim() !== "" ? { midLegFeet: mid } : {}),
+          frontLegFeet: front,
+          images: allImages,
+          notes: completeNotes.trim() || undefined,
+          ...(rowDiagramPreview ? { rowDiagramImage: rowDiagramPreview } : {}),
+          ...(meterImagePreview ? { meterImage: meterImagePreview } : {}),
+        })
       } else {
         // Local-only mode fallback
         const storedVisits = JSON.parse(localStorage.getItem(`visits_${visitSnapshot.quotationId}`) || "[]")
@@ -778,12 +743,9 @@ export default function VisitorDashboardPage() {
       setBackLegFeet("")
       setMidLegFeet("")
       setFrontLegFeet("")
-      setImages([])
       setImagePreviews([])
       setPersistedSiteImageCount(0)
-      setRowDiagramFile(null)
       setRowDiagramPreview(null)
-      setMeterImageFile(null)
       setMeterImagePreview(null)
       setCompleteNotes("")
     } catch (error) {
@@ -910,58 +872,106 @@ export default function VisitorDashboardPage() {
     }
   }
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || [])
-    if (files.length > 0) {
-      setImages((prev) => [...prev, ...files])
-      // Create previews
-      files.forEach((file) => {
-        const reader = new FileReader()
-        reader.onload = (e) => {
-          setImagePreviews((prev) => [...prev, e.target?.result as string])
+    e.target.value = ""
+    if (files.length === 0) return
+
+    if (useApi && selectedVisit) {
+      setIsUploadingCompleteAsset(true)
+      try {
+        const uploadedUrls: string[] = []
+        for (const file of files) {
+          uploadedUrls.push(await api.visits.uploadCompletionAsset(selectedVisit.id, "images", file))
         }
-        reader.readAsDataURL(file)
-      })
+        setImagePreviews((prev) => [...prev, ...uploadedUrls])
+      } catch (error) {
+        toast({
+          title: "Image upload failed",
+          description: apiErrorToUserMessage(error),
+          variant: "destructive",
+        })
+      } finally {
+        setIsUploadingCompleteAsset(false)
+      }
+      return
     }
+
+    files.forEach((file) => {
+      const reader = new FileReader()
+      reader.onload = (loadEvent) => {
+        setImagePreviews((prev) => [...prev, loadEvent.target?.result as string])
+      }
+      reader.readAsDataURL(file)
+    })
   }
 
   const removeImage = (index: number) => {
     setImagePreviews((prev) => prev.filter((_, i) => i !== index))
     if (index < persistedSiteImageCount) {
       setPersistedSiteImageCount((c) => Math.max(0, c - 1))
-    } else {
-      const fileIndex = index - persistedSiteImageCount
-      setImages((prev) => prev.filter((_, i) => i !== fileIndex))
     }
   }
 
-  const handleRowDiagramUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRowDiagramUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ""
     if (!file) return
-    setRowDiagramFile(file)
+
+    if (useApi && selectedVisit) {
+      setIsUploadingCompleteAsset(true)
+      try {
+        const uploadedUrl = await api.visits.uploadCompletionAsset(selectedVisit.id, "rowDiagramImage", file)
+        setRowDiagramPreview(uploadedUrl)
+      } catch (error) {
+        toast({
+          title: "Row diagram upload failed",
+          description: apiErrorToUserMessage(error),
+          variant: "destructive",
+        })
+      } finally {
+        setIsUploadingCompleteAsset(false)
+      }
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = (ev) => setRowDiagramPreview(ev.target?.result as string)
     reader.readAsDataURL(file)
   }
 
   const clearRowDiagram = () => {
-    setRowDiagramFile(null)
     setRowDiagramPreview(null)
   }
 
-  const handleMeterImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleMeterImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     e.target.value = ""
     if (!file) return
-    setMeterImageFile(file)
+
+    if (useApi && selectedVisit) {
+      setIsUploadingCompleteAsset(true)
+      try {
+        const uploadedUrl = await api.visits.uploadCompletionAsset(selectedVisit.id, "meterImage", file)
+        setMeterImagePreview(uploadedUrl)
+      } catch (error) {
+        toast({
+          title: "Meter image upload failed",
+          description: apiErrorToUserMessage(error),
+          variant: "destructive",
+        })
+      } finally {
+        setIsUploadingCompleteAsset(false)
+      }
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = (ev) => setMeterImagePreview(ev.target?.result as string)
     reader.readAsDataURL(file)
   }
 
   const clearMeterImage = () => {
-    setMeterImageFile(null)
     setMeterImagePreview(null)
   }
 
@@ -1884,6 +1894,7 @@ export default function VisitorDashboardPage() {
                   accept="image/*"
                   multiple
                   onChange={handleImageUpload}
+                  disabled={isUploadingCompleteAsset}
                   className="hidden"
                   id="image-upload"
                 />
@@ -1891,10 +1902,11 @@ export default function VisitorDashboardPage() {
                   type="button"
                   variant="outline"
                   size="sm"
+                  disabled={isUploadingCompleteAsset}
                   onClick={() => document.getElementById("image-upload")?.click()}
                 >
                   <Upload className="w-4 h-4 mr-2" />
-                  Select Images
+                  {isUploadingCompleteAsset ? "Uploading..." : "Select Images"}
                 </Button>
               </div>
 
@@ -1912,6 +1924,7 @@ export default function VisitorDashboardPage() {
                         variant="destructive"
                         size="icon"
                         className="absolute top-2 right-2 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                        disabled={isUploadingCompleteAsset}
                         onClick={() => removeImage(index)}
                       >
                         <X className="w-3 h-3" />
@@ -1932,14 +1945,21 @@ export default function VisitorDashboardPage() {
                     type="file"
                     accept="image/*"
                     onChange={handleRowDiagramUpload}
+                    disabled={isUploadingCompleteAsset}
                     className="hidden"
                   />
-                  <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById("row-diagram-upload")?.click()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isUploadingCompleteAsset}
+                    onClick={() => document.getElementById("row-diagram-upload")?.click()}
+                  >
                     <Upload className="w-4 h-4 mr-2" />
-                    Select
+                    {isUploadingCompleteAsset ? "Uploading..." : "Select"}
                   </Button>
                   {rowDiagramPreview && (
-                    <Button type="button" variant="ghost" size="sm" onClick={clearRowDiagram}>
+                    <Button type="button" variant="ghost" size="sm" disabled={isUploadingCompleteAsset} onClick={clearRowDiagram}>
                       Remove
                     </Button>
                   )}
@@ -1966,14 +1986,21 @@ export default function VisitorDashboardPage() {
                     type="file"
                     accept="image/*"
                     onChange={handleMeterImageUpload}
+                    disabled={isUploadingCompleteAsset}
                     className="hidden"
                   />
-                  <Button type="button" variant="outline" size="sm" onClick={() => document.getElementById("meter-image-upload")?.click()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={isUploadingCompleteAsset}
+                    onClick={() => document.getElementById("meter-image-upload")?.click()}
+                  >
                     <Upload className="w-4 h-4 mr-2" />
-                    Select
+                    {isUploadingCompleteAsset ? "Uploading..." : "Select"}
                   </Button>
                   {meterImagePreview && (
-                    <Button type="button" variant="ghost" size="sm" onClick={clearMeterImage}>
+                    <Button type="button" variant="ghost" size="sm" disabled={isUploadingCompleteAsset} onClick={clearMeterImage}>
                       Remove
                     </Button>
                   )}
@@ -2006,13 +2033,14 @@ export default function VisitorDashboardPage() {
             </div>
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCompleteDialogOpen(false)}>
+              <Button variant="outline" disabled={isCompletingVisit || isUploadingCompleteAsset} onClick={() => setCompleteDialogOpen(false)}>
                 Cancel
               </Button>
               <Button
                 onClick={handleCompleteVisit}
                 disabled={
                   isCompletingVisit ||
+                  isUploadingCompleteAsset ||
                   !lengthFeet ||
                   !widthFeet ||
                   !backLegFeet ||
@@ -2023,7 +2051,7 @@ export default function VisitorDashboardPage() {
                 className="bg-blue-600 hover:bg-blue-700"
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
-                {isCompletingVisit ? "Submitting..." : "Complete Visit"}
+                {isCompletingVisit ? "Submitting..." : isUploadingCompleteAsset ? "Uploading..." : "Complete Visit"}
               </Button>
             </div>
           </div>

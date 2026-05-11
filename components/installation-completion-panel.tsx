@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -32,13 +32,19 @@ export type InstallationInfoSection = {
   emptyText?: string
 }
 
+export type InstallationUploadedFile = {
+  name: string
+  url: string
+}
+
 type Props = {
   loadingText?: string
   imageFields: readonly InstallationImageField[]
-  filesByField: Record<string, File[] | undefined>
-  onFilesChange: (fieldKey: string, files: File[]) => void
-  piFile: File | null
-  onPiFileChange: (file: File | null) => void
+  filesByField: Record<string, InstallationUploadedFile[] | undefined>
+  onFilesChange: (fieldKey: string, files: File[]) => void | Promise<void>
+  piFile: InstallationUploadedFile | null
+  onPiFileChange: (file: File | null) => void | Promise<void>
+  uploadingKey?: string | null
   extraExpenses: InstallationExpenseLine[]
   onAddExpense: () => void
   onExpenseChange: (id: string, patch: Partial<InstallationExpenseLine>) => void
@@ -61,6 +67,7 @@ export function InstallationCompletionPanel({
   onFilesChange,
   piFile,
   onPiFileChange,
+  uploadingKey,
   extraExpenses,
   onAddExpense,
   onExpenseChange,
@@ -106,7 +113,7 @@ export function InstallationCompletionPanel({
     const fileEntries = Object.entries(filesByField)
       .flatMap(([fieldKey, files]) => {
         if (!files || files.length === 0) return []
-        const firstImage = files.find((f) => f.type?.startsWith("image/")) || files[0]
+        const firstImage = files[0]
         return firstImage ? [{ fieldKey, file: firstImage }] : []
       })
       .slice(0, 3)
@@ -114,45 +121,27 @@ export function InstallationCompletionPanel({
     return fileEntries.map((entry) => ({
       fieldKey: entry.fieldKey,
       fileName: entry.file.name,
-      url: URL.createObjectURL(entry.file),
+      url: entry.file.url,
     }))
   }, [filesByField])
-
-  useEffect(() => {
-    return () => {
-      uploadedPreviewItems.forEach((item) => URL.revokeObjectURL(item.url))
-    }
-  }, [uploadedPreviewItems])
 
   const uploadedFieldPreviewMap = useMemo(() => {
     const entries = Object.entries(filesByField)
       .map(([fieldKey, files]) => {
         if (!files || files.length === 0) return null
-        const firstImage = files.find((f) => f.type?.startsWith("image/")) || files[0]
+        const firstImage = files[0]
         if (!firstImage) return null
-        return [fieldKey, URL.createObjectURL(firstImage)] as const
+        return [fieldKey, firstImage.url] as const
       })
       .filter(Boolean) as Array<readonly [string, string]>
     return Object.fromEntries(entries) as Record<string, string>
   }, [filesByField])
 
-  useEffect(() => {
-    return () => {
-      Object.values(uploadedFieldPreviewMap).forEach((url) => URL.revokeObjectURL(url))
-    }
-  }, [uploadedFieldPreviewMap])
-
   const piPreviewUrl = useMemo(() => {
     if (!piFile) return ""
-    if (piFile.type?.startsWith("image/")) return URL.createObjectURL(piFile)
+    if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(piFile.url)) return piFile.url
     return ""
   }, [piFile])
-
-  useEffect(() => {
-    return () => {
-      if (piPreviewUrl) URL.revokeObjectURL(piPreviewUrl)
-    }
-  }, [piPreviewUrl])
 
   const renderImageFieldCard = (field: InstallationImageField) => {
     const inputId = `install-image-${field.key}`
@@ -227,10 +216,12 @@ export function InstallationCompletionPanel({
           <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
             <Label
               htmlFor={inputId}
-              className="h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground cursor-pointer hover:bg-background"
+              className={`h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground hover:bg-background ${
+                uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              }`}
             >
               <Upload className="w-3.5 h-3.5" />
-              Upload
+              {uploadingKey === field.key ? "Uploading..." : "Upload"}
             </Label>
           </div>
         </div>
@@ -240,9 +231,10 @@ export function InstallationCompletionPanel({
           accept="image/*"
           multiple={field.multiple === true}
           className="hidden"
+          disabled={Boolean(uploadingKey)}
           onChange={(e) => {
             setPreviewLoadErrorByField((prev) => ({ ...prev, [field.key]: false }))
-            onFilesChange(field.key, Array.from(e.target.files || []))
+            void onFilesChange(field.key, Array.from(e.target.files || []))
             // Allow selecting the same file again after replacing/removing.
             e.currentTarget.value = ""
           }}
@@ -283,10 +275,12 @@ export function InstallationCompletionPanel({
           <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
             <Label
               htmlFor="install-pi-upload"
-              className="h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground cursor-pointer hover:bg-background"
+              className={`h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground hover:bg-background ${
+                uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+              }`}
             >
               <Upload className="w-3.5 h-3.5" />
-              Upload PI
+              {uploadingKey === "piUpload" ? "Uploading..." : "Upload PI"}
             </Label>
           </div>
         </div>
@@ -295,8 +289,9 @@ export function InstallationCompletionPanel({
           type="file"
           accept="application/pdf,image/*"
           className="hidden"
+          disabled={Boolean(uploadingKey)}
           onChange={(e) => {
-            onPiFileChange(e.target.files?.[0] || null)
+            void onPiFileChange(e.target.files?.[0] || null)
             e.currentTarget.value = ""
           }}
         />
@@ -431,11 +426,11 @@ export function InstallationCompletionPanel({
       </div>
 
       <div className="flex justify-end gap-2">
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving || Boolean(uploadingKey)}>
           Cancel
         </Button>
-        <Button size="sm" onClick={onSave} disabled={saving}>
-          {saving ? "Saving..." : saveLabel}
+        <Button size="sm" onClick={onSave} disabled={saving || Boolean(uploadingKey)}>
+          {saving ? "Saving..." : uploadingKey ? "Uploading..." : saveLabel}
         </Button>
       </div>
     </div>

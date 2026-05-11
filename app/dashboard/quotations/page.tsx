@@ -14,6 +14,8 @@ import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
 import { api, apiErrorToUserMessage } from "@/lib/api"
+import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
+import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
@@ -167,20 +169,10 @@ export default function QuotationsPage() {
       const existing = prev[quotation.id]
       if (existing) return prev
 
-      let localDraft: Record<string, any> = {}
-      if (!useApi) {
-        try {
-          localDraft = JSON.parse(localStorage.getItem(`quotation_documents_${quotation.id}`) || "{}")
-        } catch {
-          localDraft = {}
-        }
-      }
-
       return {
         ...prev,
         [quotation.id]: {
           ...seedDocumentsFormFromQuotation(quotation),
-          ...(useApi ? {} : localDraft),
         },
       }
     })
@@ -434,51 +426,7 @@ export default function QuotationsPage() {
     }))
   }
 
-  const buildDocumentsFormData = (form: Record<string, any>) => {
-    const formData = new FormData()
-    const appendIfValue = (key: string, value: any) => {
-      if (value === undefined || value === null || value === "") return
-      formData.append(key, String(value))
-    }
-    const appendFile = (key: string, value: File | null) => {
-      if (value instanceof File) formData.append(key, value)
-    }
-
-    appendIfValue("isCompliantSenior", form.isCompliantSenior ? "true" : "false")
-    appendIfValue("aadharNumber", form.aadharNumber)
-    appendIfValue("phoneNumber", form.contactPhone)
-    appendFile("aadharFront", form.aadharFront)
-    appendFile("aadharBack", form.aadharBack)
-
-    appendIfValue("compliantAadharNumber", form.compliantAadharNumber)
-    appendIfValue("compliantContactPhone", form.compliantContactPhone)
-    appendFile("compliantAadharFront", form.compliantAadharFront)
-    appendFile("compliantAadharBack", form.compliantAadharBack)
-    appendIfValue("compliantPanNumber", form.compliantPanNumber)
-    appendFile("compliantPanImage", form.compliantPanImage)
-    appendIfValue("compliantBankAccountNumber", form.compliantBankAccountNumber)
-    appendIfValue("compliantBankIfsc", form.compliantBankIfsc)
-    appendIfValue("compliantBankName", form.compliantBankName)
-    appendIfValue("compliantBankBranch", form.compliantBankBranch)
-    appendFile("compliantBankPassbookImage", form.compliantBankPassbookImage)
-
-    appendIfValue("panNumber", form.panNumber)
-    appendFile("panImage", form.panImage)
-    appendIfValue("electricityKno", form.electricityKno)
-    appendFile("electricityBillImage", form.electricityBillImage)
-
-    appendIfValue("bankAccountNumber", form.bankAccountNumber)
-    appendIfValue("bankIfsc", form.bankIfsc)
-    appendIfValue("bankName", form.bankName)
-    appendIfValue("bankBranch", form.bankBranch)
-    appendFile("bankPassbookImage", form.bankPassbookImage)
-    appendFile("geotagRoofPhoto", form.geotagRoofPhoto)
-    appendFile("customerWithHousePhoto", form.customerWithHousePhoto)
-    appendFile("propertyDocumentPdf", form.propertyDocumentPdf)
-
-    appendIfValue("emailId", form.contactEmail)
-    return formData
-  }
+  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
   const getSystemSize = (quotation: Quotation): string => {
     const products = quotation.products
@@ -869,8 +817,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, { aadharFront: e.target.files?.[0] || null })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "aadharFront",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.aadharFront ? (
@@ -884,8 +837,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, { aadharBack: e.target.files?.[0] || null })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "aadharBack",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.aadharBack ? (
@@ -934,10 +892,13 @@ export default function QuotationsPage() {
                               <Input
                                 type="file"
                                 accept="image/*"
+                                disabled={!!uploadingField}
                                 onChange={(e) =>
-                                  updateDocumentsForm(documentsQuotation.id, {
-                                    compliantAadharFront: e.target.files?.[0] || null,
-                                  })
+                                  void onDocumentFileSelected(
+                                    documentsQuotation.id,
+                                    "compliantAadharFront",
+                                    e.target.files?.[0] ?? null,
+                                  )
                                 }
                               />
                             </div>
@@ -946,10 +907,13 @@ export default function QuotationsPage() {
                               <Input
                                 type="file"
                                 accept="image/*"
+                                disabled={!!uploadingField}
                                 onChange={(e) =>
-                                  updateDocumentsForm(documentsQuotation.id, {
-                                    compliantAadharBack: e.target.files?.[0] || null,
-                                  })
+                                  void onDocumentFileSelected(
+                                    documentsQuotation.id,
+                                    "compliantAadharBack",
+                                    e.target.files?.[0] ?? null,
+                                  )
                                 }
                               />
                             </div>
@@ -974,8 +938,13 @@ export default function QuotationsPage() {
                               <Input
                                 type="file"
                                 accept="image/*"
+                                disabled={!!uploadingField}
                                 onChange={(e) =>
-                                  updateDocumentsForm(documentsQuotation.id, { compliantPanImage: e.target.files?.[0] || null })
+                                  void onDocumentFileSelected(
+                                    documentsQuotation.id,
+                                    "compliantPanImage",
+                                    e.target.files?.[0] ?? null,
+                                  )
                                 }
                               />
                             </div>
@@ -1030,10 +999,13 @@ export default function QuotationsPage() {
                               <Input
                                 type="file"
                                 accept="image/*"
+                                disabled={!!uploadingField}
                                 onChange={(e) =>
-                                  updateDocumentsForm(documentsQuotation.id, {
-                                    compliantBankPassbookImage: e.target.files?.[0] || null,
-                                  })
+                                  void onDocumentFileSelected(
+                                    documentsQuotation.id,
+                                    "compliantBankPassbookImage",
+                                    e.target.files?.[0] ?? null,
+                                  )
                                 }
                               />
                             </div>
@@ -1058,8 +1030,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, { panImage: e.target.files?.[0] || null })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "panImage",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.panImage ? (
@@ -1089,10 +1066,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, {
-                                electricityBillImage: e.target.files?.[0] || null,
-                              })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "electricityBillImage",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.electricityBillImage ? (
@@ -1146,10 +1126,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, {
-                                bankPassbookImage: e.target.files?.[0] || null,
-                              })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "bankPassbookImage",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.bankPassbookImage ? (
@@ -1184,10 +1167,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, {
-                                geotagRoofPhoto: e.target.files?.[0] || null,
-                              })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "geotagRoofPhoto",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                         </div>
@@ -1196,10 +1182,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="image/*"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, {
-                                customerWithHousePhoto: e.target.files?.[0] || null,
-                              })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "customerWithHousePhoto",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                         </div>
@@ -1208,10 +1197,13 @@ export default function QuotationsPage() {
                           <Input
                             type="file"
                             accept="application/pdf,.pdf"
+                            disabled={!!uploadingField}
                             onChange={(e) =>
-                              updateDocumentsForm(documentsQuotation.id, {
-                                propertyDocumentPdf: e.target.files?.[0] || null,
-                              })
+                              void onDocumentFileSelected(
+                                documentsQuotation.id,
+                                "propertyDocumentPdf",
+                                e.target.files?.[0] ?? null,
+                              )
                             }
                           />
                           {form.propertyDocumentPdf ? (
@@ -1437,59 +1429,55 @@ export default function QuotationsPage() {
                       }
                     }
 
-                    setIsSubmittingDocuments(true)
                     if (useApi) {
-                      const formData = buildDocumentsFormData(form)
-                      api.quotations
-                        .updateDocuments(documentsQuotation.id, formData)
-                        .then(async () => {
-                          try {
-                            const fullQuotation = await api.quotations.getById(documentsQuotation.id)
-                            const mergedQuotation = { ...documentsQuotation, ...fullQuotation } as Quotation
-                            setDocumentsQuotation(mergedQuotation)
-                            setDocumentsFormById((prev) => ({
-                              ...prev,
-                              [documentsQuotation.id]: {
-                                ...seedDocumentsFormFromQuotation(mergedQuotation),
-                                ...(prev[documentsQuotation.id] || {}),
-                              },
-                            }))
-                          } catch (refreshError) {
-                            console.warn("Could not refresh documents after submit:", refreshError)
-                          }
-                          toast({
-                            title: "Document details saved",
-                            description: "Documents uploaded successfully and refreshed from backend.",
-                          })
+                      const pendingFile = firstPendingDocumentFileField(form)
+                      if (pendingFile) {
+                        toast({
+                          title: "Files still uploading",
+                          description: "Wait for each file to finish uploading before submitting.",
+                          variant: "destructive",
                         })
-                        .catch((error: unknown) => {
-                          localStorage.setItem(
-                            `quotation_documents_${documentsQuotation.id}`,
-                            JSON.stringify(form),
-                          )
-                          toast({
-                            title: "Saved locally",
-                            description:
-                              "Backend upload is unavailable right now. Your changes are saved locally.",
-                          })
-                          console.warn("Documents upload fallback (saved locally):", apiErrorToUserMessage(error))
-                          setDocumentsDialogOpen(false)
-                        })
-                        .finally(() => setIsSubmittingDocuments(false))
-                    } else {
-                      localStorage.setItem(
-                        `quotation_documents_${documentsQuotation.id}`,
-                        JSON.stringify(form)
-                      )
-                      toast({
-                        title: "Document details saved",
-                        description: "Documents saved locally.",
-                      })
-                      setIsSubmittingDocuments(false)
-                      setDocumentsDialogOpen(false)
+                        return
+                      }
                     }
+
+                    setIsSubmittingDocuments(true)
+                    const formData = buildDocumentsMultipartFormData(form)
+                    api.quotations
+                      .updateDocuments(documentsQuotation.id, formData)
+                      .then(async () => {
+                        try {
+                          const fullQuotation = await api.quotations.getById(documentsQuotation.id)
+                          const mergedQuotation = { ...documentsQuotation, ...fullQuotation } as Quotation
+                          setDocumentsQuotation(mergedQuotation)
+                          setDocumentsFormById((prev) => ({
+                            ...prev,
+                            [documentsQuotation.id]: {
+                              ...seedDocumentsFormFromQuotation(mergedQuotation),
+                              ...(prev[documentsQuotation.id] || {}),
+                            },
+                          }))
+                        } catch (refreshError) {
+                          console.warn("Could not refresh documents after submit:", refreshError)
+                        }
+                        toast({
+                          title: "Document details saved",
+                          description: useApi
+                            ? "Details saved to the server."
+                            : "Documents saved.",
+                        })
+                        setDocumentsDialogOpen(false)
+                      })
+                      .catch((error: unknown) => {
+                        toast({
+                          title: "Save failed",
+                          description: apiErrorToUserMessage(error),
+                          variant: "destructive",
+                        })
+                      })
+                      .finally(() => setIsSubmittingDocuments(false))
                   }}
-                  disabled={isSubmittingDocuments}
+                  disabled={isSubmittingDocuments || !!uploadingField}
                 >
                   {isSubmittingDocuments ? "Submitting..." : "Submit"}
                 </Button>
