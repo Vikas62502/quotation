@@ -1062,6 +1062,12 @@ export default function CallingDataPage() {
     return new Date(lead.assignedAt || lead.createdAt).getTime()
   }
 
+  const hasUpcomingFollowUp = (item: { nextFollowUpAt?: string }) => {
+    if (!item.nextFollowUpAt) return false
+    const at = new Date(item.nextFollowUpAt).getTime()
+    return Number.isFinite(at) && at > Date.now()
+  }
+
   const dealerAssignedQueue = useMemo(() => {
     const leadOrder = new Map(leads.map((lead, index) => [lead.id, index]))
 
@@ -1177,9 +1183,10 @@ export default function CallingDataPage() {
 
   const flowDialledActions = useMemo(
     () =>
-      recentActions.filter((item) =>
-        ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase()),
-      ),
+      recentActions.filter((item) => {
+        if (hasUpcomingFollowUp(item)) return false
+        return ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase())
+      }),
     [recentActions],
   )
 
@@ -1200,6 +1207,7 @@ export default function CallingDataPage() {
   const flowConnectedActions = useMemo(
     () =>
       recentActions.filter((item) => {
+        if (hasUpcomingFollowUp(item)) return false
         const parsed = parseTaggedRemark(item.callRemark)
         return !!parsed.status && !NOT_CONNECTED_REASONS.includes(parsed.status)
       }),
@@ -1241,7 +1249,8 @@ export default function CallingDataPage() {
   const flowNotConnectedActions = useMemo(
     () =>
       recentActions.filter((item) => {
-      const parsed = parseTaggedRemark(item.callRemark)
+        if (hasUpcomingFollowUp(item)) return false
+        const parsed = parseTaggedRemark(item.callRemark)
         return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
       }),
     [recentActions],

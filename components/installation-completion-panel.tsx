@@ -301,6 +301,7 @@ export function InstallationCompletionPanel({
   }
 
   const piSpacerCount = (3 - ((imageFields.length + 1) % 3)) % 3
+  const anyImageFieldRequired = imageFields.some((f) => f.required !== false)
 
   return (
     <div className="rounded-md border border-border/70 p-3 space-y-3">
@@ -308,7 +309,11 @@ export function InstallationCompletionPanel({
       <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <p className="text-xs font-medium">Installation Completion Images (required as marked *)</p>
+            <p className="text-xs font-medium">
+              {anyImageFieldRequired
+                ? "Installation Completion Images (required as marked *)"
+                : "Installation Completion Images"}
+            </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {imageFields.map((field) => renderImageFieldCard(field))}
               {Array.from({ length: piSpacerCount }).map((_, idx) => (

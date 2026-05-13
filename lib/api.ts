@@ -1288,31 +1288,60 @@ export const api = {
      * Uploads installer completion images + site legs + extra expenses + status.
      * Do not fall back to PATCH /quotations/{id}/documents — that route is for customer KYC
      * (aadhaar, PAN, etc.); sending installer multipart there causes 500 / SYS_001 on many servers.
+     *
+     * @param options.caller — Use `"admin"` from the admin panel: many gateways only allow the
+     *   installer JWT on `POST /installer/quotations/.../documents` (403 AUTH_004 for admin).
+     *   Admin callers try `/admin/...` and `POST /quotations/.../documents` before the installer path.
      */
-    uploadCompletionDocuments: async (quotationId: string, formData: FormData) => {
+    uploadCompletionDocuments: async (
+      quotationId: string,
+      formData: FormData,
+      options?: { caller?: "installer" | "admin" },
+    ) => {
       const tried: string[] = []
-      const isMissingRoute = (error: unknown) =>
+      const tryNextEndpoint = (error: unknown) =>
         error instanceof ApiError &&
-        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+        (error.code === "HTTP_404" ||
+          error.code === "HTTP_405" ||
+          error.code === "HTTP_501" ||
+          error.code === "HTTP_403" ||
+          error.code === "AUTH_004")
 
-      try {
-        tried.push("POST /installer/quotations/{id}/documents")
-        return await multipartRequest(`/installer/quotations/${quotationId}/documents`, "POST", formData)
-      } catch (firstError) {
-        if (!isMissingRoute(firstError)) throw firstError
+      const installerPath = `/installer/quotations/${quotationId}/documents`
+      const quotationsPath = `/quotations/${quotationId}/documents`
+
+      const adminScoped: string[] =
+        options?.caller === "admin"
+          ? [
+              `/admin/quotations/${quotationId}/documents`,
+              `/admin/quotations/${quotationId}/installer-documents`,
+              `/admin/installer/quotations/${quotationId}/documents`,
+            ]
+          : []
+
+      // Installers: same shape as today (installer route first). Admins: try generic POST
+      // /quotations/... before installer-only URL so a single admin-allowed route fixes 403.
+      const primaryPair =
+        options?.caller === "admin" ? [quotationsPath, installerPath] : [installerPath, quotationsPath]
+
+      const endpoints = [...adminScoped, ...primaryPair]
+
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          tried.push(`POST ${endpoint}`)
+          return await multipartRequest(endpoint, "POST", cloneFormData(formData))
+        } catch (error) {
+          lastError = error
+          if (!tryNextEndpoint(error)) throw error
+        }
       }
 
-      try {
-        tried.push("POST /quotations/{id}/documents")
-        return await multipartRequest(`/quotations/${quotationId}/documents`, "POST", cloneFormData(formData))
-      } catch (secondError) {
-        if (!isMissingRoute(secondError)) throw secondError
-      }
-
+      if (lastError instanceof ApiError) throw lastError
       throw new ApiError(
         `Installer completion upload is not available on this API (tried: ${tried.join(
           " → ",
-        )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents, that accepts the installer multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
+        )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents (installer) or POST /api/admin/quotations/{quotationId}/documents with the same multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
         "HTTP_404",
       )
     },

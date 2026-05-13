@@ -15,6 +15,7 @@ import {
   Clock,
   MapPin,
   LogOut,
+  Menu,
   Users,
   User,
   Phone,
@@ -39,6 +40,7 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import {
   Dialog,
   DialogContent,
@@ -50,6 +52,16 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 type VisitStatus = "pending" | "approved" | "completed" | "incomplete" | "rejected" | "rescheduled"
 type VisitStatusTab = VisitStatus | "all"
+
+const VISIT_STATUS_TAB_OPTIONS: Array<{ value: VisitStatusTab; label: string }> = [
+  { value: "pending", label: "Pending" },
+  { value: "approved", label: "Approved" },
+  { value: "completed", label: "Completed" },
+  { value: "incomplete", label: "Incomplete" },
+  { value: "rescheduled", label: "Rescheduled" },
+  { value: "rejected", label: "Rejected" },
+  { value: "all", label: "All" },
+]
 
 interface Visit {
   id: string
@@ -391,6 +403,7 @@ export default function VisitorDashboardPage() {
   const [activeStatusTab, setActiveStatusTab] = useState<VisitStatusTab>("pending")
   const [currentPage, setCurrentPage] = useState(1)
   const VISITS_PER_PAGE = 10
+  const [mobileStatusMenuOpen, setMobileStatusMenuOpen] = useState(false)
   const [approveOutcome, setApproveOutcome] = useState<"completed" | "incomplete" | "rescheduled" | null>(null)
   const [approvedVisits, setApprovedVisits] = useState<Set<string>>(new Set())
   const [completeDialogOpen, setCompleteDialogOpen] = useState(false)
@@ -416,6 +429,8 @@ export default function VisitorDashboardPage() {
   const [isLoadingVisits, setIsLoadingVisits] = useState(false)
   const [isCompletingVisit, setIsCompletingVisit] = useState(false)
   const [isUploadingCompleteAsset, setIsUploadingCompleteAsset] = useState(false)
+  const activeStatusTabLabel =
+    VISIT_STATUS_TAB_OPTIONS.find((option) => option.value === activeStatusTab)?.label || "Pending"
 
   useEffect(() => {
     setCurrentPage(1)
@@ -1177,15 +1192,33 @@ export default function VisitorDashboardPage() {
           <Card className="mb-6">
             <CardHeader>
               <div className="flex flex-col gap-4">
-                <Tabs value={activeStatusTab} onValueChange={(value) => setActiveStatusTab(value as VisitStatusTab)}>
+                <div className="flex items-center justify-between gap-3 sm:hidden">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Status</p>
+                    <p className="text-sm font-medium">{activeStatusTabLabel}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setMobileStatusMenuOpen(true)}
+                  >
+                    <Menu className="w-4 h-4 mr-2" />
+                    Menu
+                  </Button>
+                </div>
+
+                <Tabs
+                  value={activeStatusTab}
+                  onValueChange={(value) => setActiveStatusTab(value as VisitStatusTab)}
+                  className="hidden sm:block"
+                >
                   <TabsList className="w-full overflow-x-auto justify-start">
-                    <TabsTrigger value="pending">Pending</TabsTrigger>
-                    <TabsTrigger value="approved">Approved</TabsTrigger>
-                    <TabsTrigger value="completed">Completed</TabsTrigger>
-                    <TabsTrigger value="incomplete">Incomplete</TabsTrigger>
-                    <TabsTrigger value="rescheduled">Rescheduled</TabsTrigger>
-                    <TabsTrigger value="rejected">Rejected</TabsTrigger>
-                    <TabsTrigger value="all">All</TabsTrigger>
+                    {VISIT_STATUS_TAB_OPTIONS.map((option) => (
+                      <TabsTrigger key={option.value} value={option.value}>
+                        {option.label}
+                      </TabsTrigger>
+                    ))}
                   </TabsList>
                 </Tabs>
                 <div className="flex flex-col sm:flex-row gap-4">
@@ -1586,6 +1619,30 @@ export default function VisitorDashboardPage() {
           )
         })()}
       </main>
+
+      <Sheet open={mobileStatusMenuOpen} onOpenChange={setMobileStatusMenuOpen}>
+        <SheetContent side="left" className="w-[280px] sm:hidden">
+          <SheetHeader>
+            <SheetTitle>Visit Status</SheetTitle>
+          </SheetHeader>
+          <div className="mt-6 space-y-2">
+            {VISIT_STATUS_TAB_OPTIONS.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                variant={activeStatusTab === option.value ? "default" : "outline"}
+                className="w-full justify-start"
+                onClick={() => {
+                  setActiveStatusTab(option.value)
+                  setMobileStatusMenuOpen(false)
+                }}
+              >
+                {option.label}
+              </Button>
+            ))}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Dialog
         open={visitDetailsOpen}

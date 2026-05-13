@@ -699,7 +699,27 @@ Behavior:
 
 **Content-Type:** `multipart/form-data`
 
-**Auth:** `installer` (or role your gateway maps to installer UI).
+**Auth (installer + admin parity — fixes `AUTH_004` on Admin “Upload”):**  
+The **installer** UI continues to call `POST /api/installer/quotations/{quotationId}/documents` first. The **admin** panel submits the **same multipart contract** (sections C.1–C.6 below) but often authenticates with role **`admin`**. If this route is **installer-only**, admins receive **403** with `AUTH_004` / message **“Insufficient permissions”**.
+
+**Pick one approach (or A + B for explicit admin URLs):**
+
+1. **Extend RBAC on the existing route (simplest):**  
+   On `POST /api/installer/quotations/{quotationId}/documents`, allow **`admin`** (and optionally **`account-management`**) alongside **`installer`** / **`installation-team`** (same role set you use for `GET /api/admin/quotations` vs installer queue). **Do not duplicate business logic** — only widen the middleware allow-list and call the same handler. Optionally persist **`uploadedByUserId`** / **`installerCompletionUploadedByRole`** for audit when the actor is admin.
+
+2. **Admin-scoped aliases (optional, matches frontend fallbacks):**  
+   Register one or more routes that **delegate to the same service** as (1), for clearer gateway rules:
+   - `POST /api/admin/quotations/{quotationId}/documents`
+   - `POST /api/admin/quotations/{quotationId}/installer-documents`
+   - `POST /api/admin/installer/quotations/{quotationId}/documents`  
+   Each: **`multipart/form-data`**, same fields as C.1–C.6, **`admin`** auth (and **`superadmin`** if you use it).
+
+3. **Generic quotations POST (only if already implemented):**  
+   If you serve **`POST /api/quotations/{quotationId}/documents`** with this installer-completion shape, allow **`admin`** there too. **Do not** mix this with customer KYC handlers on **`PATCH /api/quotations/{id}/documents`** (see warning at start of §6.4); unknown multipart keys on the KYC path caused historical **500 / SYS_001**.
+
+**Frontend probe order** (see `lib/api.ts` → `api.installer.uploadCompletionDocuments(quotationId, formData, { caller: "admin" })`): admin tries admin-prefixed URLs, then `POST /api/quotations/{id}/documents`, then `POST /api/installer/quotations/{id}/documents`. Installers keep **installer path first**; **403** / **AUTH_004** between attempts triggers the next URL only for the admin caller path.
+
+**Auth (installer-only deployments):** If you only implement (1) with widened roles, no alias routes are required.
 
 ##### C.1 Files (completion proof)
 
@@ -709,6 +729,13 @@ The installer dashboard sends **each completion image twice** (same file bytes):
 - **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
   - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `panelSerialNumberPhoto` and `otherImages`).
 - **`piUpload`** — optional single file (PDF or image): proforma / PI document.
+
+**Admin vs installer validation (align with current frontend):**
+
+- **Installer** (`installer` / `installation-team` JWT from installer dashboard): the installer UI still treats the standard completion photos as **required** before submit. The backend may enforce the same minimum set (reject **400** with a clear `VAL_*` message if business rules require every field).
+- **Admin** (`admin` JWT from **Admin Panel → Installation** completion upload): the admin UI marks **all** completion image slots and **PI** as **optional** — the multipart body may contain **no** files under `installerCompletionImages` / per-field keys / `piUpload` while still sending `installationStatus`, legs, expenses, and `installerRemarks`. The handler must **not** apply the installer-only “every photo required” rule to admin requests; persist only the files present, leave missing URLs null, and still accept `installationStatus` transitions your product allows for ops overrides. If you use one handler for both roles, branch on **`req.user.role`** (or equivalent) before image-count validation.
+
+**Empty multipart:** If zero files are uploaded, still return **200** with `success: true` when the rest of the payload is valid and you persist status/metadata — do not require `installerCompletionImages.length > 0` for **admin** unless policy explicitly forbids empty completion.
 
 ##### C.2 Site legs (dimensions) — **cm + feet**
 
@@ -733,7 +760,8 @@ Also sent for visitor / reporting compatibility (decimal feet, derived from cm):
 
 Validation:
 
-- Reject with **400** if `siteLength` / `siteHeight` (back / front legs) are missing, non-numeric, or ≤ 0.
+- Reject with **400** if `siteLength` / `siteHeight` (back / front legs) are missing, non-numeric, or ≤ 0 **when your policy requires legs for this actor** (installer completion flow).
+- **Admin** submissions may send **empty strings** for `siteLength`, `siteWidth`, `siteHeight` (and related `*LegCm` / `*LegFeet`) when ops only updates status/remarks/expenses without entering dimensions; treat all-empty leg fields as **omitted** and skip the strict positive-number check for that request, or persist nulls. If you require legs for **installer** only, enforce C.2 validation for `installer` / `installation-team` and relax for `admin`.
 - If `siteWidth` / `midLegCm` is present, it must be a positive number; if absent or empty, store null.
 
 ##### C.3 Extra expenses (multiple lines)

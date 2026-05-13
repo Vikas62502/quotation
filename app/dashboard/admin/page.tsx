@@ -96,13 +96,13 @@ type AdminMeteringModalDraft = {
   netMeterNo: string
 }
 const ADMIN_INSTALLATION_IMAGE_FIELDS = [
-  { key: "homeFrontPhoto", label: "Front Photo of Home" },
-  { key: "homeWithPersonPhoto", label: "Front Photo of Home with person" },
-  { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer" },
-  { key: "plantWithCustomerPhoto", label: "Plant photo with Customer" },
-  { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No" },
-  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No", multiple: true },
-  { key: "geoTagPlantPhoto", label: "GeoTag photo with plants" },
+  { key: "homeFrontPhoto", label: "Front Photo of Home", required: false },
+  { key: "homeWithPersonPhoto", label: "Front Photo of Home with person", required: false },
+  { key: "inverterWithCustomerPhoto", label: "Inverter Photo with customer", required: false },
+  { key: "plantWithCustomerPhoto", label: "Plant photo with Customer", required: false },
+  { key: "inverterSerialNumberPhoto", label: "Inverter Photo with Serial No", required: false },
+  { key: "panelSerialNumberPhoto", label: "Panels photo with Serial No", multiple: true, required: false },
+  { key: "geoTagPlantPhoto", label: "GeoTag photo with plants", required: false },
   { key: "otherImages", label: "Others Images", multiple: true, required: false },
 ] as const
 
@@ -1585,8 +1585,28 @@ export default function AdminPanelPage() {
     return releasedByAccounts
   }
 
+  function hasMeteringWorkflowSignal(quotation: Quotation) {
+    const qAny = quotation as any
+    const workflowStatus = getInstallationWorkflowStatus(qAny)
+    return (
+      [
+        "installer_approved",
+        "pending_metering",
+        "metering_in_progress",
+        "metering_approved",
+        "mco",
+        "pending_baldev",
+        "baldev_approved",
+        "completed",
+      ].includes(workflowStatus) ||
+      Boolean(qAny.meteringApprovedAt || qAny.metering_approved_at || qAny.mcoAt || qAny.mco_at)
+    )
+  }
+
   function isMeteringVisible(quotation: Quotation) {
-    return isInstallerVisible(quotation) && getAdminMeteringStage(quotation) !== null
+    const stage = getAdminMeteringStage(quotation)
+    if (stage === null) return false
+    return isInstallerVisible(quotation) || hasMeteringWorkflowSignal(quotation)
   }
 
   function isConfirmationVisible(quotation: Quotation) {
@@ -1640,6 +1660,7 @@ export default function AdminPanelPage() {
   function getAdminMeteringStage(quotation: Quotation): "processing" | "approved" | "mco" | null {
     const raw = String(
       (quotation as any).meteringStage ||
+        (quotation as any).meteringStatus ||
         (quotation as any).metering_status ||
         (quotation as any).mcoStatus ||
         (quotation as any).mco_status ||
@@ -1647,6 +1668,10 @@ export default function AdminPanelPage() {
         (quotation as any).installation_status ||
         "",
     ).toLowerCase()
+    if (!raw) {
+      if ((quotation as any).mcoAt || (quotation as any).mco_at) return "mco"
+      if ((quotation as any).meteringApprovedAt || (quotation as any).metering_approved_at) return "approved"
+    }
     if (raw === "mco" || raw.includes("mco")) return "mco"
     if (raw === "metering_approved" || raw === "approved" || (raw.includes("approved") && !raw.includes("pending"))) return "approved"
     if (
@@ -2038,7 +2063,7 @@ export default function AdminPanelPage() {
       formData.append("installerRemarks", adminInstallNotes)
       formData.append("installationStatus", "installer_approved")
 
-      await api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData)
+      await api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData, { caller: "admin" })
       await updateOperationalStage(adminInstallQuotation.id, "installer_approved")
       setAdminInstallExpandedId(null)
       toast({
