@@ -804,6 +804,36 @@ When the installer adds one or more expense lines, the frontend sends:
   - `documents.siteCompletionImages[]` (or equivalent)
   - Persisted **site leg** fields and **extra expense** summary if applicable
 
+##### C.7 Status after completion upload + `GET /api/admin/quotations` (Installation tabs)
+
+The admin **Installation** screen reloads from **`GET /api/admin/quotations`** after:
+
+1. `POST …/installer/quotations/{id}/documents` (or admin alias / `POST …/quotations/{id}/documents`) with completion multipart, and  
+2. `PATCH …/admin/quotations/{id}/installation-status` (or fallbacks in `lib/api.ts`) with body fields such as `installationStatus` / `installation_status`.
+
+**Behavior the frontend expects:**
+
+- After a successful completion save, persist **`installationStatus`** / **`installation_status`** on the quotation row to a canonical workflow value. Either is valid from the product side:
+  - **`installer_approved`** — installer/admin marked complete, still in “installation” bucket before metering handoff, or  
+  - **`pending_metering`** — common auto-advance: installation proof accepted, queue handoff to metering.
+
+- **`GET /api/admin/quotations`** (and **`GET /api/quotations/{id}`** when used to refresh a row) **must return** the same field on **each quotation object** (camelCase and/or snake_case), e.g. `installationStatus` + `installation_status`. If this field is missing, stale, or only nested deep under an undocumented key, the UI cannot place the row under **“Approved by Installer”** after refresh.
+
+- If your pipeline sets **`pending_metering`** immediately on document upload, still return that string in the list payload — the admin UI treats **`installer_approved`**, **`pending_metering`**, and later metering/Baldev/completed stages as “installation work done” for the **Approved by Installer** sub-tab.
+
+- Keep **`installerApprovedAt`** (or `installer_approved_at`) when you transition out of `installer_in_progress` / `pending_installer` into an approved / metering-pending state, so “sent to installation” vs “approved” timelines stay auditable.
+
+**Two-step sequence (admin “Complete & Mark as Approved”):** The frontend calls **(1)** `POST …/documents` (installer/admin upload route per §6.4.C), then **(2)** `PATCH …/installation-status` (or workflow/status fallbacks — see `lib/api.ts` → `api.admin.quotations.updateOperationalStatus`). **Both** must return **2xx** and persist the workflow field. If **(1)** succeeds but **(2)** fails (**403**, **404**, **500**, or no row update), the UI keeps the row under **Pending** even when files exist — treat this as a **required** backend path for admin completion, not optional.
+
+- **Idempotency:** Re-applying **(2)** with `installer_approved` on a row already at `installer_approved` or `pending_metering` should still return **200** and the current persisted state (no spurious **409** unless your product forbids it).
+
+- **PATCH response:** Prefer returning the updated quotation fragment (at least `installationStatus` / `installation_status`, `installerApprovedAt` / `installer_approved_at`) under your standard `data` envelope so any client can merge without a full list refetch (the admin UI still refetches via `GET /api/admin/quotations` after PATCH today).
+
+**Installer queue `GET` used on admin load (supplementary):** The admin UI calls **`GET /api/installer/quotations`** (or fallbacks in `lib/api.ts` → `api.installer.getQueue`) **twice** and **unions** ids: `status=pending_installer` and `status=approved`, then optionally an unfiltered page if both are empty. Your API should:
+
+- Support **`status=approved`** (or your documented equivalent) for rows that have **completed installer-side submission** / **approved-by-installer** workflow, with the **same list item shape** as the pending queue (at least nested or flat `id` / `quotation.id`).
+- Treat **`GET /api/admin/quotations`** as **authoritative** for **`installationStatus`** on each row: once a job leaves **`pending_installer`**, it will often **no longer** appear on the pending-only installer queue; the admin **Installation** tab still shows it under **Approved by Installer** when the **admin list** returns `installer_approved`, `pending_metering`, or later stages (see bullets above). Do not assume the installer queue alone drives admin visibility.
+
 #### C-bis) Installer → Visit dimension sync (optional separate call)
 
 After a successful `POST .../installer/quotations/{quotationId}/documents`, the **frontend** may call:
@@ -1018,6 +1048,7 @@ Accepted stage values:
 - `mco`
 - `pending_baldev`
 - `baldev_approved`
+- `completed`
 
 Request body compatibility (frontend may send one or more keys):
 ```json
@@ -1038,6 +1069,8 @@ Persist + return on quotation row/list:
 
 Admin list requirement:
 - `GET /api/admin/quotations` must include these operational fields so admin can view/manipulate installer, metering, and confirmation stages in one screen.
+
+**Alignment with §6.4.C.7:** The installation-status `PATCH` used after document upload must accept **`installer_approved`** from **`admin`** JWT and persist it (or your chosen next state such as **`pending_metering`**) so the next **`GET /api/admin/quotations`** reflects the move into the **Approved by Installer** bucket in the admin UI.
 
 RBAC for this section:
 - `admin` must be authorized to update operational stage.

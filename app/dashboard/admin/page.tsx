@@ -84,6 +84,7 @@ const ADMIN_OPERATIONAL_STAGES = [
   "mco",
   "pending_baldev",
   "baldev_approved",
+  "completed",
 ] as const
 type AdminOperationalStage = (typeof ADMIN_OPERATIONAL_STAGES)[number]
 type AdminOperationalTab = "all" | "installation" | "metering" | "confirmation"
@@ -751,25 +752,29 @@ export default function AdminPanelPage() {
           })),
         )
 
-        // Match Installer dashboard visibility exactly by using the same queue source.
+        // Union installer queue IDs from pending + approved (and optional full queue fallback).
+        // Previously only the first non-empty response was used; pending_installer-only hid rows
+        // that dropped off that queue after "Complete & Mark as Approved" from Installation → Approved.
         try {
-          let installerQueueRows: any[] = extractQuotationListFromApiResponse(
+          const ids = new Set<string>()
+          const addRows = (rows: any[]) => {
+            rows.forEach((row: any) => {
+              const flat = flattenWrappedQuotationRow(row)
+              const id = String(flat.id || "").trim()
+              if (id) ids.add(id)
+            })
+          }
+          const pending = extractQuotationListFromApiResponse(
             await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
           )
-          if (installerQueueRows.length === 0) {
-            installerQueueRows = extractQuotationListFromApiResponse(
-              await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
-            )
+          const approvedQ = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
+          )
+          addRows(pending)
+          addRows(approvedQ)
+          if (ids.size === 0) {
+            addRows(extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 })))
           }
-          if (installerQueueRows.length === 0) {
-            installerQueueRows = extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 }))
-          }
-          const ids = new Set<string>()
-          installerQueueRows.forEach((row: any) => {
-            const flat = flattenWrappedQuotationRow(row)
-            const id = String(flat.id || "").trim()
-            if (id) ids.add(id)
-          })
           setInstallerQueueIds(ids)
         } catch {
           setInstallerQueueIds(new Set())
@@ -1091,6 +1096,54 @@ export default function AdminPanelPage() {
     }
   }, [activeTab])
 
+  const getDocumentsForm = (quotationId: string) => {
+    return (
+      documentsFormById[quotationId] || {
+        isCompliantSenior: false,
+        aadharNumber: "",
+        aadharFront: null,
+        aadharBack: null,
+        compliantAadharNumber: "",
+        compliantAadharFront: null,
+        compliantAadharBack: null,
+        compliantContactPhone: "",
+        compliantPanNumber: "",
+        compliantPanImage: null,
+        compliantBankAccountNumber: "",
+        compliantBankIfsc: "",
+        compliantBankName: "",
+        compliantBankBranch: "",
+        compliantBankPassbookImage: null,
+        panNumber: "",
+        panImage: null,
+        electricityKno: "",
+        electricityBillImage: null,
+        bankAccountNumber: "",
+        bankIfsc: "",
+        bankName: "",
+        bankBranch: "",
+        bankPassbookImage: null,
+        geotagRoofPhoto: null,
+        customerWithHousePhoto: null,
+        propertyDocumentPdf: null,
+        contactPhone: "",
+        contactEmail: "",
+      }
+    )
+  }
+
+  const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
+    setDocumentsFormById((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...getDocumentsForm(quotationId),
+        ...updates,
+      },
+    }))
+  }
+
+  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
+
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
   const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
@@ -1253,8 +1306,14 @@ export default function AdminPanelPage() {
 
   const getInstallerQueueStatusForAdmin = (quotation: Quotation): "pending" | "inprogress" | "approved" => {
     const backendStatus = getInstallationWorkflowStatus(quotation as any)
+    // Backend often advances to pending_metering (or later) immediately after installer/admin completion upload.
+    // Those rows must still appear under Installation → "Approved by Installer", not stay in Pending.
     if (
       backendStatus === "installer_approved" ||
+      backendStatus === "pending_metering" ||
+      backendStatus === "metering_in_progress" ||
+      backendStatus === "metering_approved" ||
+      backendStatus === "mco" ||
       backendStatus === "pending_baldev" ||
       backendStatus === "baldev_approved" ||
       backendStatus === "completed"
@@ -1579,8 +1638,29 @@ export default function AdminPanelPage() {
       Boolean(qAny.installationReleasedAt || qAny.installation_released_at) ||
       localReleaseMap?.[qAny.id]?.installationReadyForInstaller === true
 
+    const ws = getInstallationWorkflowStatus(qAny)
+    const hasPersistedInstallWorkflow = [
+      "pending_installer",
+      "installer_in_progress",
+      "in_progress",
+      "installer_approved",
+      "pending_metering",
+      "metering_in_progress",
+      "metering_approved",
+      "mco",
+      "pending_baldev",
+      "baldev_approved",
+      "completed",
+    ].includes(ws)
+
     if (useApi && installerQueueIds.size > 0) {
-      return installerQueueIds.has(quotation.id) && releasedByAccounts
+      // Require release to installation, then either still on an installer queue response OR
+      // a persisted workflow stage (e.g. installer_approved) so rows do not vanish after they leave
+      // GET installer queue?status=pending_installer.
+      return (
+        releasedByAccounts &&
+        (installerQueueIds.has(quotation.id) || hasPersistedInstallWorkflow)
+      )
     }
     return releasedByAccounts
   }
@@ -1614,11 +1694,16 @@ export default function AdminPanelPage() {
   }
 
   function getOperationalProgressState(quotation: Quotation, tab: AdminOperationalTab): "pending" | "done" | "mco" | null {
-    const stage = getOperationalStage(quotation)
     if (tab === "installation") {
-      const backendStatus = getInstallationWorkflowStatus(stage ? { installationStatus: stage } : ({} as any))
+      // Read workflow from the quotation row, not getOperationalStage alone — avoids null progress when
+      // status is pending_metering (common after completion upload) or completed (now in ADMIN_OPERATIONAL_STAGES).
+      const backendStatus = getInstallationWorkflowStatus(quotation as any)
       if (
         backendStatus === "installer_approved" ||
+        backendStatus === "pending_metering" ||
+        backendStatus === "metering_in_progress" ||
+        backendStatus === "metering_approved" ||
+        backendStatus === "mco" ||
         backendStatus === "pending_baldev" ||
         backendStatus === "baldev_approved" ||
         backendStatus === "completed"
@@ -1916,7 +2001,11 @@ export default function AdminPanelPage() {
     }
   }
 
-  const updateOperationalStage = async (quotationId: string, stage: AdminOperationalStage) => {
+  const updateOperationalStage = async (
+    quotationId: string,
+    stage: AdminOperationalStage,
+    options?: { suppressSuccessToast?: boolean },
+  ): Promise<boolean> => {
     try {
       if (useApi) {
         await api.admin.quotations.updateOperationalStatus(quotationId, stage)
@@ -1936,10 +2025,13 @@ export default function AdminPanelPage() {
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
       }
-      toast({
-        title: "Operational stage updated",
-        description: `Quotation moved to ${stage.replaceAll("_", " ")}.`,
-      })
+      if (!options?.suppressSuccessToast) {
+        toast({
+          title: "Operational stage updated",
+          description: `Quotation moved to ${stage.replaceAll("_", " ")}.`,
+        })
+      }
+      return true
     } catch (error) {
       console.error("Error updating operational stage:", error)
       toast({
@@ -1947,6 +2039,7 @@ export default function AdminPanelPage() {
         description: error instanceof ApiError ? error.message : "Failed to update installation/metering/confirmation stage.",
         variant: "destructive",
       })
+      return false
     }
   }
 
@@ -2064,12 +2157,27 @@ export default function AdminPanelPage() {
       formData.append("installationStatus", "installer_approved")
 
       await api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData, { caller: "admin" })
-      await updateOperationalStage(adminInstallQuotation.id, "installer_approved")
-      setAdminInstallExpandedId(null)
-      toast({
-        title: "Saved",
-        description: "Installation completion uploaded and moved to Approved by Installer.",
+      const stageOk = await updateOperationalStage(adminInstallQuotation.id, "installer_approved", {
+        suppressSuccessToast: true,
       })
+      if (stageOk) {
+        setOperationalTab("installation")
+        setOperationalProgressTab("done")
+        setAdminInstallExpandedId(null)
+        setAdminInstallQuotation(null)
+        toast({
+          title: "Saved",
+          description:
+            "Installation completion saved. Showing Approved by Installer — your quotation is listed there.",
+        })
+      } else {
+        toast({
+          title: "Stage update failed",
+          description:
+            "Upload may have succeeded, but the installation stage could not be saved. Try again or check the API.",
+          variant: "destructive",
+        })
+      }
     } catch (error) {
       toast({
         title: "Upload failed",
@@ -2510,54 +2618,6 @@ export default function AdminPanelPage() {
       "N/A"
     )
   }
-
-  const getDocumentsForm = (quotationId: string) => {
-    return (
-      documentsFormById[quotationId] || {
-        isCompliantSenior: false,
-        aadharNumber: "",
-        aadharFront: null,
-        aadharBack: null,
-        compliantAadharNumber: "",
-        compliantAadharFront: null,
-        compliantAadharBack: null,
-        compliantContactPhone: "",
-        compliantPanNumber: "",
-        compliantPanImage: null,
-        compliantBankAccountNumber: "",
-        compliantBankIfsc: "",
-        compliantBankName: "",
-        compliantBankBranch: "",
-        compliantBankPassbookImage: null,
-        panNumber: "",
-        panImage: null,
-        electricityKno: "",
-        electricityBillImage: null,
-        bankAccountNumber: "",
-        bankIfsc: "",
-        bankName: "",
-        bankBranch: "",
-        bankPassbookImage: null,
-        geotagRoofPhoto: null,
-        customerWithHousePhoto: null,
-        propertyDocumentPdf: null,
-        contactPhone: "",
-        contactEmail: "",
-      }
-    )
-  }
-
-  const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
-    setDocumentsFormById((prev) => ({
-      ...prev,
-      [quotationId]: {
-        ...getDocumentsForm(quotationId),
-        ...updates,
-      },
-    }))
-  }
-
-  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
   const getExistingFileRef = (documents: Record<string, any>, key: string) => {
     const candidates = [
