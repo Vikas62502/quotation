@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useState } from "react"
-import { useToast } from "@/hooks/use-toast"
+import { toast } from "@/hooks/use-toast"
 import { api } from "@/lib/api"
 
 /**
@@ -12,7 +12,6 @@ export function useQuotationDocumentFileUpload(
   useApi: boolean,
   updateDocumentsForm: (quotationId: string, updates: Record<string, any>) => void,
 ) {
-  const { toast } = useToast()
   const [uploadingField, setUploadingField] = useState<string | null>(null)
 
   const onDocumentFileSelected = useCallback(
@@ -41,7 +40,7 @@ export function useQuotationDocumentFileUpload(
         setUploadingField(null)
       }
     },
-    [useApi, updateDocumentsForm, toast],
+    [useApi, updateDocumentsForm],
   )
 
   return { uploadingField, onDocumentFileSelected }

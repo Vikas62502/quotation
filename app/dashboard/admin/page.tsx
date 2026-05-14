@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -169,6 +169,40 @@ const GOVERNMENT_BANK_OPTIONS = [
   "RMGB Bank",
 ] as const
 
+function createEmptyDocumentsForm(): Record<string, any> {
+  return {
+    isCompliantSenior: false,
+    aadharNumber: "",
+    aadharFront: null,
+    aadharBack: null,
+    compliantAadharNumber: "",
+    compliantAadharFront: null,
+    compliantAadharBack: null,
+    compliantContactPhone: "",
+    compliantPanNumber: "",
+    compliantPanImage: null,
+    compliantBankAccountNumber: "",
+    compliantBankIfsc: "",
+    compliantBankName: "",
+    compliantBankBranch: "",
+    compliantBankPassbookImage: null,
+    panNumber: "",
+    panImage: null,
+    electricityKno: "",
+    electricityBillImage: null,
+    bankAccountNumber: "",
+    bankIfsc: "",
+    bankName: "",
+    bankBranch: "",
+    bankPassbookImage: null,
+    geotagRoofPhoto: null,
+    customerWithHousePhoto: null,
+    propertyDocumentPdf: null,
+    contactPhone: "",
+    contactEmail: "",
+  }
+}
+
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer } = useAuth()
   const router = useRouter()
@@ -331,6 +365,21 @@ export default function AdminPanelPage() {
   })
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+
+  const getDocumentsForm = (quotationId: string) => documentsFormById[quotationId] || createEmptyDocumentsForm()
+
+  const updateDocumentsForm = useCallback((quotationId: string, updates: Record<string, any>) => {
+    setDocumentsFormById((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...(prev[quotationId] || createEmptyDocumentsForm()),
+        ...updates,
+      },
+    }))
+  }, [])
+
+  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
+
   const normalizeInstallationTeamRow = (row: any): InstallationTeamRecord => ({
     id: String(row?.id || row?._id || row?.teamId || row?.team_id || ""),
     name: String(row?.name || row?.teamName || row?.team_name || row?.firstName || row?.username || "Installation team"),
@@ -1095,54 +1144,6 @@ export default function AdminPanelPage() {
       socket.off("backend:mutation", onBackendMutation)
     }
   }, [activeTab])
-
-  const getDocumentsForm = (quotationId: string) => {
-    return (
-      documentsFormById[quotationId] || {
-        isCompliantSenior: false,
-        aadharNumber: "",
-        aadharFront: null,
-        aadharBack: null,
-        compliantAadharNumber: "",
-        compliantAadharFront: null,
-        compliantAadharBack: null,
-        compliantContactPhone: "",
-        compliantPanNumber: "",
-        compliantPanImage: null,
-        compliantBankAccountNumber: "",
-        compliantBankIfsc: "",
-        compliantBankName: "",
-        compliantBankBranch: "",
-        compliantBankPassbookImage: null,
-        panNumber: "",
-        panImage: null,
-        electricityKno: "",
-        electricityBillImage: null,
-        bankAccountNumber: "",
-        bankIfsc: "",
-        bankName: "",
-        bankBranch: "",
-        bankPassbookImage: null,
-        geotagRoofPhoto: null,
-        customerWithHousePhoto: null,
-        propertyDocumentPdf: null,
-        contactPhone: "",
-        contactEmail: "",
-      }
-    )
-  }
-
-  const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
-    setDocumentsFormById((prev) => ({
-      ...prev,
-      [quotationId]: {
-        ...getDocumentsForm(quotationId),
-        ...updates,
-      },
-    }))
-  }
-
-  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
@@ -2123,10 +2124,11 @@ export default function AdminPanelPage() {
     try {
       setAdminInstallSaving(true)
       const formData = new FormData()
+      // Per-field keys only: many Multer configs cap `installerCompletionImages` maxCount; sending each
+      // file under both aggregate + field doubles parts and triggers "Unexpected or too many file fields".
       ADMIN_INSTALLATION_IMAGE_FIELDS.forEach((field) => {
         const selected = adminInstallFiles[field.key] || []
         selected.forEach((file) => {
-          formData.append("installerCompletionImages", file)
           formData.append(field.key, file)
         })
       })

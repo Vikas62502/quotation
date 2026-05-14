@@ -723,9 +723,11 @@ The **installer** UI continues to call `POST /api/installer/quotations/{quotatio
 
 ##### C.1 Files (completion proof)
 
-The installer dashboard sends **each completion image twice** (same file bytes): once under the aggregate key and once under the field key. Backend may deduplicate by hashing or prefer one key only.
+The installer dashboard may send **each completion image twice** (same file bytes): once under the aggregate key **`installerCompletionImages`** and once under the **per-field** key. Backend may deduplicate by hashing or prefer one key only.
 
-- **`installerCompletionImages`** — repeatable; each file is one site-completion image (required set is driven by UI; treat all received files as completion images).
+**Multer / strict multipart parsers:** If **`installerCompletionImages`** uses a low **`maxCount`**, duplicate aggregate + per-field parts can trigger **“Unexpected or too many file fields”**. The **admin** installation completion UI now sends **per-field file parts only** (no duplicate `installerCompletionImages` entries). Accept persistence from **`homeFrontPhoto`**, **`otherImages`**, etc., alone, or raise **`maxCount`** / relax limits if the installer UI still sends both.
+
+- **`installerCompletionImages`** — repeatable when sent; each part is one site-completion image (required set is driven by UI when this key is used; treat all received files as completion images).
 - **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
   - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `panelSerialNumberPhoto` and `otherImages`).
 - **`piUpload`** — optional single file (PDF or image): proforma / PI document.
@@ -735,7 +737,7 @@ The installer dashboard sends **each completion image twice** (same file bytes):
 - **Installer** (`installer` / `installation-team` JWT from installer dashboard): the installer UI still treats the standard completion photos as **required** before submit. The backend may enforce the same minimum set (reject **400** with a clear `VAL_*` message if business rules require every field).
 - **Admin** (`admin` JWT from **Admin Panel → Installation** completion upload): the admin UI marks **all** completion image slots and **PI** as **optional** — the multipart body may contain **no** files under `installerCompletionImages` / per-field keys / `piUpload` while still sending `installationStatus`, legs, expenses, and `installerRemarks`. The handler must **not** apply the installer-only “every photo required” rule to admin requests; persist only the files present, leave missing URLs null, and still accept `installationStatus` transitions your product allows for ops overrides. If you use one handler for both roles, branch on **`req.user.role`** (or equivalent) before image-count validation.
 
-**Empty multipart:** If zero files are uploaded, still return **200** with `success: true` when the rest of the payload is valid and you persist status/metadata — do not require `installerCompletionImages.length > 0` for **admin** unless policy explicitly forbids empty completion.
+**Empty multipart:** If zero files are uploaded, still return **200** with `success: true` when the rest of the payload is valid and you persist status/metadata — do not require any image field count > 0 for **admin** unless policy explicitly forbids empty completion.
 
 ##### C.2 Site legs (dimensions) — **cm + feet**
 
