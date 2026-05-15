@@ -2124,14 +2124,20 @@ export default function AdminPanelPage() {
     try {
       setAdminInstallSaving(true)
       const formData = new FormData()
-      // Per-field keys only: many Multer configs cap `installerCompletionImages` maxCount; sending each
-      // file under both aggregate + field doubles parts and triggers "Unexpected or too many file fields".
+      // Many backends (Multer `.fields`) only allow `installerCompletionImages` + `piUpload` as file parts;
+      // per-field keys (`homeFrontPhoto`, …) trigger "Unexpected or too many file fields". Send every
+      // image once under the aggregate key; optional JSON maps each part index → field key for labeling.
+      const fieldOrder: string[] = []
       ADMIN_INSTALLATION_IMAGE_FIELDS.forEach((field) => {
         const selected = adminInstallFiles[field.key] || []
         selected.forEach((file) => {
-          formData.append(field.key, file)
+          formData.append("installerCompletionImages", file)
+          fieldOrder.push(field.key)
         })
       })
+      if (fieldOrder.length > 0) {
+        formData.append("installerCompletionImageFieldOrderJson", JSON.stringify(fieldOrder))
+      }
       if (adminInstallPiUpload instanceof File) {
         formData.append("piUpload", adminInstallPiUpload)
       }
