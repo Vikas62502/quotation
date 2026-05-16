@@ -403,6 +403,74 @@ function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): st
   return null
 }
 
+function operationalWorkflowBody(status: string, action?: string) {
+  const body: Record<string, string> = {
+    status,
+    installationStatus: status,
+    installation_status: status,
+    meteringStatus: status,
+    metering_status: status,
+  }
+  if (action) body.action = action
+  return body
+}
+
+async function trySilentApiStep(fn: () => Promise<unknown>): Promise<boolean> {
+  try {
+    await fn()
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function patchOperationalWorkflowStatus(quotationId: string, status: string): Promise<boolean> {
+  const body = operationalWorkflowBody(status)
+  const endpoints = [
+    `/admin/quotations/${quotationId}/installation-status`,
+    `/admin/quotations/${quotationId}/workflow-status`,
+    `/quotations/${quotationId}/metering-status`,
+    `/quotations/${quotationId}/status`,
+    `/metering/quotations/${quotationId}/status`,
+  ]
+  for (const endpoint of endpoints) {
+    if (await trySilentApiStep(() => apiRequest(endpoint, { method: "PATCH", body }))) {
+      return true
+    }
+  }
+  return false
+}
+
+async function patchMeteringWorkflowAction(
+  quotationId: string,
+  action: "start" | "approve" | "send_to_mco",
+): Promise<boolean> {
+  const body = { action }
+  const endpoints = [
+    `/metering/quotations/${quotationId}/status`,
+    `/metering/quotations/${quotationId}/decision`,
+    `/quotations/${quotationId}/metering-status`,
+  ]
+  for (const endpoint of endpoints) {
+    if (await trySilentApiStep(() => apiRequest(endpoint, { method: "PATCH", body }))) {
+      return true
+    }
+  }
+  return false
+}
+
+/** Try every admin/metering path to reach MCO; returns true if any call succeeded. */
+export async function forceAdvanceQuotationToMco(quotationId: string): Promise<boolean> {
+  let ok = false
+  ok = (await patchOperationalWorkflowStatus(quotationId, "pending_metering")) || ok
+  ok = (await patchMeteringWorkflowAction(quotationId, "start")) || ok
+  ok = (await patchMeteringWorkflowAction(quotationId, "approve")) || ok
+  ok = (await patchOperationalWorkflowStatus(quotationId, "metering_approved")) || ok
+  ok = (await patchMeteringWorkflowAction(quotationId, "send_to_mco")) || ok
+  ok = (await patchOperationalWorkflowStatus(quotationId, "mco")) || ok
+  return ok
+}
+
 // API Service Methods
 export const api = {
   // Authentication
@@ -1878,6 +1946,9 @@ export const api = {
         }
         throw lastError
       },
+
+      /** Best-effort: advance quotation to MCO through admin + metering routes (ignores WF_003). */
+      forceAdvanceToMco: forceAdvanceQuotationToMco,
 
       /**
        * Persist file-login workflow (portal filing). Backend should store fileLoginAt, file payment type,

@@ -45,6 +45,85 @@ export function getInstallationWorkflowStatus(q: OperationalQuotationRecord): st
   return String(q.installationStatus || q.installation_status || "").toLowerCase()
 }
 
+/** Metering-specific workflow fields only (do not treat `installer_approved` as metering approved). */
+export function getMeteringWorkflowRaw(q: OperationalQuotationRecord): string {
+  return String(
+    q.meteringStage ||
+      q.metering_stage ||
+      q.meteringStatus ||
+      q.metering_status ||
+      q.mcoStatus ||
+      q.mco_status ||
+      "",
+  ).toLowerCase()
+}
+
+export type MeteringWorkflowTab = "processing" | "approved" | "mco"
+
+/** Installation done; metering not approved yet — must not show Move to MCO. */
+export function isInstallOnlyApprovedForMetering(q: OperationalQuotationRecord): boolean {
+  const installRaw = getInstallationWorkflowStatus(q)
+  const meteringRaw = getMeteringWorkflowRaw(q)
+  return installRaw === "installer_approved" || meteringRaw === "installer_approved"
+}
+
+export function isMeteringApprovedForTransition(q: OperationalQuotationRecord): boolean {
+  const meteringRaw = getMeteringWorkflowRaw(q)
+  const installRaw = getInstallationWorkflowStatus(q)
+
+  // Installation complete but metering not started — ignore stray metering_approved on API row.
+  if (
+    installRaw === "installer_approved" ||
+    installRaw === "pending_installer" ||
+    installRaw === "installer_in_progress" ||
+    meteringRaw === "installer_approved"
+  ) {
+    return false
+  }
+
+  if (
+    meteringRaw === "metering_approved" ||
+    installRaw === "metering_approved" ||
+    (meteringRaw === "approved" && !meteringRaw.includes("installer"))
+  ) {
+    return true
+  }
+
+  const hasApprovedTimestamp = Boolean(q.meteringApprovedAt || q.metering_approved_at)
+  if (
+    hasApprovedTimestamp &&
+    installRaw !== "installer_approved" &&
+    (meteringRaw === "metering_approved" || installRaw === "metering_approved")
+  ) {
+    return true
+  }
+
+  return false
+}
+
+export function getMeteringWorkflowStage(q: OperationalQuotationRecord): MeteringWorkflowTab | null {
+  const meteringRaw = getMeteringWorkflowRaw(q)
+  const installRaw = getInstallationWorkflowStatus(q)
+
+  if (installRaw === "pending_baldev" || installRaw === "baldev_approved" || installRaw === "completed") {
+    return null
+  }
+
+  if (meteringRaw === "mco" || meteringRaw.includes("mco") || installRaw === "mco" || q.mcoAt || q.mco_at) {
+    return "mco"
+  }
+
+  if (isMeteringApprovedForTransition(q)) {
+    return "approved"
+  }
+
+  if (!meteringRaw && !installRaw) {
+    return null
+  }
+
+  return "processing"
+}
+
 /** True when quotation should appear on installer / metering operational queues. */
 export function isQuotationReleasedToInstaller(q: OperationalQuotationRecord, localReleaseMap?: Record<string, any>): boolean {
   const workflowStatus = getInstallationWorkflowStatus(q)

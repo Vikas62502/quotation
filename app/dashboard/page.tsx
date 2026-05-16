@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -307,6 +307,22 @@ export default function DashboardPage() {
     }
   }
 
+  const getDocumentsForm = (quotationId: string) => {
+    return documentsFormById[quotationId] || createEmptyDocumentsForm()
+  }
+
+  const updateDocumentsForm = useCallback((quotationId: string, updates: Record<string, any>) => {
+    setDocumentsFormById((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...(prev[quotationId] || createEmptyDocumentsForm()),
+        ...updates,
+      },
+    }))
+  }, [])
+
+  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
+
   if (!isAuthenticated) return null
   if (role === "account-management" || role === "hr") {
     return (
@@ -425,22 +441,6 @@ export default function DashboardPage() {
         return "bg-yellow-600 text-white"
     }
   }
-
-  const getDocumentsForm = (quotationId: string) => {
-    return documentsFormById[quotationId] || createEmptyDocumentsForm()
-  }
-
-  const updateDocumentsForm = (quotationId: string, updates: Record<string, any>) => {
-    setDocumentsFormById((prev) => ({
-      ...prev,
-      [quotationId]: {
-        ...getDocumentsForm(quotationId),
-        ...updates,
-      },
-    }))
-  }
-
-  const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
   const getSystemSize = (quotation: Quotation): string => {
     const products = quotation.products

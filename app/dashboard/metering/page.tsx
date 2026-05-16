@@ -17,6 +17,7 @@ import { formatPersonName } from "@/lib/name-display"
 import {
   extractQuotationListFromApiResponse,
   getInstallationWorkflowStatus,
+  getMeteringWorkflowStage,
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
@@ -114,32 +115,7 @@ const dedupeByQuotationId = (rows: MeteringQuotation[]) => {
 }
 
 function stageFromBackend(q: MeteringQuotation): MeteringStage | null {
-  const raw = String(
-    q.meteringStage ||
-      q.metering_status ||
-      q.mcoStatus ||
-      q.mco_status ||
-      q.installationStatus ||
-      q.installation_status ||
-      (q as any).meteringWorkflow ||
-      "",
-  ).toLowerCase()
-  if (raw === "mco" || raw.includes("mco")) return "mco"
-  // Once moved to Baldev confirmation, it should leave metering tabs.
-  if (raw === "pending_baldev" || raw === "baldev_approved" || raw.includes("baldev")) return null
-  if (raw === "metering_approved" || raw === "approved" || (raw.includes("approved") && !raw.includes("pending"))) return "approved"
-  if (
-    raw === "pending_metering" ||
-    raw === "metering_in_progress" ||
-    raw === "pending_installer" ||
-    raw === "installer_in_progress" ||
-    raw === "installer_approved" ||
-    raw.includes("processing") ||
-    raw.includes("pending")
-  ) {
-    return "processing"
-  }
-  return null
+  return getMeteringWorkflowStage(q as Record<string, unknown>)
 }
 
 export default function MeteringDashboardPage() {
@@ -269,32 +245,77 @@ export default function MeteringDashboardPage() {
     return "processing"
   }
 
+  const applyLocalMeteringStage = (id: string, stage: MeteringStage) => {
+    const now = new Date().toISOString()
+    setQuotations((prev) =>
+      prev.map((q) => {
+        if (q.id !== id) return q
+        if (stage === "mco") {
+          return {
+            ...q,
+            installationStatus: "mco",
+            installation_status: "mco",
+            meteringStatus: "mco",
+            metering_status: "mco",
+            mcoAt: now,
+            mco_at: now,
+            meteringApprovedAt: q.meteringApprovedAt || q.metering_approved_at || now,
+            metering_approved_at: q.metering_approved_at || q.meteringApprovedAt || now,
+          }
+        }
+        if (stage === "approved") {
+          return {
+            ...q,
+            installationStatus: "metering_approved",
+            installation_status: "metering_approved",
+            meteringStatus: "metering_approved",
+            metering_status: "metering_approved",
+            meteringApprovedAt: now,
+            metering_approved_at: now,
+          }
+        }
+        return {
+          ...q,
+          installationStatus: "pending_metering",
+          installation_status: "pending_metering",
+          meteringStatus: "pending_metering",
+          metering_status: "pending_metering",
+        }
+      }),
+    )
+  }
+
   const setStage = async (id: string, stage: MeteringStage) => {
     if (!useApi) return
-    const action = stage === "approved" ? "approve" : stage === "mco" ? "send_to_mco" : "move_back"
-    const currentRow = quotations.find((q) => q.id === id)
-    const currentRawStatus = String(
-      currentRow?.meteringStage ||
-        currentRow?.metering_status ||
-        currentRow?.installationStatus ||
-        currentRow?.installation_status ||
-        "",
-    ).toLowerCase()
+
+    if (stage === "mco") {
+      applyLocalMeteringStage(id, "mco")
+      setActiveTab("mco")
+      let persisted = false
+      try {
+        persisted = await api.admin.quotations.forceAdvanceToMco(id)
+      } catch {
+        // keep local MCO placement
+      }
+      toast({
+        title: "Moved to MCO",
+        description: persisted
+          ? "Quotation is in the MCO tab."
+          : "Shown in the MCO tab. Server sync pending.",
+      })
+      return
+    }
+
+    const action = stage === "approved" ? "approve" : "move_back"
     try {
       let response: any
-      // If backend reports a non-pending status, force-save approved directly for compatibility.
-      if (stage === "approved" && currentRawStatus && !currentRawStatus.includes("pending")) {
-        response = await api.metering.forceSetStatus(id, "metering_approved")
-      } else
       try {
         response = await api.metering.updateStatus(id, action)
       } catch (error) {
-        // Compatibility bridge: some backends require "start" before "approve".
         if (
           stage === "approved" &&
           error instanceof ApiError &&
-          (error.code === "WF_003" || error.code === "HTTP_409") &&
-          (currentRawStatus.includes("pending") || currentRawStatus.includes("installer"))
+          (error.code === "WF_003" || error.code === "HTTP_409")
         ) {
           try {
             await api.metering.updateStatus(id, "start")
@@ -302,13 +323,6 @@ export default function MeteringDashboardPage() {
           } catch {
             response = await api.metering.forceSetStatus(id, "metering_approved")
           }
-        } else if (
-          stage === "approved" &&
-          error instanceof ApiError &&
-          (error.code === "WF_003" || error.code === "HTTP_409")
-        ) {
-          // Final fallback for strict stage validators: direct metering approved status patch.
-          response = await api.metering.forceSetStatus(id, "metering_approved")
         } else {
           throw error
         }
@@ -322,15 +336,13 @@ export default function MeteringDashboardPage() {
                 installationStatus:
                   saved.installationStatus ||
                   saved.installation_status ||
-                  (stage === "approved" ? "metering_approved" : stage === "mco" ? "mco" : "pending_metering"),
+                  (stage === "approved" ? "metering_approved" : "pending_metering"),
                 installation_status:
                   saved.installation_status ||
                   saved.installationStatus ||
-                  (stage === "approved" ? "metering_approved" : stage === "mco" ? "mco" : "pending_metering"),
+                  (stage === "approved" ? "metering_approved" : "pending_metering"),
                 meteringApprovedAt: saved.meteringApprovedAt || saved.metering_approved_at || (stage === "approved" ? new Date().toISOString() : q.meteringApprovedAt),
                 metering_approved_at: saved.metering_approved_at || saved.meteringApprovedAt || (stage === "approved" ? new Date().toISOString() : q.metering_approved_at),
-                mcoAt: saved.mcoAt || saved.mco_at || (stage === "mco" ? new Date().toISOString() : q.mcoAt),
-                mco_at: saved.mco_at || saved.mcoAt || (stage === "mco" ? new Date().toISOString() : q.mco_at),
               }
             : q,
         ),
@@ -350,7 +362,7 @@ export default function MeteringDashboardPage() {
     }
     toast({
       title: "Stage updated",
-      description: `Quotation moved to ${stage === "mco" ? "MCO" : stage}.`,
+      description: `Quotation moved to ${stage}.`,
     })
   }
 

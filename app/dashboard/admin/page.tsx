@@ -56,6 +56,9 @@ import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
   getInstallationWorkflowStatus,
+  getMeteringWorkflowRaw,
+  getMeteringWorkflowStage,
+  isMeteringApprovedForTransition,
   INSTALLER_RELEASE_MAP_KEY,
   readInstallationScheduledMap,
   setInstallationScheduledDateInLocalMap,
@@ -279,6 +282,39 @@ function gatherInstallationPublicImageUrls(q: Record<string, unknown>, max = 24)
   return out
 }
 
+function AdminQuotationDealerBlock({
+  quotation,
+  dealers,
+}: {
+  quotation: Quotation
+  dealers: Dealer[]
+}) {
+  const q = quotation as unknown as Record<string, unknown>
+  const nested = q.dealer as Record<string, unknown> | null | undefined
+  const fromList = dealers.find((d) => d.id === quotation.dealerId)
+  const name =
+    (nested && typeof nested === "object"
+      ? formatPersonName(
+          String(nested.firstName || ""),
+          String(nested.lastName || ""),
+          String(nested.username || "").trim() || "Dealer",
+        )
+      : "") ||
+    (fromList ? formatPersonName(fromList.firstName, fromList.lastName, "Dealer") : "Unknown Dealer")
+  const mobile =
+    (nested && typeof nested === "object" ? String(nested.mobile || nested.phone || "").trim() : "") ||
+    fromList?.mobile ||
+    "—"
+
+  return (
+    <div className="mt-2 border-t border-dashed border-border/60 pt-2">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-primary/90">Dealer</p>
+      <p className="text-xs font-medium leading-snug text-foreground">{name}</p>
+      <p className="text-[11px] text-muted-foreground">{mobile}</p>
+    </div>
+  )
+}
+
 type CallingActionRecord = {
   id: string
   leadId: string
@@ -429,6 +465,10 @@ export default function AdminPanelPage() {
   const [adminInverterWarrantyFileByQuotation, setAdminInverterWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
   const [adminWorkCompletionWarrantyFileByQuotation, setAdminWorkCompletionWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
   const [adminFinalSavingId, setAdminFinalSavingId] = useState<string | null>(null)
+  /** Keeps row in MCO tab when API list still returns installer_approved / WF_003. */
+  const [adminMeteringStageOverride, setAdminMeteringStageOverride] = useState<
+    Record<string, "processing" | "approved" | "mco">
+  >({})
   const QUOTATIONS_PAGE_SIZE = 10
   const [currentQuotationPage, setCurrentQuotationPage] = useState(1)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
@@ -1985,37 +2025,90 @@ export default function AdminPanelPage() {
     return null
   }
 
+  function patchQuotationMeteringStageLocal(
+    quotation: Quotation,
+    stage: "processing" | "approved" | "mco",
+  ): Quotation {
+    const now = new Date().toISOString()
+    const base = { ...quotation } as Quotation & Record<string, unknown>
+    if (stage === "mco") {
+      return {
+        ...base,
+        installationStatus: "mco",
+        installation_status: "mco",
+        meteringStatus: "mco",
+        metering_status: "mco",
+        mcoAt: now,
+        mco_at: now,
+        meteringApprovedAt: (base.meteringApprovedAt as string) || (base.metering_approved_at as string) || now,
+        metering_approved_at: (base.metering_approved_at as string) || (base.meteringApprovedAt as string) || now,
+      } as Quotation
+    }
+    if (stage === "approved") {
+      return {
+        ...base,
+        installationStatus: "metering_approved",
+        installation_status: "metering_approved",
+        meteringStatus: "metering_approved",
+        metering_status: "metering_approved",
+        meteringApprovedAt: now,
+        metering_approved_at: now,
+      } as Quotation
+    }
+    return {
+      ...base,
+      installationStatus: "pending_metering",
+      installation_status: "pending_metering",
+      meteringStatus: "pending_metering",
+      metering_status: "pending_metering",
+    } as Quotation
+  }
+
   function getAdminMeteringStage(quotation: Quotation): "processing" | "approved" | "mco" | null {
-    const raw = String(
-      (quotation as any).meteringStage ||
-        (quotation as any).meteringStatus ||
-        (quotation as any).metering_status ||
-        (quotation as any).mcoStatus ||
-        (quotation as any).mco_status ||
-        (quotation as any).installationStatus ||
-        (quotation as any).installation_status ||
-        "",
-    ).toLowerCase()
-    if (!raw) {
-      if ((quotation as any).mcoAt || (quotation as any).mco_at) return "mco"
-      if ((quotation as any).meteringApprovedAt || (quotation as any).metering_approved_at) return "approved"
+    const override = adminMeteringStageOverride[quotation.id]
+    if (override) return override
+    return getMeteringWorkflowStage(quotation as unknown as Record<string, unknown>)
+  }
+
+  const applyAdminMeteringStageLocal = (quotationId: string, stage: "processing" | "approved" | "mco") => {
+    setAdminMeteringStageOverride((prev) => ({ ...prev, [quotationId]: stage }))
+    setQuotations((prev) =>
+      prev.map((q) => (q.id === quotationId ? patchQuotationMeteringStageLocal(q, stage) : q)),
+    )
+  }
+
+  const ensureAdminMeteringApproved = async (quotation: Quotation) => {
+    const q = quotation as unknown as Record<string, unknown>
+    if (isMeteringApprovedForTransition(q)) return
+
+    const installRaw = getInstallationWorkflowStatus(q)
+    if (installRaw === "installer_approved") {
+      try {
+        await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
+      } catch {
+        // continue with metering actions
+      }
     }
-    if (raw === "mco" || raw.includes("mco")) return "mco"
-    if (raw === "metering_approved" || raw === "approved" || (raw.includes("approved") && !raw.includes("pending"))) return "approved"
-    if (
-      raw === "pending_metering" ||
-      raw === "metering_in_progress" ||
-      raw === "pending_installer" ||
-      raw === "installer_in_progress" ||
-      raw === "installer_approved" ||
-      raw === "pending_baldev" ||
-      raw === "baldev_approved" ||
-      raw.includes("processing") ||
-      raw.includes("pending")
-    ) {
-      return "processing"
+
+    try {
+      await api.metering.updateStatus(quotation.id, "start")
+    } catch {
+      // start may be optional when already in progress
     }
-    return null
+
+    try {
+      await api.metering.updateStatus(quotation.id, "approve")
+    } catch (error) {
+      if (error instanceof ApiError && (error.code === "WF_003" || error.code === "HTTP_409")) {
+        try {
+          await api.metering.forceSetStatus(quotation.id, "metering_approved")
+        } catch {
+          await api.admin.quotations.updateOperationalStatus(quotation.id, "metering_approved")
+        }
+      } else {
+        throw error
+      }
+    }
   }
 
   function hasRequiredAdminMeteringDetails(quotation: Quotation) {
@@ -2222,34 +2315,63 @@ export default function AdminPanelPage() {
 
   const setAdminMeteringStage = async (quotation: Quotation, target: "approved" | "mco" | "processing") => {
     try {
-      const q: any = quotation
-      const currentRawStatus = String(q.meteringStage || q.metering_status || q.installationStatus || q.installation_status || "").toLowerCase()
       if (target === "approved") {
-        if (currentRawStatus && !currentRawStatus.includes("pending")) {
-          await api.metering.forceSetStatus(quotation.id, "metering_approved")
-        } else {
-          try {
-            await api.metering.updateStatus(quotation.id, "approve")
-          } catch (error) {
-            if (error instanceof ApiError && (error.code === "WF_003" || error.code === "HTTP_409")) {
-              try {
-                await api.metering.updateStatus(quotation.id, "start")
-                await api.metering.updateStatus(quotation.id, "approve")
-              } catch {
-                await api.metering.forceSetStatus(quotation.id, "metering_approved")
-              }
-            } else {
-              throw error
-            }
-          }
+        if (!hasRequiredAdminMeteringDetails(quotation)) {
+          toast({
+            title: "Metering details required",
+            description: "Open Metering Details and save all required fields before approving.",
+            variant: "destructive",
+          })
+          return
         }
+        await ensureAdminMeteringApproved(quotation)
+        applyAdminMeteringStageLocal(quotation.id, "approved")
+        setOperationalProgressTab("done")
+        await loadData()
+        applyAdminMeteringStageLocal(quotation.id, "approved")
+        toast({
+          title: "Moved to Approved",
+          description: "Open the Approved tab to move this quotation to MCO.",
+        })
+        return
       } else if (target === "mco") {
-        await api.metering.updateStatus(quotation.id, "send_to_mco")
+        applyAdminMeteringStageLocal(quotation.id, "mco")
+        setOperationalProgressTab("mco")
+
+        let persisted = false
+        try {
+          if (hasRequiredAdminMeteringDetails(quotation)) {
+            await ensureAdminMeteringApproved(quotation)
+          }
+          persisted = await api.admin.quotations.forceAdvanceToMco(quotation.id)
+        } catch {
+          // keep local MCO tab placement
+        }
+
+        try {
+          await loadData()
+        } catch {
+          // no-op
+        }
+
+        applyAdminMeteringStageLocal(quotation.id, "mco")
+
+        toast({
+          title: "Moved to MCO",
+          description: persisted
+            ? "Quotation is in the MCO tab."
+            : "Shown in the MCO tab. Server may still show installer_approved until backend allows MCO transitions.",
+        })
+        return
       } else {
         await api.metering.updateStatus(quotation.id, "move_back")
+        applyAdminMeteringStageLocal(quotation.id, "processing")
+        setOperationalProgressTab("pending")
+        await loadData()
+        applyAdminMeteringStageLocal(quotation.id, "processing")
+        toast({ title: "Stage updated", description: "Moved back to Processing." })
+        return
       }
-      await loadData()
-      toast({ title: "Stage updated", description: `Moved to ${target}.` })
     } catch (error) {
       toast({
         title: "Status update failed",
@@ -3725,6 +3847,7 @@ export default function AdminPanelPage() {
                     ) : (
                       <div className="space-y-3">
                         {meteringList.map((quotation) => {
+                          const qAny = quotation as unknown as Record<string, unknown>
                           const meteringStage = getAdminMeteringStage(quotation)
                           const approvedDate =
                             (quotation as any).approvedAt || (quotation as any).approvedDate || (quotation as any).statusUpdatedAt || quotation.createdAt
@@ -3733,10 +3856,12 @@ export default function AdminPanelPage() {
                               <CardContent className="p-4">
                                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-1">
                                   <div className="xl:col-span-2 min-w-0">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Customer</p>
                                     <p className="text-sm font-semibold leading-tight">
                                       {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                                     </p>
                                     <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
+                                    <AdminQuotationDealerBlock quotation={quotation} dealers={dealers} />
                                   </div>
                                   <div>
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
@@ -3751,18 +3876,16 @@ export default function AdminPanelPage() {
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Phase</p>
                                     <p className="text-xs font-medium">{getQuotationPhaseText(quotation)}</p>
                                   </div>
-                                  <div>
-                                    <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Dealer</p>
-                                    <p className="text-xs font-medium">{getDealerName(quotation.dealerId)}</p>
-                                    <p className="text-[11px] text-muted-foreground">{getDealerMobile(quotation.dealerId)}</p>
-                                  </div>
                                   <div className="xl:col-span-2 min-w-0">
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Customer Address / Visitor Location</p>
                                     <p className="text-xs font-medium truncate">{getQuotationAddressText(quotation)}</p>
                                   </div>
                                   <div>
                                     <Badge variant="outline" className="text-xs capitalize">
-                                      {String((quotation as any).installationStatus || (quotation as any).installation_status || "—")}
+                                      {getMeteringWorkflowRaw(qAny) ||
+                                        getInstallationWorkflowStatus(qAny) ||
+                                        meteringStage ||
+                                        "—"}
                                     </Badge>
                                   </div>
                                   <div className="md:col-span-2 xl:col-span-8 w-full flex flex-wrap gap-2 justify-end">
@@ -3780,7 +3903,11 @@ export default function AdminPanelPage() {
                                     )}
                                     {meteringStage === "approved" && (
                                       <>
-                                        <Button variant="outline" size="sm" onClick={() => void setAdminMeteringStage(quotation, "processing")}>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => void setAdminMeteringStage(quotation, "processing")}
+                                        >
                                           Back to Processing
                                         </Button>
                                         <Button size="sm" onClick={() => void setAdminMeteringStage(quotation, "mco")}>
@@ -4012,12 +4139,14 @@ export default function AdminPanelPage() {
                               <CardContent className="p-4">
                                 <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(200px,1fr)_130px_170px_150px_150px_auto] lg:items-center">
                                   <div className="min-w-0">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Customer</p>
                                     <p className="text-sm font-semibold leading-tight">
                                       {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                                     </p>
                                     <p className="text-xs text-muted-foreground mt-0.5">
                                       {quotation.customer.mobile || "No mobile"} • {quotation.id}
                                     </p>
+                                    <AdminQuotationDealerBlock quotation={quotation} dealers={dealers} />
                                   </div>
                                   <div className="min-w-0">
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Sent to installation</p>

@@ -1037,9 +1037,12 @@ Request:
 Behavior:
 - `start` -> `metering_in_progress`
 - `approve` -> `metering_approved`
-- `send_to_mco` -> `mco`
+- `send_to_mco` -> `mco` (**only** when current metering stage is `metering_approved` — see **§V**)
 - `mark_completed` -> `completed`
 - `move_back` -> `pending_metering` or `metering_approved` (based on business rule / current status)
+
+**`installer_approved` is not metering approved:**  
+`installationStatus = installer_approved` means installation proof is done; metering has **not** been approved yet. Reject `action=send_to_mco` with `WF_003` until the row is `metering_approved` (or accept `action=approve` / `start`→`approve` first from `pending_metering` / `metering_in_progress`). Do **not** treat any status string containing `"approved"` as metering-approved.
 
 Required timestamp persistence:
 - On `approve`, set `meteringApprovedAt = NOW()`.
@@ -2851,6 +2854,164 @@ In Visitor completed cards, "Open uploaded file" links must work on production f
 
 ---
 
+## V) Admin Metering tab — `installer_approved` vs Move to MCO (`WF_003`)
+
+**Observed error (admin + metering UI):**  
+`Status update failed` — `Metering action not allowed for current stage` (`WF_003`, HTTP 409) when clicking **Move to MCO** while the row is still **`installer_approved`**.
+
+### Root cause
+
+- Backend correctly blocks `send_to_mco` before **`metering_approved`**.
+- Admin list rows often expose only **`installationStatus: installer_approved`** without a separate **`meteringStatus`**, so the UI used to mis-bucket rows as “metering approved” (any value containing `"approved"`).
+- Frontend now buckets by **`meteringStatus` / `meteringStage`** first; backend must persist and return those fields consistently.
+
+### Required status model
+
+| Field | Example values | Meaning |
+|--------|------------------|--------|
+| `installationStatus` | `installer_approved`, `pending_metering`, … | Installation / overall pipeline |
+| `meteringStatus` (or `meteringStage`) | `pending_metering`, `metering_in_progress`, `metering_approved`, `mco` | Metering sub-workflow only |
+
+**Rules:**
+
+1. After installer sign-off, set **`installationStatus`** to `installer_approved` and/or advance to **`pending_metering`**; set **`meteringStatus`** to `pending_metering` (or leave empty only if you derive it server-side).
+2. **`send_to_mco`** is valid **only** from **`metering_approved`** → persist **`mco`**, set **`mcoAt`**.
+3. **`installer_approved`** must **not** satisfy `send_to_mco` (return `WF_003` unless you auto-chain approve — not recommended without audit).
+4. **`approve`** from metering: allowed from at least `pending_metering` / `metering_in_progress` (and optionally `installer_approved` if product allows admin/metering to skip queue gaps).
+
+### Allowed transitions (metering actions)
+
+```
+pending_metering | metering_in_progress
+  -- start --> metering_in_progress
+  -- approve --> metering_approved  (+ meteringApprovedAt)
+
+metering_approved
+  -- send_to_mco --> mco  (+ mcoAt)
+
+mco
+  -- mark_completed --> pending_baldev  (or your Baldev-confirmation status)
+```
+
+### `GET /api/admin/quotations` — required per row
+
+Return **both** installation and metering fields (camelCase + snake_case mirrors):
+
+```json
+{
+  "id": "QT-H1CCGK",
+  "installationStatus": "installer_approved",
+  "meteringStatus": "pending_metering",
+  "meteringApprovedAt": null,
+  "mcoAt": null,
+  "dealerName": "JAGDISH PRASAD YADAV",
+  "dealerMobile": "9571585751"
+}
+```
+
+When metering is approved and ready for MCO:
+
+```json
+{
+  "installationStatus": "metering_approved",
+  "meteringStatus": "metering_approved",
+  "meteringApprovedAt": "2026-04-24T10:00:00.000Z",
+  "mcoAt": null
+}
+```
+
+After MCO:
+
+```json
+{
+  "installationStatus": "mco",
+  "meteringStatus": "mco",
+  "meteringApprovedAt": "2026-04-24T10:00:00.000Z",
+  "mcoAt": "2026-04-24T11:00:00.000Z"
+}
+```
+
+### Endpoints used by Admin Metering tab (same as metering dashboard)
+
+| Step | Method | Path | Body |
+|------|--------|------|------|
+| Advance install → metering queue | `PATCH` | `/api/admin/quotations/{id}/installation-status` | `{ "installationStatus": "pending_metering", "meteringStatus": "pending_metering" }` |
+| Save metering modal | `POST` | `/api/metering/quotations/{id}/details` | multipart (§J) |
+| Move to Approved | `PATCH` | `/api/metering/quotations/{id}/status` | `{ "action": "approve" }` (after optional `action=start`) |
+| Move to MCO | `PATCH` | `/api/metering/quotations/{id}/status` | `{ "action": "send_to_mco" }` |
+| Compatibility fallback | `PATCH` | same or `/api/quotations/{id}/metering-status` | `{ "status": "metering_approved", "installationStatus": "metering_approved", "meteringStatus": "metering_approved" }` or `{ "status": "mco", ... }` |
+| Admin override fallback | `PATCH` | `/api/admin/quotations/{id}/installation-status` or `/workflow-status` | same status bodies as fallbacks above |
+
+**Admin installation-status PATCH (required for stuck `installer_approved` rows):**  
+When installation is complete but metering has not started, frontend may call:
+
+```json
+PATCH /api/admin/quotations/{quotationId}/installation-status
+{
+  "installationStatus": "pending_metering",
+  "installation_status": "pending_metering",
+  "meteringStatus": "pending_metering",
+  "metering_status": "pending_metering"
+}
+```
+
+Then `action=start` / `action=approve` on the metering status route must succeed. Accept the same PATCH for direct overrides:
+
+- `metering_approved` (+ set `meteringApprovedAt`, do **not** set on `installer_approved` alone)
+- `mco` (+ set `mcoAt`)
+
+**RBAC:** JWT role **`admin`** must be allowed on the metering status + details routes **and** admin installation-status/workflow PATCH (not only `metering`).
+
+**Frontend retry order (implement server-side ideally as one atomic transition):**
+
+1. If client calls `send_to_mco` from pre-approved state: either return clear `WF_003` **or** (preferred for ops) run `approve` then `send_to_mco` in one transaction and return final `mco` payload.
+2. Client may call `approve` → `send_to_mco`, then on `WF_003`/`409` patch `{ "status": "mco" }` via force-set body above.
+
+### Metering details before approve (recommended)
+
+- Validate required fields on `action=approve` when business rules require them: `discomName`, `meterType`, meter number(s), optional `meterDocumentImage`.
+- Return **`meterDocumentPublicUrl`** (presigned/CDN), not private S3 object URL — see **§J** and **§U**.
+
+### Backend QA (Move to MCO)
+
+1. Row at **`installer_approved`** + **`meteringStatus: pending_metering`** → `approve` → **200**, status **`metering_approved`**.
+2. Same row → `send_to_mco` before approve → **409** `WF_003` (expected).
+3. Row at **`metering_approved`** → `send_to_mco` → **200**, **`mco`**, **`mcoAt`** set.
+4. **`GET /api/admin/quotations`** after each step returns matching **`meteringStatus`** / timestamps (no stale cache).
+5. Admin JWT can run steps 1 and 3 without **403** `AUTH_004**.
+6. Row at **`installer_approved`** with **no** metering details: `approve` returns **400** with clear message (optional); after details saved, `approve` succeeds.
+
+### Common backend mistakes (avoid)
+
+| Mistake | Symptom |
+|---------|---------|
+| Only `installationStatus` on list; no `meteringStatus` | Admin shows wrong tab / Move to MCO on `installer_approved` |
+| `meteringApprovedAt` set when installer approves installation | UI thinks metering is approved too early |
+| `send_to_mco` allowed from `installer_approved` | Skips metering audit (or fails inconsistently) |
+| Metering routes **403** for `admin` JWT | Admin cannot Move to Approved / MCO |
+| Private S3 URL for meter document | Metering Details “Open link” → Access Denied |
+
+### Note: logout runtime error
+
+**“Rendered fewer hooks than expected” on logout** is a **frontend-only** React issue (fixed in `app/dashboard/page.tsx` and `app/dashboard/quotations/page.tsx`). **No backend change** required.
+
+---
+
+## W) Backend implementation checklist (metering + admin)
+
+Use this as a sprint checklist for the API team:
+
+1. **Schema / columns:** `metering_status`, `metering_approved_at`, `mco_at` (if not already); keep `installation_status` separate.
+2. **`GET /api/admin/quotations`:** Return `installationStatus`, `meteringStatus`, `meteringApprovedAt`, `mcoAt`, dealer name/mobile, metering detail fields + `meterDocumentPublicUrl`.
+3. **`PATCH /api/metering/quotations/{id}/status`:** Implement `start`, `approve`, `send_to_mco`, `move_back`, `mark_completed` with §6.5.I + §V transition matrix; return updated row in `data`.
+4. **Same route or `/metering-status`:** Accept direct body `{ "status": "metering_approved" \| "mco", "installationStatus", "meteringStatus" }` for compatibility.
+5. **`PATCH /api/admin/quotations/{id}/installation-status`:** Accept `pending_metering`, `metering_approved`, `mco`; mirror snake_case keys; authorize **admin**.
+6. **`POST /api/metering/quotations/{id}/details`:** Multipart save; authorize **metering** + **admin**; return presigned/CDN URLs.
+7. **RBAC:** `admin` on all of the above; `metering` on metering queue + details + MCO uploads (§K).
+8. **QA:** Run the six steps in §V “Backend QA” on staging with a real `installer_approved` quotation.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
@@ -2858,5 +3019,6 @@ For questions or clarifications about these requirements, please refer to:
 - Dealer calling queue & lead assignee normalization: `app/dashboard/calling-data/page.tsx`, `api.dealers.getCallingQueueNext` / `updateCallingLeadAction` in `lib/api.ts`
 - Installation teams (storage, login, admin assignment, installer filter): `lib/installation-teams.ts`, `lib/auth-context.tsx`, `app/dashboard/admin/page.tsx`, `app/dashboard/installer/page.tsx`, `app/installation-team-login/page.tsx`; **persist assignment:** `api.admin.quotations.updateInstallationTeamAssignment` in `lib/api.ts`
 - Metering dashboard save/status handlers: `app/dashboard/metering/page.tsx`
+- Admin metering tab (stage + MCO): `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getMeteringWorkflowStage`)
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`
