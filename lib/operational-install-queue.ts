@@ -72,3 +72,36 @@ export function extractQuotationListFromApiResponse(response: any): any[] {
   if (Array.isArray(response?.data?.quotations)) return response.data.quotations
   return []
 }
+
+/** Merge installer-queue / detail payloads into admin list rows without clobbering mapped customer/status. */
+export function mergeInstallationMediaSources(
+  base: OperationalQuotationRecord,
+  extra?: OperationalQuotationRecord | null,
+): OperationalQuotationRecord {
+  if (!extra) return base
+  const documents =
+    base.documents || base.document || extra.documents || extra.document
+  return {
+    ...extra,
+    ...base,
+    ...(documents ? { documents, document: documents } : {}),
+    installation: base.installation || extra.installation,
+    installerInstallation: base.installerInstallation || extra.installerInstallation,
+    installationCompletion: base.installationCompletion || extra.installationCompletion,
+    installerCompletion: base.installerCompletion || extra.installerCompletion,
+    siteCompletionImages: base.siteCompletionImages || extra.siteCompletionImages,
+    site_completion_images: base.site_completion_images || extra.site_completion_images,
+    installerCompletionImages: base.installerCompletionImages || extra.installerCompletionImages,
+    installer_completion_images: base.installer_completion_images || extra.installer_completion_images,
+    installationImageUrls: base.installationImageUrls || extra.installationImageUrls,
+    installation_image_urls: base.installation_image_urls || extra.installation_image_urls,
+    existingInstallationImageUrlsJson:
+      base.existingInstallationImageUrlsJson || extra.existingInstallationImageUrlsJson,
+    existing_installation_image_urls_json:
+      base.existing_installation_image_urls_json || extra.existing_installation_image_urls_json,
+    installerRemarks: base.installerRemarks ?? extra.installerRemarks,
+    installer_remarks: base.installer_remarks ?? extra.installer_remarks,
+    piUploadUrl: base.piUploadUrl || extra.piUploadUrl,
+    pi_upload_url: base.pi_upload_url || extra.pi_upload_url,
+  }
+}

@@ -2284,6 +2284,46 @@ export const api = {
       })
     },
   },
+
+  /** Presigned / public view URLs for private S3 objects (installation photos, documents). */
+  media: {
+    fetchPresignedUrl: async (endpoint: string) => {
+      return apiRequest(endpoint, { requiresAuth: true })
+    },
+
+    /**
+     * Ask API for a browser-openable URL for a private S3 or internal file URL.
+     * Backend should implement one of the paths tried in `resolvePublicOpenMediaUrl`.
+     */
+    resolvePublicUrl: async (sourceUrl: string, quotationId?: string): Promise<string | null> => {
+      const encoded = encodeURIComponent(sourceUrl.trim())
+      const endpoints: string[] = []
+      if (quotationId) {
+        endpoints.push(
+          `/quotations/${quotationId}/documents/view-url?url=${encoded}`,
+          `/quotations/${quotationId}/documents/presign-url?url=${encoded}`,
+          `/admin/quotations/${quotationId}/documents/view-url?url=${encoded}`,
+        )
+      }
+      endpoints.push(`/media/presign-url?url=${encoded}`, `/files/presigned-url?url=${encoded}`)
+
+      for (const endpoint of endpoints) {
+        try {
+          const payload = await apiRequest(endpoint, { requiresAuth: true })
+          const root = (payload as { data?: unknown })?.data ?? payload
+          if (!root || typeof root !== "object") continue
+          const o = root as Record<string, unknown>
+          for (const k of ["publicUrl", "public_url", "signedUrl", "signed_url", "viewUrl", "url"]) {
+            const v = o[k]
+            if (typeof v === "string" && v.trim()) return v.trim()
+          }
+        } catch {
+          continue
+        }
+      }
+      return null
+    },
+  },
 }
 
 // api is already exported above, so we only export the other items here

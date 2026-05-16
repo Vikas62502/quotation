@@ -727,6 +727,8 @@ The installer dashboard may send **each completion image twice** (same file byte
 
 **Multer / strict multipart parsers:** Duplicate aggregate + per-field parts can exceed **`installerCompletionImages`** **`maxCount`**. Some APIs only allow **`installerCompletionImages`** and **`piUpload`** as **file** parts — extra file field names (e.g. `homeFrontPhoto`) trigger **“Unexpected or too many file fields”**. The **admin** installation completion UI sends **all images as repeated `installerCompletionImages` parts only**, plus optional text **`installerCompletionImageFieldOrderJson`**: a JSON array of logical keys in upload order (e.g. `["homeFrontPhoto","panelSerialNumberPhoto",…]`) so the server can map files to columns. Set **`maxCount`** on `installerCompletionImages` high enough (e.g. **20+**) for multi-panel uploads. The **installer** UI may still send aggregate + per-field; dedupe or widen limits as needed.
 
+- **Admin partial re-upload (optional text parts):** When the admin edits photos and keeps some existing S3 URLs without re-uploading bytes, the UI may send **`existingInstallationImageUrlsJson`** — JSON object mapping logical field key → string URL array (same keys as per-field list above). Optionally **`existingPiUploadUrl`** — single string when PI is unchanged. Merge these with new `installerCompletionImages` parts using **`installerCompletionImageFieldOrderJson`** for new files only.
+
 - **`installerCompletionImages`** — repeatable when sent; each part is one site-completion image (required set is driven by UI when this key is used; treat all received files as completion images).
 - **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
   - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `panelSerialNumberPhoto` and `otherImages`).
@@ -799,11 +801,13 @@ When the installer adds one or more expense lines, the frontend sends:
 - Backend must upload received files to AWS S3 (not local disk).
 - Save S3 URL(s) in quotation documents / workflow records.
 - Response should return uploaded file URLs for frontend display.
+- For each file object, prefer returning **`publicUrl`** (and duplicate as **`url`** if needed) — full **`https://`** string suitable for `<img src>` and “open in new tab” (see **§6.4.C.8**).
 - Suggested response payload should include:
   - `installationStatus`
   - `installerInProgressAt`
   - `installerApprovedAt`
-  - `documents.siteCompletionImages[]` (or equivalent)
+  - `documents.siteCompletionImages[]` (or equivalent), each item with **`publicUrl`** / **`url`**
+  - Per-field URLs: `homeFrontPhotoUrl`, `panelSerialNumberPhotoUrls`, `piUploadUrl`, etc.
   - Persisted **site leg** fields and **extra expense** summary if applicable
 
 ##### C.7 Status after completion upload + `GET /api/admin/quotations` (Installation tabs)
@@ -835,6 +839,115 @@ The admin **Installation** screen reloads from **`GET /api/admin/quotations`** a
 
 - Support **`status=approved`** (or your documented equivalent) for rows that have **completed installer-side submission** / **approved-by-installer** workflow, with the **same list item shape** as the pending queue (at least nested or flat `id` / `quotation.id`).
 - Treat **`GET /api/admin/quotations`** as **authoritative** for **`installationStatus`** on each row: once a job leaves **`pending_installer`**, it will often **no longer** appear on the pending-only installer queue; the admin **Installation** tab still shows it under **Approved by Installer** when the **admin list** returns `installer_approved`, `pending_metering`, or later stages (see bullets above). Do not assume the installer queue alone drives admin visibility.
+
+##### C.8 Admin **Installation → Approved by Installer** — thumbnails + **Open link** (public URLs)
+
+**Symptom:** Admin row shows **Approved by Installer** and multiple **Open link** labels, but image thumbnails are broken (placeholder icon). **Open link** opens a URL like `https://cbpl-bajaj-node.s3.ap-south-1.amazonaws.com/quotation-workflow/QT-xxx/site_completion_image-….jpeg` and the browser shows **Access Denied** (XML), not the image.
+
+**Root cause (typical):** The API returns the **raw virtual-hosted S3 object URL** (private bucket). That is **not** a public link. Completion images are persisted, but **read** payloads must return either a **presigned GET URL** (`?X-Amz-Signature=…`), a **CloudFront/public CDN URL**, or an **API proxy URL** — not only `https://{bucket}.s3.{region}.amazonaws.com/{key}`.
+
+**Required behavior**
+
+1. **Return browsable URLs on list + detail (mandatory for admin approved strip)**  
+   On **`GET /api/admin/quotations`** (each item) and **`GET /api/quotations/{id}`**, include installation completion media using the **same** shapes as §6.4.C.6. Do **not** rely on the installer queue alone for image metadata after approval.
+
+2. **Prefer explicit public URLs**  
+   For each stored file, return at least one of:
+   - **`publicUrl`** / **`public_url`** on array items (preferred for UI), **or**
+   - Top-level **`https://...`** S3/CDN URL (virtual-hosted or path-style), **or**
+   - Per-field URL: `homeFrontPhotoUrl`, `panelSerialNumberPhotoUrls[]`, etc. (camelCase and snake_case).
+
+   Example (array under `documents`):
+
+   ```json
+   {
+     "documents": {
+       "siteCompletionImages": [
+         {
+           "field": "homeFrontPhoto",
+           "publicUrl": "https://your-bucket.s3.ap-south-1.amazonaws.com/quotations/QT-123/home-front.jpg",
+           "url": "https://your-bucket.s3.ap-south-1.amazonaws.com/quotations/QT-123/home-front.jpg"
+         }
+       ],
+       "homeFrontPhotoUrl": "https://...",
+       "panelSerialNumberPhotoUrls": ["https://...", "https://..."],
+       "piUploadUrl": "https://..."
+     }
+   }
+   ```
+
+3. **Avoid broken relative `/api/...` as the only URL**  
+   If you expose `GET /api/.../files/{id}`:
+   - Either return the **full** URL including API origin, e.g. `https://api.example.com/api/quotations/{id}/files/{fileId}`, **and** allow **GET** with the same **Bearer** token the admin already has (CORS + `Authorization` for browser `fetch` from the Next app origin), **or**
+   - Also persist and return a **`publicUrl`** (public bucket or long-lived signed URL) for thumbnails and “open in new tab” without auth.
+
+   Do **not** return only `/api/foo/bar` without the API host — clients may incorrectly prefix the **frontend** origin.
+
+4. **Persist field mapping from admin multipart**  
+   When **`installerCompletionImageFieldOrderJson`** is sent with repeated **`installerCompletionImages`** parts, map each file index → logical key (`homeFrontPhoto`, `panelSerialNumberPhoto`, `otherImages`, …) and store **per-field URL(s)** on the quotation/documents record, not only a single undifferentiated array.
+
+5. **Admin edit / retain existing files**  
+   Accept and persist:
+   - **`existingInstallationImageUrlsJson`** — `{ "homeFrontPhoto": ["https://..."], "panelSerialNumberPhoto": ["https://...", "https://..."] }`
+   - **`existingPiUploadUrl`** — single string when PI unchanged  
+   Echo the merged result on the **POST** response and on subsequent **GET** list/detail.
+
+6. **S3 / CDN rules**
+   - Upload to S3 (§C.6); store **stable** object key + **retrieved** HTTPS URL.
+   - For **public** buckets: return the permanent object URL in **`publicUrl`**.
+   - For **private** buckets: return **signed `publicUrl`** with TTL ≥ 1 hour (or refresh endpoint); ensure signature is not double-encoded (`%2520` in path breaks images).
+   - If only the object **key** is stored (e.g. `quotations/QT-123/home-front.jpg`), document **`NEXT_PUBLIC_MEDIA_BASE_URL`** for the frontend or always expand to full HTTPS in API responses.
+
+7. **POST completion response (same as list)**  
+   After `POST …/installer/quotations/{id}/documents` (or admin alias), **`data`** must include the updated **`documents`** block (or equivalent) with all new/changed URLs so the UI can show thumbnails without waiting for a full list refetch.
+
+8. **Revert to pending (admin)**  
+   **`PATCH …/installation-status`** (or §6.4 operational status) must accept **`pending_installer`** from **admin** to move a job back from approved → pending (admin **Revert to pending**). Idempotent **200** preferred.
+
+**Endpoints checklist**
+
+| Action | Method / path | Notes |
+|--------|----------------|-------|
+| Upload completion | `POST /api/installer/quotations/{id}/documents` and/or `POST /api/admin/quotations/{id}/documents` | **admin** + installer RBAC; §C.1–C.4 |
+| Set stage | `PATCH /api/admin/quotations/{id}/installation-status` | `installer_approved`, `pending_installer`, `pending_metering`, … |
+| List (photos + status) | **`GET /api/admin/quotations`** | **Must** include `installationStatus` + installation **`documents`** / URLs per C.8 |
+| Detail fallback | **`GET /api/quotations/{id}`** | Same URL fields as list when list is thin |
+| Queue (optional) | `GET /api/installer/quotations?status=approved` | Same document shape as pending queue |
+
+**Logical field keys** (align with frontend `ADMIN_INSTALLATION_IMAGE_FIELDS`):
+
+`homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto` (multiple), `geoTagPlantPhoto`, `otherImages` (multiple), optional **`piUpload`** / `piUploadUrl`.
+
+**QA (backend)**
+
+1. Admin completes installation with 2+ photos → **POST** returns **200** with `documents` URLs.
+2. **PATCH** `installation_status` → **200**; DB row is `installer_approved` or `pending_metering`.
+3. **`GET /api/admin/quotations`** → that quotation includes **`installationStatus`** + at least one **https** URL in `documents` or per-field `*Url`.
+4. Paste `publicUrl` in a browser **incognito** window (no JWT): image loads. If only the raw `https://{bucket}.s3.{region}.amazonaws.com/...` URL appears and shows **Access Denied**, return a **presigned GET** in `publicUrl` instead.
+5. **Open link** and `<img>` use the **same** browsable URL (presigned or CDN), not the private object URL.
+
+**Presign endpoint (implement at least one — frontend probes these):**
+
+- `GET /api/quotations/{quotationId}/documents/view-url?url={encodeURIComponent(privateS3Url)}`
+- or `GET /api/quotations/{quotationId}/documents/presign-url?url=…`
+- or `GET /api/media/presign-url?url=…`
+
+Response example:
+
+```json
+{
+  "success": true,
+  "data": {
+    "publicUrl": "https://cbpl-bajaj-node.s3.ap-south-1.amazonaws.com/quotation-workflow/QT-BAV3WO/file.jpeg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=..."
+  }
+}
+```
+
+Generate with S3 **`GetObject`** presign (TTL ≥ **3600** s). Prefer returning this URL directly on **`GET /api/admin/quotations`** in each `siteCompletionImages[]` item’s **`publicUrl`** field.
+
+**Alternative:** CloudFront in front of the bucket — set env `NEXT_PUBLIC_MEDIA_BASE_URL` to the CDN origin on the frontend, or return CDN URLs from the API.
+
+**Alignment:** Same “return HTTP-accessible file URLs on list/detail” principle as **§L** (KYC documents); installation completion uses the field keys in §C.1 and **`siteCompletionImages[]`** aggregate.
 
 #### C-bis) Installer → Visit dimension sync (optional separate call)
 
@@ -2419,7 +2532,7 @@ Now uploaded document fields must also support **View existing file** without re
 1. On quotation fetch (list/details), include previously saved document metadata in a stable object, e.g. `documents` (or consistently aliased equivalent).
 2. For each uploaded file field, return an HTTP-accessible URL (signed/public as per security policy) so UI can open it in a new tab:
    - `aadharFront` / `aadhar_front`
-   - `aadharBack` / `aadhar_back`cc
+   - `aadharBack` / `aadhar_back`
    - `panImage` / `pan_image`
    - `electricityBillImage` / `electricity_bill_image`
    - `bankPassbookImage` / `bank_passbook_image`

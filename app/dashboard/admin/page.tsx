@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -34,6 +34,7 @@ import {
   SlidersHorizontal,
   Download,
   ChevronDown,
+  RotateCcw,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -47,7 +48,7 @@ import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
-import { InstallationCompletionPanel } from "@/components/installation-completion-panel"
+import { InstallationCompletionPanel, type InstallationUploadedFile } from "@/components/installation-completion-panel"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
@@ -60,7 +61,10 @@ import {
   setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
   flattenWrappedQuotationRow,
+  mergeInstallationMediaSources,
 } from "@/lib/operational-install-queue"
+import { normalizeMediaUrl, pickMediaUrlFromValue, toPublicOpenHref } from "@/lib/media-url"
+import { InstallationPublicPhoto } from "@/components/installation-public-photo"
 import {
   createInstallationTeam,
   deleteInstallationTeam,
@@ -74,6 +78,17 @@ import {
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
+const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
+  "installer_approved",
+  "pending_metering",
+  "metering_in_progress",
+  "metering_approved",
+  "mco",
+  "pending_baldev",
+  "baldev_approved",
+  "completed",
+])
+
 const ADMIN_OPERATIONAL_STAGES = [
   "pending_installer",
   "installer_in_progress",
@@ -116,6 +131,151 @@ const isAdminImageFieldMultiple = (field: (typeof ADMIN_INSTALLATION_IMAGE_FIELD
 type AdminExtraExpenseLine = { id: string; description: string; amount: string }
 const newAdminExpenseLineId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `exp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+/** Slot = saved URL from API and/or a new `File` chosen in the panel (`localFile`). */
+type AdminInstallMedia = InstallationUploadedFile & { localFile?: File }
+
+function pickNonEmptyString(v: unknown): string | undefined {
+  if (typeof v === "string" && v.trim()) return v.trim()
+  return undefined
+}
+
+function collectUrlsForInstallField(fieldKey: string, ...containers: unknown[]): string[] {
+  const snake = fieldKey.replace(/[A-Z]/g, (m) => `_${m.toLowerCase()}`)
+  const urls: string[] = []
+  const add = (s?: string) => {
+    const normalized = toPublicOpenHref(s)
+    if (normalized && !urls.includes(normalized)) urls.push(normalized)
+  }
+  for (const raw of containers) {
+    const o = raw as Record<string, unknown> | null | undefined
+    if (!o || typeof o !== "object") continue
+    add(pickNonEmptyString(o[`${fieldKey}PublicUrl`]))
+    add(pickNonEmptyString(o[`${fieldKey}_public_url`]))
+    add(pickNonEmptyString(o[`${snake}_public_url`]))
+    add(pickNonEmptyString(o[`${fieldKey}Url`]))
+    add(pickNonEmptyString(o[`${fieldKey}_url`]))
+    add(pickNonEmptyString(o[`${snake}_url`]))
+    const rawField = o[fieldKey]
+    if (typeof rawField === "string") add(rawField)
+    else if (rawField && typeof rawField === "object") add(pickMediaUrlFromValue(rawField))
+    const arrKeys = [`${fieldKey}s`, `${fieldKey}Urls`, `${fieldKey}_urls`, `${snake}s`, `${snake}_urls`]
+    for (const k of arrKeys) {
+      const arr = o[k]
+      if (!Array.isArray(arr)) continue
+      for (const item of arr) {
+        if (typeof item === "string") add(item)
+        else if (item && typeof item === "object") add(pickMediaUrlFromValue(item))
+      }
+    }
+  }
+  return urls
+}
+
+function extractAdminInstallationMediaFromQuotation(q: Record<string, unknown>): Partial<Record<AdminInstallationImageFieldKey, AdminInstallMedia[]>> {
+  const doc = (q.documents || q.document || q.installationDocuments || q.quotationDocuments || {}) as Record<string, unknown>
+  const inst = (q.installation || q.installerInstallation || q.installationCompletion || {}) as Record<string, unknown>
+  const out: Partial<Record<AdminInstallationImageFieldKey, AdminInstallMedia[]>> = {}
+  for (const f of ADMIN_INSTALLATION_IMAGE_FIELDS) {
+    const urls = collectUrlsForInstallField(f.key, doc, q, inst)
+    if (urls.length)
+      out[f.key] = urls.map((url, i) => ({
+        name: url.split("/").pop()?.split("?")[0] || `${f.key}-${i + 1}`,
+        url: toPublicOpenHref(url) || url,
+      }))
+  }
+  return out
+}
+
+function extractPiMediaFromQuotation(q: Record<string, unknown>): AdminInstallMedia | null {
+  const doc = (q.documents || q.document || {}) as Record<string, unknown>
+  const u =
+    pickNonEmptyString(doc.piUploadUrl) ||
+    pickNonEmptyString(doc.pi_upload_url) ||
+    pickNonEmptyString(q.piUploadUrl) ||
+    pickNonEmptyString(q.pi_upload_url)
+  if (!u) return null
+  const name = pickNonEmptyString(doc.piUploadFileName) || pickNonEmptyString(doc.pi_upload_file_name) || "PI"
+  return { name, url: toPublicOpenHref(u) || u }
+}
+
+function addDedupedUrl(sink: string[], max: number, s?: string) {
+  const normalized = toPublicOpenHref(s)
+  if (!normalized || sink.includes(normalized) || sink.length >= max) return
+  sink.push(normalized)
+}
+
+function collectUrlsFromArrayLike(arr: unknown, sink: string[], max: number) {
+  if (!Array.isArray(arr)) return
+  for (const item of arr) {
+    if (sink.length >= max) return
+    addDedupedUrl(sink, max, pickMediaUrlFromValue(item))
+  }
+}
+
+/** All public http(s) image/doc URLs for installation completion (list + detail shapes). */
+function gatherInstallationPublicImageUrls(q: Record<string, unknown>, max = 24): string[] {
+  const out: string[] = []
+
+  const media = extractAdminInstallationMediaFromQuotation(q)
+  for (const f of ADMIN_INSTALLATION_IMAGE_FIELDS) {
+    for (const m of media[f.key] || []) addDedupedUrl(out, max, m.url)
+  }
+  addDedupedUrl(out, max, extractPiMediaFromQuotation(q)?.url)
+
+  const doc = (q.documents || q.document || q.installationDocuments || q.quotationDocuments || {}) as Record<string, unknown>
+  const nested = [
+    q,
+    doc,
+    (q.installation || q.installerInstallation) as Record<string, unknown> | undefined,
+    (q as Record<string, unknown>).installerCompletion as Record<string, unknown> | undefined,
+    (q as Record<string, unknown>).installationCompletion as Record<string, unknown> | undefined,
+  ].filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+
+  const arrayKeys = [
+    "siteCompletionImages",
+    "site_completion_images",
+    "installerCompletionImages",
+    "installer_completion_images",
+    "completionImages",
+    "completion_images",
+    "installationImages",
+    "installation_images",
+    "installerCompletionImageUrls",
+  ]
+
+  for (const src of nested) {
+    for (const k of arrayKeys) {
+      collectUrlsFromArrayLike(src[k], out, max)
+    }
+  }
+
+  const jsonBlob =
+    pickNonEmptyString(q.installationImageUrls) ||
+    pickNonEmptyString(q.installation_image_urls) ||
+    pickNonEmptyString(doc.installationImageUrls) ||
+    pickNonEmptyString(doc.installation_image_urls) ||
+    pickNonEmptyString(q.existingInstallationImageUrlsJson) ||
+    pickNonEmptyString(q.existing_installation_image_urls_json) ||
+    pickNonEmptyString(doc.existingInstallationImageUrlsJson) ||
+    pickNonEmptyString(doc.existing_installation_image_urls_json)
+  if (jsonBlob && (jsonBlob.startsWith("[") || jsonBlob.startsWith("{"))) {
+    try {
+      const parsed = JSON.parse(jsonBlob)
+      if (Array.isArray(parsed)) collectUrlsFromArrayLike(parsed, out, max)
+      else if (parsed && typeof parsed === "object") {
+        for (const v of Object.values(parsed as Record<string, unknown>)) {
+          if (Array.isArray(v)) collectUrlsFromArrayLike(v, out, max)
+          else if (typeof v === "string") addDedupedUrl(out, max, v)
+        }
+      }
+    } catch {
+      // ignore invalid JSON
+    }
+  }
+
+  return out
+}
 
 type CallingActionRecord = {
   id: string
@@ -233,8 +393,12 @@ export default function AdminPanelPage() {
   const [installerQueueIds, setInstallerQueueIds] = useState<Set<string>>(new Set())
   const [adminInstallExpandedId, setAdminInstallExpandedId] = useState<string | null>(null)
   const [adminInstallQuotation, setAdminInstallQuotation] = useState<Quotation | null>(null)
-  const [adminInstallFiles, setAdminInstallFiles] = useState<Partial<Record<AdminInstallationImageFieldKey, File[]>>>({})
-  const [adminInstallPiUpload, setAdminInstallPiUpload] = useState<File | null>(null)
+  const [adminInstallMediaByField, setAdminInstallMediaByField] = useState<
+    Partial<Record<AdminInstallationImageFieldKey, AdminInstallMedia[]>>
+  >({})
+  const [adminInstallPiMedia, setAdminInstallPiMedia] = useState<AdminInstallMedia | null>(null)
+  const [installRevertTarget, setInstallRevertTarget] = useState<{ id: string; label: string } | null>(null)
+  const [installRevertSaving, setInstallRevertSaving] = useState(false)
   const [adminInstallExtraExpenses, setAdminInstallExtraExpenses] = useState<AdminExtraExpenseLine[]>([])
   const [adminInstallNotes, setAdminInstallNotes] = useState("")
   const [adminInstallDimensions, setAdminInstallDimensions] = useState({ length: "", width: "", height: "" })
@@ -654,6 +818,61 @@ export default function AdminPanelPage() {
     setOperationalProgressTab("all")
   }, [operationalTab])
 
+  const installDocEnrichAttemptedRef = useRef(new Set<string>())
+  const installDocEnrichInFlightRef = useRef(new Set<string>())
+
+  useEffect(() => {
+    if (!useApi) return
+    if (operationalTab !== "installation") return
+    if (operationalProgressTab !== "done" && operationalProgressTab !== "all") return
+
+    const candidates = quotations
+      .filter((q) => {
+        const ws = getInstallationWorkflowStatus(q as unknown as Record<string, unknown>)
+        if (!INSTALLATION_APPROVED_MEDIA_STATUSES.has(ws)) return false
+        const id = String(q.id || "").trim()
+        if (!id || installDocEnrichAttemptedRef.current.has(id) || installDocEnrichInFlightRef.current.has(id)) {
+          return false
+        }
+        return gatherInstallationPublicImageUrls(q as unknown as Record<string, unknown>).length === 0
+      })
+      .slice(0, 12)
+
+    if (candidates.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      for (const q of candidates) {
+        if (cancelled) break
+        const id = q.id
+        installDocEnrichAttemptedRef.current.add(id)
+        installDocEnrichInFlightRef.current.add(id)
+        try {
+          const full = await api.quotations.getById(id)
+          if (cancelled) break
+          setQuotations((prev) =>
+            prev.map((row) =>
+              row.id === id
+                ? (mergeInstallationMediaSources(
+                    row as unknown as Record<string, unknown>,
+                    full as Record<string, unknown>,
+                  ) as Quotation)
+                : row,
+            ),
+          )
+        } catch {
+          // no-op — list may still lack documents until backend returns URLs on GET by id
+        } finally {
+          installDocEnrichInFlightRef.current.delete(id)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [useApi, operationalTab, operationalProgressTab, quotations])
+
   // Fetch full quotation details when edit dialog opens
   useEffect(() => {
     if (editingQuotation && editDialogOpen && useApi) {
@@ -734,12 +953,58 @@ export default function AdminPanelPage() {
         // Load quotations
         const quotationsResponse = await api.admin.quotations.getAll()
         setOptimisticFileLoginSelect({})
+        const installerQueueById: Record<string, Record<string, unknown>> = {}
+        const ingestInstallerQueueRows = (rows: unknown[]) => {
+          rows.forEach((row: unknown) => {
+            const flat = flattenWrappedQuotationRow(row) as Record<string, unknown>
+            const id = String(flat.id || "").trim()
+            if (!id) return
+            installerQueueById[id] = mergeInstallationMediaSources(
+              installerQueueById[id] || {},
+              flat,
+            ) as Record<string, unknown>
+          })
+        }
+
+        let installerQueueIdSet = new Set<string>()
+        try {
+          const pending = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
+          )
+          const approvedQ = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
+          )
+          ingestInstallerQueueRows(pending)
+          ingestInstallerQueueRows(approvedQ)
+          ;[...pending, ...approvedQ].forEach((row: unknown) => {
+            const flat = flattenWrappedQuotationRow(row)
+            const id = String(flat.id || "").trim()
+            if (id) installerQueueIdSet.add(id)
+          })
+          if (installerQueueIdSet.size === 0) {
+            const fallback = extractQuotationListFromApiResponse(
+              await api.installer.getQueue({ page: 1, limit: 1000 }),
+            )
+            ingestInstallerQueueRows(fallback)
+            fallback.forEach((row: unknown) => {
+              const flat = flattenWrappedQuotationRow(row)
+              const id = String(flat.id || "").trim()
+              if (id) installerQueueIdSet.add(id)
+            })
+          }
+        } catch {
+          installerQueueIdSet = new Set()
+        }
+        setInstallerQueueIds(installerQueueIdSet)
+
         const quotationsList = (quotationsResponse.quotations || []).map((q: any) => {
           const customerData = q.customer || {}
           const rawFileLogin = q.fileLoginStatus ?? q.file_login_status
           const fileLoginStatusNorm =
             rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
-          return {
+          const queueExtra = installerQueueById[String(q.id || "").trim()]
+          const mapped = {
+            ...q,
             id: q.id,
             customer: {
               firstName: customerData.firstName || "",
@@ -790,6 +1055,9 @@ export default function AdminPanelPage() {
             installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
             installationTeamId: q.installationTeamId ?? q.installation_team_id,
           }
+          return queueExtra
+            ? (mergeInstallationMediaSources(mapped, queueExtra) as typeof mapped)
+            : mapped
         })
         const scheduledLocal = readInstallationScheduledMap()
         const teamAssignLocal = readTeamAssignments()
@@ -800,34 +1068,6 @@ export default function AdminPanelPage() {
             installationTeamId: q.installationTeamId || teamAssignLocal[q.id],
           })),
         )
-
-        // Union installer queue IDs from pending + approved (and optional full queue fallback).
-        // Previously only the first non-empty response was used; pending_installer-only hid rows
-        // that dropped off that queue after "Complete & Mark as Approved" from Installation → Approved.
-        try {
-          const ids = new Set<string>()
-          const addRows = (rows: any[]) => {
-            rows.forEach((row: any) => {
-              const flat = flattenWrappedQuotationRow(row)
-              const id = String(flat.id || "").trim()
-              if (id) ids.add(id)
-            })
-          }
-          const pending = extractQuotationListFromApiResponse(
-            await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
-          )
-          const approvedQ = extractQuotationListFromApiResponse(
-            await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
-          )
-          addRows(pending)
-          addRows(approvedQ)
-          if (ids.size === 0) {
-            addRows(extractQuotationListFromApiResponse(await api.installer.getQueue({ page: 1, limit: 1000 })))
-          }
-          setInstallerQueueIds(ids)
-        } catch {
-          setInstallerQueueIds(new Set())
-        }
 
         // Load dealers
         const dealersResponse = await api.admin.dealers.getAll()
@@ -2044,6 +2284,31 @@ export default function AdminPanelPage() {
     }
   }
 
+  const confirmRevertInstallationToPending = async () => {
+    if (!installRevertTarget) return
+    const { id } = installRevertTarget
+    setInstallRevertSaving(true)
+    try {
+      const ok = await updateOperationalStage(id, "pending_installer", { suppressSuccessToast: true })
+      setInstallRevertTarget(null)
+      if (ok) {
+        setAdminInstallExpandedId((prev) => (prev === id ? null : prev))
+        toast({
+          title: "Reverted to pending",
+          description: "This job is back under Pending Installations. You can upload or edit photos again from there.",
+        })
+      } else {
+        toast({
+          title: "Revert failed",
+          description: "The installation stage could not be updated. Check the API or try again.",
+          variant: "destructive",
+        })
+      }
+    } finally {
+      setInstallRevertSaving(false)
+    }
+  }
+
   const openAdminInstallDialog = async (quotation: Quotation) => {
     let mergedQuotation = quotation
     if (useApi) {
@@ -2054,19 +2319,26 @@ export default function AdminPanelPage() {
         mergedQuotation = quotation
       }
     }
+    const qm = mergedQuotation as any
     setAdminInstallQuotation(mergedQuotation)
     setAdminInstallExpandedId((prev) => (prev === quotation.id ? null : quotation.id))
-    setAdminInstallFiles({})
-    setAdminInstallPiUpload(null)
+    const prefilled = extractAdminInstallationMediaFromQuotation(qm)
+    setAdminInstallMediaByField(prefilled)
+    setAdminInstallPiMedia(extractPiMediaFromQuotation(qm))
     setAdminInstallExtraExpenses([])
-    setAdminInstallNotes("")
-    setAdminInstallDimensions({ length: "", width: "", height: "" })
+    setAdminInstallNotes(String(qm.installerRemarks ?? qm.installer_remarks ?? "").trim())
+    const back = String(qm.siteLength ?? qm.site_length ?? qm.backLegCm ?? qm.back_leg_cm ?? "").trim()
+    const mid = String(qm.siteWidth ?? qm.site_width ?? qm.midLegCm ?? qm.mid_leg_cm ?? "").trim()
+    const front = String(qm.siteHeight ?? qm.site_height ?? qm.frontLegCm ?? qm.front_leg_cm ?? "").trim()
+    setAdminInstallDimensions({ length: back, width: mid, height: front })
   }
 
   const submitAdminInstallationUpload = async () => {
     if (!adminInstallQuotation) return
     const requiredFields = ADMIN_INSTALLATION_IMAGE_FIELDS.filter((f) => isAdminImageFieldRequired(f))
-    const missingFields = requiredFields.filter((field) => !(adminInstallFiles[field.key] && adminInstallFiles[field.key]!.length > 0))
+    const missingFields = requiredFields.filter(
+      (field) => !(adminInstallMediaByField[field.key] && adminInstallMediaByField[field.key]!.length > 0),
+    )
     if (missingFields.length > 0) {
       toast({
         title: "Images required",
@@ -2129,17 +2401,31 @@ export default function AdminPanelPage() {
       // image once under the aggregate key; optional JSON maps each part index → field key for labeling.
       const fieldOrder: string[] = []
       ADMIN_INSTALLATION_IMAGE_FIELDS.forEach((field) => {
-        const selected = adminInstallFiles[field.key] || []
-        selected.forEach((file) => {
-          formData.append("installerCompletionImages", file)
-          fieldOrder.push(field.key)
+        const slots = adminInstallMediaByField[field.key] || []
+        slots.forEach((slot) => {
+          if (slot.localFile) {
+            formData.append("installerCompletionImages", slot.localFile)
+            fieldOrder.push(field.key)
+          }
         })
       })
+      const retainedUrls: Record<string, string[]> = {}
+      ADMIN_INSTALLATION_IMAGE_FIELDS.forEach((field) => {
+        const urls = (adminInstallMediaByField[field.key] || [])
+          .filter((s) => !s.localFile && s.url)
+          .map((s) => s.url)
+        if (urls.length) retainedUrls[field.key] = urls
+      })
+      if (Object.keys(retainedUrls).length > 0) {
+        formData.append("existingInstallationImageUrlsJson", JSON.stringify(retainedUrls))
+      }
       if (fieldOrder.length > 0) {
         formData.append("installerCompletionImageFieldOrderJson", JSON.stringify(fieldOrder))
       }
-      if (adminInstallPiUpload instanceof File) {
-        formData.append("piUpload", adminInstallPiUpload)
+      if (adminInstallPiMedia?.localFile) {
+        formData.append("piUpload", adminInstallPiMedia.localFile)
+      } else if (adminInstallPiMedia?.url && !adminInstallPiMedia.localFile) {
+        formData.append("existingPiUploadUrl", adminInstallPiMedia.url)
       }
       if (expenseLines.length > 0) {
         const payload = expenseLines.map(({ description, amount }) => ({
@@ -2164,15 +2450,34 @@ export default function AdminPanelPage() {
       formData.append("installerRemarks", adminInstallNotes)
       formData.append("installationStatus", "installer_approved")
 
-      await api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData, { caller: "admin" })
+      const uploadResult = await api.installer.uploadCompletionDocuments(
+        adminInstallQuotation.id,
+        formData,
+        { caller: "admin" },
+      )
       const stageOk = await updateOperationalStage(adminInstallQuotation.id, "installer_approved", {
         suppressSuccessToast: true,
       })
       if (stageOk) {
+        const uploadedId = adminInstallQuotation.id
+        if (uploadResult && typeof uploadResult === "object") {
+          setQuotations((prev) =>
+            prev.map((row) =>
+              row.id === uploadedId
+                ? (mergeInstallationMediaSources(
+                    row as unknown as Record<string, unknown>,
+                    uploadResult as Record<string, unknown>,
+                  ) as Quotation)
+                : row,
+            ),
+          )
+        }
         setOperationalTab("installation")
         setOperationalProgressTab("done")
         setAdminInstallExpandedId(null)
         setAdminInstallQuotation(null)
+        setAdminInstallMediaByField({})
+        setAdminInstallPiMedia(null)
         toast({
           title: "Saved",
           description:
@@ -3806,8 +4111,68 @@ export default function AdminPanelPage() {
                                       <History className="w-3.5 h-3.5 mr-1" />
                                       Timeline
                                     </Button>
+                                    {installerStatus === "approved" ? (
+                                      <>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="secondary"
+                                          onClick={() => void openAdminInstallDialog(quotation)}
+                                        >
+                                          <Edit className="w-3.5 h-3.5 mr-1" />
+                                          Edit photos
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
+                                          className="border-amber-800/40 text-amber-950 dark:text-amber-100"
+                                          onClick={() =>
+                                            setInstallRevertTarget({
+                                              id: quotation.id,
+                                              label: formatPersonName(
+                                                quotation.customer.firstName,
+                                                quotation.customer.lastName,
+                                                quotation.id,
+                                              ),
+                                            })
+                                          }
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                                          Revert to pending
+                                        </Button>
+                                      </>
+                                    ) : null}
                                   </div>
                                 </div>
+                                {installerStatus === "approved" ? (
+                                  <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                      Uploaded installation photos
+                                    </p>
+                                    {(() => {
+                                      const thumbs = gatherInstallationPublicImageUrls(qAny, 24)
+                                      if (thumbs.length === 0) {
+                                        return (
+                                          <p className="text-[11px] text-muted-foreground">
+                                            No photos on file yet. Use <span className="font-medium">Edit photos</span> to add or replace images.
+                                          </p>
+                                        )
+                                      }
+                                      return (
+                                        <div className="flex max-w-full gap-3 overflow-x-auto pb-1">
+                                          {thumbs.map((url, idx) => (
+                                            <InstallationPublicPhoto
+                                              key={`${quotation.id}-inst-${idx}`}
+                                              rawUrl={url}
+                                              quotationId={quotation.id}
+                                            />
+                                          ))}
+                                        </div>
+                                      )
+                                    })()}
+                                  </div>
+                                ) : null}
                                 {adminInstallExpandedId === quotation.id && adminInstallQuotation?.id === quotation.id ? (
                                   <div className="mt-4">
                                     <InstallationCompletionPanel
@@ -3819,12 +4184,23 @@ export default function AdminPanelPage() {
                                           multiple?: boolean
                                         }[]
                                       }
-                                      filesByField={adminInstallFiles}
+                                      filesByField={adminInstallMediaByField as Record<string, InstallationUploadedFile[] | undefined>}
                                       onFilesChange={(fieldKey, files) =>
-                                        setAdminInstallFiles((prev) => ({ ...prev, [fieldKey]: files }))
+                                        setAdminInstallMediaByField((prev) => ({
+                                          ...prev,
+                                          [fieldKey]: files.map((f) => ({
+                                            name: f.name,
+                                            url: URL.createObjectURL(f),
+                                            localFile: f,
+                                          })),
+                                        }))
                                       }
-                                      piFile={adminInstallPiUpload}
-                                      onPiFileChange={setAdminInstallPiUpload}
+                                      piFile={adminInstallPiMedia}
+                                      onPiFileChange={(f) =>
+                                        setAdminInstallPiMedia(
+                                          f ? { name: f.name, url: URL.createObjectURL(f), localFile: f } : null,
+                                        )
+                                      }
                                       extraExpenses={adminInstallExtraExpenses}
                                       onAddExpense={() =>
                                         setAdminInstallExtraExpenses((prev) => [
@@ -8097,6 +8473,30 @@ export default function AdminPanelPage() {
             <div className="flex justify-end pt-2">
               <Button variant="outline" onClick={() => setStatusHistoryQuotation(null)}>
                 Close
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!installRevertTarget} onOpenChange={(open) => !open && setInstallRevertTarget(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Revert to pending installation?</DialogTitle>
+              <DialogDescription>
+                {installRevertTarget ? (
+                  <>
+                    <span className="font-medium text-foreground">{installRevertTarget.label}</span> will move back to{" "}
+                    <strong>Pending Installations</strong>. Use this if photos need to be re-done or the job was approved by mistake.
+                  </>
+                ) : null}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button type="button" variant="outline" onClick={() => setInstallRevertTarget(null)} disabled={installRevertSaving}>
+                Cancel
+              </Button>
+              <Button type="button" variant="default" onClick={() => void confirmRevertInstallationToPending()} disabled={installRevertSaving}>
+                {installRevertSaving ? "Reverting…" : "Yes, revert"}
               </Button>
             </div>
           </DialogContent>
