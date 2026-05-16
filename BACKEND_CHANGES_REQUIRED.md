@@ -1111,6 +1111,7 @@ Behavior:
 - Persist these values in quotation metering fields (or a `quotation_metering_details` table linked by quotation id).
 - Store uploaded `meterDocumentImage` in S3 and persist URL/metadata.
 - Return saved values in response so UI can rehydrate after refresh.
+- **Public / browsable meter document URL (required for Admin + Metering modals):** Do **not** return only a private virtual-hosted S3 URL (`https://{bucket}.s3.{region}.amazonaws.com/...`) — browsers get **Access Denied**. Return **`meterDocumentPublicUrl`** (presigned GET or CDN URL) and duplicate as **`meterDocumentUrl`** when needed. Same rules as **§6.4.C.8** (installation photos). On **`GET /api/admin/quotations`** and **`GET /api/metering/quotations`**, include `meterDocumentUrl` / `meterDocumentPublicUrl` / `meterDocumentName` on each row so **Metering Details** shows thumbnail + **Open link** after refresh.
 
 **RBAC (fixes `AUTH_004` / “Insufficient permissions” on Save Details):**  
 Metering dashboard users authenticate with role `metering`. This `POST` must **not** be admin-only. Use the same role list as `GET /api/metering/quotations` (at minimum `metering`, plus `admin` if desired). If only `admin` is allowed here, metering logins will get **403** with `AUTH_004` while the queue still loads.
@@ -1898,7 +1899,8 @@ router.post(
             ContentType: req.file.mimetype || "application/octet-stream",
           }),
         );
-        meterDocumentUrl = `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${meterDocumentKey}`;
+        const privateObjectUrl = `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${meterDocumentKey}`;
+        meterDocumentUrl = await getPresignedGetUrl(bucket, meterDocumentKey); // or public CDN URL — must open in browser
         meterDocumentName = req.file.originalname;
       }
 
@@ -1911,6 +1913,7 @@ router.post(
         solarMeterNo: meterType === "both" ? solarMeterNo : meterType === "solar" ? meterNo : null,
         netMeterNo: meterType === "both" ? netMeterNo : meterType === "net" ? meterNo : null,
         meterDocumentUrl: meterDocumentUrl ?? existing?.meterDocumentUrl ?? null,
+        meterDocumentPublicUrl: meterDocumentUrl ?? existing?.meterDocumentPublicUrl ?? null,
         meterDocumentKey: meterDocumentKey ?? existing?.meterDocumentKey ?? null,
         meterDocumentName: meterDocumentName ?? existing?.meterDocumentName ?? null,
         savedByUserId: req.user?.id || null,

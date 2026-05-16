@@ -19,6 +19,7 @@ import {
   getInstallationWorkflowStatus,
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
+import { StoredMediaPreview } from "@/components/stored-media-preview"
 
 type MeteringStage = "processing" | "approved" | "mco"
 
@@ -1067,25 +1068,26 @@ export default function MeteringDashboardPage() {
                 {(() => {
                   if (!detailsQuotationId) return null
                   const row = quotations.find((q) => q.id === detailsQuotationId) as any
-                  const previewSrc =
-                    meterDocumentPreviewByQuotation[detailsQuotationId] ||
+                  const savedUrl =
+                    row?.meterDocumentPublicUrl ||
+                    row?.meter_document_public_url ||
                     workflowMap[detailsQuotationId]?.meterDocumentUrl ||
                     row?.meterDocumentUrl ||
                     row?.meter_document_url
-                  const publicUrl =
-                    workflowMap[detailsQuotationId]?.meterDocumentUrl ||
-                    row?.meterDocumentUrl ||
-                    row?.meter_document_url
-                  if (!previewSrc) return null
+                  const localFile = meterDocumentByQuotation[detailsQuotationId] || null
+                  const savedName =
+                    meterDocumentByQuotation[detailsQuotationId]?.name ||
+                    workflowMap[detailsQuotationId]?.meterDocumentName ||
+                    row?.meterDocumentName ||
+                    row?.meter_document_name
+                  if (!savedUrl && !localFile) return null
                   return (
-                    <div className="space-y-1">
-                      <img src={previewSrc} alt="Meter document preview" className="h-24 w-auto rounded border object-cover" />
-                      {publicUrl && (
-                        <a href={publicUrl} target="_blank" rel="noreferrer" className="text-xs underline text-primary break-all">
-                          {publicUrl}
-                        </a>
-                      )}
-                    </div>
+                    <StoredMediaPreview
+                      rawUrl={savedUrl}
+                      localFile={localFile}
+                      quotationId={detailsQuotationId}
+                      fileName={savedName}
+                    />
                   )
                 })()}
               </div>

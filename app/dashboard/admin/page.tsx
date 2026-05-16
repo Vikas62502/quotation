@@ -65,6 +65,8 @@ import {
 } from "@/lib/operational-install-queue"
 import { normalizeMediaUrl, pickMediaUrlFromValue, toPublicOpenHref } from "@/lib/media-url"
 import { InstallationPublicPhoto } from "@/components/installation-public-photo"
+import { StoredMediaPreview } from "@/components/stored-media-preview"
+import { parseMeterDocumentUrlFromApiPayload } from "@/lib/parse-api-media"
 import {
   createInstallationTeam,
   deleteInstallationTeam,
@@ -2064,7 +2066,7 @@ export default function AdminPanelPage() {
     if (!adminMeteringQuotationId) return
     try {
       setAdminMeteringSaving(true)
-      await api.metering.saveDetails(
+      const saveResp = await api.metering.saveDetails(
         adminMeteringQuotationId,
         {
           discomName: adminMeteringDraft.discomName.trim(),
@@ -2075,6 +2077,21 @@ export default function AdminPanelPage() {
         },
         adminMeteringDocByQuotation[adminMeteringQuotationId] || null,
       )
+      const meterDocUrl = parseMeterDocumentUrlFromApiPayload(saveResp)
+      if (meterDocUrl) {
+        const id = adminMeteringQuotationId
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === id
+              ? ({
+                  ...q,
+                  meterDocumentUrl: meterDocUrl,
+                  meter_document_url: meterDocUrl,
+                } as Quotation)
+              : q,
+          ),
+        )
+      }
       await loadData()
       toast({ title: "Saved", description: "Metering details saved." })
       setAdminMeteringModalOpen(false)
@@ -8333,6 +8350,36 @@ export default function AdminPanelPage() {
                       setAdminMeteringDocByQuotation((prev) => ({ ...prev, [adminMeteringQuotationId]: file }))
                     }}
                   />
+                  {(() => {
+                    const q = adminMeteringSelectedQuotation as any
+                    const savedUrl =
+                      q?.meterDocumentPublicUrl ||
+                      q?.meter_document_public_url ||
+                      q?.meterDocumentUrl ||
+                      q?.meter_document_url
+                    const savedName = q?.meterDocumentName || q?.meter_document_name
+                    const localFile = adminMeteringQuotationId
+                      ? adminMeteringDocByQuotation[adminMeteringQuotationId]
+                      : null
+                    if (!savedUrl && !localFile) {
+                      return (
+                        <p className="text-[11px] text-muted-foreground">No meter document on file yet.</p>
+                      )
+                    }
+                    return (
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                          Uploaded meter document
+                        </p>
+                        <StoredMediaPreview
+                          rawUrl={savedUrl}
+                          localFile={localFile}
+                          quotationId={adminMeteringQuotationId || undefined}
+                          fileName={localFile?.name || savedName}
+                        />
+                      </div>
+                    )
+                  })()}
                 </div>
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => setAdminMeteringModalOpen(false)} disabled={adminMeteringSaving}>
