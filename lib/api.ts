@@ -663,6 +663,35 @@ export const api = {
         throw error
       }
     },
+
+    /** Try common backend paths to assign a pool lead to the logged-in dealer. */
+    assignCallingLeadToMe: async (leadId: string, dealerId: string) => {
+      const body = { assignedDealerId: dealerId, dealerId, status: "assigned" }
+      const attempts: Array<() => Promise<unknown>> = [
+        () => apiRequest(`/dealers/me/calling-queue/${leadId}/claim`, { method: "POST", body }),
+        () => apiRequest(`/dealers/me/calling-queue/${leadId}/assign`, { method: "POST", body }),
+        () =>
+          apiRequest(`/dealers/me/calling-queue/${leadId}`, {
+            method: "PATCH",
+            body,
+          }),
+        () =>
+          apiRequest(`/dealers/me/calling-queue/${leadId}/action`, {
+            method: "PATCH",
+            body: { action: "start", claim: true, autoAssign: true, assignedDealerId: dealerId },
+          }),
+      ]
+      for (const run of attempts) {
+        try {
+          return await run()
+        } catch (error) {
+          if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+            continue
+          }
+        }
+      }
+      return null
+    },
   },
 
   // Customers

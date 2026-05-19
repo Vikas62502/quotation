@@ -55,7 +55,7 @@ export interface ProductSelection {
   nonDcrPanelQuantity?: number
   /** When true, quotation PDF shows panel size as 540W-620W instead of exact size. */
   pdfUsePanelSizeRange?: boolean
-  /** When true, quotation PDF shows inverter brand as Saatvik/Vsole/Xwatt. */
+  /** When true, quotation PDF shows inverter brand as Xwatt/Vsole/Saatvik */
   pdfUseInverterBrandOptions?: boolean
 }
 

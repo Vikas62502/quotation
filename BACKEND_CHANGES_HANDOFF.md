@@ -108,7 +108,7 @@ Optional booleans on `products` change **PDF / preview text only** — not prici
 | Field | When `true`, PDF shows |
 |-------|-------------------------|
 | `pdfUsePanelSizeRange` | **540W-620W** instead of exact size (e.g. `555W`) |
-| `pdfUseInverterBrandOptions` | **Inverter Brand- Saatvik/Vsole/Xwatt** instead of selected brand only |
+| `pdfUseInverterBrandOptions` | **Inverter Brand- Vsole/Xwatt/Saatvik** instead of selected brand only |
 
 Snake_case aliases (optional): `pdf_use_panel_size_range`, `pdf_use_inverter_brand_options`.
 
@@ -162,7 +162,7 @@ If the API builds PDFs server-side, mirror `lib/quotation-pdf-display.ts`:
 
 **Cause:** `GET /calling-queue/next` returns a lead the dealer may **view** (pool / batch), but `PATCH .../action` rejects because `assigned_dealer_id` is null or belongs to another dealer.
 
-**Frontend mitigations (already shipped):** stricter current-queue filter, assignee resolution (`lib/calling-lead-assignee.ts`), retry `start` with `claim` / `assignedDealerId` and optional `POST .../claim`. **Backend must still implement one of the options below** for a reliable fix.
+**Frontend mitigations (already shipped):** dialer opens immediately; retries assign via `POST .../claim`, `POST .../assign`, `PATCH .../calling-queue/{id}`; on persistent `LEAD_004` the UI updates locally to `in_progress` **without** showing the error. **Backend must still implement Option A or C** so `called` / follow-up actions persist and data stays in sync across devices.
 
 ### Required backend behavior (pick one or combine)
 
@@ -187,13 +187,19 @@ Optional body flags the frontend may send (treat as hints):
 }
 ```
 
-#### Option B — Claim endpoint
+#### Option B — Claim / assign endpoints
 
-`POST /api/dealers/me/calling-queue/{leadId}/claim`
+Implement **at least one** (frontend already calls these if present):
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/dealers/me/calling-queue/{leadId}/claim` |
+| `POST` | `/api/dealers/me/calling-queue/{leadId}/assign` body `{ assignedDealerId, status: "assigned" }` |
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}` body `{ assignedDealerId, status }` |
 
 - Auth: dealer JWT.
 - Sets `assigned_dealer_id` to current dealer if lead is pool/unassigned and dealer is eligible.
-- Returns updated lead + 409 if already claimed by someone else.
+- Returns updated lead + **409** if already claimed by someone else.
 
 #### Option C — Assign before returning from `/next`
 
@@ -246,7 +252,7 @@ After `called` / `follow_up` / `not_interested` / `rescheduled`:
 | `app/dashboard/hr/page.tsx` | Uploaded Data tab, batch modal, colored summary badges |
 | `lib/quotation-pdf-display.ts` | PDF panel range + inverter brand options |
 | `lib/calling-lead-assignee.ts` | Calling assignee match + `LEAD_004` detection |
-| `app/dashboard/calling-data/page.tsx` | Current Lead queue filter + claim retry on start |
+| `app/dashboard/calling-data/page.tsx` | `handleStartCall` — dial + assign retries + optimistic `in_progress` if `LEAD_004` |
 
 **HR table rules (frontend):**
 

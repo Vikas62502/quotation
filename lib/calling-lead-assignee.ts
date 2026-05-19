@@ -108,7 +108,9 @@ export function callingLeadIsPoolUnassigned(lead: CallingLeadAssigneeRow & Recor
 
 export function isLeadNotAssignedToDealerError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
-  const code = (error as { code?: string }).code
-  if (code === "LEAD_004") return true
-  return /not assigned to dealer/i.test(error.message || "")
+  const apiErr = error as { code?: string; message?: string; details?: Array<{ message?: string }> }
+  if (apiErr.code === "LEAD_004") return true
+  if (/not assigned to dealer/i.test(apiErr.message || "")) return true
+  if (apiErr.details?.some((d) => /not assigned/i.test(String(d.message || "")))) return true
+  return false
 }

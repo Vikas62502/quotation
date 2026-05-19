@@ -4,7 +4,7 @@ import type { ProductSelection } from "@/lib/quotation-context"
 export const PDF_PANEL_SIZE_RANGE_LABEL = "540W-620W"
 
 /** Shown on PDF when `pdfUseInverterBrandOptions` is true. */
-export const PDF_INVERTER_BRAND_OPTIONS_LABEL = "Saatvik/Vsole/Xwatt"
+export const PDF_INVERTER_BRAND_OPTIONS_LABEL = "Vsole/Xwatt/Saatvik"
 
 type PdfDisplaySource = Pick<
   ProductSelection,

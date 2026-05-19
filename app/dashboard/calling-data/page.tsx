@@ -1417,9 +1417,42 @@ export default function CallingDataPage() {
     setRescheduleAt("")
   }, [currentLead])
 
+  const applyOptimisticCallStart = (leadId: string) => {
+    const dealerName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim()
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === leadId
+          ? {
+              ...l,
+              status: "in_progress",
+              assignedDealerId: currentDealerId || l.assignedDealerId,
+              assignedDealerName: dealerName || l.assignedDealerName,
+            }
+          : l,
+      ),
+    )
+  }
+
+  const tryAssignLeadToCurrentDealer = async (leadId: string) => {
+    if (!currentDealerId) return false
+    try {
+      await api.dealers.assignCallingLeadToMe(leadId, currentDealerId)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Open dialer and sync start — never block the call on LEAD_004. */
+  const handleStartCall = async (lead: CallingLead) => {
+    openDialer(lead.mobile)
+    await submitAction(lead.id, { action: "start" }, { optimisticOnNotAssigned: true })
+  }
+
   const submitAction = async (
     leadId: string,
     payload: { action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"; callRemark?: string; nextFollowUpAt?: string; actionAt?: string },
+    options?: { optimisticOnNotAssigned?: boolean },
   ) => {
     if (submittingLeadIdsRef.current.has(leadId)) return
     if (!useApi) {
@@ -1444,21 +1477,31 @@ export default function CallingDataPage() {
 
         // Pool / unassigned lead: claim to current dealer then retry (fixes LEAD_004).
         if (!response && isLeadNotAssignedToDealerError(innerError) && currentDealerId) {
-          try {
-            await api.dealers.updateCallingLeadAction(leadId, {
-              action: "start",
-              actionAt,
-              claim: true,
-              autoAssign: true,
-              assignedDealerId: currentDealerId,
-            })
-            response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
-          } catch {
+          const assigned = await tryAssignLeadToCurrentDealer(leadId)
+          if (assigned) {
             try {
-              await api.dealers.claimCallingLead(leadId)
               response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
             } catch {
               // fall through
+            }
+          }
+          if (!response) {
+            try {
+              await api.dealers.updateCallingLeadAction(leadId, {
+                action: "start",
+                actionAt,
+                claim: true,
+                autoAssign: true,
+                assignedDealerId: currentDealerId,
+              })
+              response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+            } catch {
+              try {
+                await api.dealers.claimCallingLead(leadId)
+                response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+              } catch {
+                // fall through
+              }
             }
           }
         }
@@ -1488,6 +1531,15 @@ export default function CallingDataPage() {
         }
 
         if (!response) {
+          if (
+            options?.optimisticOnNotAssigned &&
+            payload.action === "start" &&
+            isLeadNotAssignedToDealerError(innerError)
+          ) {
+            applyOptimisticCallStart(leadId)
+            void loadLeads()
+            return
+          }
           throw innerError
         }
       }
@@ -1507,6 +1559,16 @@ export default function CallingDataPage() {
         setFlowTab("current_lead")
       }
     } catch (error) {
+      if (
+        options?.optimisticOnNotAssigned &&
+        payload.action === "start" &&
+        (isLeadNotAssignedToDealerError(error) ||
+          (error instanceof ApiError && error.code === "HTTP_403"))
+      ) {
+        applyOptimisticCallStart(leadId)
+        void loadLeads()
+        return
+      }
       const message =
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Failed to update lead action."
       toast({
@@ -1821,7 +1883,7 @@ export default function CallingDataPage() {
                                   variant="outline"
                                   className="border-blue-300 text-blue-700 hover:bg-blue-50"
                                   disabled={isLeadSubmitting(lead.id)}
-                                  onClick={() => submitAction(lead.id, { action: "start" })}
+                                  onClick={() => handleStartCall(lead)}
                                 >
                                   {isLeadSubmitting(lead.id) ? (
                                     <span className="inline-flex items-center gap-1.5">
@@ -2585,12 +2647,7 @@ export default function CallingDataPage() {
                 {currentLead.status === "assigned" || currentLead.status === "queued" ? (
                   <Button
                     variant="outline"
-                    onClick={() =>
-                      submitAction(
-                        currentLead.id,
-                        { action: "start" },
-                      )
-                    }
+                    onClick={() => handleStartCall(currentLead)}
                     className="gap-2"
                     disabled={isLeadSubmitting(currentLead.id)}
                   >
@@ -3011,7 +3068,7 @@ export default function CallingDataPage() {
                                 variant="outline"
                                 className="border-blue-300 text-blue-700 hover:bg-blue-50"
                                 disabled={isLeadSubmitting(lead.id)}
-                                onClick={() => submitAction(lead.id, { action: "start" })}
+                                onClick={() => handleStartCall(lead)}
                               >
                                 {isLeadSubmitting(lead.id) ? (
                                   <span className="inline-flex items-center gap-1.5">

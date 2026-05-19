@@ -3215,7 +3215,7 @@ Dealers can tick optional checkboxes when creating/editing a quotation. These fl
 | Flag | When `true`, PDF shows |
 |------|------------------------|
 | `pdfUsePanelSizeRange` | Panel size **540W-620W** (instead of exact value, e.g. `555W`) |
-| `pdfUseInverterBrandOptions` | **Inverter Brand- Saatvik/Vsole/Xwatt** (instead of selected brand only) |
+| `pdfUseInverterBrandOptions` | **Inverter Brand- Vsole/Xwatt/Saatvik** (instead of selected brand only) |
 
 For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** panel lines in the PDF; inverter flag applies to the shared inverter line.
 
