@@ -23,6 +23,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
+import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
 import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
 type CallingLead = {
@@ -1443,9 +1444,9 @@ export default function CallingDataPage() {
     }
   }
 
-  /** Open dialer and sync start — never block the call on LEAD_004. */
+  /** Copy number and sync start — never block the call on LEAD_004; no tel: / app redirect. */
   const handleStartCall = async (lead: CallingLead) => {
-    openDialer(lead.mobile)
+    void copyLeadPhone(lead.mobile)
     await submitAction(lead.id, { action: "start" }, { optimisticOnNotAssigned: true })
   }
 
@@ -1587,9 +1588,10 @@ export default function CallingDataPage() {
     }
   }
 
-  const openDialer = (mobile?: string) => {
-    const digits = (mobile || "").replace(/\D/g, "")
-    if (!digits) {
+  const copyLeadPhone = async (mobile?: string) => {
+    const result = await copyPhoneForDial(mobile)
+    const digits = normalizePhoneDigits(mobile)
+    if (result === "missing") {
       toast({
         title: "Phone number missing",
         description: "This lead does not have a valid mobile number.",
@@ -1597,14 +1599,22 @@ export default function CallingDataPage() {
       })
       return
     }
-    if (typeof window !== "undefined") {
-      window.location.href = `tel:${digits}`
+    const display = formatPhoneForDisplay(digits)
+    if (result === "copied") {
+      toast({
+        title: "Number copied",
+        description: `${display} — dial from your phone; this page stays open.`,
+      })
+      return
     }
+    toast({
+      title: "Dial this number",
+      description: display,
+    })
   }
 
   const startCallFromRecent = async (item: ActionLogItem) => {
-    // Primary behavior in Recent tab: user should be able to call immediately.
-    openDialer(item.mobile)
+    void copyLeadPhone(item.mobile)
 
     // Best-effort backend sync (do not block calling flow if transition is invalid).
     if (!item.leadId || !useApi) return
