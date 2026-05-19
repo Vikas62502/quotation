@@ -16,6 +16,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import {
+  HR_UPLOAD_COUNT_LEGEND,
+  getHrLeadRowDisplay,
+  resolveHrUploadBatchCounts,
+} from "@/lib/hr-upload-lead-display"
 
 type DealerOption = {
   id: string
@@ -61,8 +66,30 @@ type UploadedLeadBatch = {
   rowCount: number
   assignedCount: number
   unassignedCount: number
+  completedCount: number
   dealers: string[]
   rows: ParsedCsvRow[]
+}
+
+const extractUploadedLeadBatchesList = (response: unknown): any[] => {
+  if (!response) return []
+  if (Array.isArray(response)) return response
+
+  const root = response as Record<string, unknown>
+  const nested = root.data
+  if (Array.isArray(nested)) return nested
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const inner = nested as Record<string, unknown>
+    for (const key of ["uploads", "batches", "items", "results", "callingUploads", "calling_uploads"]) {
+      if (Array.isArray(inner[key])) return inner[key] as any[]
+    }
+  }
+
+  for (const key of ["uploads", "batches", "items", "results", "callingUploads", "calling_uploads"]) {
+    if (Array.isArray(root[key])) return root[key] as any[]
+  }
+
+  return []
 }
 
 const DEFAULT_ACTIVE_LIMIT = 1
@@ -187,27 +214,6 @@ const normalizeName = (value?: string) =>
     .toLowerCase()
     .replace(/\s+/g, " ")
 
-const prettifyAssignmentStatus = (value?: string) => {
-  const status = String(value || "").trim().toLowerCase()
-  if (!status) return "Pending"
-  if (status === "assigned") return "Assigned"
-  if (status === "in_progress") return "In Progress"
-  if (status === "rescheduled") return "Rescheduled"
-  if (status === "completed") return "Completed"
-  if (status === "queued") return "Queued"
-  return status.replace(/_/g, " ").replace(/\b\w/g, (m) => m.toUpperCase())
-}
-
-const isCompletedAssignmentStatus = (value?: string) => {
-  const status = String(value || "").trim().toLowerCase()
-  return status === "completed" || status === "done" || status === "closed"
-}
-
-const isAssignedAssignmentStatus = (value?: string) => {
-  const status = String(value || "").trim().toLowerCase()
-  return ["assigned", "in_progress", "rescheduled", "completed", "done", "closed"].includes(status)
-}
-
 const getDateRangeParams = (range: "daily" | "weekly" | "monthly" | "last_month" | "all") => {
   if (range === "all") return {}
   const now = new Date()
@@ -255,6 +261,8 @@ export default function HrDashboardPage() {
   const [activeTab, setActiveTab] = useState("assignment")
   const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
+  const [isLoadingUploadedBatches, setIsLoadingUploadedBatches] = useState(false)
+  const [uploadedBatchesLoadError, setUploadedBatchesLoadError] = useState<string | null>(null)
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false)
   const [activeBatch, setActiveBatch] = useState<UploadedLeadBatch | null>(null)
   const [activeBatchRows, setActiveBatchRows] = useState<ParsedCsvRow[]>([])
@@ -426,13 +434,15 @@ export default function HrDashboardPage() {
         assignedDealerName: dealerName || undefined,
       }
     })
-    const dealerValues: string[] = Array.isArray(item?.dealers)
+    const dealerValues: unknown[] = Array.isArray(item?.dealers)
       ? item.dealers
       : Array.isArray(item?.dealerIds)
         ? item.dealerIds
-        : item?.dealerId
-          ? [item.dealerId]
-          : []
+        : Array.isArray(item?.assignedDealers)
+          ? item.assignedDealers
+          : item?.dealerId
+            ? [item.dealerId]
+            : []
 
     const normalizedDealers = dealerValues
       .map((value: any) => {
@@ -449,25 +459,16 @@ export default function HrDashboardPage() {
       .filter(Boolean)
 
     const rowCountFromApi = Number(item?.rowCount || item?.totalRows || item?.count || 0)
-  const assignedCountFromApi = Number(
-    item?.assignedCount ?? item?.assigned ?? item?.counts?.assigned ?? item?.summary?.assigned ?? 0,
-  )
-  const unassignedCountFromApi = Number(
-    item?.unassignedCount ?? item?.pending ?? item?.counts?.unassigned ?? item?.summary?.unassigned ?? 0,
-  )
-  const assignedCountComputed = rows.filter((row) => isAssignedAssignmentStatus(row.assignmentStatus)).length
-  const rowCountResolved = rowCountFromApi > 0 ? rowCountFromApi : rows.length
-  const assignedCountResolved = assignedCountFromApi > 0 ? assignedCountFromApi : assignedCountComputed
-  const unassignedCountResolved =
-    unassignedCountFromApi > 0 ? unassignedCountFromApi : Math.max(0, rowCountResolved - assignedCountResolved)
+    const resolvedCounts = resolveHrUploadBatchCounts(rows, rowCountFromApi, item)
 
     return {
       id: item?.id || item?.batchId || item?.uploadId || `batch-${index}`,
       uploadedAt: item?.uploadedAt || item?.createdAt || item?.updatedAt || new Date().toISOString(),
       fileName: item?.fileName || item?.originalFileName || item?.csvFileName || "uploaded.csv",
-    rowCount: rowCountResolved,
-    assignedCount: assignedCountResolved,
-    unassignedCount: unassignedCountResolved,
+      rowCount: resolvedCounts.rowCount,
+      assignedCount: resolvedCounts.assigned,
+      unassignedCount: resolvedCounts.unassigned,
+      completedCount: resolvedCounts.completed,
       dealers: normalizedDealers,
       rows,
     }
@@ -517,25 +518,31 @@ export default function HrDashboardPage() {
     const loadUploadedLeadBatches = async () => {
       if (!useApi) {
         setUploadedLeadBatches([])
+        setUploadedBatchesLoadError(null)
         return
       }
+      setIsLoadingUploadedBatches(true)
+      setUploadedBatchesLoadError(null)
       try {
         const response = await api.hr.uploadedLeads.getAll({ limit: 200 })
-        const source =
-          response?.uploads ||
-          response?.batches ||
-          response?.items ||
-          response?.data ||
-          []
-        const normalized = Array.isArray(source)
-          ? source.map((item: any, index: number) => normalizeUploadedLeadBatch(item, dealers, index))
-          : []
+        const source = extractUploadedLeadBatchesList(response)
+        const normalized = source.map((item: any, index: number) => normalizeUploadedLeadBatch(item, dealers, index))
         const sorted = normalized.sort(
           (a, b) => new Date(b.uploadedAt || 0).getTime() - new Date(a.uploadedAt || 0).getTime(),
         )
         setUploadedLeadBatches(sorted)
-      } catch {
+      } catch (error) {
         setUploadedLeadBatches([])
+        const message =
+          error instanceof ApiError
+            ? error.details?.[0]?.message || error.message
+            : error instanceof Error
+              ? error.message
+              : "Failed to load uploaded lead data."
+        setUploadedBatchesLoadError(message)
+        console.error("Failed to load HR uploaded lead batches:", error)
+      } finally {
+        setIsLoadingUploadedBatches(false)
       }
     }
     loadUploadedLeadBatches()
@@ -745,8 +752,11 @@ export default function HrDashboardPage() {
       const parsed = Number(result?.parsed || result?.total || csvRows.length)
       const created = Number(result?.created || result?.inserted || 0)
       const skippedDuplicate = Number(result?.skippedDuplicate || result?.skipped || 0)
-      const assigned = Number(result?.assigned || created || 0)
-      const queued = Number(result?.queued || 0)
+      const assignedAtUpload = Number(
+        result?.assignedAtUpload ?? result?.assigned ?? result?.data?.assignedAtUpload ?? created ?? 0,
+      )
+      const queuedAtUpload = Number(result?.queuedAtUpload ?? result?.queued ?? result?.data?.queuedAtUpload ?? 0)
+      const uploadId = result?.uploadId || result?.batchId || result?.data?.uploadId || result?.data?.batchId
 
       setCsvRows([])
       setCsvFile(null)
@@ -754,7 +764,7 @@ export default function HrDashboardPage() {
       setRealtimeTick((prev) => prev + 1)
       toast({
         title: "Saved to database",
-        description: `Parsed ${parsed}, created ${created}, assigned ${assigned}, queued ${queued}, duplicates ${skippedDuplicate}.`,
+        description: `Parsed ${parsed}, created ${created}, assigned at upload ${assignedAtUpload}, queued at upload ${queuedAtUpload}, duplicates ${skippedDuplicate}${uploadId ? ` (batch ${String(uploadId).slice(0, 8)}…)` : ""}.`,
       })
     } catch (error) {
       let message = "Failed to assign leads in database."
@@ -801,25 +811,72 @@ export default function HrDashboardPage() {
         response?.data?.items ||
         response?.data?.leads ||
         null
+      const paginationTotal = Number(
+        response?.pagination?.total ??
+          response?.data?.pagination?.total ??
+          response?.meta?.total ??
+          0,
+      )
       const totalRowsFromResponse = Number(
         response?.totalRows ||
-          response?.total ||
-          response?.pagination?.total ||
-          response?.meta?.total ||
           response?.data?.totalRows ||
+          rawBatch?.rowCount ||
+          response?.data?.batch?.rowCount ||
+          paginationTotal ||
+          response?.total ||
           response?.data?.total ||
-          response?.data?.pagination?.total ||
           0,
       )
       if (rawBatch) {
-        const normalized = normalizeUploadedLeadBatch(rawBatch, dealers, 0)
-        setActiveBatch((prev) => (prev ? { ...prev, ...normalized } : normalized))
+        const totalRows =
+          totalRowsFromResponse > 0
+            ? totalRowsFromResponse
+            : Number(rawBatch?.rowCount || rawBatch?.totalRows || rawBatch?.count || 0)
+        const countSource = {
+          ...rawBatch,
+          rowCount: totalRows || rawBatch?.rowCount,
+          assignedCount:
+            rawBatch?.assignedCount ??
+            response?.assignedCount ??
+            response?.data?.batch?.assignedCount,
+          unassignedCount:
+            rawBatch?.unassignedCount ??
+            response?.unassignedCount ??
+            response?.data?.batch?.unassignedCount,
+          completedCount:
+            rawBatch?.completedCount ??
+            response?.completedCount ??
+            response?.data?.batch?.completedCount,
+          counts: rawBatch?.counts ?? response?.counts ?? response?.data?.batch?.counts,
+        }
+        const normalized = normalizeUploadedLeadBatch(countSource, dealers, 0)
+        const pageRows = Array.isArray(rowsSource)
+          ? normalizeBatchRows(rowsSource)
+          : normalized.rows || []
+        const displayCounts = resolveHrUploadBatchCounts(
+          pageRows,
+          totalRows || normalized.rowCount,
+          countSource,
+        )
+        setActiveBatch((prev) => {
+          const base = prev || batch
+          return {
+            ...base,
+            ...normalized,
+            rowCount: displayCounts.rowCount,
+            assignedCount: displayCounts.assigned,
+            unassignedCount: displayCounts.unassigned,
+            completedCount: displayCounts.completed,
+          }
+        })
         if (Array.isArray(rowsSource)) {
-          setActiveBatchRows(normalizeBatchRows(rowsSource))
+          setActiveBatchRows(pageRows)
         } else {
           setActiveBatchRows(normalized.rows || [])
         }
-        setActiveBatchTotalRows(totalRowsFromResponse > 0 ? totalRowsFromResponse : normalized.rowCount || normalized.rows.length)
+        const rowsForPaging =
+          paginationTotal > 0 ? paginationTotal : totalRows > 0 ? totalRows : normalized.rowCount || normalized.rows.length
+        setActiveBatchTotalRows(rowsForPaging)
       } else {
         if (Array.isArray(rowsSource)) {
           const normalizedRows = normalizeBatchRows(rowsSource)
@@ -1078,7 +1135,14 @@ export default function HrDashboardPage() {
                 <CardTitle className="text-base">Uploaded Lead Data</CardTitle>
               </CardHeader>
               <CardContent>
-                {uploadedLeadBatches.length === 0 ? (
+                {isLoadingUploadedBatches ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading uploaded data...
+                  </div>
+                ) : uploadedBatchesLoadError ? (
+                  <p className="text-sm text-destructive">{uploadedBatchesLoadError}</p>
+                ) : uploadedLeadBatches.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No uploaded lead data found yet.</p>
                 ) : (
                   <div className="space-y-4">
@@ -1090,6 +1154,20 @@ export default function HrDashboardPage() {
                             <p className="text-xs text-muted-foreground">
                               Uploaded: {new Date(batch.uploadedAt).toLocaleString()} • Rows: {batch.rowCount}
                             </p>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] font-normal border-amber-200 text-amber-900 bg-amber-50"
+                              >
+                                Unassigned: {batch.unassignedCount}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] font-normal border-emerald-200 text-emerald-800 bg-emerald-50"
+                              >
+                                Completed: {batch.completedCount}
+                              </Badge>
+                            </div>
                           </div>
                           <div className="ml-auto flex items-center gap-2">
                             <div className="flex flex-wrap gap-1 justify-end">
@@ -1223,9 +1301,13 @@ export default function HrDashboardPage() {
         <DialogContent className="!w-[96vw] !max-w-[96vw] sm:!max-w-[96vw] max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>{activeBatch?.fileName || "Batch details"}</DialogTitle>
-            <DialogDescription>
-              Uploaded {activeBatch?.uploadedAt ? new Date(activeBatch.uploadedAt).toLocaleString() : "N/A"} •
-              {" "}Rows: {activeBatch?.rowCount ?? 0} • Assigned: {activeBatch?.assignedCount ?? 0} • Unassigned: {activeBatch?.unassignedCount ?? 0}
+            <DialogDescription className="space-y-1">
+              <span className="block">
+                Uploaded {activeBatch?.uploadedAt ? new Date(activeBatch.uploadedAt).toLocaleString() : "N/A"} • Rows:{" "}
+                {activeBatch?.rowCount ?? 0} • Unassigned: {activeBatch?.unassignedCount ?? 0} • Completed:{" "}
+                {activeBatch?.completedCount ?? 0}
+              </span>
+              <span className="block text-xs text-muted-foreground">{HR_UPLOAD_COUNT_LEGEND}</span>
             </DialogDescription>
           </DialogHeader>
           <div className="border rounded-md">
@@ -1252,18 +1334,18 @@ export default function HrDashboardPage() {
                   {activeBatchRows.map((row, idx) => (
                     <tr key={`${activeBatch?.id || "batch"}-${row.mobile}-${idx}`} className="border-t border-border/40">
                       {(() => {
-                        const completed = isCompletedAssignmentStatus(row.assignmentStatus)
-                        const shownDealerName = completed ? row.assignedDealerName || "Unassigned" : "Unassigned"
-                        const shownStatus = completed ? prettifyAssignmentStatus(row.assignmentStatus || "completed") : "Pending"
+                        const display = getHrLeadRowDisplay(row)
                         return (
                           <>
                             <td className="py-2 px-3 break-words whitespace-normal">{row.name || "N/A"}</td>
                             <td className="py-2 px-3 break-all whitespace-normal">{row.mobile || "N/A"}</td>
                             <td className="py-2 px-3 break-all whitespace-normal">{row.kNumber || "N/A"}</td>
                             <td className="py-2 px-3 break-words whitespace-normal">{row.address || "N/A"}</td>
-                            <td className="py-2 px-3 break-words whitespace-normal">{shownDealerName}</td>
+                            <td className="py-2 px-3 break-words whitespace-normal">{display.dealerLabel}</td>
                             <td className="py-2 px-3 break-words whitespace-normal">
-                              <Badge variant="outline">{shownStatus}</Badge>
+                              <Badge variant="outline" className={display.statusBadgeClassName}>
+                                {display.statusLabel}
+                              </Badge>
                             </td>
                           </>
                         )

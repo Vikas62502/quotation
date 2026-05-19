@@ -4,6 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
+import {
+  callingLeadAssignedToDealer,
+  callingLeadAssignedToOtherDealer,
+  callingLeadIsPoolUnassigned,
+  isLeadNotAssignedToDealerError,
+  leadHasExplicitCallingAssigneeId,
+  normalizeCallingAssigneeToken,
+  resolveCallingAssigneeId,
+} from "@/lib/calling-lead-assignee"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -295,30 +304,6 @@ const DECISION_PENDING_REASONS = [
   "Not Picking on Follow-up",
 ]
 
-/** Backend often sends dealerId / dealerName for uploader — not "assigned for calling". */
-const UNASSIGNED_ASSIGNMENT_TOKENS = new Set([
-  "",
-  "unassigned",
-  "null",
-  "none",
-  "-",
-  "na",
-  "n/a",
-  "pool",
-  "open",
-])
-
-function normalizeCallingAssigneeToken(raw: unknown): string {
-  const s = String(raw ?? "").trim()
-  if (UNASSIGNED_ASSIGNMENT_TOKENS.has(s.toLowerCase())) return ""
-  return s
-}
-
-function leadHasExplicitCallingAssigneeId(lead: Pick<CallingLead, "assignedDealerId">): boolean {
-  const id = String(lead.assignedDealerId || "").trim().toLowerCase()
-  return Boolean(id && !UNASSIGNED_ASSIGNMENT_TOKENS.has(id))
-}
-
 type CallingLeadDealerVisibilityCtx = {
   currentDealerId: string
   currentDealerUsername: string
@@ -328,6 +313,13 @@ type CallingLeadDealerVisibilityCtx = {
 
 /** Explicit assignee match, else pool / HR batch-unassigned (name may be batch label, not empty). */
 function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVisibilityCtx): boolean {
+  const dealerIdentity = {
+    id: ctx.currentDealerId,
+    username: ctx.currentDealerUsername,
+    fullName: ctx.currentDealerFullName,
+  }
+  if (callingLeadAssignedToOtherDealer(lead, dealerIdentity)) return false
+
   const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
   const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
 
@@ -441,6 +433,7 @@ export default function CallingDataPage() {
   const previousCurrentLeadIdRef = useRef<string | null>(null)
   const shownScheduledReminderRef = useRef<Record<string, true>>({})
   const submittingLeadIdsRef = useRef<Set<string>>(new Set())
+  const [queueSanctionedLeadIds, setQueueSanctionedLeadIds] = useState<Set<string>>(() => new Set())
   const isLeadSubmitting = (leadId?: string) => !!(leadId && submittingLeadMap[leadId])
   const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
   const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
@@ -467,6 +460,15 @@ export default function CallingDataPage() {
       dealerCallingBatchIds,
     }),
     [currentDealerId, currentDealerUsername, currentDealerFullName, dealerCallingBatchIds],
+  )
+
+  const currentDealerIdentity = useMemo(
+    () => ({
+      id: currentDealerId,
+      username: currentDealerUsername,
+      fullName: currentDealerFullName,
+    }),
+    [currentDealerId, currentDealerUsername, currentDealerFullName],
   )
 
   const syncRescheduleForStatus = (nextStatus: string) => {
@@ -508,19 +510,8 @@ export default function CallingDataPage() {
       customerNote: source?.customerNote || source?.customer_note || source?.note || "",
       city: source?.city || "",
       state: source?.state || "",
-      // Only explicit "calling assignee" fields — do not use dealerId/dealerName (often = uploader / account owner).
-      // Pool rows: empty assignee id after normalize; name may still be a batch label — visibility uses eligibleDealerIds / uploadBatchId.
-      assignedDealerId: normalizeCallingAssigneeToken(
-        source?.assignedDealerId ||
-          source?.assigned_dealer_id ||
-          source?.assignedToDealerId ||
-          source?.assigned_to_dealer_id ||
-          source?.assignedTo ||
-          source?.assigned_to ||
-          source?.assignedToUsername ||
-          source?.assigned_to_username ||
-          "",
-      ),
+      // Calling assignee (includes legacy dealerId when assignee fields are empty).
+      assignedDealerId: resolveCallingAssigneeId(source),
       assignedDealerName: normalizeCallingAssigneeToken(
         source?.assignedDealerName ||
           source?.assigned_dealer_name ||
@@ -815,6 +806,20 @@ export default function CallingDataPage() {
       response?.activeLead ||
       queueCandidates[0] ||
       null
+    const sanctionedIds = new Set<string>()
+    for (const item of [
+      response?.lead,
+      response?.nextLead,
+      response?.currentLead,
+      response?.activeLead,
+      rawLead,
+    ]) {
+      if (!item) continue
+      const id = String(item?.id || item?._id || item?.leadId || item?.lead_id || "").trim()
+      if (id) sanctionedIds.add(id)
+    }
+    setQueueSanctionedLeadIds(sanctionedIds)
+
     const mergedLeadMap = new Map<string, CallingLead>()
     ;[rawLead, ...queueCandidates]
       .filter(Boolean)
@@ -1073,8 +1078,14 @@ export default function CallingDataPage() {
 
     return leads
       .filter((lead) => {
+        if (callingLeadAssignedToOtherDealer(lead, currentDealerIdentity)) return false
         if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
-        return isLeadCallableNow(lead)
+        if (!isLeadCallableNow(lead)) return false
+        if (callingLeadAssignedToDealer(lead, currentDealerIdentity)) return true
+        if (callingLeadIsPoolUnassigned(lead)) {
+          return queueSanctionedLeadIds.has(lead.id)
+        }
+        return false
       })
       .sort((a, b) => {
         const aOrder = leadOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER
@@ -1082,7 +1093,7 @@ export default function CallingDataPage() {
         if (aOrder !== bOrder) return aOrder - bOrder
         return getLeadSortTime(a) - getLeadSortTime(b)
       })
-  }, [leads, callingVisibilityCtx])
+  }, [leads, callingVisibilityCtx, currentDealerIdentity, queueSanctionedLeadIds])
 
   const queuedCount = useMemo(() => {
     return leads.filter((lead) => {
@@ -1431,11 +1442,32 @@ export default function CallingDataPage() {
           innerError instanceof ApiError &&
           (innerError.code === "LEAD_005" || /invalid lead action transition/i.test(innerError.message || ""))
 
+        // Pool / unassigned lead: claim to current dealer then retry (fixes LEAD_004).
+        if (!response && isLeadNotAssignedToDealerError(innerError) && currentDealerId) {
+          try {
+            await api.dealers.updateCallingLeadAction(leadId, {
+              action: "start",
+              actionAt,
+              claim: true,
+              autoAssign: true,
+              assignedDealerId: currentDealerId,
+            })
+            response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+          } catch {
+            try {
+              await api.dealers.claimCallingLead(leadId)
+              response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+            } catch {
+              // fall through
+            }
+          }
+        }
+
         // Many backends require `start` (assigned/queued → in_progress) before called / not_interested / etc.
-        if (isInvalidTransition && payload.action !== "start" && payload.action !== "rescheduled") {
+        if (!response && isInvalidTransition && payload.action !== "start" && payload.action !== "rescheduled") {
           try {
             await api.dealers.updateCallingLeadAction(leadId, { action: "start", actionAt })
-            response = await api.dealers.updateCallingLeadAction(leadId, payload)
+            response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
           } catch {
             // fall through to rescheduled fallback below
           }
@@ -1453,10 +1485,13 @@ export default function CallingDataPage() {
             nextFollowUpAt: fallbackNextFollowUpAt,
             actionAt,
           })
-        } else if (!response) {
+        }
+
+        if (!response) {
           throw innerError
         }
       }
+
       setCallRemark("")
       setRescheduleAt("")
       setManualOtherReason("")
@@ -1467,8 +1502,6 @@ export default function CallingDataPage() {
       if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
         applyQueueResponse(response)
       }
-      // Refresh in background so button response feels instant.
-      // PATCH response already updates UI optimistically when it includes queue fields.
       void loadLeads()
       if (wasCurrentQueueHead) {
         setFlowTab("current_lead")

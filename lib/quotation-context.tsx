@@ -53,6 +53,10 @@ export interface ProductSelection {
   nonDcrPanelBrand?: string
   nonDcrPanelSize?: string
   nonDcrPanelQuantity?: number
+  /** When true, quotation PDF shows panel size as 540W-620W instead of exact size. */
+  pdfUsePanelSizeRange?: boolean
+  /** When true, quotation PDF shows inverter brand as Saatvik/Vsole/Xwatt. */
+  pdfUseInverterBrandOptions?: boolean
 }
 
 export type QuotationStatus = "pending" | "approved" | "rejected" | "completed"
@@ -487,6 +491,12 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         }
         if (currentProducts.hybridInverter) {
           cleanedProducts.hybridInverter = currentProducts.hybridInverter
+        }
+        if (currentProducts.pdfUsePanelSizeRange) {
+          cleanedProducts.pdfUsePanelSizeRange = true
+        }
+        if (currentProducts.pdfUseInverterBrandOptions) {
+          cleanedProducts.pdfUseInverterBrandOptions = true
         }
 
         // Validate required fields based on system type

@@ -19,6 +19,12 @@ import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, 
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
+import {
+  formatPanelSizeForPdf,
+  getPdfInverterLine,
+  getPdfPanelSpecLine,
+  readPdfDisplayFlags,
+} from "@/lib/quotation-pdf-display"
 import { useQuotation } from "@/lib/quotation-context"
 import { api } from "@/lib/api"
 import { useAuth } from "@/lib/auth-context"
@@ -736,6 +742,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   }
 
   const getInverterDetails = () => {
+    const { useInverterBrandOptions } = readPdfDisplayFlags(products)
+    if (useInverterBrandOptions) {
+      return getPdfInverterLine(products)
+    }
     return `${products.inverterBrand} - ${products.inverterSize}` || "N/A"
   }
 
@@ -756,7 +766,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       const sizes = products.customPanels.map((p) => `${p.size}W`).join(", ")
       return sizes || "As per selection"
     }
-    return `${products.panelSize}` || "As per selection"
+    const { usePanelSizeRange } = readPdfDisplayFlags(products)
+    return formatPanelSizeForPdf(products.panelSize, usePanelSizeRange) || "As per selection"
   }
 
   const toKwValue = (value?: string) => {
@@ -1464,7 +1475,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
                         {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                           <div>
-                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand} {products.dcrPanelSize} ×{" "}
+                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand}{" "}
+                            {formatPanelSizeForPdf(
+                              products.dcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            ×{" "}
                             {products.dcrPanelQuantity}
                             <span style={{ fontSize: "10px", color: "#666" }}>
                               {" "}
@@ -1480,7 +1496,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                           <div style={{ marginTop: "4px" }}>
                             <strong>Non-DCR (without subsidy):</strong> {products.nonDcrPanelBrand}{" "}
-                            {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                            {formatPanelSizeForPdf(
+                              products.nonDcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.nonDcrPanelQuantity}
                             <span style={{ fontSize: "10px", color: "#666" }}>
                               {" "}
                               (
@@ -1507,7 +1527,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         Common Components
                       </div>
                       <div className="pdf-product-specs">
-                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {getPdfInverterLine(products)}
                         <br />
                         Phase: {pdfPhaseLabel}
                         {products.structureType && (
@@ -1532,14 +1552,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <div className="pdf-product-details">
                     <div className="pdf-product-specs">
                       {products.systemType !== "customize"
-                        ? `${products.panelBrand} ${products.panelSize} × ${products.panelQuantity}`
+                        ? getPdfPanelSpecLine(products)
                         : products.customPanels
                             ?.map((p) => `${p.brand} ${p.size} × ${p.quantity}`)
                             .join(", ") || "N/A"}
                       <br />
     
                       <div>
-                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {getPdfInverterLine(products)}
                         <br />
                         Phase: {pdfPhaseLabel}
                         {products.structureType && (
@@ -2053,7 +2073,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                             <p className="font-medium">
                               <span className="text-muted-foreground">DCR (subsidy)</span>{" "}
-                              {products.dcrPanelBrand} {products.dcrPanelSize} × {products.dcrPanelQuantity}
+                              {products.dcrPanelBrand}{" "}
+                            {formatPanelSizeForPdf(
+                              products.dcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.dcrPanelQuantity}
                               <span className="text-xs text-muted-foreground ml-1">
                                 (
                                 {(
@@ -2068,7 +2093,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                             <p className="font-medium">
                               <span className="text-muted-foreground">Non-DCR</span>{" "}
-                              {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                              {products.nonDcrPanelBrand}{" "}
+                            {formatPanelSizeForPdf(
+                              products.nonDcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.nonDcrPanelQuantity}
                               <span className="text-xs text-muted-foreground ml-1">
                                 (
                                 {(
@@ -2085,7 +2115,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           <span className="font-semibold block">Common components</span>
                           <div>
                             <span className="font-semibold">Inverter: </span>
-                            {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                            {getPdfInverterLine(products)}
                           </div>
                           {products.structureType && (
                             <div>
@@ -2104,7 +2134,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     ) : products.systemType !== "customize" ? (
                       <div>
                         <span className="font-semibold">Panels: </span>
-                        {products.panelBrand} {products.panelSize} × {products.panelQuantity}
+                        {getPdfPanelSpecLine(products)}
                       </div>
                     ) : (
                       products.customPanels?.map((panel, index) => (
@@ -2118,7 +2148,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <>
                         <div>
                           <span className="font-semibold">Inverter: </span>
-                          {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                          {getPdfInverterLine(products)}
                         </div>
                         {products.structureType && (
                           <div>

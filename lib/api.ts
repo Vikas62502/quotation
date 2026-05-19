@@ -75,6 +75,18 @@ const clearAuthTokens = () => {
   localStorage.removeItem("refreshToken")
 }
 
+/** Prefer `data`; if absent, return other top-level fields (e.g. `uploads`) for legacy backends. */
+function unwrapApiResponseBody<T>(payload: ApiResponse<T>): T {
+  if (payload.data !== undefined && payload.data !== null) {
+    return payload.data as T
+  }
+  const { success: _success, error: _error, message: _message, ...rest } = payload as unknown as Record<string, unknown>
+  if (Object.keys(rest).length > 0) {
+    return rest as T
+  }
+  return payload as T
+}
+
 // Main API request function
 async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {}): Promise<T> {
   console.log('[API] ========================================')
@@ -297,7 +309,7 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
 
     console.log('[API] Request completed successfully')
     console.log('[API] ========================================')
-    return data.data as T
+    return unwrapApiResponseBody<T>(data)
   } catch (error) {
     console.error('[API] ===== EXCEPTION CAUGHT =====')
     console.error('[API] Error type:', error instanceof Error ? error.constructor.name : typeof error)
@@ -628,12 +640,28 @@ export const api = {
         callRemark?: string
         nextFollowUpAt?: string
         actionAt?: string
+        /** Optional: backends that auto-assign pool leads on start */
+        claim?: boolean
+        autoAssign?: boolean
+        assignedDealerId?: string
       },
     ) => {
       return apiRequest(`/dealers/me/calling-queue/${leadId}/action`, {
         method: "PATCH",
         body: payload,
       })
+    },
+
+    /** Claim a pool lead before start (404 = endpoint not implemented — caller may retry action only). */
+    claimCallingLead: async (leadId: string) => {
+      try {
+        return await apiRequest(`/dealers/me/calling-queue/${leadId}/claim`, { method: "POST" })
+      } catch (error) {
+        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+          return null
+        }
+        throw error
+      }
     },
   },
 
@@ -1683,7 +1711,17 @@ export const api = {
         let lastError: unknown = null
         for (const endpoint of endpoints) {
           try {
-            return await apiRequest(endpoint)
+            const body = await apiRequest<Record<string, unknown>>(endpoint)
+            const nested =
+              body?.data && typeof body.data === "object" && !Array.isArray(body.data)
+                ? (body.data as Record<string, unknown>)
+                : null
+            return {
+              ...body,
+              uploads: body.uploads ?? nested?.uploads,
+              batches: body.batches ?? nested?.batches,
+              pagination: body.pagination ?? nested?.pagination,
+            }
           } catch (error) {
             lastError = error
             const isMissingEndpoint =
@@ -1715,7 +1753,19 @@ export const api = {
         let lastError: unknown = null
         for (const endpoint of endpoints) {
           try {
-            return await apiRequest(endpoint)
+            const body = await apiRequest<Record<string, unknown>>(endpoint)
+            const nested =
+              body?.data && typeof body.data === "object" && !Array.isArray(body.data)
+                ? (body.data as Record<string, unknown>)
+                : null
+            const batch = body.batch ?? nested?.batch ?? nested?.upload
+            return {
+              ...body,
+              batch,
+              rows: body.rows ?? nested?.rows,
+              pagination: body.pagination ?? nested?.pagination,
+              totalRows: body.totalRows ?? nested?.totalRows,
+            }
           } catch (error) {
             lastError = error
             const isMissingEndpoint =

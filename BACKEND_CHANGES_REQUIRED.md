@@ -280,7 +280,11 @@ Allow updating the system configuration and product details for an existing quot
     
     // Subsidy fields
     "stateSubsidy": number,
-    "centralSubsidy": number
+    "centralSubsidy": number,
+
+    // PDF display only (optional) — see §X
+    "pdfUsePanelSizeRange": boolean,
+    "pdfUseInverterBrandOptions": boolean
   }
 }
 ```
@@ -1466,6 +1470,7 @@ Rules:
 - [ ] Implement dealer action endpoint with transition validation.
 - [ ] Add indexes on `(dealerId, status, assignedAt)`.
 - [ ] Return standard response format `{ success, data }`.
+- [ ] Implement upload batch live counts + paginated detail (§7.8).
 
 ---
 
@@ -1494,6 +1499,193 @@ Use dynamic work allocation instead of fixed dealer-wise split:
 #### Notes
 - This is a **Work Queue + Dynamic Reassignment** model (pull-based).
 - It is intentionally not strict round-robin after initial seeding.
+
+---
+
+### 7.8 HR Uploaded Data — batch summary counts (HR dashboard)
+
+**Frontend:** `app/dashboard/hr/page.tsx` → **Uploaded Lead Data** tab + batch preview modal (`GET /hr/leads/uploads`, `GET /hr/leads/uploads/{uploadId}`). **API client:** `lib/api.ts` → `api.hr.uploadedLeads.getAll`, `api.hr.uploadedLeads.getById`.
+
+#### Problem this contract fixes
+
+- Upload response field **`assigned`** (from `POST /hr/leads/upload-csv`) means **“how many leads received an initial dealer slot at upload time”** — not **“how many are currently assigned in the work queue.”**
+- Returning **`assignedCount: rowCount`** (or reusing upload-time **`assigned`**) on list/detail makes the HR modal show **Assigned: 1000 • Unassigned: 0** while every row is still **Unassigned / Pending**.
+- **`dealerIds`** on the upload batch = **eligible dealer pool** for allocation — must **not** be copied onto each lead as `assignedDealerId` unless that lead truly has an active assignee.
+
+#### Count semantics (mutually exclusive buckets)
+
+For each lead in an upload (`uploadId` / batch), compute exactly one bucket:
+
+| Bucket | Rule |
+|--------|------|
+| **`completedCount`** | `status` ∈ `completed`, `done`, `closed` (case-insensitive) |
+| **`assignedCount`** | Else: valid **calling assignee** present (`assigned_dealer_id` not null/empty and not an unassigned sentinel — see §Dealer calling queue **C**) |
+| **`unassignedCount`** | Else: no valid assignee (typically `queued` / `pending` / empty status) |
+
+Invariant: **`assignedCount + unassignedCount + completedCount === rowCount`** (per upload).
+
+**Do not** count upload-time seeding (`POST` response `assigned`) as `assignedCount` on list/detail.
+
+#### SQL example (aggregate per upload)
+
+```sql
+-- Adjust table/column names to your schema (hr_leads.upload_id, assigned_dealer_id, status)
+SELECT
+  upload_id,
+  COUNT(*) AS row_count,
+  SUM(CASE WHEN LOWER(status) IN ('completed', 'done', 'closed') THEN 1 ELSE 0 END) AS completed_count,
+  SUM(CASE
+    WHEN LOWER(status) NOT IN ('completed', 'done', 'closed')
+     AND assigned_dealer_id IS NOT NULL
+     AND TRIM(assigned_dealer_id) <> ''
+     AND LOWER(TRIM(assigned_dealer_id)) NOT IN ('unassigned', 'null', 'none', '-', 'na', 'n/a', 'pool', 'open')
+    THEN 1 ELSE 0 END) AS assigned_count,
+  SUM(CASE
+    WHEN LOWER(status) NOT IN ('completed', 'done', 'closed')
+     AND (
+       assigned_dealer_id IS NULL
+       OR TRIM(assigned_dealer_id) = ''
+       OR LOWER(TRIM(assigned_dealer_id)) IN ('unassigned', 'null', 'none', '-', 'na', 'n/a', 'pool', 'open')
+     )
+    THEN 1 ELSE 0 END) AS unassigned_count
+FROM hr_leads
+GROUP BY upload_id;
+```
+
+Prefer computing these in SQL (or a single `COUNT … FILTER` query per upload) — do not load all rows into memory for batches with thousands of leads on the list endpoint.
+
+#### D) `GET /api/hr/leads/uploads?limit=200`
+
+**Auth:** `hr` (and optionally `admin`).
+
+**Response** (envelope may be top-level or under `data`):
+
+```json
+{
+  "success": true,
+  "uploads": [
+    {
+      "id": "upload_abc",
+      "fileName": "leads.csv",
+      "uploadedAt": "2026-05-18T08:46:01.000Z",
+      "rowCount": 1000,
+      "assignedCount": 12,
+      "unassignedCount": 988,
+      "completedCount": 0,
+      "counts": {
+        "assigned": 12,
+        "unassigned": 988,
+        "completed": 0
+      },
+      "dealerIds": ["dealer-uuid-1", "dealer-uuid-2"],
+      "dealers": [
+        { "id": "dealer-uuid-1", "firstName": "Raj", "lastName": "Kumar" }
+      ]
+    }
+  ]
+}
+```
+
+**Rules:**
+
+- Include **`assignedCount`**, **`unassignedCount`**, **`completedCount`** on **every** upload object (live counts from DB, not upload-time stats).
+- Optional mirror: **`counts.assigned`**, **`counts.unassigned`**, **`counts.completed`** (frontend accepts both).
+- **`dealerIds` / `dealers`**: pool selected at upload only; not a per-row assignment indicator.
+- **Do not** embed full `rows[]` for large batches on this endpoint (use paginated detail below). If you must return rows for backward compatibility, each row must still follow per-row rules in **E**.
+
+#### E) `GET /api/hr/leads/uploads/{uploadId}?page=1&limit=50`
+
+**Auth:** `hr`.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "batch": {
+    "id": "upload_abc",
+    "fileName": "leads.csv",
+    "uploadedAt": "2026-05-18T08:46:01.000Z",
+    "rowCount": 1000,
+    "assignedCount": 12,
+    "unassignedCount": 988,
+    "completedCount": 0,
+    "dealerIds": ["dealer-uuid-1"]
+  },
+  "rows": [
+    {
+      "id": "lead_1",
+      "name": "MAINA DEVI",
+      "mobile": "8890642150",
+      "kNumber": "211529029897",
+      "address": "…",
+      "assignedDealerId": null,
+      "assignedDealerName": null,
+      "status": "queued",
+      "assignmentStatus": "queued"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 50,
+    "total": 1000,
+    "totalPages": 20
+  },
+  "totalRows": 1000
+}
+```
+
+**Per-row fields (calling assignee — same as §Dealer calling queue B):**
+
+| Field | Meaning |
+|-------|---------|
+| `assignedDealerId` / `assigned_dealer_id` | UUID of dealer **currently assigned to call** this lead |
+| `assignedDealerName` / `assigned_dealer_name` | Display name from `dealers` join when assigned |
+| `status` / `assignmentStatus` / `leadStatus` | `queued`, `assigned`, `in_progress`, `rescheduled`, `completed`, etc. |
+
+- **Unassigned row:** `assignedDealerId` = `null` (or sentinel), `status` = `queued` / `pending`.
+- **Assigned row:** real dealer UUID + `status` = `assigned` or `in_progress`.
+- **Completed row:** `status` = `completed` (+ assignee fields if you store who closed it).
+
+**Batch-level counts** on this response must match the **full upload**, not just the current page.
+
+#### F) `POST /api/hr/leads/upload-csv` — response naming
+
+Keep upload-time stats under distinct keys so they are not mistaken for live batch counts:
+
+```json
+{
+  "success": true,
+  "parsed": 1000,
+  "created": 1000,
+  "assignedAtUpload": 3,
+  "queuedAtUpload": 997,
+  "skippedDuplicate": 0,
+  "uploadId": "upload_abc"
+}
+```
+
+Legacy aliases **`assigned`** / **`queued`** may remain for the upload toast, but **`GET /uploads`** must **not** map `assigned` → `assignedCount`.
+
+#### G) Realtime / cache
+
+After dealer actions or queue reallocation, emit **`calling:uploads-updated`** (or equivalent) so HR counts refresh without hard refresh.
+
+#### H) Backend checklist (additions)
+
+- [ ] Add `assignedCount`, `unassignedCount`, `completedCount` aggregates on `GET /hr/leads/uploads`.
+- [ ] Implement paginated `GET /hr/leads/uploads/{id}` with batch-level counts + row assignee fields.
+- [ ] Stop returning upload-time `assigned` as `assignedCount` on list/detail.
+- [ ] Do not set per-row `assignedDealerId` from upload `dealerIds[]` unless that lead was actually allocated.
+- [ ] Join dealer name for assigned rows (`assignedDealerName`).
+- [ ] Verify invariant `assigned + unassigned + completed === rowCount` in QA.
+
+#### I) Regression check
+
+1. Upload 1000 leads with pool dealers; only 3 dealers free → **`assignedAtUpload: 3`**, **`queuedAtUpload: 997`** on POST.
+2. `GET /uploads` → **`assignedCount: 3`**, **`unassignedCount: 997`**, **`completedCount: 0`** (not 1000 assigned).
+3. Dealer completes 5 leads → **`completedCount: 5`**, assigned/unassigned adjust accordingly.
+4. Modal page 1 rows with `assignedDealerId: null`, `status: queued` → header still shows correct totals from batch object.
 
 ---
 
@@ -3012,6 +3204,79 @@ Use this as a sprint checklist for the API team:
 
 ---
 
+## X) Quotation PDF display flags (panel size range & inverter brands)
+
+**Frontend:** `components/product-selection-form.tsx` (checkboxes), `lib/quotation-pdf-display.ts`, PDF in `components/quotation-confirmation.tsx` and `components/quotation-details-dialog.tsx`.
+
+### Purpose
+
+Dealers can tick optional checkboxes when creating/editing a quotation. These flags change **PDF / on-screen quotation wording only** — not catalog validation, pricing, or stored `panelSize` / `inverterBrand` values used for calculations.
+
+| Flag | When `true`, PDF shows |
+|------|------------------------|
+| `pdfUsePanelSizeRange` | Panel size **540W-620W** (instead of exact value, e.g. `555W`) |
+| `pdfUseInverterBrandOptions` | **Inverter Brand- Saatvik/Vsole/Xwatt** (instead of selected brand only) |
+
+For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** panel lines in the PDF; inverter flag applies to the shared inverter line.
+
+### Backend requirements
+
+1. **Persist** both fields inside the existing `products` JSON (no new table required if `products` is already JSON/JSONB).
+2. **Accept on create/update:**
+   - `POST /api/quotations` (body `products`)
+   - `PATCH /api/quotations/{id}/products`
+3. **Return on read** unchanged on:
+   - `GET /api/quotations/{id}`
+   - `GET /api/quotations` (list/detail)
+4. **Optional snake_case aliases** (frontend reads either form):
+   - `pdf_use_panel_size_range` ↔ `pdfUsePanelSizeRange`
+   - `pdf_use_inverter_brand_options` ↔ `pdfUseInverterBrandOptions`
+5. **Omit or `false` when unchecked** — frontend only sends `true` when checked; default = exact panel size / selected inverter brand in PDF.
+6. **Do not** use these flags for:
+   - Product catalog / `validateProductSelection`
+   - `calculatePricing`, subsidies, or `systemSize` derivation
+7. If the API generates quotation PDFs server-side, apply the same display rules as the frontend helpers in `lib/quotation-pdf-display.ts`.
+
+### Example `products` fragment
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Adani",
+  "panelSize": "555W",
+  "panelQuantity": 9,
+  "inverterBrand": "Saatvik",
+  "inverterType": "String Inverter",
+  "inverterSize": "5kW",
+  "pdfUsePanelSizeRange": true,
+  "pdfUseInverterBrandOptions": true
+}
+```
+
+### Checklist
+
+- [ ] Store optional booleans on `products` for create + PATCH products.
+- [ ] Echo flags on GET quotation(s).
+- [ ] Ignore flags in pricing/catalog validation.
+- [ ] (If applicable) Server PDF uses range / multi-brand text when flags are true.
+
+---
+
+## Y) Quick handoff — HR lead counts & quotation PDF flags (May 2026)
+
+**One-page summary for backend:** see **`BACKEND_CHANGES_HANDOFF.md`**.
+
+| Priority | Topic | Section | Reference |
+|----------|--------|---------|-----------|
+| High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
+| Medium | Persist `pdfUsePanelSizeRange`, `pdfUseInverterBrandOptions` on `products` JSON | §X | `lib/quotation-pdf-display.ts` |
+
+**HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
+
+**PDF flags — do not:** use flags in pricing or catalog validation. **Do:** store and return on quotation GET/create/PATCH products.
+
+---
+
 ## Contact
 
 For questions or clarifications about these requirements, please refer to:
@@ -3020,5 +3285,7 @@ For questions or clarifications about these requirements, please refer to:
 - Installation teams (storage, login, admin assignment, installer filter): `lib/installation-teams.ts`, `lib/auth-context.tsx`, `app/dashboard/admin/page.tsx`, `app/dashboard/installer/page.tsx`, `app/installation-team-login/page.tsx`; **persist assignment:** `api.admin.quotations.updateInstallationTeamAssignment` in `lib/api.ts`
 - Metering dashboard save/status handlers: `app/dashboard/metering/page.tsx`
 - Admin metering tab (stage + MCO): `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getMeteringWorkflowStage`)
+- Quotation PDF display flags: `lib/quotation-pdf-display.ts`, `components/product-selection-form.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**
+- HR upload batch counts: `app/dashboard/hr/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`computeHrUploadLeadCounts`)
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

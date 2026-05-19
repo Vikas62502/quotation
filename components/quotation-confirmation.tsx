@@ -11,6 +11,12 @@ import { ArrowLeft, Check, FileText, Download, Edit, AlertCircle } from "lucide-
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
+import {
+  formatPanelSizeForPdf,
+  getPdfInverterLine,
+  getPdfPanelSpecLine,
+  readPdfDisplayFlags,
+} from "@/lib/quotation-pdf-display"
 
 interface Props {
   customer: Customer
@@ -607,6 +613,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   }
 
   const getInverterDetails = () => {
+    const { useInverterBrandOptions } = readPdfDisplayFlags(products)
+    if (useInverterBrandOptions) {
+      return getPdfInverterLine(products)
+    }
     return `${products.inverterBrand} - ${products.inverterSize}` || "N/A"
   }
 
@@ -623,7 +633,8 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       }
       return dcrSize || nonDcrSize || "As per selection"
     }
-    return `${products.panelSize}W` || "As per selection"
+    const { usePanelSizeRange } = readPdfDisplayFlags(products)
+    return formatPanelSizeForPdf(products.panelSize, usePanelSizeRange) || "As per selection"
   }
 
   const toKwValue = (value?: string) => {
@@ -1265,8 +1276,12 @@ const getStructureDetails = (products: ProductSelection) => {
                       <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
                         {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                           <div>
-                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand} {products.dcrPanelSize} ×{" "}
-                            {products.dcrPanelQuantity}
+                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand}{" "}
+                            {formatPanelSizeForPdf(
+                              products.dcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.dcrPanelQuantity}
                             <span style={{ fontSize: "10px", color: "#666" }}>
                               {" "}
                               (
@@ -1281,7 +1296,11 @@ const getStructureDetails = (products: ProductSelection) => {
                         {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                           <div style={{ marginTop: "4px" }}>
                             <strong>Non-DCR (without subsidy):</strong> {products.nonDcrPanelBrand}{" "}
-                            {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                            {formatPanelSizeForPdf(
+                              products.nonDcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.nonDcrPanelQuantity}
                             <span style={{ fontSize: "10px", color: "#666" }}>
                               {" "}
                               (
@@ -1308,7 +1327,7 @@ const getStructureDetails = (products: ProductSelection) => {
                         Common Components
                       </div>
                       <div className="pdf-product-specs">
-                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {getPdfInverterLine(products)}
                         <br />
                         Phase: {pdfPhaseLabel}
                         {products.structureType && (
@@ -1351,9 +1370,9 @@ const getStructureDetails = (products: ProductSelection) => {
                     <div className="pdf-product-name">{getPdfSystemTitle()}</div>
                     <div className="pdf-product-details">
                       <div className="pdf-product-specs">
-                        {`${products.panelBrand} ${products.panelSize}W × ${products.panelQuantity}`}
+                        {getPdfPanelSpecLine(products)}
                         <br />
-                        Inverter: {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {getPdfInverterLine(products)}
                         <br />
                         Phase: {pdfPhaseLabel}
                         {products.structureType && (
@@ -1880,7 +1899,12 @@ const getStructureDetails = (products: ProductSelection) => {
                       {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                         <p className="text-sm font-medium text-foreground">
                           <span className="text-muted-foreground">Non-DCR</span>{" "}
-                          {products.nonDcrPanelBrand} {products.nonDcrPanelSize} × {products.nonDcrPanelQuantity}
+                          {products.nonDcrPanelBrand}{" "}
+                            {formatPanelSizeForPdf(
+                              products.nonDcrPanelSize,
+                              readPdfDisplayFlags(products).usePanelSizeRange,
+                            )}{" "}
+                            × {products.nonDcrPanelQuantity}
                           <span className="text-xs text-muted-foreground ml-1">
                             (
                             {(
@@ -1898,7 +1922,7 @@ const getStructureDetails = (products: ProductSelection) => {
                       <div className="flex justify-between gap-2">
                         <span className="text-muted-foreground shrink-0">Inverter</span>
                         <span className="text-sm font-medium text-right">
-                          {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                          {getPdfInverterLine(products)}
                         </span>
                       </div>
                       {products.structureType && (
@@ -1921,7 +1945,7 @@ const getStructureDetails = (products: ProductSelection) => {
                   <div className="flex justify-between">
                     <span className="text-sm text-muted-foreground">Panels</span>
                     <span className="text-sm font-medium">
-                      {products.panelBrand} {products.panelSize} × {products.panelQuantity}
+                      {getPdfPanelSpecLine(products)}
                     </span>
                   </div>
                 )}
@@ -1930,7 +1954,7 @@ const getStructureDetails = (products: ProductSelection) => {
                     <div className="flex justify-between">
                       <span className="text-sm text-muted-foreground">Inverter</span>
                       <span className="text-sm font-medium">
-                        {products.inverterBrand} {products.inverterType} ({products.inverterSize})
+                        {getPdfInverterLine(products)}
                       </span>
                     </div>
                     {products.structureType && (

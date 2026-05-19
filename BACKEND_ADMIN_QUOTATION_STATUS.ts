@@ -687,6 +687,78 @@ function asArray(value) {
   return []
 }
 
+const UNASSIGNED_DEALER_ID_TOKENS = new Set([
+  "",
+  "unassigned",
+  "null",
+  "none",
+  "-",
+  "na",
+  "n/a",
+  "pool",
+  "open",
+])
+
+const COMPLETED_LEAD_STATUSES = new Set(["completed", "done", "closed"])
+
+function normalizeAssigneeId(value) {
+  const id = String(value ?? "").trim()
+  if (!id) return ""
+  if (UNASSIGNED_DEALER_ID_TOKENS.has(id.toLowerCase())) return ""
+  return id
+}
+
+function isCompletedLeadStatus(status) {
+  return COMPLETED_LEAD_STATUSES.has(String(status ?? "").trim().toLowerCase())
+}
+
+/**
+ * Live batch buckets for HR Uploaded Data (see BACKEND_CHANGES_REQUIRED.md §7.8).
+ * assigned + unassigned + completed === rowCount
+ */
+export function computeHrUploadLeadCounts(leads) {
+  const counts = { rowCount: 0, assignedCount: 0, unassignedCount: 0, completedCount: 0 }
+  for (const lead of leads || []) {
+    counts.rowCount += 1
+    const status = lead?.status ?? lead?.assignmentStatus
+    if (isCompletedLeadStatus(status)) {
+      counts.completedCount += 1
+      continue
+    }
+    if (normalizeAssigneeId(lead?.assignedDealerId ?? lead?.assigned_dealer_id)) {
+      counts.assignedCount += 1
+      continue
+    }
+    counts.unassignedCount += 1
+  }
+  return counts
+}
+
+function mapHrUploadLeadRow(r, dealerNameById) {
+  const assignedDealerId = normalizeAssigneeId(r.assignedDealerId ?? r.assigned_dealer_id) || null
+  const status = r.status || r.assignmentStatus || "queued"
+  const assignedDealerName =
+    assignedDealerId && dealerNameById?.get(assignedDealerId)
+      ? dealerNameById.get(assignedDealerId)
+      : r.assignedDealerName || r.assigned_dealer_name || null
+
+  return {
+    id: r.id,
+    name: r.name,
+    mobile: r.mobile,
+    altMobile: r.altMobile,
+    kNumber: r.kNumber,
+    address: r.address,
+    city: r.city,
+    state: r.state,
+    customerNote: r.customerNote,
+    assignedDealerId,
+    assignedDealerName,
+    status,
+    assignmentStatus: status,
+  }
+}
+
 /**
  * POST /hr/leads/upload-csv
  * - Store upload metadata in hr_lead_uploads
@@ -798,7 +870,9 @@ export async function postHrLeadsUploadCsv(req, res, db) {
       parsed,
       created,
       assigned,
+      assignedAtUpload: assigned,
       queued,
+      queuedAtUpload: queued,
       skippedDuplicate,
       uploadId: upload.id,
     })
@@ -823,30 +897,105 @@ export async function getHrLeadsUploads(req, res, db) {
     const limitRaw = Number(req.query.limit || 50)
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.floor(limitRaw))) : 50
 
-    const uploads = await db.hrLeadUploads.findManyWithRows({ limit, orderBy: "uploadedAt_DESC" })
+    const uploads = await db.hrLeadUploads.findManyWithCounts({ limit, orderBy: "uploadedAt_DESC" })
 
     res.json({
       success: true,
-      uploads: uploads.map((u) => ({
-        id: u.id,
-        uploadedAt: u.uploadedAt,
-        fileName: u.fileName,
-        rowCount: u.rowCount,
-        dealerIds: u.dealerIds || [],
-        rows: (u.rows || []).map((r) => ({
-          id: r.id,
-          name: r.name,
-          mobile: r.mobile,
-          altMobile: r.altMobile,
-          kNumber: r.kNumber,
-          address: r.address,
-          city: r.city,
-          state: r.state,
-          customerNote: r.customerNote,
-          assignedDealerId: r.assignedDealerId,
-          status: r.status,
-        })),
-      })),
+      uploads: uploads.map((u) => {
+        const counts =
+          u.counts ||
+          computeHrUploadLeadCounts(u.rows || [])
+        const rowCount = Number(u.rowCount || counts.rowCount || 0)
+        const assignedCount = Number(u.assignedCount ?? counts.assignedCount ?? 0)
+        const unassignedCount = Number(u.unassignedCount ?? counts.unassignedCount ?? 0)
+        const completedCount = Number(u.completedCount ?? counts.completedCount ?? 0)
+
+        return {
+          id: u.id,
+          uploadedAt: u.uploadedAt,
+          fileName: u.fileName,
+          rowCount,
+          assignedCount,
+          unassignedCount,
+          completedCount,
+          counts: {
+            assigned: assignedCount,
+            unassigned: unassignedCount,
+            completed: completedCount,
+          },
+          dealerIds: u.dealerIds || [],
+        }
+      }),
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
+  }
+}
+
+/**
+ * GET /hr/leads/uploads/:uploadId?page=1&limit=50
+ * Paginated rows + batch-level live counts (full upload, not page-only).
+ */
+export async function getHrLeadsUploadById(req, res, db) {
+  try {
+    const user = req.hr ?? req.user
+    if (!user || user.role !== "hr") {
+      res.status(401).json({ success: false, error: { code: "AUTH_003", message: "HR required" } })
+      return
+    }
+
+    const uploadId = req.params.uploadId || req.params.id
+    if (!uploadId) {
+      res.status(400).json({ success: false, error: { code: "VAL_001", message: "uploadId required" } })
+      return
+    }
+
+    const pageRaw = Number(req.query.page || 1)
+    const limitRaw = Number(req.query.limit || 50)
+    const page = Number.isFinite(pageRaw) ? Math.max(1, Math.floor(pageRaw)) : 1
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50
+
+    const upload = await db.hrLeadUploads.findByIdWithCounts(uploadId)
+    if (!upload) {
+      res.status(404).json({ success: false, error: { code: "RES_001", message: "Upload not found" } })
+      return
+    }
+
+    const { rows, total } = await db.hrLeads.findByUploadIdPaginated(uploadId, { page, limit })
+    const dealerNameById = await db.dealers.getNameMapByIds(upload.dealerIds || [])
+
+    const counts = upload.counts || computeHrUploadLeadCounts(await db.hrLeads.findAllByUploadId(uploadId))
+    const rowCount = Number(upload.rowCount || counts.rowCount || total || 0)
+    const assignedCount = Number(upload.assignedCount ?? counts.assignedCount ?? 0)
+    const unassignedCount = Number(upload.unassignedCount ?? counts.unassignedCount ?? 0)
+    const completedCount = Number(upload.completedCount ?? counts.completedCount ?? 0)
+
+    res.json({
+      success: true,
+      batch: {
+        id: upload.id,
+        uploadedAt: upload.uploadedAt,
+        fileName: upload.fileName,
+        rowCount,
+        assignedCount,
+        unassignedCount,
+        completedCount,
+        counts: {
+          assigned: assignedCount,
+          unassigned: unassignedCount,
+          completed: completedCount,
+        },
+        dealerIds: upload.dealerIds || [],
+      },
+      rows: rows.map((r) => mapHrUploadLeadRow(r, dealerNameById)),
+      totalRows: rowCount,
+      pagination: {
+        page,
+        limit,
+        total: rowCount,
+        totalPages: Math.max(1, Math.ceil(rowCount / limit)),
+      },
     })
   } catch (e) {
     console.error(e)
@@ -858,6 +1007,7 @@ export async function getHrLeadsUploads(req, res, db) {
  * Additional routes (Express example):
  *   router.post('/hr/leads/upload-csv', hrAuth, upload.single('file'), postHrLeadsUploadCsv)
  *   router.get('/hr/leads/uploads', hrAuth, getHrLeadsUploads)
+ *   router.get('/hr/leads/uploads/:uploadId', hrAuth, getHrLeadsUploadById)
  */
 
 /**

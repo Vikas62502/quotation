@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box, List } from "lucide-react"
 import { DcrConfigDialog } from "@/components/dcr-config-dialog"
@@ -35,6 +36,48 @@ import {
   systemTypes,
 } from "@/lib/quotation-data"
 import { useProductCatalog } from "@/lib/use-product-catalog"
+import {
+  PDF_INVERTER_BRAND_OPTIONS_LABEL,
+  PDF_PANEL_SIZE_RANGE_LABEL,
+} from "@/lib/quotation-pdf-display"
+
+function QuotationPdfDisplayOptions({
+  usePanelSizeRange,
+  useInverterBrandOptions,
+  onPanelSizeRangeChange,
+  onInverterBrandOptionsChange,
+}: {
+  usePanelSizeRange: boolean
+  useInverterBrandOptions: boolean
+  onPanelSizeRangeChange: (checked: boolean) => void
+  onInverterBrandOptionsChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="col-span-full rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">Quotation PDF display (optional)</p>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <Checkbox
+          checked={usePanelSizeRange}
+          onCheckedChange={(v) => onPanelSizeRangeChange(v === true)}
+          className="mt-0.5"
+        />
+        <span>
+          Show panel size range <strong>{PDF_PANEL_SIZE_RANGE_LABEL}</strong> on PDF (instead of exact size)
+        </span>
+      </label>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <Checkbox
+          checked={useInverterBrandOptions}
+          onCheckedChange={(v) => onInverterBrandOptionsChange(v === true)}
+          className="mt-0.5"
+        />
+        <span>
+          Show inverter brands <strong>Inverter Brand- {PDF_INVERTER_BRAND_OPTIONS_LABEL}</strong> on PDF
+        </span>
+      </label>
+    </div>
+  )
+}
 
 interface Props {
   onSubmit: (products: ProductSelection) => void
@@ -97,6 +140,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       nonDcrPanelBrand: "",
       nonDcrPanelSize: "",
       nonDcrPanelQuantity: 0,
+      pdfUsePanelSizeRange: false,
+      pdfUseInverterBrandOptions: false,
     },
   )
 
@@ -889,6 +934,15 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 </div>
               </div>
 
+              <div className="mt-3">
+                <QuotationPdfDisplayOptions
+                  usePanelSizeRange={Boolean(formData.pdfUsePanelSizeRange)}
+                  useInverterBrandOptions={Boolean(formData.pdfUseInverterBrandOptions)}
+                  onPanelSizeRangeChange={(checked) => updateFormData("pdfUsePanelSizeRange", checked)}
+                  onInverterBrandOptionsChange={(checked) => updateFormData("pdfUseInverterBrandOptions", checked)}
+                />
+              </div>
+
               {/* Inverter Selection for Both */}
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
@@ -1339,6 +1393,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       ) : null
                     })()}
                   </div>
+                </div>
+                <div className="mt-3">
+                  <QuotationPdfDisplayOptions
+                    usePanelSizeRange={Boolean(formData.pdfUsePanelSizeRange)}
+                    useInverterBrandOptions={Boolean(formData.pdfUseInverterBrandOptions)}
+                    onPanelSizeRangeChange={(checked) => updateFormData("pdfUsePanelSizeRange", checked)}
+                    onInverterBrandOptionsChange={(checked) => updateFormData("pdfUseInverterBrandOptions", checked)}
+                  />
                 </div>
               </div>
 
