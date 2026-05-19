@@ -20,6 +20,7 @@ import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import {
+  formatPanelBrandLineForPdf,
   formatPanelSizeForPdf,
   getPdfInverterLine,
   getPdfPanelSpecLine,
@@ -1475,42 +1476,48 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
                         {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                           <div>
-                            <strong>DCR (with subsidy):</strong> {products.dcrPanelBrand}{" "}
-                            {formatPanelSizeForPdf(
+                            <strong>DCR (with subsidy):</strong>{" "}
+                            {formatPanelBrandLineForPdf(
+                              products.dcrPanelBrand,
                               products.dcrPanelSize,
+                              products.dcrPanelQuantity,
                               readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}{" "}
-                            ×{" "}
-                            {products.dcrPanelQuantity}
-                            <span style={{ fontSize: "10px", color: "#666" }}>
-                              {" "}
-                              (
-                              {(
-                                (Number.parseFloat(products.dcrPanelSize.replace("W", "")) * products.dcrPanelQuantity) /
-                                1000
-                              ).toFixed(2)}
-                              kW)
-                            </span>
+                            )}
+                            {!readPdfDisplayFlags(products).usePanelSizeRange && (
+                              <span style={{ fontSize: "10px", color: "#666" }}>
+                                {" "}
+                                (
+                                {(
+                                  (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
+                                    products.dcrPanelQuantity) /
+                                  1000
+                                ).toFixed(2)}
+                                kW)
+                              </span>
+                            )}
                           </div>
                         )}
                         {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                           <div style={{ marginTop: "4px" }}>
-                            <strong>Non-DCR (without subsidy):</strong> {products.nonDcrPanelBrand}{" "}
-                            {formatPanelSizeForPdf(
+                            <strong>Non-DCR (without subsidy):</strong>{" "}
+                            {formatPanelBrandLineForPdf(
+                              products.nonDcrPanelBrand,
                               products.nonDcrPanelSize,
+                              products.nonDcrPanelQuantity,
                               readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}{" "}
-                            × {products.nonDcrPanelQuantity}
-                            <span style={{ fontSize: "10px", color: "#666" }}>
-                              {" "}
-                              (
-                              {(
-                                (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
-                                  products.nonDcrPanelQuantity) /
-                                1000
-                              ).toFixed(2)}
-                              kW)
-                            </span>
+                            )}
+                            {!readPdfDisplayFlags(products).usePanelSizeRange && (
+                              <span style={{ fontSize: "10px", color: "#666" }}>
+                                {" "}
+                                (
+                                {(
+                                  (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                    products.nonDcrPanelQuantity) /
+                                  1000
+                                ).toFixed(2)}
+                                kW)
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2073,41 +2080,45 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
                             <p className="font-medium">
                               <span className="text-muted-foreground">DCR (subsidy)</span>{" "}
-                              {products.dcrPanelBrand}{" "}
-                            {formatPanelSizeForPdf(
-                              products.dcrPanelSize,
-                              readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}{" "}
-                            × {products.dcrPanelQuantity}
-                              <span className="text-xs text-muted-foreground ml-1">
-                                (
-                                {(
-                                  (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
-                                    products.dcrPanelQuantity) /
-                                  1000
-                                ).toFixed(2)}
-                                kW)
-                              </span>
+                              {formatPanelBrandLineForPdf(
+                                products.dcrPanelBrand,
+                                products.dcrPanelSize,
+                                products.dcrPanelQuantity,
+                                readPdfDisplayFlags(products).usePanelSizeRange,
+                              )}
+                              {!readPdfDisplayFlags(products).usePanelSizeRange && (
+                                <span className="text-xs text-muted-foreground ml-1">
+                                  (
+                                  {(
+                                    (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
+                                      products.dcrPanelQuantity) /
+                                    1000
+                                  ).toFixed(2)}
+                                  kW)
+                                </span>
+                              )}
                             </p>
                           )}
                           {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
                             <p className="font-medium">
                               <span className="text-muted-foreground">Non-DCR</span>{" "}
-                              {products.nonDcrPanelBrand}{" "}
-                            {formatPanelSizeForPdf(
-                              products.nonDcrPanelSize,
-                              readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}{" "}
-                            × {products.nonDcrPanelQuantity}
-                              <span className="text-xs text-muted-foreground ml-1">
-                                (
-                                {(
-                                  (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
-                                    products.nonDcrPanelQuantity) /
-                                  1000
-                                ).toFixed(2)}
-                                kW)
-                              </span>
+                              {formatPanelBrandLineForPdf(
+                                products.nonDcrPanelBrand,
+                                products.nonDcrPanelSize,
+                                products.nonDcrPanelQuantity,
+                                readPdfDisplayFlags(products).usePanelSizeRange,
+                              )}
+                              {!readPdfDisplayFlags(products).usePanelSizeRange && (
+                                <span className="text-xs text-muted-foreground ml-1">
+                                  (
+                                  {(
+                                    (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                      products.nonDcrPanelQuantity) /
+                                    1000
+                                  ).toFixed(2)}
+                                  kW)
+                                </span>
+                              )}
                             </p>
                           )}
                         </div>

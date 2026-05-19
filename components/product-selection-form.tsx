@@ -62,7 +62,7 @@ function QuotationPdfDisplayOptions({
           className="mt-0.5"
         />
         <span>
-          Show panel size range <strong>{PDF_PANEL_SIZE_RANGE_LABEL}</strong> on PDF (instead of exact size)
+          Show panel size range <strong>{PDF_PANEL_SIZE_RANGE_LABEL}</strong> on PDF (instead of exact size; panel count hidden)
         </span>
       </label>
       <label className="flex items-start gap-2 text-sm cursor-pointer">

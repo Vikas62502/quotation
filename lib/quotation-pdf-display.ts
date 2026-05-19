@@ -31,6 +31,32 @@ export function formatPanelSizeForPdf(
   return usePanelSizeRange ? PDF_PANEL_SIZE_RANGE_LABEL : panelSize.trim()
 }
 
+/** When range checkbox is on, hide panel count (no "× 9") on PDF. */
+export function formatPanelSizeWithQuantityForPdf(
+  panelSize: string | undefined,
+  quantity: number | undefined,
+  usePanelSizeRange: boolean,
+): string {
+  const size = formatPanelSizeForPdf(panelSize, usePanelSizeRange)
+  if (!size) return ""
+  const showQty = !usePanelSizeRange && quantity != null && Number(quantity) > 0
+  return showQty ? `${size} × ${quantity}` : size
+}
+
+export function formatPanelBrandLineForPdf(
+  brand: string | undefined,
+  panelSize: string | undefined,
+  quantity: number | undefined,
+  usePanelSizeRange: boolean,
+): string {
+  const brandPart = (brand || "").trim()
+  const sizeQty = formatPanelSizeWithQuantityForPdf(panelSize, quantity, usePanelSizeRange)
+  const parts: string[] = []
+  if (brandPart) parts.push(brandPart)
+  if (sizeQty) parts.push(sizeQty)
+  return parts.join(" ").trim() || "N/A"
+}
+
 export function getPdfInverterLine(products: ProductSelection): string {
   const { useInverterBrandOptions } = readPdfDisplayFlags(products)
   const segments: string[] = []
@@ -49,17 +75,10 @@ export function getPdfInverterLine(products: ProductSelection): string {
 
 export function getPdfPanelSpecLine(products: ProductSelection): string {
   const { usePanelSizeRange } = readPdfDisplayFlags(products)
-  const brand = products.panelBrand?.trim() || ""
-  const size = formatPanelSizeForPdf(products.panelSize, usePanelSizeRange)
-  const qty = products.panelQuantity
-
-  const parts: string[] = []
-  if (brand) parts.push(brand)
-  if (size) {
-    parts.push(qty ? `${size} × ${qty}` : size)
-  } else if (qty) {
-    parts.push(`× ${qty}`)
-  }
-
-  return parts.join(" ").trim() || "N/A"
+  return formatPanelBrandLineForPdf(
+    products.panelBrand,
+    products.panelSize,
+    products.panelQuantity,
+    usePanelSizeRange,
+  )
 }
