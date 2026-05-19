@@ -638,6 +638,12 @@ export const api = {
       payload: {
         action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"
         callRemark?: string
+        call_remark?: string
+        statusCategory?: string
+        status_category?: string
+        statusText?: string
+        status_text?: string
+        remark?: string
         nextFollowUpAt?: string
         actionAt?: string
         /** Optional: backends that auto-assign pool leads on start */

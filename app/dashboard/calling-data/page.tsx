@@ -23,6 +23,11 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
+import {
+  callRemarkDraftStorageKey,
+  enrichCallingActionPayload,
+  parseTaggedCallRemark,
+} from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
 import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
@@ -364,6 +369,9 @@ export default function CallingDataPage() {
   const [leads, setLeads] = useState<CallingLead[]>([])
   const [scheduledLeads, setScheduledLeads] = useState<CallingLead[]>([])
   const [recentActions, setRecentActions] = useState<ActionLogItem[]>([])
+  const [dialledActions, setDialledActions] = useState<ActionLogItem[]>([])
+  const [connectedActionItems, setConnectedActionItems] = useState<ActionLogItem[]>([])
+  const [notConnectedActionItems, setNotConnectedActionItems] = useState<ActionLogItem[]>([])
   const [activeSubTab, setActiveSubTab] = useState("current")
   const [backendCounts, setBackendCounts] = useState<{ pending?: number; queued?: number; scheduled?: number; completed?: number }>({})
   const [callRemark, setCallRemark] = useState("")
@@ -430,12 +438,46 @@ export default function CallingDataPage() {
   const [analyticsFromDate, setAnalyticsFromDate] = useState("")
   const [analyticsToDate, setAnalyticsToDate] = useState("")
   const [submittingLeadMap, setSubmittingLeadMap] = useState<Record<string, boolean>>({})
+  /** Locks Current Lead until Submit — prevents Start from skipping through the queue. */
+  const [pinnedCurrentLead, setPinnedCurrentLead] = useState<CallingLead | null>(null)
+  const pinnedCurrentLeadRef = useRef<CallingLead | null>(null)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const previousCurrentLeadIdRef = useRef<string | null>(null)
   const shownScheduledReminderRef = useRef<Record<string, true>>({})
   const submittingLeadIdsRef = useRef<Set<string>>(new Set())
   const [queueSanctionedLeadIds, setQueueSanctionedLeadIds] = useState<Set<string>>(() => new Set())
   const isLeadSubmitting = (leadId?: string) => !!(leadId && submittingLeadMap[leadId])
+
+  useEffect(() => {
+    pinnedCurrentLeadRef.current = pinnedCurrentLead
+  }, [pinnedCurrentLead])
+
+  const pinCurrentLeadForActiveCall = (lead: CallingLead) => {
+    const pinned: CallingLead = { ...lead, status: "in_progress" }
+    pinnedCurrentLeadRef.current = pinned
+    setPinnedCurrentLead(pinned)
+    setLeads((prev) => {
+      const rest = prev.filter((l) => l.id !== lead.id)
+      return [pinned, ...rest]
+    })
+  }
+
+  const clearPinnedCurrentLead = () => {
+    pinnedCurrentLeadRef.current = null
+    setPinnedCurrentLead(null)
+  }
+
+  const restorePinnedLeadInQueue = () => {
+    const pin = pinnedCurrentLeadRef.current
+    if (!pin) return
+    setLeads((prev) => {
+      const merged = prev.find((l) => l.id === pin.id)
+      const nextPin: CallingLead = { ...(merged || pin), status: "in_progress" }
+      pinnedCurrentLeadRef.current = nextPin
+      return [nextPin, ...prev.filter((l) => l.id !== pin.id)]
+    })
+    setPinnedCurrentLead(pinnedCurrentLeadRef.current)
+  }
   const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
   const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
   const currentDealerFullName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim().toLowerCase()
@@ -584,6 +626,18 @@ export default function CallingDataPage() {
     }
   }
 
+  const mergeActionLogEntries = (sources: any[]): ActionLogItem[] => {
+    const map = new Map<string, ActionLogItem>()
+    sources.forEach((entry) => {
+      const normalized = normalizeActionLog(entry)
+      if (!normalized?.id) return
+      map.set(normalized.id, normalized)
+    })
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+    )
+  }
+
   const formatDateTime = (value?: string) => {
     if (!value) return "N/A"
     const date = new Date(value)
@@ -607,16 +661,11 @@ export default function CallingDataPage() {
   }
 
   const parseTaggedRemark = (remark?: string) => {
-    const raw = (remark || "").trim()
-    if (!raw) return { category: "", status: "", remark: "" }
-
-    const match = raw.match(/^\[([^\]]+)\]\s*([^|]*?)\s*(?:\|\s*(.*))?$/)
-    if (!match) return { category: "", status: "", remark: raw }
-
+    const parsed = parseTaggedCallRemark(remark)
     return {
-      category: (match[1] || "").trim(),
-      status: (match[2] || "").trim(),
-      remark: (match[3] || "").trim(),
+      category: parsed.statusCategory,
+      status: parsed.status,
+      remark: parsed.remark,
     }
   }
 
@@ -846,7 +895,16 @@ export default function CallingDataPage() {
       .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
     setScheduledLeads(normalizedScheduled)
 
-    const actionSource = [
+    const dialledOnly = mergeActionLogEntries([
+      ...readArray(response?.dialledActions),
+    ])
+    const connectedOnly = mergeActionLogEntries([
+      ...readArray(response?.connectedActions),
+    ])
+    const notConnectedOnly = mergeActionLogEntries([
+      ...readArray(response?.notConnectedActions),
+    ])
+    const allActions = mergeActionLogEntries([
       ...readArray(response?.recentActions),
       ...readArray(response?.actionHistory),
       ...readArray(response?.completedActions),
@@ -855,22 +913,77 @@ export default function CallingDataPage() {
       ...readArray(response?.notConnectedActions),
       ...readArray(response?.actions),
       ...readArray(response?.callingActions),
-    ]
-    const normalizedActionsMap = new Map<string, ActionLogItem>()
-    actionSource.map(normalizeActionLog).forEach((action) => {
-      if (!action?.id) return
-      normalizedActionsMap.set(action.id, action)
-    })
-    const normalizedActions = Array.from(normalizedActionsMap.values()).sort(
-      (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
-    )
-    setRecentActions(normalizedActions)
+    ])
+    setDialledActions(dialledOnly)
+    setConnectedActionItems(connectedOnly)
+    setNotConnectedActionItems(notConnectedOnly)
+    setRecentActions(allActions)
     setBackendCounts({
       pending: response?.pendingCount ?? response?.counts?.pending,
       queued: response?.queuedCount ?? response?.counts?.queued,
       scheduled: response?.scheduledCount ?? response?.counts?.scheduled,
       completed: response?.completedCount ?? response?.counts?.completed,
     })
+  }
+
+  /** Updates analytics/history tabs without replacing the active current lead from API `nextLead`. */
+  const applyQueueMetadataFromResponse = (response: any) => {
+    if (!response) return
+    const readArray = (value: any): any[] => {
+      if (Array.isArray(value)) return value
+      if (Array.isArray(value?.items)) return value.items
+      if (Array.isArray(value?.rows)) return value.rows
+      if (Array.isArray(value?.data)) return value.data
+      return []
+    }
+
+    const scheduledSource = [
+      ...readArray(response?.scheduledLeads),
+      ...readArray(response?.upcomingFollowUps),
+      ...readArray(response?.followUps),
+      ...readArray(response?.scheduled),
+      ...readArray(response?.scheduledData),
+      ...readArray(response?.scheduledItems),
+      ...readArray(response?.rescheduledLeads),
+    ]
+    const normalizedScheduled = scheduledSource
+      .map(normalizeApiLead)
+      .filter((lead) => !!lead.nextFollowUpAt)
+      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
+    if (normalizedScheduled.length > 0) setScheduledLeads(normalizedScheduled)
+
+    const dialledOnly = mergeActionLogEntries([...readArray(response?.dialledActions)])
+    const connectedOnly = mergeActionLogEntries([...readArray(response?.connectedActions)])
+    const notConnectedOnly = mergeActionLogEntries([...readArray(response?.notConnectedActions)])
+    const allActions = mergeActionLogEntries([
+      ...readArray(response?.recentActions),
+      ...readArray(response?.actionHistory),
+      ...readArray(response?.completedActions),
+      ...readArray(response?.dialledActions),
+      ...readArray(response?.connectedActions),
+      ...readArray(response?.notConnectedActions),
+      ...readArray(response?.actions),
+      ...readArray(response?.callingActions),
+    ])
+    if (dialledOnly.length > 0) setDialledActions(dialledOnly)
+    if (connectedOnly.length > 0) setConnectedActionItems(connectedOnly)
+    if (notConnectedOnly.length > 0) setNotConnectedActionItems(notConnectedOnly)
+    if (allActions.length > 0) setRecentActions(allActions)
+
+    if (
+      response?.pendingCount != null ||
+      response?.queuedCount != null ||
+      response?.scheduledCount != null ||
+      response?.completedCount != null ||
+      response?.counts
+    ) {
+      setBackendCounts({
+        pending: response?.pendingCount ?? response?.counts?.pending,
+        queued: response?.queuedCount ?? response?.counts?.queued,
+        scheduled: response?.scheduledCount ?? response?.counts?.scheduled,
+        completed: response?.completedCount ?? response?.counts?.completed,
+      })
+    }
   }
 
   const loadLeads = async () => {
@@ -948,6 +1061,9 @@ export default function CallingDataPage() {
         mergedResponse.lead
 
       applyQueueResponse(mergedResponse)
+      if (pinnedCurrentLeadRef.current) {
+        restorePinnedLeadInQueue()
+      }
     } catch (error) {
       const message =
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Could not load calling queue from backend."
@@ -1184,7 +1300,16 @@ export default function CallingDataPage() {
     })
   }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter])
 
-  const currentLead = dealerAssignedQueue[0] || null
+  const currentLead = pinnedCurrentLead || dealerAssignedQueue[0] || null
+
+  useEffect(() => {
+    if (pinnedCurrentLeadRef.current) return
+    const head = dealerAssignedQueue[0]
+    if (!head || getNormalizedStatus(head) !== "in_progress") return
+    pinCurrentLeadForActiveCall(head)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealerAssignedQueue])
+
   const currentFlowStage: "current_lead" | "dialled" | "connected" | "not_connected" = !currentLead
     ? "current_lead"
     : !callConnection
@@ -1193,14 +1318,38 @@ export default function CallingDataPage() {
         ? "connected"
         : "not_connected"
 
-  const flowDialledActions = useMemo(
-    () =>
-      recentActions.filter((item) => {
-        if (hasUpcomingFollowUp(item)) return false
-        return ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase())
-      }),
-    [recentActions],
-  )
+  const scheduledFutureLeadIds = useMemo(() => {
+    const now = Date.now()
+    return new Set(
+      scheduledLeads
+        .filter((lead) => {
+          const at = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).getTime() : NaN
+          return Number.isFinite(at) && at > now
+        })
+        .map((lead) => lead.id),
+    )
+  }, [scheduledLeads])
+
+  const flowDialledActions = useMemo(() => {
+    const source =
+      dialledActions.length > 0
+        ? dialledActions
+        : recentActions.filter((item) => {
+            if (hasUpcomingFollowUp(item)) return false
+            return ["called", "follow_up", "not_interested", "rescheduled"].includes(
+              String(item.action || "").toLowerCase(),
+            )
+          })
+    return source.filter((item) => {
+      if (hasUpcomingFollowUp(item)) return false
+      const action = String(item.action || "").toLowerCase()
+      if (!["called", "follow_up", "not_interested", "rescheduled"].includes(action)) return false
+      if (item.leadId && scheduledFutureLeadIds.has(item.leadId) && (action === "rescheduled" || action === "follow_up")) {
+        return false
+      }
+      return true
+    })
+  }, [dialledActions, recentActions, scheduledFutureLeadIds])
 
   const filteredFlowDialledActions = useMemo(() => {
     const term = dialledSearchTerm.trim().toLowerCase()
@@ -1216,15 +1365,14 @@ export default function CallingDataPage() {
     })
   }, [flowDialledActions, dialledSearchTerm, dialledActionFilter])
 
-  const flowConnectedActions = useMemo(
-    () =>
-      recentActions.filter((item) => {
-        if (hasUpcomingFollowUp(item)) return false
-        const parsed = parseTaggedRemark(item.callRemark)
-        return !!parsed.status && !NOT_CONNECTED_REASONS.includes(parsed.status)
-      }),
-    [recentActions],
-  )
+  const flowConnectedActions = useMemo(() => {
+    const source = connectedActionItems.length > 0 ? connectedActionItems : recentActions
+    return source.filter((item) => {
+      if (hasUpcomingFollowUp(item)) return false
+      const parsed = parseTaggedRemark(item.callRemark)
+      return !!parsed.status && !NOT_CONNECTED_REASONS.includes(parsed.status)
+    })
+  }, [connectedActionItems, recentActions])
 
   function getConnectedOutcomeForStatus(status: string): "interested" | "not_interested" | "decision_pending" {
     if (LOST_REASONS.includes(status) || status === "Not Interested" || status === "Not Interested Currently") {
@@ -1258,15 +1406,14 @@ export default function CallingDataPage() {
     })
   }, [flowConnectedActions, connectedOutcomeFilter, connectedSearchTerm])
 
-  const flowNotConnectedActions = useMemo(
-    () =>
-      recentActions.filter((item) => {
-        if (hasUpcomingFollowUp(item)) return false
-        const parsed = parseTaggedRemark(item.callRemark)
-        return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
-      }),
-    [recentActions],
-  )
+  const flowNotConnectedActions = useMemo(() => {
+    const source = notConnectedActionItems.length > 0 ? notConnectedActionItems : recentActions
+    return source.filter((item) => {
+      if (hasUpcomingFollowUp(item)) return false
+      const parsed = parseTaggedRemark(item.callRemark)
+      return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
+    })
+  }, [notConnectedActionItems, recentActions])
   const filteredFlowNotConnectedActions = useMemo(() => {
     const term = notConnectedSearchTerm.trim().toLowerCase()
     return flowNotConnectedActions.filter((item) => {
@@ -1418,6 +1565,30 @@ export default function CallingDataPage() {
     setRescheduleAt("")
   }, [currentLead])
 
+  useEffect(() => {
+    const activeId = pinnedCurrentLead?.id
+    if (!activeId) return
+    try {
+      const draft = sessionStorage.getItem(callRemarkDraftStorageKey(activeId))
+      if (draft) setCallRemark(draft)
+    } catch {
+      // ignore storage errors
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedCurrentLead?.id])
+
+  useEffect(() => {
+    const activeId = pinnedCurrentLead?.id
+    if (!activeId) return
+    try {
+      const key = callRemarkDraftStorageKey(activeId)
+      if (callRemark.trim()) sessionStorage.setItem(key, callRemark)
+      else sessionStorage.removeItem(key)
+    } catch {
+      // ignore storage errors
+    }
+  }, [callRemark, pinnedCurrentLead?.id])
+
   const applyOptimisticCallStart = (leadId: string) => {
     const dealerName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim()
     setLeads((prev) =>
@@ -1444,10 +1615,88 @@ export default function CallingDataPage() {
     }
   }
 
-  /** Copy number and sync start — never block the call on LEAD_004; no tel: / app redirect. */
+  /** Copy number and mark in progress — next lead only after Submit (not on repeated Start). */
   const handleStartCall = async (lead: CallingLead) => {
+    if (pinnedCurrentLead && pinnedCurrentLead.id !== lead.id) {
+      toast({
+        title: "Submit current lead first",
+        description: "Finish and submit the open lead before starting another call.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (
+      pinnedCurrentLead?.id === lead.id ||
+      lead.status === "in_progress" ||
+      submittingLeadIdsRef.current.has(lead.id)
+    ) {
+      void copyLeadPhone(lead.mobile)
+      return
+    }
+
     void copyLeadPhone(lead.mobile)
+    pinCurrentLeadForActiveCall(lead)
     await submitAction(lead.id, { action: "start" }, { optimisticOnNotAssigned: true })
+  }
+
+  const persistSubmittedCallRemark = (
+    leadId: string,
+    payload: { action: string; callRemark?: string; actionAt?: string; nextFollowUpAt?: string },
+  ) => {
+    if (!payload.callRemark?.trim()) return
+    const lead = leads.find((l) => l.id === leadId) || pinnedCurrentLeadRef.current
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === leadId
+          ? {
+              ...l,
+              callRemark: payload.callRemark,
+              action: payload.action as CallingLead["action"],
+              actionAt: payload.actionAt,
+              ...(payload.nextFollowUpAt ? { nextFollowUpAt: payload.nextFollowUpAt } : {}),
+            }
+          : l,
+      ),
+    )
+    if (!lead) return
+    const actionItem: ActionLogItem = {
+      id: `local-${leadId}-${payload.actionAt || Date.now()}`,
+      leadId,
+      name: lead.name,
+      mobile: lead.mobile,
+      action: payload.action,
+      callRemark: payload.callRemark,
+      actionAt: payload.actionAt || new Date().toISOString(),
+      nextFollowUpAt: payload.nextFollowUpAt,
+      kNumber: lead.kNumber,
+      address: lead.address,
+      city: lead.city,
+      state: lead.state,
+      customerNote: lead.customerNote,
+    }
+    setRecentActions((prev) => {
+      const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
+      return [actionItem, ...withoutDup]
+    })
+    const dialAction = String(payload.action || "").toLowerCase()
+    if (["called", "follow_up", "not_interested", "rescheduled"].includes(dialAction)) {
+      setDialledActions((prev) => {
+        const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
+        return [actionItem, ...withoutDup]
+      })
+    }
+    const parsed = parseTaggedRemark(payload.callRemark)
+    if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) {
+      setNotConnectedActionItems((prev) => {
+        const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
+        return [actionItem, ...withoutDup]
+      })
+    } else if (parsed.status) {
+      setConnectedActionItems((prev) => {
+        const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
+        return [actionItem, ...withoutDup]
+      })
+    }
   }
 
   const submitAction = async (
@@ -1468,9 +1717,10 @@ export default function CallingDataPage() {
     setSubmittingLeadMap((prev) => ({ ...prev, [leadId]: true }))
     try {
       const actionAt = payload.actionAt || new Date().toISOString()
+      const apiPayload = enrichCallingActionPayload({ ...payload, actionAt })
       let response: any
       try {
-        response = await api.dealers.updateCallingLeadAction(leadId, payload)
+        response = await api.dealers.updateCallingLeadAction(leadId, apiPayload)
       } catch (innerError) {
         const isInvalidTransition =
           innerError instanceof ApiError &&
@@ -1481,7 +1731,7 @@ export default function CallingDataPage() {
           const assigned = await tryAssignLeadToCurrentDealer(leadId)
           if (assigned) {
             try {
-              response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+              response = await api.dealers.updateCallingLeadAction(leadId, enrichCallingActionPayload({ ...payload, actionAt }))
             } catch {
               // fall through
             }
@@ -1495,11 +1745,11 @@ export default function CallingDataPage() {
                 autoAssign: true,
                 assignedDealerId: currentDealerId,
               })
-              response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+              response = await api.dealers.updateCallingLeadAction(leadId, enrichCallingActionPayload({ ...payload, actionAt }))
             } catch {
               try {
                 await api.dealers.claimCallingLead(leadId)
-                response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+                response = await api.dealers.updateCallingLeadAction(leadId, enrichCallingActionPayload({ ...payload, actionAt }))
               } catch {
                 // fall through
               }
@@ -1511,7 +1761,7 @@ export default function CallingDataPage() {
         if (!response && isInvalidTransition && payload.action !== "start" && payload.action !== "rescheduled") {
           try {
             await api.dealers.updateCallingLeadAction(leadId, { action: "start", actionAt })
-            response = await api.dealers.updateCallingLeadAction(leadId, { ...payload, actionAt })
+            response = await api.dealers.updateCallingLeadAction(leadId, enrichCallingActionPayload({ ...payload, actionAt }))
           } catch {
             // fall through to rescheduled fallback below
           }
@@ -1523,12 +1773,15 @@ export default function CallingDataPage() {
           const fallbackNextFollowUpAt =
             payload.nextFollowUpAt ||
             new Date(Date.now() + 60 * 60 * 1000).toISOString()
-          response = await api.dealers.updateCallingLeadAction(leadId, {
-            ...payload,
-            action: "rescheduled",
-            nextFollowUpAt: fallbackNextFollowUpAt,
-            actionAt,
-          })
+          response = await api.dealers.updateCallingLeadAction(
+            leadId,
+            enrichCallingActionPayload({
+              ...payload,
+              action: "rescheduled",
+              nextFollowUpAt: fallbackNextFollowUpAt,
+              actionAt,
+            }),
+          )
         }
 
         if (!response) {
@@ -1538,11 +1791,23 @@ export default function CallingDataPage() {
             isLeadNotAssignedToDealerError(innerError)
           ) {
             applyOptimisticCallStart(leadId)
-            void loadLeads()
             return
           }
           throw innerError
         }
+      }
+
+      if (payload.action === "start") {
+        applyOptimisticCallStart(leadId)
+        applyQueueMetadataFromResponse(response)
+        return
+      }
+
+      persistSubmittedCallRemark(leadId, apiPayload)
+      try {
+        sessionStorage.removeItem(callRemarkDraftStorageKey(leadId))
+      } catch {
+        // ignore storage errors
       }
 
       setCallRemark("")
@@ -1551,7 +1816,9 @@ export default function CallingDataPage() {
       setIsRescheduleChecked(false)
       setSelectedStatusGroup(STATUS_GROUPS[0].key)
       setSelectedStatus(STATUS_GROUPS[0].options[0])
-      const wasCurrentQueueHead = dealerAssignedQueue[0]?.id === leadId
+      const wasCurrentQueueHead =
+        pinnedCurrentLeadRef.current?.id === leadId || dealerAssignedQueue[0]?.id === leadId
+      clearPinnedCurrentLead()
       if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
         applyQueueResponse(response)
       }
@@ -1567,8 +1834,10 @@ export default function CallingDataPage() {
           (error instanceof ApiError && error.code === "HTTP_403"))
       ) {
         applyOptimisticCallStart(leadId)
-        void loadLeads()
         return
+      }
+      if (payload.action === "start") {
+        clearPinnedCurrentLead()
       }
       const message =
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Failed to update lead action."
@@ -1614,15 +1883,21 @@ export default function CallingDataPage() {
   }
 
   const startCallFromRecent = async (item: ActionLogItem) => {
+    if (pinnedCurrentLead) {
+      toast({
+        title: "Submit current lead first",
+        description: "Finish the open lead on Current Lead before calling from history.",
+        variant: "destructive",
+      })
+      return
+    }
     void copyLeadPhone(item.mobile)
 
-    // Best-effort backend sync (do not block calling flow if transition is invalid).
     if (!item.leadId || !useApi) return
     try {
       await api.dealers.updateCallingLeadAction(item.leadId, { action: "start" })
-      await loadLeads()
     } catch {
-      // Ignore transition errors here; dialer is already opened.
+      // Ignore transition errors here; number is already copied.
     }
   }
 
@@ -1639,8 +1914,8 @@ export default function CallingDataPage() {
           <h1 className="text-xl font-semibold">Calling Data</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          One lead visible at a time. Submit call result to unlock next queued lead automatically. The queue
-          refreshes in the background every 5 minutes (and when you return to this tab).
+          One lead at a time. After Start Call, submit the outcome before the next lead appears — repeated Start
+          will not skip leads. The queue refreshes in the background every 5 minutes (and when you return to this tab).
         </p>
 
         <Card>
@@ -1717,9 +1992,13 @@ export default function CallingDataPage() {
         <div className="mb-3">
           <Tabs
             value={flowTab}
-            onValueChange={(value) =>
+            onValueChange={(value) => {
               setFlowTab(value as "current_lead" | "scheduled" | "dialled" | "connected" | "not_connected")
-            }
+              setScheduledPage(1)
+              setDialledPage(1)
+              setConnectedPage(1)
+              setNotConnectedPage(1)
+            }}
           >
             <TabsList className="w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/70 to-orange-50/70 p-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
               <TabsTrigger value="current_lead" className="shrink-0 text-xs sm:text-sm">Current Lead</TabsTrigger>
@@ -1728,10 +2007,8 @@ export default function CallingDataPage() {
               <TabsTrigger value="connected" className="shrink-0 text-xs sm:text-sm">Connected</TabsTrigger>
               <TabsTrigger value="not_connected" className="shrink-0 text-xs sm:text-sm">Not Connected</TabsTrigger>
             </TabsList>
-          </Tabs>
-        </div>
 
-        {flowTab === "scheduled" ? (
+            <TabsContent value="scheduled" className="mt-3 focus-visible:outline-none">
           <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
             <CardHeader>
               <div className="flex flex-col gap-3">
@@ -1924,7 +2201,9 @@ export default function CallingDataPage() {
               )}
             </CardContent>
           </Card>
-        ) : flowTab === "dialled" ? (
+            </TabsContent>
+
+            <TabsContent value="dialled" className="mt-3 focus-visible:outline-none">
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-2">
@@ -2085,7 +2364,9 @@ export default function CallingDataPage() {
               )}
             </CardContent>
           </Card>
-        ) : flowTab === "connected" ? (
+            </TabsContent>
+
+            <TabsContent value="connected" className="mt-3 focus-visible:outline-none">
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -2236,7 +2517,9 @@ export default function CallingDataPage() {
               )}
             </CardContent>
           </Card>
-        ) : flowTab === "not_connected" ? (
+            </TabsContent>
+
+            <TabsContent value="not_connected" className="mt-3 focus-visible:outline-none">
           <Card>
             <CardHeader>
               <div className="flex flex-col gap-2">
@@ -2473,7 +2756,10 @@ export default function CallingDataPage() {
               )}
             </CardContent>
           </Card>
-        ) : !currentLead ? (
+            </TabsContent>
+
+            <TabsContent value="current_lead" className="mt-3 focus-visible:outline-none">
+        {!currentLead ? (
           <Card>
             <CardContent className="py-10 text-center text-muted-foreground">
               No calling data pending for you.
@@ -2671,7 +2957,7 @@ export default function CallingDataPage() {
                 ) : (
                   <>
                     <Textarea
-                      placeholder="Remarks"
+                      placeholder="Remarks (saved when you click Submit)"
                       value={callRemark}
                       onChange={(e) => setCallRemark(e.target.value)}
                       rows={3}
@@ -2914,9 +3200,12 @@ export default function CallingDataPage() {
             </CardContent>
           </Card>
         )}
+            </TabsContent>
+          </Tabs>
+        </div>
         </TabsContent>
 
-        <TabsContent value="scheduled">
+        <TabsContent value="scheduled" className="hidden">
         <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
           <CardHeader>
             <div className="flex flex-col gap-3">
