@@ -2373,11 +2373,66 @@ Other dealers’ clients will hide the row from their **current** queue.
 
 ## E) `PATCH /api/dealers/me/calling-queue/{leadId}/action`
 
-Continue returning an updated queue snapshot or enough data for the next `GET` so the UI can refetch and show the next lead.
+### Remark fields (persist on submit)
+
+When `action` is a **completion** action (`called`, `follow_up`, `not_interested`, `rescheduled`), accept and persist:
+
+| Field | Alias | Notes |
+|-------|-------|--------|
+| `callRemark` | `call_remark` | Combined: `[statusCategory] statusText \| free text` |
+| `statusCategory` | `status_category` | `call_connectivity`, `lead_validity`, `customer_intent`, `financial`, `competition`, `schedule`, `other` |
+| `statusText` | `status_text` | e.g. `Call Unanswered` |
+| `remark` | — | Free text only |
+
+Parse tagged format with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`. Echo `callRemark` / structured fields on lead rows and history items.
+
+### `start` vs completion (queue advancement)
+
+| `action` | Server behavior |
+|----------|-----------------|
+| `start` | Set assignee + `in_progress`. **Do not** return `nextLead` or advance queue head. Return updated **same** lead. |
+| `called` / `follow_up` / `not_interested` / `rescheduled` | Persist remark fields + timestamps; **then** return `nextLead` / updated queue snapshot. |
+
+On **`LEAD_004`** (lead not assigned): allow `start` to set `assigned_dealer_id` to JWT dealer (claim on start). Frontend retries assign + optimistic `in_progress`.
+
+### Optional: customer note on lead
+
+`PATCH /api/dealers/me/calling-queue/{leadId}` with `{ "customerNote": "..." }` / `customer_note`. Echo on GET queue responses.
+
+### Customer create from quotation prefill
+
+`POST /api/customers` — accept optional `notes` and `remarks` (same string when prefilled from Calling Data).
 
 ---
 
-## F) Regression check for backend QA
+## H) Tab-specific queue arrays (Scheduled / Dialled / Connected / Not Connected)
+
+`GET /api/dealers/me/calling-queue/next` and `/current` must return **separate** lists (frontend keys in `applyQueueResponse`):
+
+| Response key | UI tab | Rule |
+|--------------|--------|------|
+| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | Scheduled | `nextFollowUpAt` in the future |
+| `dialledActions` | Dialled | Completed actions **without** an upcoming future follow-up |
+| `connectedActions` | Connected | Dialled subset where outcome is “connected” (not in not-connected reason list) |
+| `notConnectedActions` | Not Connected | Dialled subset for unanswered / unreachable / switched off, etc. |
+| `recentActions` / `actionHistory` | Analytics | Union or superset |
+
+Each history item: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `callRemark`, `nextFollowUpAt`, `customerNote`, address fields as available.
+
+**Do not** duplicate future scheduled follow-ups only under `dialledActions`.
+
+---
+
+## I) Regression check for backend QA (remarks & tabs)
+
+1. Submit with remarks → `callRemark` visible in admin/HR calling history and dealer GET.
+2. Scheduled tab ≠ Dialled tab data (no shared-only `recentActions` without buckets).
+3. Double **Start** on same lead → same lead until Submit; no skip via `nextLead` on start.
+4. Create Quotation from calling → `POST /customers` stores `notes`/`remarks`.
+
+---
+
+## F) Regression check for backend QA (assignee)
 
 1. Create a **pool** lead with **`dealerId` = HR/uploader** but **no** `assigned_dealer_id`.
 2. Dealer login → **Current Lead** should still show the lead (after this frontend change).
@@ -3262,14 +3317,17 @@ For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** 
 
 ---
 
-## Y) Quick handoff — HR lead counts & quotation PDF flags (May 2026)
+## Y) Quick handoff — HR lead counts, calling remarks & PDF flags (May 2026)
 
 **One-page summary for backend:** see **`BACKEND_CHANGES_HANDOFF.md`**.
 
 | Priority | Topic | Section | Reference |
 |----------|--------|---------|-----------|
-| High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
+| High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8, HANDOFF §1 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
+| High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
+| High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | Medium | Persist `pdfUsePanelSizeRange`, `pdfUseInverterBrandOptions` on `products` JSON | §X | `lib/quotation-pdf-display.ts` |
+| Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
@@ -3287,5 +3345,6 @@ For questions or clarifications about these requirements, please refer to:
 - Admin metering tab (stage + MCO): `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getMeteringWorkflowStage`)
 - Quotation PDF display flags: `lib/quotation-pdf-display.ts`, `components/product-selection-form.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**
 - HR upload batch counts: `app/dashboard/hr/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`computeHrUploadLeadCounts`)
+- Calling remarks, queue tabs, start vs submit: `app/dashboard/calling-data/page.tsx`, `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_HANDOFF.md` §4**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

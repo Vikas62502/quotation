@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
 import {
@@ -24,10 +24,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { useToast } from "@/hooks/use-toast"
 import {
-  callRemarkDraftStorageKey,
-  enrichCallingActionPayload,
-  parseTaggedCallRemark,
-} from "@/lib/calling-remark-payload"
+  getCallingActiveLeadId,
+  loadCallingLeadSession,
+  saveCallingLeadSession,
+  setCallingActiveLeadId,
+} from "@/lib/calling-lead-session"
+import { enrichCallingActionPayload, parseTaggedCallRemark } from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
 import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
@@ -364,6 +366,7 @@ function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVis
 
 export default function CallingDataPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const { isAuthenticated, dealer, role } = useAuth()
   const { toast } = useToast()
   const [leads, setLeads] = useState<CallingLead[]>([])
@@ -823,13 +826,44 @@ export default function CallingDataPage() {
   // Using `leadId` can cause state collisions when multiple recent history rows exist for the same lead/customer.
   const actionRowKey = (item: ActionLogItem) => item.id
 
-  const openNewQuotationWithPrefill = (lead: CallingLead) => {
+  const openNewQuotationWithPrefill = (
+    lead: CallingLead,
+    overrides?: { callRemark?: string; customerNote?: string },
+  ) => {
+    const isActiveLead =
+      currentLead?.id === lead.id || pinnedCurrentLeadRef.current?.id === lead.id || pinnedCurrentLead?.id === lead.id
+    const customerNote =
+      overrides?.customerNote ??
+      (isActiveLead ? editableLeadDetails?.customerNote : undefined) ??
+      lead.customerNote ??
+      ""
+    const callRemarkText =
+      overrides?.callRemark ??
+      (isActiveLead ? callRemark : "") ??
+      parseTaggedCallRemark(lead.callRemark).remark ??
+      ""
+
+    saveCallingLeadSession(lead.id, {
+      callRemark: callRemarkText,
+      customerNote,
+      callConnection: isActiveLead ? callConnection : undefined,
+      connectedOutcome: isActiveLead ? connectedOutcome : undefined,
+    })
+    setCallingActiveLeadId(lead.id)
+
     const params = new URLSearchParams()
     params.set("prefillName", lead.name || "")
     params.set("prefillMobile", lead.mobile || "")
     params.set("prefillAddress", lead.address || "")
     params.set("prefillCity", lead.city || "")
     params.set("prefillState", lead.state || "")
+    params.set("prefillLeadId", lead.id)
+    params.set("returnTo", "/dashboard/calling-data")
+    if (lead.kNumber?.trim()) params.set("prefillKNumber", lead.kNumber.trim())
+    if (customerNote.trim()) params.set("prefillCustomerNote", customerNote.trim())
+    if (callRemarkText.trim()) params.set("prefillCallRemark", callRemarkText.trim())
+    const combinedRemarks = [customerNote.trim(), callRemarkText.trim()].filter(Boolean).join("\n\n")
+    if (combinedRemarks) params.set("prefillRemarks", combinedRemarks)
     router.push(`/dashboard/new-quotation?${params.toString()}`)
   }
 
@@ -1544,6 +1578,9 @@ export default function CallingDataPage() {
     if (!hasLeadChanged) return
 
     previousCurrentLeadIdRef.current = currentLead.id
+    const session = loadCallingLeadSession(currentLead.id)
+    const parsedLeadRemark = parseTaggedCallRemark(currentLead.callRemark).remark
+
     setEditableLeadDetails({
       name: currentLead.name || "",
       mobile: currentLead.mobile || "",
@@ -1551,43 +1588,88 @@ export default function CallingDataPage() {
       city: currentLead.city || "",
       state: currentLead.state || "",
       address: currentLead.address || "",
-      customerNote: currentLead.customerNote || "",
+      customerNote: session?.customerNote ?? currentLead.customerNote ?? "",
     })
     setIsEditingLead(false)
-    setCallConnection("")
-    setConnectedOutcome("")
+    if (session?.callConnection === "connected" || session?.callConnection === "not_connected") {
+      setCallConnection(session.callConnection)
+    } else {
+      setCallConnection("")
+    }
+    if (
+      session?.connectedOutcome === "interested" ||
+      session?.connectedOutcome === "not_interested" ||
+      session?.connectedOutcome === "decision_pending"
+    ) {
+      setConnectedOutcome(session.connectedOutcome)
+    } else {
+      setConnectedOutcome("")
+    }
     setNotConnectedReason(NOT_CONNECTED_REASONS[0])
     setLostReason(LOST_REASONS[0])
     setDecisionReason(DECISION_PENDING_REASONS[0])
     setDecisionOverride("pending")
     setDealClosed(false)
-    setCallRemark("")
+    setCallRemark(session?.callRemark ?? parsedLeadRemark ?? "")
     setRescheduleAt("")
+    setCallingActiveLeadId(currentLead.id)
   }, [currentLead])
 
   useEffect(() => {
-    const activeId = pinnedCurrentLead?.id
-    if (!activeId) return
-    try {
-      const draft = sessionStorage.getItem(callRemarkDraftStorageKey(activeId))
-      if (draft) setCallRemark(draft)
-    } catch {
-      // ignore storage errors
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinnedCurrentLead?.id])
+    const leadId = pinnedCurrentLead?.id || currentLead?.id
+    if (!leadId) return
+    saveCallingLeadSession(leadId, {
+      callRemark,
+      customerNote: editableLeadDetails?.customerNote ?? currentLead?.customerNote,
+      callConnection,
+      connectedOutcome,
+    })
+    setCallingActiveLeadId(leadId)
+  }, [
+    callRemark,
+    editableLeadDetails?.customerNote,
+    callConnection,
+    connectedOutcome,
+    pinnedCurrentLead?.id,
+    currentLead?.id,
+  ])
 
   useEffect(() => {
-    const activeId = pinnedCurrentLead?.id
-    if (!activeId) return
-    try {
-      const key = callRemarkDraftStorageKey(activeId)
-      if (callRemark.trim()) sessionStorage.setItem(key, callRemark)
-      else sessionStorage.removeItem(key)
-    } catch {
-      // ignore storage errors
+    const leadIdFromUrl = searchParams.get("leadId")?.trim()
+    const leadId = leadIdFromUrl || getCallingActiveLeadId()
+    if (!leadId) return
+
+    const session = loadCallingLeadSession(leadId)
+    if (!session) return
+
+    if (session.callRemark) setCallRemark(session.callRemark)
+    if (session.callConnection === "connected" || session.callConnection === "not_connected") {
+      setCallConnection(session.callConnection as "connected" | "not_connected")
     }
-  }, [callRemark, pinnedCurrentLead?.id])
+    if (
+      session.connectedOutcome === "interested" ||
+      session.connectedOutcome === "not_interested" ||
+      session.connectedOutcome === "decision_pending"
+    ) {
+      setConnectedOutcome(session.connectedOutcome as "interested" | "not_interested" | "decision_pending")
+    }
+    if (session.customerNote) {
+      setEditableLeadDetails((prev) => {
+        const base: EditableLeadDetails = prev || {
+          name: "",
+          mobile: "",
+          kNumber: "",
+          city: "",
+          state: "",
+          address: "",
+          customerNote: "",
+        }
+        return { ...base, customerNote: session.customerNote || "" }
+      })
+    }
+    setFlowTab("current_lead")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const applyOptimisticCallStart = (leadId: string) => {
     const dealerName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim()
@@ -1804,11 +1886,10 @@ export default function CallingDataPage() {
       }
 
       persistSubmittedCallRemark(leadId, apiPayload)
-      try {
-        sessionStorage.removeItem(callRemarkDraftStorageKey(leadId))
-      } catch {
-        // ignore storage errors
-      }
+      saveCallingLeadSession(leadId, {
+        callRemark: apiPayload.callRemark,
+        customerNote: editableLeadDetails?.customerNote ?? currentLead?.customerNote,
+      })
 
       setCallRemark("")
       setRescheduleAt("")
@@ -2181,7 +2262,16 @@ export default function CallingDataPage() {
                                     "Start Call"
                                   )}
                                 </Button>
-                                <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    openNewQuotationWithPrefill(lead, {
+                                      customerNote: scheduledRemarks[lead.id],
+                                      callRemark: scheduledRemarks[lead.id],
+                                    })
+                                  }
+                                >
                                   New Quotation
                                 </Button>
                               </div>
@@ -2928,10 +3018,10 @@ export default function CallingDataPage() {
                     variant="outline"
                     size="sm"
                     onClick={() =>
-                      openNewQuotationWithPrefill({
-                        ...currentLead,
-                        ...leadForView,
-                      })
+                      openNewQuotationWithPrefill(
+                        { ...currentLead, ...leadForView },
+                        { callRemark, customerNote: leadForView.customerNote },
+                      )
                     }
                   >
                     Create Quotation (Prefill)
@@ -3378,7 +3468,16 @@ export default function CallingDataPage() {
                                   "Start Call"
                                 )}
                               </Button>
-                              <Button size="sm" variant="outline" onClick={() => openNewQuotationWithPrefill(lead)}>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() =>
+                                  openNewQuotationWithPrefill(lead, {
+                                    customerNote: scheduledRemarks[lead.id],
+                                    callRemark: scheduledRemarks[lead.id],
+                                  })
+                                }
+                              >
                                 New Quotation
                               </Button>
                             </div>
@@ -3612,23 +3711,28 @@ export default function CallingDataPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={() =>
-                                openNewQuotationWithPrefill({
-                                  id: item.leadId || item.id,
-                                  name: item.name,
-                                  mobile: item.mobile,
-                                  altMobile: "",
-                                  kNumber: item.kNumber,
-                                  address: item.address,
-                                  customerNote: item.customerNote,
-                                  city: item.city,
-                                  state: item.state,
-                                  assignedDealerId: dealer?.id || "",
-                                  assignedDealerName: "",
-                                  createdAt: new Date().toISOString(),
-                                  status: "assigned",
-                                })
-                              }
+                              onClick={() => {
+                                const parsed = parseTaggedRemark(item.callRemark)
+                                const rowRemark = recentEditRemarks[actionRowKey(item)] ?? parsed.remark ?? ""
+                                openNewQuotationWithPrefill(
+                                  {
+                                    id: item.leadId || item.id,
+                                    name: item.name,
+                                    mobile: item.mobile,
+                                    altMobile: "",
+                                    kNumber: item.kNumber,
+                                    address: item.address,
+                                    customerNote: item.customerNote,
+                                    city: item.city,
+                                    state: item.state,
+                                    assignedDealerId: dealer?.id || "",
+                                    assignedDealerName: "",
+                                    createdAt: new Date().toISOString(),
+                                    status: "assigned",
+                                  },
+                                  { callRemark: rowRemark, customerNote: item.customerNote },
+                                )
+                              }}
                             >
                               New Quotation
                             </Button>

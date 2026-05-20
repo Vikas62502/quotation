@@ -25,10 +25,6 @@ export function buildTaggedCallRemark(
   return `[${category}] ${status}${trimmed ? ` | ${trimmed}` : ""}`
 }
 
-export function callRemarkDraftStorageKey(leadId: string) {
-  return `calling-data-remark:${leadId}`
-}
-
 export type CallingLeadActionPayload = {
   action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"
   callRemark?: string

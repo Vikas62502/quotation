@@ -16,6 +16,8 @@ export interface Customer {
     state: string
     pincode: string
   }
+  /** Free-text notes (e.g. from Calling Data remarks / customer note). */
+  remarks?: string
 }
 
 export interface ProductSelection {
@@ -333,7 +335,12 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             if (currentCustomer.email && currentCustomer.email.trim() !== "") {
               customerData.email = currentCustomer.email.trim()
             }
-            
+            if (currentCustomer.remarks?.trim()) {
+              const notes = currentCustomer.remarks.trim()
+              customerData.notes = notes
+              customerData.remarks = notes
+            }
+
             const newCustomer = await api.customers.create(customerData)
             customerId = newCustomer.id
           }

@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads), `lib/quotation-pdf-display.ts` (PDF wording).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, dealer calling queue **§E / §H**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body).
 
 ---
 
@@ -244,7 +244,148 @@ After `called` / `follow_up` / `not_interested` / `rescheduled`:
 
 ---
 
-## 4. Frontend (implemented)
+## 4. Calling remarks, queue tabs & start vs submit
+
+**Frontend:** `app/dashboard/calling-data/page.tsx`, `lib/calling-remark-payload.ts`, `lib/calling-lead-session.ts`, `app/dashboard/new-quotation/page.tsx`, `components/customer-details-form.tsx` (`remarks` on customer).
+
+Browser **sessionStorage** holds drafts until Submit; **backend must persist** on action and return data in the correct queue buckets.
+
+### 4.1 Persist call remarks on dealer action
+
+`PATCH /api/dealers/me/calling-queue/{leadId}/action`
+
+**Accept any of these in the body** (frontend sends camelCase + snake_case when remarks are submitted):
+
+| Field | Example |
+|-------|---------|
+| `callRemark` / `call_remark` | `[call_connectivity] Call Unanswered \| Customer asked callback evening` |
+| `statusCategory` / `status_category` | `call_connectivity` |
+| `statusText` / `status_text` | `Call Unanswered` |
+| `remark` | `Customer asked callback evening` (free text only) |
+
+**Tagged format** (parse with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`):
+
+```text
+[statusCategory] statusText | optional free remark
+```
+
+**Allowed `statusCategory` values:** `call_connectivity`, `lead_validity`, `customer_intent`, `financial`, `competition`, `schedule`, `other`.
+
+**Persist on the lead row (recommended columns):**
+
+- `status_category`, `status_text`, `remark` (structured)
+- `call_remark` (legacy combined string, same as frontend)
+- `action`, `action_at`, `next_follow_up_at` when applicable
+
+**On `action: "start"`:** remark fields are usually omitted — only set `status` → `in_progress` and assignee. **Do not require** `callRemark` for start.
+
+**On `action` in `called` \| `follow_up` \| `not_interested` \| `rescheduled`:** **require** valid remark payload (or at least `statusCategory` + `statusText`) so history tabs have data.
+
+**Return on GET** (lead + history items): `callRemark`, `call_remark`, and optionally denormalized `statusCategory`, `statusText`, `remark`.
+
+### 4.2 Customer note on calling lead (optional PATCH)
+
+Frontend shows **Customer Note** on Current Lead (separate from call remarks).
+
+| Method | Path | Body |
+|--------|------|------|
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}` | `{ "customerNote": "..." }` or `customer_note` |
+
+Echo on lead object: `customerNote` / `customer_note` in `GET /next`, `GET /current`, and queue lists.
+
+If not implemented, frontend keeps note in **sessionStorage only** until quotation prefill — **persist is strongly preferred**.
+
+### 4.3 Quotation prefill — customer `notes` / `remarks`
+
+`POST /api/customers` (and `PUT` if used)
+
+Accept optional:
+
+```json
+{
+  "firstName": "Sunita",
+  "lastName": "Customer",
+  "mobile": "9660016677",
+  "address": { "street": "...", "city": "...", "state": "...", "pincode": "..." },
+  "notes": "Customer note from calling\n\nCall remark free text",
+  "remarks": "same as notes"
+}
+```
+
+Frontend sends **`remarks`** and **`notes`** with the same value when prefilled from Calling Data.
+
+### 4.4 Separate queue arrays per tab (critical)
+
+`GET /api/dealers/me/calling-queue/next` and `GET /api/dealers/me/calling-queue/current` should return **distinct lists** so Scheduled / Dialled / Connected / Not Connected tabs do not show the same rows.
+
+| Response key | Tab | Rule |
+|--------------|-----|------|
+| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | **Scheduled** | Future `nextFollowUpAt` > now, status `rescheduled` (or scheduled) |
+| `dialledActions` | **Dialled** | Completed dial attempts: actions in `called`, `follow_up`, `not_interested`, `rescheduled` **without** upcoming future follow-up |
+| `connectedActions` | **Connected** | Subset of dialled where `status_text` is **not** a not-connected reason (see frontend `NOT_CONNECTED_REASONS`) |
+| `notConnectedActions` | **Not Connected** | Subset where `status_text` is call-unanswered / switched off / not reachable / etc. |
+| `recentActions` / `actionHistory` | History / analytics | Union or superset for counts |
+
+**Do not** put future scheduled follow-ups only in `dialledActions` — they belong under **`scheduledLeads`**.
+
+Each action item should include: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `callRemark`, `nextFollowUpAt`, `kNumber`, `address`, `customerNote` (if stored).
+
+### 4.5 `start` must not skip to the next lead
+
+**Problem:** If `PATCH .../action` with `action: "start"` returns `nextLead` / replaces the current queue head, dealers skip leads when tapping Start multiple times.
+
+**Required:**
+
+| Action | Behavior |
+|--------|----------|
+| `start` | Set assignee + `in_progress`; **return the same lead** (updated). **Do not** return `nextLead` or advance queue. |
+| `called` / `follow_up` / `not_interested` / `rescheduled` | Complete workflow; **then** return `nextLead` / updated counts / next queue head. |
+
+Example **`start` response** (no next lead):
+
+```json
+{
+  "success": true,
+  "lead": { "id": "...", "status": "in_progress", "assignedDealerId": "dealer-uuid", "..." }
+}
+```
+
+Example **after Submit** (`called`):
+
+```json
+{
+  "success": true,
+  "lead": { "...completed or rescheduled..." },
+  "nextLead": { "id": "next-uuid", "..." },
+  "pendingCount": 42
+}
+```
+
+### 4.6 Reference
+
+- `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`, `parseTaggedCallRemark`, `callingActionToApiJson`
+- `lib/calling-remark-payload.ts` → `enrichCallingActionPayload()` (frontend body shape)
+
+### 4.7 QA
+
+1. Submit Current Lead with remarks → `GET` history shows `callRemark`; HR/admin calling actions list shows same text.
+2. **Scheduled** tab: only future follow-ups; **Dialled** tab: past actions without duplicating scheduled rows.
+3. Double **Start** on same lead → still same lead until Submit.
+4. **Create Quotation** from calling → customer `notes` saved on `POST /customers`.
+5. Reload app → remarks visible from API (not only browser storage).
+
+### Checklist
+
+- [ ] PATCH action accepts `callRemark` + `call_remark` + structured `statusCategory` / `statusText` / `remark`
+- [ ] Persist `call_remark` and structured columns; echo on GET
+- [ ] Optional PATCH lead `customerNote`
+- [ ] `POST /customers` accepts `notes` / `remarks`
+- [ ] Queue GET returns `scheduledLeads`, `dialledActions`, `connectedActions`, `notConnectedActions` separately
+- [ ] `start` does not return `nextLead`; completion actions do
+
+---
+
+## 5. Frontend (implemented)
 
 | File | Role |
 |------|------|
@@ -252,7 +393,12 @@ After `called` / `follow_up` / `not_interested` / `rescheduled`:
 | `app/dashboard/hr/page.tsx` | Uploaded Data tab, batch modal, colored summary badges |
 | `lib/quotation-pdf-display.ts` | PDF panel range + inverter brand options |
 | `lib/calling-lead-assignee.ts` | Calling assignee match + `LEAD_004` detection |
-| `app/dashboard/calling-data/page.tsx` | `handleStartCall` — dial + assign retries + optimistic `in_progress` if `LEAD_004` |
+| `lib/calling-remark-payload.ts` | Remark payload enrichment for PATCH action |
+| `lib/calling-lead-session.ts` | Browser draft per lead (until API echoes back) |
+| `lib/phone-dialer.ts` | Copy number on Start (no `tel:` redirect on desktop) |
+| `app/dashboard/calling-data/page.tsx` | Queue tabs, pin lead until Submit, remarks + quotation prefill |
+| `app/dashboard/new-quotation/page.tsx` | Prefill `prefillRemarks`, Back to Calling Data |
+| `components/customer-details-form.tsx` | Optional `remarks` on customer step |
 
 **HR table rules (frontend):**
 
@@ -269,6 +415,8 @@ After `called` / `follow_up` / `not_interested` / `rescheduled`:
 | Doc | Section |
 |-----|---------|
 | `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.8 (calling queue, HR uploads), dealer queue (~2307), §X (PDF flags) |
-| `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` |
+| `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
+| `lib/calling-remark-payload.ts` | PATCH action body for remarks |
+| `lib/calling-lead-session.ts` | Client-side draft keys (not a backend contract) |

@@ -1,9 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useQuotation, type Customer, type ProductSelection } from "@/lib/quotation-context"
+import {
+  customerFromPrefillSearchParams,
+  getPrefillSearchParams,
+  prefillSignatureFromSearchParams,
+} from "@/lib/quotation-prefill"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
@@ -28,6 +33,20 @@ export default function NewQuotationPage() {
   const [currentStep, setCurrentStep] = useState(1)
   const appliedPrefillSignatureRef = useRef<string>("")
 
+  const prefillParams = useMemo(
+    () => getPrefillSearchParams(searchParams),
+    [searchParams],
+  )
+  const prefillCustomer = useMemo(
+    () => customerFromPrefillSearchParams(prefillParams),
+    [prefillParams],
+  )
+  const prefillSignature = useMemo(
+    () => prefillSignatureFromSearchParams(prefillParams),
+    [prefillParams],
+  )
+  const customerFormInitial = prefillCustomer ?? currentCustomer ?? undefined
+
   useEffect(() => {
     if (!isAuthenticated) {
       router.push("/login")
@@ -45,35 +64,12 @@ export default function NewQuotationPage() {
   }, [isAuthenticated, router, dealer])
 
   useEffect(() => {
-    const prefillName = searchParams.get("prefillName") || ""
-    const prefillMobile = (searchParams.get("prefillMobile") || "").replace(/\D/g, "").slice(-10)
-    const prefillAddress = searchParams.get("prefillAddress") || ""
-    const prefillCity = searchParams.get("prefillCity") || ""
-    const prefillState = searchParams.get("prefillState") || ""
-
-    if (!prefillName && !prefillMobile && !prefillAddress && !prefillCity && !prefillState) return
-    const signature = `${prefillName}|${prefillMobile}|${prefillAddress}|${prefillCity}|${prefillState}`
-    if (appliedPrefillSignatureRef.current === signature) return
-    appliedPrefillSignatureRef.current = signature
-
-    const words = prefillName.trim().split(/\s+/).filter(Boolean)
-    const firstName = words[0] || ""
-    const lastName = words.slice(1).join(" ") || "Customer"
-
-    setCurrentCustomer({
-      firstName,
-      lastName,
-      mobile: prefillMobile,
-      email: "",
-      address: {
-        street: prefillAddress,
-        city: prefillCity,
-        state: prefillState,
-        pincode: "",
-      },
-    })
+    if (!prefillCustomer || !prefillSignature) return
+    if (appliedPrefillSignatureRef.current === prefillSignature) return
+    appliedPrefillSignatureRef.current = prefillSignature
+    setCurrentCustomer(prefillCustomer)
     setCurrentStep(1)
-  }, [searchParams, setCurrentCustomer])
+  }, [prefillCustomer, prefillSignature, setCurrentCustomer])
 
   if (!isAuthenticated) return null
 
@@ -99,6 +95,21 @@ export default function NewQuotationPage() {
 
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
+          {searchParams.get("prefillLeadId") ? (
+            <div className="mb-4">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const leadId = searchParams.get("prefillLeadId")
+                  router.push(leadId ? `/dashboard/calling-data?leadId=${encodeURIComponent(leadId)}` : "/dashboard/calling-data")
+                }}
+              >
+                Back to Calling Data
+              </Button>
+            </div>
+          ) : null}
           {/* Progress Steps */}
           <div className="mb-6 sm:mb-8">
             <div className="flex items-center justify-center overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -150,7 +161,11 @@ export default function NewQuotationPage() {
 
           {/* Step Content */}
           {currentStep === 1 && (
-            <CustomerDetailsForm onSubmit={handleCustomerSubmit} initialData={currentCustomer || undefined} />
+            <CustomerDetailsForm
+              key={prefillSignature || "customer-step"}
+              onSubmit={handleCustomerSubmit}
+              initialData={customerFormInitial}
+            />
           )}
           {currentStep === 2 && (
             <ProductSelectionForm

@@ -2,10 +2,11 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import type { Customer } from "@/lib/quotation-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -31,6 +32,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
           state: "",
           pincode: "",
         },
+        remarks: "",
       }
     }
 
@@ -41,6 +43,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
       ...data,
       lastName: cleanedLastName.toLowerCase() === "na" ? "" : cleanedLastName,
       email: cleanedEmail.toLowerCase() === "na@chairbord.com" ? "" : cleanedEmail,
+      remarks: data.remarks?.trim() || "",
       address: {
         street: data.address?.street || "",
         city: data.address?.city || "",
@@ -52,6 +55,26 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
 
   const [error, setError] = useState("")
   const [formData, setFormData] = useState<Customer>(normalizeInitialCustomer(initialData))
+  const appliedInitialSignatureRef = useRef("")
+
+  const initialDataSignature = initialData
+    ? [
+        initialData.firstName,
+        initialData.lastName,
+        initialData.mobile,
+        initialData.address?.street,
+        initialData.address?.city,
+        initialData.address?.state,
+        initialData.remarks || "",
+      ].join("|")
+    : ""
+
+  useEffect(() => {
+    if (!initialDataSignature) return
+    if (appliedInitialSignatureRef.current === initialDataSignature) return
+    appliedInitialSignatureRef.current = initialDataSignature
+    setFormData(normalizeInitialCustomer(initialData))
+  }, [initialData, initialDataSignature])
 
   const updateFormData = (field: string, value: string) => {
     if (field.startsWith("address.")) {
@@ -106,6 +129,7 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
         state: formData.address.state.trim(),
         pincode: formData.address.pincode.trim(),
       },
+      remarks: formData.remarks?.trim() || undefined,
     })
   }
 
@@ -217,6 +241,17 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div>
+            <Label htmlFor="remarks">Remarks / notes (optional)</Label>
+            <Textarea
+              id="remarks"
+              value={formData.remarks || ""}
+              onChange={(e) => updateFormData("remarks", e.target.value)}
+              placeholder="Calling notes, customer preferences, etc."
+              rows={3}
+            />
           </div>
 
           <div className="flex justify-end">
