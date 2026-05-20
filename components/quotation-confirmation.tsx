@@ -521,6 +521,13 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
               })
             }
             errorMessage += "\nThis error should not occur. Please contact support if you see this message."
+          } else if (errorCode === "SYS_001" || errorMessage === "Internal server error") {
+            errorMessage =
+              "The server failed while saving the quotation (internal error).\n\n" +
+              "Common causes:\n" +
+              "• Product catalog mismatch (panel/inverter size not in backend catalog)\n" +
+              "• Server database or deployment issue\n\n" +
+              "Please try again. If it persists, contact support with the browser console logs (F12 → Console)."
           } else if (errorDetails && Array.isArray(errorDetails) && errorDetails.length > 0) {
             // Generic ApiError with details
             errorMessage = `${error.message}\n\nDetails:\n${errorDetails.map((d: any) => `- ${d.field || "unknown field"}: ${d.message}`).join("\n")}`

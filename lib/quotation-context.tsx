@@ -4,6 +4,13 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from "
 import { api, ApiError } from "./api"
 import { useAuth } from "./auth-context"
 import { calculateSystemSize, determinePhase } from "./pricing-tables"
+import {
+  buildCustomerCreatePayload,
+  buildCustomerCreatePayloadWithNotes,
+  extractPdfDisplayFlags,
+  normalizeCustomersListResponse,
+  stripPdfDisplayFlags,
+} from "./quotation-api-payload"
 
 export interface Customer {
   firstName: string
@@ -315,34 +322,40 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         try {
           // Try to find existing customer by mobile
           const customersResponse = await api.customers.getAll({ search: currentCustomer.mobile })
-          const existingCustomer = customersResponse.customers?.find(
-            (c: any) => c.mobile === currentCustomer.mobile
+          const customersList = normalizeCustomersListResponse(customersResponse)
+          const existingCustomer = customersList.find(
+            (c) => c.mobile === currentCustomer.mobile,
           )
-          
+
           if (existingCustomer) {
             customerId = existingCustomer.id
           } else {
-            // Create new customer
-            // Prepare customer data - ensure email is only sent if it exists and is valid
-            const customerData: any = {
-              firstName: currentCustomer.firstName,
-              lastName: currentCustomer.lastName,
-              mobile: currentCustomer.mobile,
-              address: currentCustomer.address,
-            }
-            
-            // Only include email if it's provided and valid
-            if (currentCustomer.email && currentCustomer.email.trim() !== "") {
-              customerData.email = currentCustomer.email.trim()
-            }
-            if (currentCustomer.remarks?.trim()) {
-              const notes = currentCustomer.remarks.trim()
-              customerData.notes = notes
-              customerData.remarks = notes
+            const createCustomer = async (payload: Record<string, unknown>) => {
+              const created = (await api.customers.create(payload)) as Record<string, unknown>
+              const id =
+                (typeof created?.id === "string" && created.id) ||
+                (typeof (created?.customer as Record<string, unknown>)?.id === "string" &&
+                  (created.customer as Record<string, unknown>).id) ||
+                ""
+              if (!id) throw new Error("Customer created but no id was returned from the API")
+              return id
             }
 
-            const newCustomer = await api.customers.create(customerData)
-            customerId = newCustomer.id
+            try {
+              customerId = await createCustomer(buildCustomerCreatePayloadWithNotes(currentCustomer))
+            } catch (notesErr) {
+              const shouldRetryWithoutNotes =
+                currentCustomer.remarks?.trim() &&
+                (notesErr instanceof ApiError
+                  ? notesErr.code === "SYS_001" || notesErr.code.startsWith("HTTP_5")
+                  : true)
+              if (!shouldRetryWithoutNotes) throw notesErr
+              console.warn(
+                "[saveQuotation] Customer create with notes failed; retrying without notes/remarks",
+                notesErr,
+              )
+              customerId = await createCustomer(buildCustomerCreatePayload(currentCustomer))
+            }
           }
         } catch (err: any) {
           console.error("Error creating customer:", err)
@@ -499,40 +512,36 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         if (currentProducts.hybridInverter) {
           cleanedProducts.hybridInverter = currentProducts.hybridInverter
         }
-        if (currentProducts.pdfUsePanelSizeRange) {
-          cleanedProducts.pdfUsePanelSizeRange = true
-        }
-        if (currentProducts.pdfUseInverterBrandOptions) {
-          cleanedProducts.pdfUseInverterBrandOptions = true
-        }
+        const pdfDisplayFlags = extractPdfDisplayFlags(currentProducts)
+        const productsForApi = stripPdfDisplayFlags(cleanedProducts)
 
         // Validate required fields based on system type
-        if (cleanedProducts.systemType === "both") {
-          if (!cleanedProducts.dcrPanelBrand || !cleanedProducts.dcrPanelSize || !cleanedProducts.dcrPanelQuantity) {
+        if (productsForApi.systemType === "both") {
+          if (!productsForApi.dcrPanelBrand || !productsForApi.dcrPanelSize || !productsForApi.dcrPanelQuantity) {
             throw new Error("DCR panel information is required for BOTH system type")
           }
-          if (!cleanedProducts.nonDcrPanelBrand || !cleanedProducts.nonDcrPanelSize || !cleanedProducts.nonDcrPanelQuantity) {
+          if (!productsForApi.nonDcrPanelBrand || !productsForApi.nonDcrPanelSize || !productsForApi.nonDcrPanelQuantity) {
             throw new Error("Non-DCR panel information is required for BOTH system type")
           }
-        } else if (cleanedProducts.systemType !== "customize") {
-          if (!cleanedProducts.panelBrand || !cleanedProducts.panelSize || !cleanedProducts.panelQuantity) {
+        } else if (productsForApi.systemType !== "customize") {
+          if (!productsForApi.panelBrand || !productsForApi.panelSize || !productsForApi.panelQuantity) {
             throw new Error("Panel information is required")
           }
         }
 
-        if (!cleanedProducts.inverterBrand || !cleanedProducts.inverterSize) {
+        if (!productsForApi.inverterBrand || !productsForApi.inverterSize) {
           throw new Error("Inverter information is required")
         }
-        if (!cleanedProducts.structureType || !cleanedProducts.structureSize) {
+        if (!productsForApi.structureType || !productsForApi.structureSize) {
           throw new Error("Structure information is required")
         }
-        if (!cleanedProducts.meterBrand) {
+        if (!productsForApi.meterBrand) {
           throw new Error("Meter brand is required")
         }
-        if (!cleanedProducts.acCableBrand || !cleanedProducts.acCableSize || !cleanedProducts.dcCableBrand || !cleanedProducts.dcCableSize) {
+        if (!productsForApi.acCableBrand || !productsForApi.acCableSize || !productsForApi.dcCableBrand || !productsForApi.dcCableSize) {
           throw new Error("Cable information is required")
         }
-        if (!cleanedProducts.acdb || !cleanedProducts.dcdb) {
+        if (!productsForApi.acdb || !productsForApi.dcdb) {
           throw new Error("ACDB and DCDB are required")
         }
 
@@ -688,8 +697,22 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         })
         console.log("[saveQuotation] ===========================================")
 
-        const quotation = await api.quotations.create(quotationData)
-        
+        let quotation = await api.quotations.create(quotationData)
+
+        if (
+          quotation?.id &&
+          (pdfDisplayFlags.pdfUsePanelSizeRange || pdfDisplayFlags.pdfUseInverterBrandOptions)
+        ) {
+          try {
+            await api.quotations.updateProducts(quotation.id, {
+              ...productsForApi,
+              ...pdfDisplayFlags,
+            })
+          } catch (patchErr) {
+            console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
+          }
+        }
+
         // Reload quotations
         await loadQuotations()
         
