@@ -31,6 +31,7 @@ import {
 } from "@/lib/calling-lead-session"
 import { enrichCallingActionPayload, parseTaggedCallRemark } from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
+import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
 type CallingLead = {
@@ -455,6 +456,14 @@ export default function CallingDataPage() {
     pinnedCurrentLeadRef.current = pinnedCurrentLead
   }, [pinnedCurrentLead])
 
+  useEffect(() => {
+    if (analyticsRange !== "custom") return
+    if (analyticsFromDate || analyticsToDate) return
+    const t = formatYmdLocal(new Date())
+    setAnalyticsFromDate(t)
+    setAnalyticsToDate(t)
+  }, [analyticsRange, analyticsFromDate, analyticsToDate])
+
   const pinCurrentLeadForActiveCall = (lead: CallingLead) => {
     const pinned: CallingLead = { ...lead, status: "in_progress" }
     pinnedCurrentLeadRef.current = pinned
@@ -775,11 +784,17 @@ export default function CallingDataPage() {
       const y = now.getFullYear() - 1
       return { start: getDayStart(new Date(y, 0, 1)), end: getDayEnd(new Date(y, 11, 31)) }
     }
-    if (!analyticsFromDate || !analyticsToDate) return null
-    const start = getDayStart(new Date(analyticsFromDate))
-    const end = getDayEnd(new Date(analyticsToDate))
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null
-    return { start, end }
+    if (analyticsRange === "custom") {
+      if (!analyticsFromDate || !analyticsToDate) {
+        return { start: getDayStart(now), end: getDayEnd(now) }
+      }
+      const start = getDayStart(new Date(analyticsFromDate))
+      const end = getDayEnd(new Date(analyticsToDate))
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+        return { start: getDayStart(now), end: getDayEnd(now) }
+      }
+      return { start, end }
+    }
   }, [analyticsRange, analyticsFromDate, analyticsToDate])
 
   const rangeFilteredActionsForAnalytics = useMemo(() => {
@@ -2002,6 +2017,9 @@ export default function CallingDataPage() {
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Dealer Call Analytics</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Counts use your completed call actions in the selected period (same dealer as this login).
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2015,14 +2033,14 @@ export default function CallingDataPage() {
                   <SelectValue placeholder="Select range" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="today">Daily (today)</SelectItem>
                   <SelectItem value="yesterday">Yesterday</SelectItem>
-                  <SelectItem value="this_week">This Week</SelectItem>
-                  <SelectItem value="last_week">Last Week</SelectItem>
-                  <SelectItem value="this_month">This Month</SelectItem>
-                  <SelectItem value="last_month">Last Month</SelectItem>
-                  <SelectItem value="last_year">Last Year</SelectItem>
-                  <SelectItem value="custom">Custom Date Range</SelectItem>
+                  <SelectItem value="this_week">Weekly (this week)</SelectItem>
+                  <SelectItem value="last_week">Last week</SelectItem>
+                  <SelectItem value="this_month">Monthly (this month)</SelectItem>
+                  <SelectItem value="last_month">Last month</SelectItem>
+                  <SelectItem value="last_year">Last year</SelectItem>
+                  <SelectItem value="custom">Custom date range</SelectItem>
                 </SelectContent>
               </Select>
               {analyticsRange === "custom" ? (

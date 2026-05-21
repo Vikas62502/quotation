@@ -245,8 +245,8 @@ export default function BaldevDashboardPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              logout()
+            onClick={async () => {
+              await logout()
               router.push("/")
             }}
             className="gap-2"

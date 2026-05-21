@@ -7,7 +7,7 @@ import { api, ApiError } from "@/lib/api"
 import { getRealtime } from "@/lib/realtime"
 import { SolarLogo } from "@/components/solar-logo"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
@@ -16,6 +16,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import {
+  buildCallingActionsQueryDates,
+  formatYmdLocal,
+  getCustomBoundsFromYmd,
+  getPresetBounds,
+} from "@/lib/calling-report-date-range"
 import {
   HR_UPLOAD_COUNT_LEGEND,
   getHrLeadRowDisplay,
@@ -214,39 +220,6 @@ const normalizeName = (value?: string) =>
     .toLowerCase()
     .replace(/\s+/g, " ")
 
-const getDateRangeParams = (range: "daily" | "weekly" | "monthly" | "last_month" | "all") => {
-  if (range === "all") return {}
-  const now = new Date()
-  const toIsoStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).toISOString()
-  const toIsoEnd = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).toISOString()
-
-  if (range === "daily") {
-    return { startDate: toIsoStart(now), endDate: toIsoEnd(now) }
-  }
-
-  if (range === "weekly") {
-    const start = new Date(now)
-    const day = start.getDay()
-    const diff = day === 0 ? 6 : day - 1
-    start.setDate(start.getDate() - diff)
-    const end = new Date(start)
-    end.setDate(start.getDate() + 6)
-    return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
-  }
-
-  if (range === "monthly") {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1)
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
-  }
-
-  const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
-  const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
-  const start = new Date(prevYear, prevMonth, 1)
-  const end = new Date(prevYear, prevMonth + 1, 0)
-  return { startDate: toIsoStart(start), endDate: toIsoEnd(end) }
-}
-
 export default function HrDashboardPage() {
   const router = useRouter()
   const { isAuthenticated, role, logout } = useAuth()
@@ -271,7 +244,11 @@ export default function HrDashboardPage() {
   const [activeBatchTotalRows, setActiveBatchTotalRows] = useState(0)
   const [isLoadingBatchRows, setIsLoadingBatchRows] = useState(false)
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
-  const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
+  const [callingRange, setCallingRange] = useState<
+    "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
+  >("daily")
+  const [callingCustomFromDate, setCallingCustomFromDate] = useState("")
+  const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingDealerFilter, setCallingDealerFilter] = useState("all")
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -549,6 +526,14 @@ export default function HrDashboardPage() {
   }, [dealers, useApi, realtimeTick])
 
   useEffect(() => {
+    if (callingRange !== "custom") return
+    if (callingCustomFromDate || callingCustomToDate) return
+    const t = formatYmdLocal(new Date())
+    setCallingCustomFromDate(t)
+    setCallingCustomToDate(t)
+  }, [callingRange, callingCustomFromDate, callingCustomToDate])
+
+  useEffect(() => {
     const loadCallingActions = async () => {
       const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
       const normalizedLocal = Array.isArray(localCallingActions)
@@ -570,7 +555,7 @@ export default function HrDashboardPage() {
         const dealerIdParam = !callingDealerFilter || callingDealerFilter === "all" || callingDealerFilter.startsWith("name:")
           ? undefined
           : callingDealerFilter
-        const dateRangeParams = getDateRangeParams(callingRange)
+        const dateRangeParams = buildCallingActionsQueryDates(callingRange, callingCustomFromDate, callingCustomToDate)
         const response = await api.hr.callingActions.getAll({
           limit: 2000,
           range: callingRange,
@@ -608,7 +593,7 @@ export default function HrDashboardPage() {
       }
     }
     loadCallingActions()
-  }, [dealers, useApi, realtimeTick, callingRange, callingDealerFilter])
+  }, [dealers, useApi, realtimeTick, callingRange, callingDealerFilter, callingCustomFromDate, callingCustomToDate])
 
   useEffect(() => {
     const socket = getRealtime()
@@ -913,44 +898,15 @@ export default function HrDashboardPage() {
   const activeBatchTotalPages = Math.max(1, Math.ceil(activeBatchTotalRows / activeBatchLimit))
 
   const getCallingRangeBounds = () => {
-    const now = new Date()
     if (callingRange === "all") return null
-    if (callingRange === "daily") {
-      const start = new Date(now)
-      start.setHours(0, 0, 0, 0)
-      const end = new Date(now)
-      end.setHours(23, 59, 59, 999)
-      return { start, end }
-    }
-    if (callingRange === "weekly") {
-      const startOfWeek = new Date(now)
-      const day = startOfWeek.getDay()
-      const diff = day === 0 ? 6 : day - 1
-      startOfWeek.setDate(now.getDate() - diff)
-      startOfWeek.setHours(0, 0, 0, 0)
-      const endOfWeek = new Date(startOfWeek)
-      endOfWeek.setDate(startOfWeek.getDate() + 6)
-      endOfWeek.setHours(23, 59, 59, 999)
-      return { start: startOfWeek, end: endOfWeek }
-    }
-    if (callingRange === "monthly") {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
-      return { start, end }
-    }
-    if (callingRange === "last_month") {
-      const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
-      const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
-      const start = new Date(prevYear, prevMonth, 1, 0, 0, 0, 0)
-      const end = new Date(prevYear, prevMonth + 1, 0, 23, 59, 59, 999)
-      return { start, end }
-    }
-    return null
+    if (callingRange === "custom") return getCustomBoundsFromYmd(callingCustomFromDate, callingCustomToDate)
+    return getPresetBounds(callingRange)
   }
 
   const isWithinCallingRange = (actionAt?: string) => {
+    if (callingRange === "all") return true
     const bounds = getCallingRangeBounds()
-    if (!bounds) return true
+    if (!bounds) return false
     if (!actionAt) return false
     const actionDate = parseActionDate(actionAt)
     if (!actionDate) return false
@@ -969,7 +925,7 @@ export default function HrDashboardPage() {
         (isNameFilter && normalizedItemDealerName === normalizedNameFilter)
       return matchesDealer && isWithinCallingRange(item.actionAt)
     })
-  }, [callingActions, callingDealerFilter, callingRange])
+  }, [callingActions, callingDealerFilter, callingRange, callingCustomFromDate, callingCustomToDate])
 
   const dealerFilterOptions = useMemo(() => {
     const byValue = new Map<string, { value: string; label: string }>()
@@ -1029,8 +985,8 @@ export default function HrDashboardPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              logout()
+            onClick={async () => {
+              await logout()
               router.push("/")
             }}
             className="gap-2"
@@ -1195,10 +1151,18 @@ export default function HrDashboardPage() {
             <Card className="border-border/60">
               <CardHeader>
                 <CardTitle className="text-base">Dealer Calling Actions</CardTitle>
+                <CardDescription>
+                  Use the dealer dropdown to see one salesperson&apos;s actions. Date filters apply to action time.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
-                  <Select value={callingRange} onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "all") => setCallingRange(value)}>
+                  <Select
+                    value={callingRange}
+                    onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
+                      setCallingRange(value)
+                    }
+                  >
                     <SelectTrigger className="bg-background">
                       <SelectValue placeholder="Select report range" />
                     </SelectTrigger>
@@ -1207,6 +1171,7 @@ export default function HrDashboardPage() {
                       <SelectItem value="weekly">Weekly</SelectItem>
                       <SelectItem value="monthly">Monthly</SelectItem>
                       <SelectItem value="last_month">Last Month</SelectItem>
+                      <SelectItem value="custom">Custom date range</SelectItem>
                       <SelectItem value="all">All Time</SelectItem>
                     </SelectContent>
                   </Select>
@@ -1224,6 +1189,28 @@ export default function HrDashboardPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {callingRange === "custom" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">From</p>
+                      <Input
+                        type="date"
+                        className="bg-background"
+                        value={callingCustomFromDate}
+                        onChange={(e) => setCallingCustomFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium text-muted-foreground">To</p>
+                      <Input
+                        type="date"
+                        className="bg-background"
+                        value={callingCustomToDate}
+                        onChange={(e) => setCallingCustomToDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <Card className="border-emerald-200 bg-emerald-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Interested</p><p className="text-xl font-semibold">{callingSummary.interested}</p></CardContent></Card>

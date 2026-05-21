@@ -1339,9 +1339,8 @@ export default function AccountManagementPage() {
     }
   }
 
-  const handleLogout = () => {
-    // Direct logout without confirmation for better UX
-    logout()
+  const handleLogout = async () => {
+    await logout()
     toast({
       title: "Logged Out",
       description: "You have been successfully logged out",

@@ -52,6 +52,7 @@ import { InstallationCompletionPanel, type InstallationUploadedFile } from "@/co
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
+import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
@@ -480,7 +481,11 @@ export default function AdminPanelPage() {
   const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
-  const [callingRange, setCallingRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "all">("daily")
+  const [callingRange, setCallingRange] = useState<
+    "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
+  >("daily")
+  const [callingCustomFromDate, setCallingCustomFromDate] = useState("")
+  const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null)
@@ -1747,35 +1752,26 @@ export default function AdminPanelPage() {
     })
   }
 
+  useEffect(() => {
+    if (callingRange !== "custom") return
+    if (callingCustomFromDate || callingCustomToDate) return
+    const t = formatYmdLocal(new Date())
+    setCallingCustomFromDate(t)
+    setCallingCustomToDate(t)
+  }, [callingRange, callingCustomFromDate, callingCustomToDate])
+
   const isWithinCallingRange = (actionAt?: string) => {
     if (callingRange === "all") return true
     if (!actionAt) return false
     const actionDate = new Date(actionAt)
     if (Number.isNaN(actionDate.getTime())) return false
-    const now = new Date()
-
-    if (callingRange === "daily") {
-      return actionDate.toDateString() === now.toDateString()
+    if (callingRange === "custom") {
+      const b = getCustomBoundsFromYmd(callingCustomFromDate, callingCustomToDate)
+      if (!b) return false
+      return actionDate >= b.start && actionDate <= b.end
     }
-
-    if (callingRange === "weekly") {
-      const startOfWeek = new Date(now)
-      startOfWeek.setDate(now.getDate() - now.getDay())
-      startOfWeek.setHours(0, 0, 0, 0)
-      return actionDate >= startOfWeek && actionDate <= now
-    }
-
-    if (callingRange === "monthly") {
-      return actionDate.getMonth() === now.getMonth() && actionDate.getFullYear() === now.getFullYear()
-    }
-
-    if (callingRange === "last_month") {
-      const prevMonth = now.getMonth() === 0 ? 11 : now.getMonth() - 1
-      const prevYear = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear()
-      return actionDate.getMonth() === prevMonth && actionDate.getFullYear() === prevYear
-    }
-
-    return true
+    const b = getPresetBounds(callingRange)
+    return actionDate >= b.start && actionDate <= b.end
   }
 
   const filteredCallingActions = callingActions.filter((item) => {
@@ -3471,12 +3467,18 @@ export default function AdminPanelPage() {
               <CardHeader>
                 <CardTitle>Employee Calling Actions</CardTitle>
                 <CardDescription>
-                  Track which sales employee performed each action with daily, weekly, monthly, and last-month filters.
+                  Track actions by employee (dealer) and date: daily, weekly, monthly, last month, custom range, or all
+                  time. Custom range uses each action&apos;s timestamp.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Select value={callingRange} onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "all") => setCallingRange(value)}>
+                  <Select
+                    value={callingRange}
+                    onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
+                      setCallingRange(value)
+                    }
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select report range" />
                     </SelectTrigger>
@@ -3485,6 +3487,7 @@ export default function AdminPanelPage() {
                       <SelectItem value="weekly">Weekly</SelectItem>
                       <SelectItem value="monthly">Monthly</SelectItem>
                       <SelectItem value="last_month">Last Month</SelectItem>
+                      <SelectItem value="custom">Custom date range</SelectItem>
                       <SelectItem value="all">All Time</SelectItem>
                     </SelectContent>
                   </Select>
@@ -3503,6 +3506,26 @@ export default function AdminPanelPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {callingRange === "custom" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        value={callingCustomFromDate}
+                        onChange={(e) => setCallingCustomFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        value={callingCustomToDate}
+                        onChange={(e) => setCallingCustomToDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <Card className="border-border/60">

@@ -861,8 +861,8 @@ export default function MeteringDashboardPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => {
-              logout()
+            onClick={async () => {
+              await logout()
               router.push("/")
             }}
             className="gap-2"

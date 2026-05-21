@@ -210,56 +210,72 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
     // Handle API errors (success: false in response body)
     // Check this FIRST, even if response.ok is false, because API returns error structure in body
     if (!data.success || !response.ok) {
-      console.error('[API] ===== API ERROR DETECTED =====')
       const errorMessage = data.error?.message || `HTTP ${response.status}: ${response.statusText}` || "An error occurred"
       const errorCode = data.error?.code || (response.status === 401 ? "AUTH_001" : `HTTP_${response.status}`) || "API_ERROR"
       const errorDetails = data.error?.details || undefined
-      
-      // Log for debugging
-      console.error('[API] API Error Response:', {
-        status: response.status,
-        statusText: response.statusText,
-        message: errorMessage,
-        code: errorCode,
-        details: errorDetails,
-        fullData: data
-      })
-      
+      const isUnauthorized =
+        response.status === 401 ||
+        errorCode === "AUTH_001" ||
+        errorCode === "AUTH_003" ||
+        errorCode === "HTTP_401"
+
+      // Expected after logout / expired session — avoid scary console noise during normal sign-out.
+      if (isUnauthorized) {
+        console.debug("[API] Unauthorized", { endpoint, method, errorMessage, errorCode })
+      } else {
+        console.error("[API] ===== API ERROR DETECTED =====")
+        // Log for debugging
+        console.error("[API] API Error Response:", {
+          status: response.status,
+          statusText: response.statusText,
+          message: errorMessage,
+          code: errorCode,
+          details: errorDetails,
+          fullData: data,
+        })
+      }
+
       // Special handling for "User not authenticated" errors
-      if (errorMessage?.toLowerCase().includes("not authenticated") || 
-          errorMessage?.toLowerCase().includes("user not authenticated") ||
-          errorCode === "AUTH_001" || 
-          errorCode === "AUTH_003") {
-        console.error('[API] Authentication error detected - clearing tokens and redirecting')
+      if (
+        errorMessage?.toLowerCase().includes("not authenticated") ||
+        errorMessage?.toLowerCase().includes("user not authenticated") ||
+        errorCode === "AUTH_001" ||
+        errorCode === "AUTH_003"
+      ) {
+        if (!isUnauthorized) {
+          console.error("[API] Authentication error detected - clearing tokens and redirecting")
+        }
         clearAuthTokens()
         if (typeof window !== "undefined") {
           // Don't redirect immediately - let the calling code handle it
           // This allows for better error messages
         }
       }
-      
-      // Special logging for quotation creation errors
-      if (endpoint.includes('/quotations') && method === 'POST') {
-        console.error('[API] QUOTATION CREATION ERROR DETAILS:')
+
+      // Special logging for quotation creation errors (skip noise for auth failures)
+      if (!isUnauthorized && endpoint.includes("/quotations") && method === "POST") {
+        console.error("[API] QUOTATION CREATION ERROR DETAILS:")
         if (errorDetails && Array.isArray(errorDetails)) {
           errorDetails.forEach((detail: any, index: number) => {
             console.error(`[API]   Error Detail ${index + 1}:`, {
               field: detail.field,
-              message: detail.message
+              message: detail.message,
             })
           })
         }
-        console.error('[API] Request that failed:', {
+        console.error("[API] Request that failed:", {
           endpoint,
           method,
-          bodyKeys: body && typeof body === 'object' ? Object.keys(body) : 'N/A',
-          hasSubtotal: body && typeof body === 'object' ? 'subtotal' in body : false,
-          hasTotalAmount: body && typeof body === 'object' ? 'totalAmount' in body : false,
-          hasFinalAmount: body && typeof body === 'object' ? 'finalAmount' in body : false
+          bodyKeys: body && typeof body === "object" ? Object.keys(body) : "N/A",
+          hasSubtotal: body && typeof body === "object" ? "subtotal" in body : false,
+          hasTotalAmount: body && typeof body === "object" ? "totalAmount" in body : false,
+          hasFinalAmount: body && typeof body === "object" ? "finalAmount" in body : false,
         })
       }
-      console.error('[API] =================================')
-      
+      if (!isUnauthorized) {
+        console.error("[API] =================================")
+      }
+
       throw new ApiError(errorMessage, errorCode, errorDetails)
     }
     
@@ -512,17 +528,19 @@ export const api = {
 
     logout: async () => {
       const token = getAuthToken()
+      // Clear tokens immediately so no new apiRequest attaches Authorization while navigation runs.
+      clearAuthTokens()
+      if (!token) return
       try {
         const url = `${API_BASE_URL}/auth/logout`
-        // Use direct fetch so logout never triggers global auth redirect-to-login logic.
         await fetch(url, {
           method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
         })
       } catch {
-        // Ignore errors on logout
-      } finally {
-        clearAuthTokens()
+        // Ignore network errors on logout
       }
     },
 
@@ -1821,7 +1839,7 @@ export const api = {
         dealerId?: string
         startDate?: string
         endDate?: string
-        range?: "daily" | "weekly" | "monthly" | "last_month" | "all"
+        range?: "daily" | "weekly" | "monthly" | "last_month" | "all" | "custom"
       }) => {
         const queryParams = new URLSearchParams()
         if (params) {
@@ -1916,7 +1934,7 @@ export const api = {
         dealerId?: string
         startDate?: string
         endDate?: string
-        range?: "daily" | "weekly" | "monthly" | "last_month" | "all"
+        range?: "daily" | "weekly" | "monthly" | "last_month" | "all" | "custom"
       }) => {
         const queryParams = new URLSearchParams()
         if (params) {

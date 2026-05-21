@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, dealer calling queue **§E / §H**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, dealer calling queue **§E / §H / §J**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params).
 
 ---
 
@@ -373,6 +373,31 @@ Example **after Submit** (`called`):
 3. Double **Start** on same lead → still same lead until Submit.
 4. **Create Quotation** from calling → customer `notes` saved on `POST /customers`.
 5. Reload app → remarks visible from API (not only browser storage).
+6. HR **Dealer Calling Actions**: `GET` with `dealerId` + `startDate`/`endDate` returns filtered rows; **Custom** range sends both dates (see §4.8).
+
+### 4.8 HR / Admin — GET calling-actions (date & dealer filters)
+
+**Frontend:** `lib/api.ts` (`api.hr.callingActions.getAll`, `api.admin.callingActions.getAll`), `lib/calling-report-date-range.ts`, `app/dashboard/hr/page.tsx`, `app/dashboard/admin/page.tsx`.
+
+HR refetches this list when **preset/custom range** or **dealer** changes and sends:
+
+| Query param | Purpose |
+|-------------|---------|
+| `limit` | e.g. `2000` |
+| `dealerId` | Optional — restrict to one salesperson (dealer UUID) |
+| `range` | `daily` \| `weekly` \| `monthly` \| `last_month` \| `all` \| **`custom`** |
+| `startDate`, `endDate` | ISO 8601 — inclusive window on **`action_at`** (recommended) |
+
+For **every** preset including **custom**, the SPA sends **`startDate` and `endDate`** built from `buildCallingActionsQueryDates()` so the backend can filter by timestamp alone. If you only implement date filtering, that is sufficient; **`range`** can be logged or used as a hint.
+
+**Paths to implement** (at least one per surface — see `lib/api.ts` fallback order):
+
+- HR: `GET /api/hr/calling-actions`, `GET /api/hr/calling-queue/actions`
+- Admin: `GET /api/admin/calling-actions`, `GET /api/admin/calling-queue/actions`, `GET /api/admin/leads/actions`
+
+**Response:** array under `actions` / `callingActions` / `items` / `logs` / `data`; each item needs at minimum `id`, `leadId`, `dealerId`, `dealerName`, `action`, `actionAt`, `callRemark` (and customer fields if stored).
+
+**Weekly alignment:** same as `lib/calling-report-date-range.ts` — week = **Monday 00:00** through **Sunday end of day** in the timezone you document for reporting.
 
 ### Checklist
 
@@ -382,6 +407,7 @@ Example **after Submit** (`called`):
 - [ ] `POST /customers` accepts `notes` / `remarks`
 - [ ] Queue GET returns `scheduledLeads`, `dialledActions`, `connectedActions`, `notConnectedActions` separately
 - [ ] `start` does not return `nextLead`; completion actions do
+- [ ] HR/Admin **GET calling-actions** honours `dealerId` + `startDate` / `endDate` (and optional `range=custom`)
 
 ---
 
@@ -390,7 +416,9 @@ Example **after Submit** (`called`):
 | File | Role |
 |------|------|
 | `lib/hr-upload-lead-display.ts` | Count buckets + table labels (`Unassigned`/`Pending` vs dealer name/`Completed`) |
-| `app/dashboard/hr/page.tsx` | Uploaded Data tab, batch modal, colored summary badges |
+| `app/dashboard/hr/page.tsx` | Uploaded Data tab, batch modal, **calling actions** date + dealer filters |
+| `app/dashboard/admin/page.tsx` | **Calling Reports** tab — same date presets + custom + employee filter |
+| `lib/calling-report-date-range.ts` | Preset/custom bounds + ISO params for HR calling-actions `GET` |
 | `lib/quotation-pdf-display.ts` | PDF panel range + inverter brand options |
 | `lib/calling-lead-assignee.ts` | Calling assignee match + `LEAD_004` detection |
 | `lib/calling-remark-payload.ts` | Remark payload enrichment for PATCH action |
@@ -414,9 +442,10 @@ Example **after Submit** (`called`):
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.8 (calling queue, HR uploads), dealer queue (~2307), §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.8 (calling queue, HR uploads), dealer queue (~2307), **§J** (calling-actions GET), §X (PDF flags) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
 | `lib/calling-remark-payload.ts` | PATCH action body for remarks |
+| `lib/calling-report-date-range.ts` | HR **GET** `startDate` / `endDate` + `range` semantics |
 | `lib/calling-lead-session.ts` | Client-side draft keys (not a backend contract) |

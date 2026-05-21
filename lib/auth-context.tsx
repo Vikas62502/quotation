@@ -142,7 +142,7 @@ interface AuthContextType {
   loginMetering: (username: string, password: string) => Promise<boolean>
   loginBaldev: (username: string, password: string) => Promise<boolean>
   loginHr: (username: string, password: string) => Promise<boolean>
-  logout: () => void
+  logout: () => Promise<void>
   register: (dealerData: Dealer & { password: string }) => Promise<boolean>
 }
 
@@ -572,6 +572,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
+    disconnectRealtime()
+
     if (useApi) {
       try {
         await api.auth.logout()
@@ -602,7 +604,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("authToken")
     localStorage.removeItem("refreshToken")
     localStorage.removeItem("user")
-    disconnectRealtime()
   }
 
   const loginAccountManagement = async (username: string, password: string): Promise<boolean> => {

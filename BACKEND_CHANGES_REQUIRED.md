@@ -2429,6 +2429,59 @@ Each history item: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `call
 2. Scheduled tab ≠ Dialled tab data (no shared-only `recentActions` without buckets).
 3. Double **Start** on same lead → same lead until Submit; no skip via `nextLead` on start.
 4. Create Quotation from calling → `POST /customers` stores `notes`/`remarks`.
+5. HR/Admin **GET calling-actions** with `dealerId` + `startDate`/`endDate` returns only rows in range for that dealer (see §J).
+
+---
+
+## J) HR / Admin — GET calling-actions (date range & dealer filter)
+
+**Frontend:** `app/dashboard/hr/page.tsx`, `app/dashboard/admin/page.tsx`, `lib/api.ts` → `api.hr.callingActions.getAll` / `api.admin.callingActions.getAll`, `lib/calling-report-date-range.ts` (preset + custom bounds, ISO query params).
+
+The HR panel refetches when **range**, **custom from/to dates**, or **dealer** changes. Admin currently loads a broad list once and filters in the browser; server-side filtering is still recommended for large datasets.
+
+### Endpoints (implement at least one path per role)
+
+| Role | Paths the client tries (in order) |
+|------|-------------------------------------|
+| **HR** | `GET /api/hr/calling-actions`, `GET /api/hr/calling-queue/actions` |
+| **Admin** | `GET /api/admin/calling-actions`, `GET /api/admin/calling-queue/actions`, `GET /api/admin/leads/actions` |
+
+### Query parameters
+
+| Param | Type | Notes |
+|-------|------|--------|
+| `limit` | number | e.g. `2000` — cap page size |
+| `dealerId` | UUID string, optional | When set, only actions performed by / attributed to that dealer |
+| `range` | string, optional | `daily` \| `weekly` \| `monthly` \| `last_month` \| `all` \| **`custom`** |
+| `startDate` | ISO 8601 string, optional | Inclusive lower bound on **`action_at`** (or your canonical action timestamp column) |
+| `endDate` | ISO 8601 string, optional | Inclusive upper bound on **`action_at`** |
+
+**Recommended behaviour**
+
+1. If **`startDate` and `endDate` are both present**, filter rows to `action_at >= startDate AND action_at <= endDate` (whether or not `range` is set). This is what the SPA sends for **daily / weekly / monthly / last_month / custom** after `lib/calling-report-date-range.ts` builds ISO bounds.
+2. If **`range=all`**, return all rows (subject to `limit` and RBAC), ignoring preset windows unless `startDate`/`endDate` are also sent.
+3. If **`range=custom`** without dates, you may return `400` with a clear message or return an empty list; the frontend seeds **today** for both dates when the user picks Custom, so normally both are sent.
+4. **`weekly`** (if you derive server-side from `range` only, without dates): align with frontend — **Monday 00:00:00** through **Sunday 23:59:59.999** in the org’s reporting timezone (document the TZ; UTC is acceptable if documented).
+
+### Response envelope
+
+Accept any of these shapes (frontend normalizes):
+
+- `actions[]`, `callingActions[]`, `items[]`, `logs[]`, or `data` as an array
+
+Each row should include where possible: **`id`**, **`leadId`**, **`dealerId`**, **`dealerName`**, **`action`**, **`actionAt`**, **`callRemark`**, customer name/mobile/address for display.
+
+### RBAC
+
+- **HR** JWT: only actions for leads/dealers in scope for that HR account (per your product rules).
+- **Admin** JWT: full visibility or scoped per admin role.
+
+### Checklist
+
+- [ ] `GET` supports `dealerId` filter
+- [ ] `GET` supports `startDate` + `endDate` (ISO) on action timestamp
+- [ ] `range` accepts `custom` (or ignores unknown `range` when dates are present)
+- [ ] Response includes `actionAt` and `callRemark` for each row
 
 ---
 
@@ -3326,6 +3379,7 @@ For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** 
 | High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8, HANDOFF §1 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
+| High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
 | Medium | Persist `pdfUsePanelSizeRange`, `pdfUseInverterBrandOptions` on `products` JSON | §X | `lib/quotation-pdf-display.ts` |
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 
@@ -3345,6 +3399,6 @@ For questions or clarifications about these requirements, please refer to:
 - Admin metering tab (stage + MCO): `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getMeteringWorkflowStage`)
 - Quotation PDF display flags: `lib/quotation-pdf-display.ts`, `components/product-selection-form.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**
 - HR upload batch counts: `app/dashboard/hr/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`computeHrUploadLeadCounts`)
-- Calling remarks, queue tabs, start vs submit: `app/dashboard/calling-data/page.tsx`, `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_HANDOFF.md` §4**
+- HR/Admin calling-actions list + query params: `lib/api.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J**, **`BACKEND_CHANGES_HANDOFF.md` §4.8**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`
