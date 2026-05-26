@@ -28,6 +28,7 @@ export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
 
 export const DEFAULT_PROPOSAL_SUPPORT_FORM_URL = "https://www.chairbord.com/support"
 export const DEFAULT_PROPOSAL_SUPPORT_PHONE = "+91 9785230023"
+export const DEFAULT_PROPOSAL_SUPPORT_EMAIL = "care@chairbord.com"
 
 export type ProposalOfficeLocation = {
   label: string
@@ -161,6 +162,7 @@ export type QuotationProposalDocumentData = {
   pricingRows: PricingRow[]
   paymentRows: PaymentRow[]
   warrantyRows: WarrantyRow[]
+  supportLine: string
   termsRows: TermsRow[]
 }
 
@@ -542,32 +544,13 @@ export function buildWarrantyRows(panelBrand: string): WarrantyRow[] {
   ]
 }
 
-export function buildAfterSalesSupportRows(company: ProposalCompanyInfo): WarrantyRow[] {
+export function buildAfterSalesSupportLine(company: ProposalCompanyInfo): string {
   const formUrl = company.supportFormUrl?.trim() || DEFAULT_PROPOSAL_SUPPORT_FORM_URL
   return [
-    {
-      component: "Support Number",
-      period: "—",
-      coverage: DEFAULT_PROPOSAL_SUPPORT_PHONE,
-    },
-    {
-      component: "Support Email",
-      period: "—",
-      coverage: company.email?.trim() || "—",
-    },
-    {
-      component: "Support Form",
-      period: "—",
-      coverage: formUrl,
-    },
-  ]
-}
-
-export function buildWarrantyAndSupportRows(
-  panelBrand: string,
-  company: ProposalCompanyInfo,
-): WarrantyRow[] {
-  return [...buildWarrantyRows(panelBrand), ...buildAfterSalesSupportRows(company)]
+    `Support No: ${DEFAULT_PROPOSAL_SUPPORT_PHONE}`,
+    `Support Email: ${DEFAULT_PROPOSAL_SUPPORT_EMAIL}`,
+    `Support Form: ${formUrl}`,
+  ].join("  |  ")
 }
 
 export function getProposalConsentText(companyName: string): string {
@@ -684,7 +667,8 @@ export function buildQuotationProposalDocumentData(params: {
     showPricingRateColumn: shouldShowPricingRateColumn(undefined, products),
     pricingRows: buildPricingRows(params.subtotal, systemKwLabel),
     paymentRows: buildPaymentRows(params.subtotal),
-    warrantyRows: buildWarrantyAndSupportRows(panelBrand, params.company),
+    warrantyRows: buildWarrantyRows(panelBrand),
+    supportLine: buildAfterSalesSupportLine(params.company),
     termsRows: buildTermsRows(products, panelBrand),
   }
 }

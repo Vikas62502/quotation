@@ -338,6 +338,17 @@ export const PROPOSAL_PDF_STYLES = `
   font-size: 11.5px;
   line-height: 1.45;
 }
+.proposal-pdf-page-2 .prop-support-line {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e0;
+  border-radius: 4px;
+  background: #f7fafc;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #1a365d;
+  white-space: nowrap;
+}
 .proposal-pdf-page-2 .prop-table tbody tr.prop-row-pad td {
   padding-top: 12px;
   padding-bottom: 12px;

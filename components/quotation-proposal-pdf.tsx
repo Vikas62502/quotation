@@ -47,6 +47,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
     pricingRows,
     paymentRows,
     warrantyRows,
+    supportLine,
     termsRows,
   } = data
 
@@ -268,6 +269,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
               ))}
             </tbody>
           </table>
+          <p className="prop-support-line">{supportLine}</p>
         </div>
 
         <div className="prop-p2-spacer" aria-hidden />
