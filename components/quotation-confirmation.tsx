@@ -1,22 +1,25 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { type Customer, type ProductSelection, useQuotation } from "@/lib/quotation-context"
+import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ArrowLeft, Check, FileText, Download, Edit, AlertCircle } from "lucide-react"
-import jsPDF from "jspdf"
-import html2canvas from "html2canvas"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
+import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
+import { buildQuotationProposalDocumentData } from "@/lib/quotation-proposal-document"
+import { exportProposalPagesToPdf } from "@/lib/quotation-pdf-export"
 import {
   formatPanelBrandLineForPdf,
   formatPanelSizeWithQuantityForPdf,
   getPdfInverterLine,
   getPdfPanelSpecLine,
-  readPdfDisplayFlags,
+  resolvePdfPanelRangeKey,
+  shouldHidePanelQuantityOnPdf,
 } from "@/lib/quotation-pdf-display"
 
 interface Props {
@@ -33,7 +36,8 @@ const companyInfo = {
   tagline: "Base of Innovation",
   address: "Plot No. 10, Ground Floor, Shri Shyam Vihar, Kalwar Road, Jhotwara, Jaipur, Rajasthan, India - 302012",
   phone: "+91 9251666646",
-  email: "info@chairbord.com",
+  email: "info@chairbordsolar.com",
+  supportFormUrl: "https://www.chairbord.com/support",
   website: "www.chairbord.com",
   gst: "08AAJCC8097M1ZT",
   license: "MNRE/2023/CB/001234",
@@ -69,8 +73,7 @@ import {
 // Get system price based on system type
 const getSystemPrice = (products: ProductSelection): number => {
   if (!products || !products.systemType) {
-    // If we have a stored systemPrice, use it as fallback
-    return products.systemPrice || 0
+    return products?.systemPrice || 0
   }
   
   if (products.systemType === "dcr") {
@@ -133,6 +136,7 @@ const getSystemPrice = (products: ProductSelection): number => {
 export function QuotationConfirmation({ customer, products, onBack, onEditCustomer, onEditProducts }: Props) {
   const router = useRouter()
   const { saveQuotation, clearCurrent } = useQuotation()
+  const { dealer: authDealer } = useAuth()
   const [discountAmount, setDiscountAmount] = useState(0)
   const [isGenerating, setIsGenerating] = useState(false)
   const [generated, setGenerated] = useState(false)
@@ -219,10 +223,10 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   // This is the final amount before discount
   const finalAmount = subtotal - totalSubsidy
 
-  // Calculate quotation validity (5 days from today)
+  // Calculate quotation validity (7 days from today)
   const quotationDate = new Date()
   const validityDate = new Date(quotationDate)
-  validityDate.setDate(validityDate.getDate() + 5)
+  validityDate.setDate(validityDate.getDate() + 7)
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-IN", {
@@ -549,48 +553,23 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
     }
   }
 
+  const proposalPdfData = useMemo(
+    () =>
+      buildQuotationProposalDocumentData({
+        quotationId: quotationId || `QT${Date.now().toString().slice(-6)}`,
+        customer,
+        products,
+        company: companyInfo,
+        banks: bankDetails,
+        subtotal,
+        totalAmount,
+        quotationDate,
+        validityDate,
+      }),
+    [quotationId, customer, products, authDealer, subtotal, totalAmount, quotationDate, validityDate],
+  )
+
   const generatePDF = async () => {
-    const input = document.getElementById("quotation-content")
-
-    if (!input) {
-      console.error("Quotation content element not found.")
-      return
-    }
-
-    input.classList.add("pdf-rendering-styles")
-
-    try {
-      const canvas = await html2canvas(input, {
-        useCORS: true,
-        logging: false,
-        backgroundColor: "#ffffff",
-        allowTaint: false,
-      })
-
-      const imgWidth = 210 // A4 width in mm
-      const pageHeight = 297 // A4 height in mm
-
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-      const pdf = new jsPDF("p", "mm", "a4")
-
-      let heightLeft = imgHeight
-      let position = 0
-
-      // Add first page
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, position, imgWidth, imgHeight)
-      heightLeft -= pageHeight
-
-      // Add additional pages only if there's significant content left (more than 10mm)
-      // This prevents blank pages
-      while (heightLeft > 10) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 0, position, imgWidth, imgHeight)
-        heightLeft -= pageHeight
-      }
-
-      // Generate filename for mobile/web download using customer + quotation id.
       const sanitizeSegment = (value: string) =>
         value
           .trim()
@@ -599,14 +578,13 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
           .replace(/_+/g, "_")
       const customerName = sanitizeSegment(`${customer.firstName}_${customer.lastName}`) || "Customer"
       const safeQuotationId = sanitizeSegment(quotationId) || "Quotation"
-      const filename = `Quotation_${customerName}_${safeQuotationId}.pdf`
+    const filename = `Solar_Proposal_${customerName}_${safeQuotationId}.pdf`
 
-      // Save (native Android/iOS writes file and opens share sheet)
-      await savePdfForDevice(pdf, filename)
+    try {
+      await exportProposalPagesToPdf("quotation-content", filename, savePdfForDevice)
     } catch (error) {
       console.error("Error generating PDF:", error)
-    } finally {
-      input.classList.remove("pdf-rendering-styles")
+      alert("Could not generate PDF. Please try again.")
     }
   }
 
@@ -620,32 +598,36 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
     return products.panelBrand || "N/A"
   }
 
-  const getInverterDetails = () => {
-    const { useInverterBrandOptions } = readPdfDisplayFlags(products)
-    if (useInverterBrandOptions) {
-      return getPdfInverterLine(products)
-    }
-    return `${products.inverterBrand} - ${products.inverterSize}` || "N/A"
-  }
+  const getInverterDetails = () => getPdfInverterLine(products)
 
   const getSystemSizes = () => {
-    const { usePanelSizeRange } = readPdfDisplayFlags(products)
     if (products.systemType === "both") {
+      const dcrRange = resolvePdfPanelRangeKey(products, "dcr")
+      const nonDcrRange = resolvePdfPanelRangeKey(products, "nonDcr")
       const dcrSize =
-        products.dcrPanelSize && products.dcrPanelQuantity
-          ? formatPanelSizeWithQuantityForPdf(products.dcrPanelSize, products.dcrPanelQuantity, usePanelSizeRange)
+        products.dcrPanelSize
+          ? formatPanelSizeWithQuantityForPdf(
+              products.dcrPanelSize,
+              products.dcrPanelQuantity,
+              dcrRange,
+            )
           : ""
       const nonDcrSize =
-        products.nonDcrPanelSize && products.nonDcrPanelQuantity
-          ? formatPanelSizeWithQuantityForPdf(products.nonDcrPanelSize, products.nonDcrPanelQuantity, usePanelSizeRange)
-          : ""
+        products.nonDcrPanelSize
+          ? formatPanelSizeWithQuantityForPdf(
+              products.nonDcrPanelSize,
+              products.nonDcrPanelQuantity,
+              nonDcrRange,
+            )
+        : ""
       if (dcrSize && nonDcrSize) {
         return `DCR: ${dcrSize}, Non-DCR: ${nonDcrSize}`
       }
       return dcrSize || nonDcrSize || "As per selection"
     }
+    const primaryRange = resolvePdfPanelRangeKey(products, "primary")
     return (
-      formatPanelSizeWithQuantityForPdf(products.panelSize, products.panelQuantity, usePanelSizeRange) ||
+      formatPanelSizeWithQuantityForPdf(products.panelSize, products.panelQuantity, primaryRange) ||
       "As per selection"
     )
   }
@@ -772,1061 +754,8 @@ const getStructureDetails = (products: ProductSelection) => {
 
   return (
     <div className="space-y-6">
-      {/* Hidden PDF Content */}
-      <div
-        id="quotation-content"
-        className="bg-white p-4 sm:p-6 rounded-lg shadow-md"
-        style={{ position: "absolute", left: "-9999px", top: "-9999px" }}
-      >
-        <style jsx>{`
-          #quotation-content {
-            font-family: Arial, sans-serif;
-            line-height: 1.4;
-            color: #000;
-            font-size: 12px;
-            width: 210mm;
-            min-height: 297mm;
-            padding: 0;
-            box-sizing: border-box;
-            display: flex;
-            flex-direction: column;
-            background-color: #ffffff;
-            position: relative;
-            margin: 0;
-          }
-
-          .pdf-page-content {
-            position: relative;
-            z-index: 1;
-            background-color: #ffffff;
-            padding: 15mm;
-            box-sizing: border-box;
-            width: 210mm;
-            min-height: 297mm;
-            display: flex;
-            flex-direction: column;
-            page-break-after: always;
-            margin: 0;
-          }
-
-          .pdf-page-content:last-of-type {
-            page-break-after: avoid;
-          }
-
-          .pdf-page-content .pdf-footer {
-            margin-top: auto;
-            position: relative;
-            bottom: 0;
-          }
-
-          .pdf-header {
-            background: #ebecf0;
-            color: black;
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          }
-
-          .pdf-company-logo img {
-            height: 40px;
-            width: auto;
-            object-fit: contain;
-          }
-
-          .pdf-quotation-info {
-            text-align: right;
-            font-size: 11px;
-          }
-
-          .pdf-quotation-info div {
-            margin-bottom: 3px;
-          }
-
-          .pdf-quotation-title {
-            text-align: center;
-            font-size: 15px;
-            font-weight: bold;
-            color: #ff8c00;
-            margin-bottom: 20px;
-            padding: 7px;
-            padding-bottom: 15px;
-            background: linear-gradient(90deg, #fff8e1, #ffe0b2, #fff8e1);
-            border-radius: 6px;
-          }
-
-          .pdf-info-section {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin-bottom: 15px;
-          }
-
-          .pdf-info-card {
-            background: #f8fafc;
-            padding: 12px;
-            border-radius: 6px;
-            border-left: 4px solid #ff8c00;
-          }
-
-          .pdf-info-card h3 {
-            color: #ff8c00;
-            font-size: 15px;
-            margin-bottom: 8px;
-            font-weight: bold;
-          }
-
-          .pdf-info-item {
-            font-size: 12px;
-            margin-bottom: 4px;
-            display: flex;
-          }
-
-          .pdf-info-item strong {
-            min-width: 65px;
-            color: #374151;
-          }
-
-          .pdf-products-section {
-            flex: 1;
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 15px;
-            margin-bottom: 15px;
-          }
-
-          .pdf-product-category {
-            background: #f9fafb;
-            border-radius: 8px;
-            padding: 12px;
-            border: 1px solid #e5e7eb;
-            position: relative;
-            overflow: hidden;
-          }
-
-          .pdf-category-header {
-            background: linear-gradient(90deg, #ff8c00, #e67300);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-weight: bold;
-            font-size: 12px;
-            margin-bottom: 10px;
-            padding-bottom: 15px;
-            text-align: center;
-          }
-
-          .pdf-product-item {
-            background: transparent;
-            padding: 8px;
-            border-radius: 4px;
-            margin-bottom: 8px;
-            border-left: 3px solid #10b981;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-          }
-
-          .pdf-product-name {
-            font-weight: bold;
-            font-size: 11px;
-            color: #1f2937;
-            margin-bottom: 4px;
-            line-height: 1.2;
-          }
-
-          .pdf-product-details {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 10px;
-          }
-
-          .pdf-product-specs {
-            color: #6b7280;
-          }
-
-          .pdf-bank-details-section {
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
-          }
-
-          .pdf-bank-details-section h3 {
-            font-size: 15px;
-            color: #ff8c00;
-            margin-bottom: 10px;
-            font-weight: bold;
-            text-align: center;
-          }
-
-          .pdf-bank-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px 20px;
-            font-size: 11px;
-          }
-
-          .pdf-bank-item strong {
-            color: #374151;
-            min-width: 70px;
-            display: inline-block;
-          }
-
-          .pdf-bank-item {
-            margin-bottom: 5px;
-          }
-
-          .pdf-summary-section {
-            background: linear-gradient(135deg, #f3f4f6, #e5e7eb);
-            padding: 15px;
-            border-radius: 8px;
-            border: 2px solid #ff8c00;
-          }
-
-          .pdf-summary-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-            font-size: 12px;
-            line-height: 1.4;
-          }
-
-          .pdf-summary-row.total {
-            font-weight: bold;
-            font-size: 15px;
-            color: #ff8c00;
-            border-top: 2px solid #ff8c00;
-            padding-top: 10px;
-            margin-top: 10px;
-          }
-
-          .pdf-summary-row.price-after-subsidy {
-            background: #fff3e0;
-            padding: 8px 12px;
-            border-radius: 6px;
-            padding-bottom: 20px;
-            font-size: 14px;
-            font-weight: bold;
-            color: #000;
-            margin-top: 10px;
-            border: 1px solid #ffcc80;
-          }
-
-          .pdf-summary-label {
-            flex: 1;
-            text-align: left;
-          }
-
-          .pdf-summary-value {
-            flex: 0 0 auto;
-            text-align: right;
-            min-width: 80px;
-          }
-
-          .pdf-footer {
-            text-align: center;
-            color: #6b7280;
-            background: #f9fafb;
-            padding: 10px;
-            border-radius: 6px;
-            border-top: 2px solid #ff8c00;
-            width: 100%;
-            box-sizing: border-box;
-          }
-
-          .pdf-footer p {
-            margin-bottom: 3px;
-            line-height: 1.3;
-          }
-
-          .pdf-footer .signature {
-            margin-top: 5px;
-            font-weight: bold;
-          }
-
-          .pdf-footer .contact-info {
-            margin-top: 8px;
-            padding-top: 5px;
-            border-top: 1px solid #ff8c00;
-            line-height: 1.2;
-          }
-
-          .pdf-footer-page1 {
-            font-size: 10px;
-          }
-
-          .pdf-footer-page1 p {
-            margin-bottom: 4px;
-            line-height: 1.3;
-          }
-
-          .pdf-footer-page1 .signature {
-            margin-top: 8px;
-            font-weight: bold;
-            font-size: 13px;
-          }
-
-          .pdf-footer-page1 .contact-info {
-            margin-top: 10px;
-            padding-top: 8px;
-            line-height: 1.3;
-          }
-
-          .pdf-footer-page2 {
-            font-size: 10px;
-          }
-
-          .pdf-footer-page2 p {
-            margin-bottom: 3px;
-            line-height: 1.2;
-          }
-
-          .pdf-footer-page2 .signature {
-            margin-top: 8px;
-            font-weight: bold;
-            font-size: 10px;
-          }
-
-          .pdf-footer-page2 .contact-info {
-            margin-top: 12px;
-            padding-top: 8px;
-            line-height: 1.2;
-          }
-
-          .pdf-validity-box {
-            background: linear-gradient(135deg, #fef3c7, #fde68a);
-            border: 2px solid #f59e0b;
-            padding: 8px;
-            border-radius: 6px;
-            text-align: center;
-            font-size: 11px;
-            font-weight: bold;
-            padding-bottom: 13px;
-            color: #92400e;
-            margin-bottom: 15px;
-          }
-
-          .pdf-terms-section {
-            background: #f8fafc;
-            border: 1px solid #e5e7eb;
-            border-radius: 8px;
-            padding: 10px;
-            margin-bottom: 15px;
-          }
-
-          .pdf-terms-section .term-point {
-            margin-bottom: 1px;
-          }
-
-          .pdf-terms-section .term-point strong {
-            font-size: 11px;
-            color: #ff8c00;
-            display: block;
-            margin-bottom: 1px;
-          }
-
-          .pdf-terms-section .term-point div {
-            padding-left: 8px;
-          }
-
-          .pdf-terms-section .term-point div div {
-            margin-bottom: 0px;
-            line-height: 1.2;
-          }
-
-          .make-table {
-            width: 100%;
-            table-layout: fixed;
-            border-collapse: collapse;
-            font-size: 10px;
-            font-family: Arial, sans-serif;
-            font-weight: normal;
-            border: 1px solid #6b7280;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            text-rendering: optimizeLegibility;
-          }
-
-          .make-table td,
-          .make-table th {
-            border: 1px solid #6b7280;
-            padding: 2px 6px 14px 6px;
-            background: #ffffff;
-            text-align: left;
-            vertical-align: top;
-            font-family: Arial, sans-serif;
-            font-weight: normal;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            text-rendering: optimizeLegibility;
-            line-height: 0.4;
-            word-break: break-word;
-            overflow-wrap: break-word;
-            white-space: normal;
-          }
-
-          .make-table tr:nth-child(even) {
-            background-color: #f9fafb;
-          }
-
-          .make-table td:first-child,
-          .make-table th:first-child {
-            width: 40%;
-            text-align: left;
-            font-weight: 200;
-          }
-
-          .make-table td:nth-child(2),
-          .make-table th:nth-child(2) {
-            width: 60%;
-            text-align: left;
-          }
-
-          .make-table .label-cell {
-            width: 150px;
-            white-space: nowrap;
-            font-weight: 300;
-          }
-
-          .pdf-rendering-styles .hide-on-pdf {
-            display: none !important;
-          }
-        `}</style>
-
-        {/* Page 1: Main Quotation Content */}
-        <div className="pdf-page-content">
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            {/* Header */}
-            <div className="pdf-header">
-              <div className="pdf-company-logo">
-                <img
-                  src={companyInfo.logoUrl || "/placeholder.svg"}
-                  alt="ChairBord Solar Logo"
-                  style={{ height: "40px", objectFit: "contain" }}
-                />
-              </div>
-              <div className="pdf-quotation-info">
-                <div>
-                  <strong>Quotation #{quotationId || `QT${Date.now().toString().slice(-6)}`}</strong>
-                </div>
-                <div>📅 Date: {formatDate(quotationDate)}</div>
-                <div>⏰ Valid Until: {formatDate(validityDate)}</div>
-              </div>
-            </div>
-
-            {/* Title */}
-            <div className="pdf-quotation-title">🌞 SOLAR INSTALLATION QUOTATION 🌞</div>
-
-            {/* Info Section - 2 columns */}
-            <div className="pdf-info-section">
-              <div className="pdf-info-card">
-                <h3>👤 Customer Details</h3>
-                <div className="pdf-info-item">
-                  <strong>Name:</strong> {customer.firstName} {customer.lastName}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Email:</strong> {customer.email}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Phone:</strong> {customer.mobile}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Location:</strong> {customer.address?.city || ""}, {customer.address?.state || ""}
-                </div>
-              </div>
-              <div className="pdf-info-card">
-                <h3>🏢 Dealer Details</h3>
-                <div className="pdf-info-item">
-                  <strong>Company:</strong> {companyInfo.name}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Contact:</strong> {companyInfo.phone}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Email:</strong> {companyInfo.email}
-                </div>
-                <div className="pdf-info-item">
-                  <strong>Address:</strong> {companyInfo.address}
-                </div>
-              </div>
-            </div>
-
-            {/* Validity Notice */}
-            <div className="pdf-validity-box">
-              ⚠️ IMPORTANT: This quotation is valid for 5 days from issue date (Until {formatDate(validityDate)})
-            </div>
-
-            {/* Products Section */}
-            <div className="pdf-products-section">
-              <div className="pdf-product-category">
-                <div className="pdf-category-header">📦 SOLAR SETS</div>
-                
-                {/* BOTH: left = system size + DCR, Non-DCR below; right = common components */}
-                {products.systemType === "both" ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "row",
-                      alignItems: "flex-start",
-                      justifyContent: "space-between",
-                      gap: "12px",
-                      marginBottom: "8px",
-                    }}
-                  >
-                    <div style={{ flex: "1 1 52%", minWidth: 0 }}>
-                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
-                        Solar panels (DCR + Non-DCR)
-                      </div>
-                      {roundedSystemSizeLabel && (
-                        <div className="pdf-system-size-label" style={{ marginBottom: "6px" }}>
-                          System Size: {roundedSystemSizeLabel}
-                        </div>
-                      )}
-                      <div className="pdf-product-specs" style={{ lineHeight: 1.45 }}>
-                        {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
-                          <div>
-                            <strong>DCR (with subsidy):</strong>{" "}
-                            {formatPanelBrandLineForPdf(
-                              products.dcrPanelBrand,
-                              products.dcrPanelSize,
-                              products.dcrPanelQuantity,
-                              readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}
-                            {!readPdfDisplayFlags(products).usePanelSizeRange && (
-                              <span style={{ fontSize: "10px", color: "#666" }}>
-                                {" "}
-                                (
-                                {(
-                                  (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
-                                    products.dcrPanelQuantity) /
-                                  1000
-                                ).toFixed(2)}
-                                kW)
-                              </span>
-                            )}
-                          </div>
-                        )}
-                        {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
-                          <div style={{ marginTop: "4px" }}>
-                            <strong>Non-DCR (without subsidy):</strong>{" "}
-                            {formatPanelBrandLineForPdf(
-                              products.nonDcrPanelBrand,
-                              products.nonDcrPanelSize,
-                              products.nonDcrPanelQuantity,
-                              readPdfDisplayFlags(products).usePanelSizeRange,
-                            )}
-                            {!readPdfDisplayFlags(products).usePanelSizeRange && (
-                              <span style={{ fontSize: "10px", color: "#666" }}>
-                                {" "}
-                                (
-                                {(
-                                  (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
-                                    products.nonDcrPanelQuantity) /
-                                  1000
-                                ).toFixed(2)}
-                                kW)
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div
-                      style={{
-                        flex: "1 1 44%",
-                        minWidth: 0,
-                        borderLeft: "1px solid #e5e7eb",
-                        paddingLeft: "10px",
-                      }}
-                    >
-                      <div className="pdf-product-name" style={{ marginBottom: "4px" }}>
-                        Common Components
-                      </div>
-                      <div className="pdf-product-specs">
-                        {getPdfInverterLine(products)}
-                        <br />
-                        Phase: {pdfPhaseLabel}
-                        {products.structureType && (
-                          <>
-                            <br />
-                            Structure: {products.structureType} ({products.structureSize})
-                          </>
-                        )}
-                        {products.meterBrand && (
-                          <>
-                            <br />
-                            Meter: {products.meterBrand}
-                          </>
-                        )}
-                        {products.acCableBrand && (
-                          <>
-                            <br />
-                            AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                            {products.dcCableSize}
-                          </>
-                        )}
-                        {(products.acdb || products.dcdb) && (
-                          <>
-                            <br />
-                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                          </>
-                        )}
-                        {products.batteryCapacity && (
-                          <>
-                            <br />
-                            Battery: {products.batteryCapacity}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  /* For DCR, NON DCR, or CUSTOMIZE system types */
-                  <div className="pdf-product-item">
-                    <div className="pdf-product-name">{getPdfSystemTitle()}</div>
-                    <div className="pdf-product-details">
-                      <div className="pdf-product-specs">
-                        {getPdfPanelSpecLine(products)}
-                        <br />
-                        {getPdfInverterLine(products)}
-                        <br />
-                        Phase: {pdfPhaseLabel}
-                        {products.structureType && (
-                          <>
-                            <br />
-                            Structure: {products.structureType} ({products.structureSize})
-                          </>
-                        )}
-                        {products.meterBrand && (
-                          <>
-                            <br />
-                            Meter: {products.meterBrand}
-                          </>
-                        )}
-                        {products.acCableBrand && (
-                          <>
-                            <br />
-                            AC Cable: {products.acCableBrand} {products.acCableSize}, DC Cable: {products.dcCableBrand}{" "}
-                            {products.dcCableSize}
-                          </>
-                        )}
-                        {(products.acdb || products.dcdb) && (
-                          <>
-                            <br />
-                            ACDB/DCDB: {products.acdb ? "ACDB" : ""} {products.dcdb ? "DCDB" : ""}
-                          </>
-                        )}
-                        {products.batteryCapacity && (
-                          <>
-                            <br />
-                            Battery: {products.batteryCapacity}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Summary Section */}
-            <div className="pdf-summary-section">
-              <div className="pdf-summary-row price-after-subsidy">
-                <span className="pdf-summary-label">💰 Total Project Cost (including GST and structure):</span>
-                <span className="pdf-summary-value">₹{subtotal.toLocaleString()}</span>
-              </div>
-              {(products.stateSubsidy ?? 0) > 0 && (
-                <div className="pdf-summary-row">
-                  <span className="pdf-summary-label">⬇️ State Subsidy:</span>
-                  <span className="pdf-summary-value"> ₹{(products.stateSubsidy ?? 0).toLocaleString()}</span>
-                </div>
-              )}
-              {products.centralSubsidy && products.centralSubsidy > 0 && (
-                <div className="pdf-summary-row">
-                  <span className="pdf-summary-label">⬇️ Central Subsidy:</span>
-                  <span className="pdf-summary-value"> ₹{products.centralSubsidy.toLocaleString()}</span>
-                </div>
-              )}
-              {sanitizedDiscountAmount > 0 && (
-                <div className="pdf-summary-row">
-                  <span className="pdf-summary-label">⬇️ Discount:</span>
-                  <span className="pdf-summary-value"> ₹{sanitizedDiscountAmount.toLocaleString()}</span>
-                </div>
-              )}
-              <div className="pdf-summary-row">
-                <span className="pdf-summary-label">🎯 Final Price:</span>
-                <span className="pdf-summary-value">₹{totalAmount.toLocaleString()}</span>
-              </div>
-            </div>
-
-            {/* Bank Details Section */}
-            <div className="pdf-bank-details-section">
-              <h3>🏦 Bank Details for Payment</h3>
-              <div className="pdf-bank-grid">
-                <div>
-                  <div className="pdf-bank-item">
-                    <strong>Bank:</strong> {bankDetails.icici.bankName}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>A/C Name:</strong> {bankDetails.icici.accountName}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>A/C No:</strong> {bankDetails.icici.accountNumber}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>IFSC:</strong> {bankDetails.icici.ifscCode}
-                  </div>
-                </div>
-                <div>
-                  <div className="pdf-bank-item">
-                    <strong>Bank:</strong> {bankDetails.sbi.bankName}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>A/C Name:</strong> {bankDetails.sbi.accountName}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>A/C No:</strong> {bankDetails.sbi.accountNumber}
-                  </div>
-                  <div className="pdf-bank-item">
-                    <strong>IFSC:</strong> {bankDetails.sbi.ifscCode}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer for Page 1 */}
-          <div className="pdf-footer pdf-footer-page1">
-            <p>
-              <strong>🙏 Thanking you and assuring you of our best and prompt attention at all times, we remain.</strong>
-            </p>
-            <div className="signature">
-              <p>
-                <strong>Yours faithfully,</strong>
-              </p>
-              <p>
-                <strong>For, {companyInfo.name}</strong>
-              </p>
-            </div>
-            <div className="contact-info">
-              <p>
-                <strong>OFFICE:</strong> {companyInfo.address}
-              </p>
-              <p>
-                <strong>Mobile:</strong> {companyInfo.phone} | <strong>GSTIN:</strong> {companyInfo.gst}
-              </p>
-            </div>
-          </div>
-        </div>
-
-        {/* Page 2: Terms & Conditions */}
-        <div className="pdf-page-content" style={{ pageBreakBefore: "always" }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-            {/* Header for Page 2 */}
-            <div className="pdf-header" style={{ marginTop: "-10px" }}>
-              <div className="pdf-company-logo">
-                <img
-                  src={companyInfo.logoUrl || "/placeholder.svg"}
-                  alt="ChairBord Solar Logo"
-                  style={{ height: "40px", objectFit: "contain" }}
-                />
-              </div>
-              <div className="pdf-quotation-info">
-                <div>
-                  <strong>Quotation #{quotationId || `QT${Date.now().toString().slice(-6)}`}</strong>
-                </div>
-                <div>📅 Date: {formatDate(quotationDate)}</div>
-                <div>📋 Page 2 of 2</div>
-              </div>
-            </div>
-
-            {/* Title for Page 2 */}
-            <div className="pdf-quotation-title">📋 TERMS & CONDITIONS</div>
-
-            {/* Terms & Conditions Content */}
-            <div
-              className="pdf-terms-section"
-              style={{
-                flex: 1,
-                marginBottom: 0,
-                maxHeight: "200mm",
-                overflow: "hidden",
-                marginTop: "-20px",
-              }}
-            >
-              <div style={{ fontSize: "10px", lineHeight: "1.2", color: "#374151" }}>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "6px",
-                    }}
-                  >
-                    1. Make:
-                  </strong>
-                  <table className="make-table">
-                    <tbody>
-                      <tr>
-                        <td className="label-cell">• Solar Module</td>
-                        <td>{getUniqueBrands()} Bifacial Panels</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• GTI Inverter</td>
-                        <td>{getInverterDetails()}</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Solar Set Size</td>
-                        <td>{getSystemSizes()}</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• DC Cable</td>
-                        <td>Polycab / KEI (4 sq.mm)</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• AC Cable</td>
-                        <td>Polycab (6 sq.mm), etc.</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Structure</td>
-                        <td>Tata GI Pipes(2mm) like 72*72, 60*40, 40*40</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Lightning Arrester & Earthing</td>
-                        <td>Standard make</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• ACDB & DCDB</td>
-                        <td>Havells, Havells + ELMEX, etc.</td>
-                      </tr>
-                      <tr>
-                        <td className="label-cell">• Meter (Solar + Net)</td>
-                        <td>HPL, Genus, Secure, L&T, etc.</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    2. Payment Terms:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>Inverter and Other Items</div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    3. Project Completion:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      15–20 days from the date of receipt of Solar NOC from DISCOM, commercially clear order, and advance
-                      payment.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    4. Validity of Offer:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      5 days from the date of offer. After this period, confirmation must be obtained.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    5. Client Scope:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Cleaning of solar modules is under the client&apos;s scope
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Rooftop to be arranged and provided by the client
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Electricity and water must be provided by the client during construction
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Provide safe storage space for materials used in the solar power plant
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Ensure electricity supply is available to synchronize the inverter during and after
-                      commissioning
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Provide connection space in the LT panel to connect the inverter output
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Internet connection to be provided by the client for remote monitoring of the system
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    6. Transportation:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      All transportation of the above-mentioned Bill of Materials (BOM) up to the installation site is
-                      included.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    7. Net-Metering:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      All government DISCOM fees (file charges, demand charges, testing for net metering, and
-                      arrangement of Electrical Inspector Report) shall be paid directly to DISCOM and will be under
-                      the client&apos;s scope.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    8. Solar System Warranty:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>• 5-year comprehensive system warranty</div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Solar module performance warranty: 25 years
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Solar grid-tie inverter warranty: 10 years (as per manufacturer&apos;s terms & conditions)
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    9. Subsidy Exclusion Policy:
-                  </strong>
-                  <div>
-                    <div style={{ fontSize: "11px" }}>
-                      The quoted price excludes any subsidies, incentives, or rebates. The full package cost will be
-                      charged as per the terms outlined, with subsidies to be applied for separately by the customer.
-                    </div>
-                  </div>
-                </div>
-                <div className="term-point">
-                  <strong
-                    style={{
-                      fontSize: "13px",
-                      color: "#ff8c00",
-                      display: "block",
-                      marginBottom: "4px",
-                    }}
-                  >
-                    10. Payment Terms:
-                  </strong>
-                  <div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Initial Deposit (Upon Contract Signing): 10-30% of total system cost to secure the contract and
-                      cover initial costs (design, permits, equipment ordering).
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Progress Payment (Upon Equipment Delivery/Installation Start): 40-80% of total system cost when
-                      equipment arrives on-site or installation begins.
-                    </div>
-                    <div style={{ marginBottom: "2px", fontSize: "11px" }}>
-                      • Final Payment (Upon System Commissioning/Grid Connection): 10-20% of total system cost after
-                      system is installed, inspected, and operational with utility approval.
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer for Page 2 */}
-          <div className="pdf-footer pdf-footer-page2">
-            <p>
-              <strong>🙏 Thanking you and assuring you of our best and prompt attention at all times, we remain.</strong>
-            </p>
-            <div className="signature">
-              <p>
-                <strong>Yours faithfully,</strong>
-              </p>
-              <p>
-                <strong>For, {companyInfo.name}</strong>
-              </p>
-            </div>
-            <div className="contact-info">
-              <p>
-                <strong>OFFICE:</strong> {companyInfo.address}
-              </p>
-              <p>
-                <strong>Mobile:</strong> {companyInfo.phone} | <strong>GSTIN:</strong> {companyInfo.gst}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Hidden PDF — 3-page Solar Installation Proposal */}
+      <QuotationProposalPdf data={proposalPdfData} />
 
       {/* UI elements for the web page */}
       <div>
@@ -1902,47 +831,52 @@ const getStructureDetails = (products: ProductSelection) => {
                       {roundedSystemSizeLabel && (
                         <p className="text-xs text-muted-foreground">System Size: {roundedSystemSizeLabel}</p>
                       )}
-                      {products.dcrPanelBrand && products.dcrPanelSize && products.dcrPanelQuantity && (
+                      {products.dcrPanelBrand &&
+                        products.dcrPanelSize &&
+                        (products.dcrPanelQuantity > 0 || shouldHidePanelQuantityOnPdf(products, "dcr")) && (
                         <p className="text-sm font-medium text-foreground">
                           <span className="text-muted-foreground">DCR (subsidy)</span>{" "}
                           {formatPanelBrandLineForPdf(
                             products.dcrPanelBrand,
                             products.dcrPanelSize,
                             products.dcrPanelQuantity,
-                            readPdfDisplayFlags(products).usePanelSizeRange,
+                            resolvePdfPanelRangeKey(products, "dcr"),
                           )}
-                          {!readPdfDisplayFlags(products).usePanelSizeRange && (
-                            <span className="text-xs text-muted-foreground ml-1">
-                              (
-                              {(
+                          {!shouldHidePanelQuantityOnPdf(products, "dcr") && (
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (
+                            {(
                                 (Number.parseFloat(products.dcrPanelSize.replace("W", "")) *
                                   products.dcrPanelQuantity) /
-                                1000
-                              ).toFixed(2)}
-                              kW)
-                            </span>
+                              1000
+                            ).toFixed(2)}
+                            kW)
+                          </span>
                           )}
                         </p>
                       )}
-                      {products.nonDcrPanelBrand && products.nonDcrPanelSize && products.nonDcrPanelQuantity && (
+                      {products.nonDcrPanelBrand &&
+                        products.nonDcrPanelSize &&
+                        (products.nonDcrPanelQuantity > 0 ||
+                          shouldHidePanelQuantityOnPdf(products, "nonDcr")) && (
                         <p className="text-sm font-medium text-foreground">
                           <span className="text-muted-foreground">Non-DCR</span>{" "}
                           {formatPanelBrandLineForPdf(
                             products.nonDcrPanelBrand,
-                            products.nonDcrPanelSize,
+                              products.nonDcrPanelSize,
                             products.nonDcrPanelQuantity,
-                            readPdfDisplayFlags(products).usePanelSizeRange,
+                            resolvePdfPanelRangeKey(products, "nonDcr"),
                           )}
-                          {!readPdfDisplayFlags(products).usePanelSizeRange && (
-                            <span className="text-xs text-muted-foreground ml-1">
-                              (
-                              {(
-                                (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
-                                  products.nonDcrPanelQuantity) /
-                                1000
-                              ).toFixed(2)}
-                              kW)
-                            </span>
+                          {!shouldHidePanelQuantityOnPdf(products, "nonDcr") && (
+                          <span className="text-xs text-muted-foreground ml-1">
+                            (
+                            {(
+                              (Number.parseFloat(products.nonDcrPanelSize.replace("W", "")) *
+                                products.nonDcrPanelQuantity) /
+                              1000
+                            ).toFixed(2)}
+                            kW)
+                          </span>
                           )}
                         </p>
                       )}

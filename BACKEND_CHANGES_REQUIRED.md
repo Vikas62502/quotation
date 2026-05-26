@@ -3312,61 +3312,92 @@ Use this as a sprint checklist for the API team:
 
 ---
 
-## X) Quotation PDF display flags (panel size range & inverter brands)
+## X) Quotation `products` JSON — PDF display, brands, validation (May 2026)
 
-**Frontend:** `components/product-selection-form.tsx` (checkboxes), `lib/quotation-pdf-display.ts`, PDF in `components/quotation-confirmation.tsx` and `components/quotation-details-dialog.tsx`.
+**Handoff summary:** `BACKEND_CHANGES_HANDOFF.md` §2.
+
+**Frontend:** `components/product-selection-form.tsx`, `lib/quotation-pdf-display.ts`, `lib/quotation-api-payload.ts`, `lib/quotation-proposal-document.ts`, proposal PDF in `components/quotation-confirmation.tsx` / `quotation-details-dialog.tsx`.
 
 ### Purpose
 
-Dealers can tick optional checkboxes when creating/editing a quotation. These flags change **PDF / on-screen quotation wording only** — not catalog validation, pricing, or stored `panelSize` / `inverterBrand` values used for calculations.
+Optional fields on `products` and quotation `dealer` support the **client-generated Solar Installation Proposal PDF**. They must not affect pricing, subsidies, or catalog SKU validation (except where noted for combined brand strings and panel quantity).
 
-| Flag | When `true`, PDF shows |
-|------|------------------------|
-| `pdfUsePanelSizeRange` | Panel size **540W-620W** (instead of exact value, e.g. `555W`) |
-| `pdfUseInverterBrandOptions` | **Inverter Brand- Vsole/Xwatt/Saatvik** (instead of selected brand only) |
+### 2.1 PDF panel range keys (current)
 
-For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** panel lines in the PDF; inverter flag applies to the shared inverter line.
+| Field | Scope |
+|-------|--------|
+| `pdfPanelRangeKey` | `dcr` / `non-dcr` |
+| `pdfDcrPanelRangeKey` | `both` — DCR panels |
+| `pdfNonDcrPanelRangeKey` | `both` — Non-DCR panels |
 
-### Backend requirements
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`.
 
-1. **Persist** both fields inside the existing `products` JSON (no new table required if `products` is already JSON/JSONB).
-2. **Accept on create/update:**
-   - `POST /api/quotations` (body `products`)
-   - `PATCH /api/quotations/{id}/products`
-3. **Return on read** unchanged on:
-   - `GET /api/quotations/{id}`
-   - `GET /api/quotations` (list/detail)
-4. **Optional snake_case aliases** (frontend reads either form):
-   - `pdf_use_panel_size_range` ↔ `pdfUsePanelSizeRange`
-   - `pdf_use_inverter_brand_options` ↔ `pdfUseInverterBrandOptions`
-5. **Omit or `false` when unchecked** — frontend only sends `true` when checked; default = exact panel size / selected inverter brand in PDF.
-6. **Do not** use these flags for:
-   - Product catalog / `validateProductSelection`
-   - `calculatePricing`, subsidies, or `systemSize` derivation
-7. If the API generates quotation PDFs server-side, apply the same display rules as the frontend helpers in `lib/quotation-pdf-display.ts`.
+**Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
+
+**Legacy booleans (read-only for old rows):** `pdfUsePanelSizeRange`, `pdf_use_panel_size_range`. **`pdfUseInverterBrandOptions` is deprecated** — UI no longer sends it; inverter text comes from `inverterBrand` dropdown (`Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`, or catalog brands).
+
+**Frontend flow:** `POST /api/quotations` strips PDF keys from `products` for validation; **`PATCH /api/quotations/{id}/products`** persists PDF keys immediately after create.
+
+### 2.2 Combined brand strings
+
+Allow on `products` (if brand whitelist exists):
+
+- `inverterBrand`: `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`
+- `meterBrand`: `L&T/HPL/Genus/Secure`
+
+### 2.3 Validation — panel quantity
+
+When the matching `pdf*PanelRangeKey` is set, allow `panelQuantity` / `dcrPanelQuantity` / `nonDcrPanelQuantity` to be **0 or omitted** (PDF does not show panel count).
+
+### 2.4 GET quotation — `dealer` object
+
+Return nested `dealer` `{ id, firstName, lastName, email, mobile, username, role }` for proposal “Dealer Details” (see `DealerInfo` in `lib/quotation-context.tsx`).
+
+### 2.5 `validUntil` (optional)
+
+Align server default from **5 days → 7 days** after `createdAt` if `validUntil` is set on create.
+
+### Endpoints
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/quotations` |
+| `PATCH` | `/api/quotations/{id}/products` |
+| `GET` | `/api/quotations`, `/api/quotations/{id}` |
 
 ### Example `products` fragment
 
 ```json
 {
-  "systemType": "dcr",
-  "panelBrand": "Adani",
-  "panelSize": "555W",
-  "panelQuantity": 9,
-  "inverterBrand": "Saatvik",
-  "inverterType": "String Inverter",
+  "systemType": "both",
+  "dcrPanelBrand": "Adani",
+  "dcrPanelSize": "610W",
+  "dcrPanelQuantity": 0,
+  "pdfDcrPanelRangeKey": "adani_610_625_bifacial_topcon",
+  "nonDcrPanelBrand": "Waaree",
+  "nonDcrPanelSize": "580W",
+  "nonDcrPanelQuantity": 8,
+  "inverterBrand": "Vsole/Xwatt",
   "inverterSize": "5kW",
-  "pdfUsePanelSizeRange": true,
-  "pdfUseInverterBrandOptions": true
+  "meterBrand": "L&T/HPL/Genus/Secure",
+  "centralSubsidy": 78000,
+  "stateSubsidy": 0
 }
 ```
 
+### Do not
+
+- Use PDF range keys in `validateProductSelection`, `calculatePricing`, or `systemSize` derivation.
+- Strip PDF keys on PATCH products.
+
 ### Checklist
 
-- [ ] Store optional booleans on `products` for create + PATCH products.
-- [ ] Echo flags on GET quotation(s).
-- [ ] Ignore flags in pricing/catalog validation.
-- [ ] (If applicable) Server PDF uses range / multi-brand text when flags are true.
+- [ ] Persist `pdfPanelRangeKey`, `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey`
+- [ ] Support POST + PATCH products (PATCH after create)
+- [ ] Relax panel qty when range keys set
+- [ ] Allow combined inverter/meter brand strings
+- [ ] Return `dealer` on GET quotation
+- [ ] (Optional) `validUntil` +7 days
 
 ---
 
@@ -3380,12 +3411,12 @@ For **BOTH** system type, `pdfUsePanelSizeRange` applies to **DCR and Non-DCR** 
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
-| Medium | Persist `pdfUsePanelSizeRange`, `pdfUseInverterBrandOptions` on `products` JSON | §X | `lib/quotation-pdf-display.ts` |
+| Medium | Persist `pdf*PanelRangeKey`, combined brands, dealer on GET, panel qty rules | §X, HANDOFF §2 | `lib/quotation-pdf-display.ts`, `lib/quotation-api-payload.ts` |
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
-**PDF flags — do not:** use flags in pricing or catalog validation. **Do:** store and return on quotation GET/create/PATCH products.
+**PDF / products — do not:** use `pdf*PanelRangeKey` in pricing. **Do:** store on `products`, allow PATCH after create, return `dealer` on GET, allow combined `inverterBrand`/`meterBrand` strings.
 
 ---
 

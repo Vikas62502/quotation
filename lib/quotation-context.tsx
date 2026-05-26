@@ -62,9 +62,15 @@ export interface ProductSelection {
   nonDcrPanelBrand?: string
   nonDcrPanelSize?: string
   nonDcrPanelQuantity?: number
-  /** When true, quotation PDF shows panel size as 540W-620W instead of exact size. */
+  /** PDF panel range option for DCR / NON DCR (see quotation-pdf-display). */
+  pdfPanelRangeKey?: string
+  /** PDF panel range for BOTH — DCR panels. */
+  pdfDcrPanelRangeKey?: string
+  /** PDF panel range for BOTH — Non-DCR panels. */
+  pdfNonDcrPanelRangeKey?: string
+  /** @deprecated use pdfPanelRangeKey */
   pdfUsePanelSizeRange?: boolean
-  /** When true, quotation PDF shows inverter brand as Xwatt/Vsole/Saatvik */
+  /** @deprecated inverter brand is chosen in dropdown */
   pdfUseInverterBrandOptions?: boolean
 }
 
@@ -699,10 +705,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
         let quotation = await api.quotations.create(quotationData)
 
-        if (
-          quotation?.id &&
-          (pdfDisplayFlags.pdfUsePanelSizeRange || pdfDisplayFlags.pdfUseInverterBrandOptions)
-        ) {
+        if (quotation?.id && Object.keys(pdfDisplayFlags).length > 0) {
           try {
             await api.quotations.updateProducts(quotation.id, {
               ...productsForApi,

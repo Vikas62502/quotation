@@ -26,7 +26,7 @@ import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 const ADMIN_USERNAME = "admin"
 
 export default function QuotationsPage() {
-  const { isAuthenticated, dealer } = useAuth()
+  const { isAuthenticated, dealer, authReady } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
@@ -180,19 +180,21 @@ export default function QuotationsPage() {
   }
 
   useEffect(() => {
+    if (!authReady) return
+
     if (!isAuthenticated) {
       router.push("/login")
       return
     }
-    
+
     // Redirect admin to admin panel
     if (dealer?.username === ADMIN_USERNAME) {
       router.push("/dashboard/admin")
       return
     }
-    
+
     loadQuotations()
-  }, [isAuthenticated, router, dealer])
+  }, [authReady, isAuthenticated, router, dealer])
 
   const loadQuotations = async () => {
     if (!dealer?.id) return
@@ -315,7 +317,7 @@ export default function QuotationsPage() {
 
   const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
-  if (!isAuthenticated) return null
+  if (!authReady || !isAuthenticated) return null
 
   const getCustomerDisplayName = (customer?: Quotation["customer"]) => {
     return formatPersonName(customer?.firstName, customer?.lastName, "")

@@ -99,60 +99,81 @@ GROUP BY upload_id;
 
 ---
 
-## 2. Quotation PDF display flags (products JSON)
+## 2. Quotation `products` JSON — PDF display, brands, validation (May 2026)
 
-### Purpose
+**Frontend:** `lib/quotation-api-payload.ts`, `lib/quotation-pdf-display.ts`, `lib/quotation-proposal-document.ts`, `components/product-selection-form.tsx`.
 
-Optional booleans on `products` change **PDF / preview text only** — not pricing, catalog validation, or stored `panelSize` / `inverterBrand` used for calculations.
+Proposal PDF is **client-generated**; backend stores/returns `products` and optional `dealer` on GET.
 
-| Field | When `true`, PDF shows |
-|-------|-------------------------|
-| `pdfUsePanelSizeRange` | **540W-620W** instead of exact size (e.g. `555W`) |
-| `pdfUseInverterBrandOptions` | **Inverter Brand- Vsole/Xwatt/Saatvik** instead of selected brand only |
+### 2.1 PDF panel range keys
 
-Snake_case aliases (optional): `pdf_use_panel_size_range`, `pdf_use_inverter_brand_options`.
+| Field | Scope |
+|-------|--------|
+| `pdfPanelRangeKey` | `dcr` / `non-dcr` |
+| `pdfDcrPanelRangeKey` | `both` — DCR |
+| `pdfNonDcrPanelRangeKey` | `both` — Non-DCR |
 
-### Endpoints
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`.
 
-| Method | Path | Change |
-|--------|------|--------|
-| `POST` | `/api/quotations` | Accept flags inside `products`; persist in JSON/JSONB |
-| `PATCH` | `/api/quotations/{id}/products` | Merge flags; return on response |
-| `GET` | `/api/quotations`, `/api/quotations/{id}` | Echo flags unchanged |
+**Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
-### Example `products` fragment
+**Legacy:** `pdfUsePanelSizeRange` (old rows only). **`pdfUseInverterBrandOptions` no longer sent.**
+
+**Save flow:** `POST` strips PDF keys → **`PATCH /api/quotations/{id}/products`** saves them.
+
+When a range key is set, PDF hides panel count; allow **qty 0 / omitted** on backend validation.
+
+### 2.2 Combined brand strings (if whitelisted)
+
+| Field | Extra values |
+|-------|----------------|
+| `inverterBrand` | `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt` |
+| `meterBrand` | `L&T/HPL/Genus/Secure` |
+
+### 2.3 GET quotation — `dealer`
+
+Return `dealer: { id, firstName, lastName, email, mobile, username, role }` for proposal “Dealer Details”.
+
+### 2.4 `validUntil` (optional)
+
+Use **createdAt + 7 days** (frontend uses 7-day validity; reference controller may still use 5).
+
+### Example `products`
 
 ```json
 {
   "systemType": "dcr",
   "panelBrand": "Adani",
-  "panelSize": "555W",
-  "panelQuantity": 9,
-  "inverterBrand": "Saatvik",
-  "inverterSize": "5kW",
-  "pdfUsePanelSizeRange": true,
-  "pdfUseInverterBrandOptions": true
+  "panelSize": "610W",
+  "panelQuantity": 0,
+  "inverterBrand": "Vsole/Xwatt/Saatvik",
+  "meterBrand": "L&T/HPL/Genus/Secure",
+  "pdfPanelRangeKey": "adani_610_625_bifacial_topcon"
 }
 ```
 
+### Endpoints
+
+| Method | Path |
+|--------|------|
+| `POST` | `/api/quotations` |
+| `PATCH` | `/api/quotations/{id}/products` |
+| `GET` | `/api/quotations`, `/api/quotations/{id}` |
+
 ### Do not
 
-- Use these flags in `validateProductSelection`, `calculatePricing`, or `systemSize` derivation.
-- Strip flags when saving `products` (frontend only sends `true` when checked).
-
-### Server-generated PDFs
-
-If the API builds PDFs server-side, mirror `lib/quotation-pdf-display.ts`:
-
-- `formatPanelSizeForPdf(size, usePanelSizeRange)` → `540W-620W` or exact size
-- `getPdfInverterLine(products)` → multi-brand line when flag set
+Use PDF keys in pricing/catalog validation. Do not strip PDF keys on PATCH.
 
 ### Checklist
 
-- [ ] Persist optional booleans on create + PATCH products
-- [ ] Echo on GET quotation(s)
-- [ ] Ignore in pricing/validation
-- [ ] (If applicable) Server PDF uses same display rules
+- [ ] Persist `pdf*PanelRangeKey` on `products`
+- [ ] PATCH products after create works
+- [ ] Relax panel qty when range keys set
+- [ ] Allow combined inverter/meter brands
+- [ ] Return `dealer` on GET quotation
+- [ ] (Optional) `validUntil` +7 days
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` §X.
 
 ---
 

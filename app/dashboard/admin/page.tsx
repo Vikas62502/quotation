@@ -1432,6 +1432,14 @@ export default function AdminPanelPage() {
     }
   }, [activeTab])
 
+  useEffect(() => {
+    if (callingRange !== "custom") return
+    if (callingCustomFromDate || callingCustomToDate) return
+    const t = formatYmdLocal(new Date())
+    setCallingCustomFromDate(t)
+    setCallingCustomToDate(t)
+  }, [callingRange, callingCustomFromDate, callingCustomToDate])
+
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
   const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
@@ -1751,14 +1759,6 @@ export default function AdminPanelPage() {
       description: `Exported ${sortedQuotations.length} filtered quotations.`,
     })
   }
-
-  useEffect(() => {
-    if (callingRange !== "custom") return
-    if (callingCustomFromDate || callingCustomToDate) return
-    const t = formatYmdLocal(new Date())
-    setCallingCustomFromDate(t)
-    setCallingCustomToDate(t)
-  }, [callingRange, callingCustomFromDate, callingCustomToDate])
 
   const isWithinCallingRange = (actionAt?: string) => {
     if (callingRange === "all") return true

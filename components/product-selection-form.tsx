@@ -37,46 +37,56 @@ import {
 } from "@/lib/quotation-data"
 import { useProductCatalog } from "@/lib/use-product-catalog"
 import {
-  PDF_INVERTER_BRAND_OPTIONS_LABEL,
-  PDF_PANEL_SIZE_RANGE_LABEL,
+  buildInverterBrandDropdownOptions,
+  buildMeterBrandDropdownOptions,
+  getPanelPdfRangeOptionsForBrand,
+  type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
 
-function QuotationPdfDisplayOptions({
-  usePanelSizeRange,
-  useInverterBrandOptions,
-  onPanelSizeRangeChange,
-  onInverterBrandOptionsChange,
+function PanelPdfRangeOptions({
+  panelBrand,
+  selectedKey,
+  onChange,
 }: {
-  usePanelSizeRange: boolean
-  useInverterBrandOptions: boolean
-  onPanelSizeRangeChange: (checked: boolean) => void
-  onInverterBrandOptionsChange: (checked: boolean) => void
+  panelBrand: string
+  selectedKey?: string
+  onChange: (key: PdfPanelRangeKey | "") => void
 }) {
+  const options = getPanelPdfRangeOptionsForBrand(panelBrand)
+  if (options.length === 0) return null
+
   return (
-    <div className="col-span-full rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
-      <p className="text-xs font-medium text-muted-foreground">Quotation PDF display (optional)</p>
-      <label className="flex items-start gap-2 text-sm cursor-pointer">
-        <Checkbox
-          checked={usePanelSizeRange}
-          onCheckedChange={(v) => onPanelSizeRangeChange(v === true)}
-          className="mt-0.5"
-        />
-        <span>
-          Show panel size range <strong>{PDF_PANEL_SIZE_RANGE_LABEL}</strong> on PDF (instead of exact size; panel count hidden)
-        </span>
-      </label>
-      <label className="flex items-start gap-2 text-sm cursor-pointer">
-        <Checkbox
-          checked={useInverterBrandOptions}
-          onCheckedChange={(v) => onInverterBrandOptionsChange(v === true)}
-          className="mt-0.5"
-        />
-        <span>
-          Show inverter brands <strong>Inverter Brand- {PDF_INVERTER_BRAND_OPTIONS_LABEL}</strong> on PDF
-        </span>
-      </label>
+    <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">Quotation PDF — panel size range (optional)</p>
+      <p className="text-xs text-muted-foreground">
+        Select one range to show on the proposal PDF instead of exact panel size. Panel quantity is not required and
+        will not appear on the PDF.
+      </p>
+      {options.map((option) => (
+        <label key={option.key} className="flex items-start gap-2 text-sm cursor-pointer">
+          <Checkbox
+            checked={selectedKey === option.key}
+            onCheckedChange={(checked) => onChange(checked === true ? option.key : "")}
+            className="mt-0.5"
+          />
+          <span>
+            Show <strong>{option.label}</strong> on PDF
+          </span>
+        </label>
+      ))}
     </div>
   )
+}
+
+function isPanelRowComplete(
+  brand: string,
+  size: string,
+  quantity: number,
+  rangeKey?: string,
+): boolean {
+  if (!brand?.trim() || !size?.trim()) return false
+  if (rangeKey?.trim()) return true
+  return quantity > 0
 }
 
 interface Props {
@@ -101,12 +111,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   // Get panel sizes from pricing tables instead of catalog
   const panelSizesList = getAvailablePanelSizes(pricingTables || undefined)
   const inverterTypesList = catalog?.inverters?.types || []
-  const inverterBrandsList = catalog?.inverters?.brands || []
   const inverterSizesList = catalog?.inverters?.sizes || []
+  const inverterBrandsList = buildInverterBrandDropdownOptions(catalog?.inverters?.brands)
   const structureTypesList = catalog?.structures?.types || []
   // Get structure sizes from pricing tables instead of catalog
   const structureSizesList = getAvailableStructureSizes(pricingTables || undefined)
-  const meterBrandsList = catalog?.meters?.brands || []
+  const meterBrandsList = buildMeterBrandDropdownOptions(catalog?.meters?.brands)
   const cableBrandsList = catalog?.cables?.brands || []
   const cableSizesList = catalog?.cables?.sizes || []
   const [formData, setFormData] = useState<ProductSelection>(
@@ -140,8 +150,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       nonDcrPanelBrand: "",
       nonDcrPanelSize: "",
       nonDcrPanelQuantity: 0,
-      pdfUsePanelSizeRange: false,
-      pdfUseInverterBrandOptions: false,
+      pdfPanelRangeKey: "",
+      pdfDcrPanelRangeKey: "",
+      pdfNonDcrPanelRangeKey: "",
     },
   )
 
@@ -252,6 +263,21 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setFormData((prev) => ({ ...prev, [field]: value }))
     setError("")
   }
+
+  const updatePanelBrand = (field: "panelBrand" | "dcrPanelBrand" | "nonDcrPanelBrand", brand: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: brand,
+      ...(field === "panelBrand" ? { pdfPanelRangeKey: "" } : {}),
+      ...(field === "dcrPanelBrand" ? { pdfDcrPanelRangeKey: "", panelBrand: brand } : {}),
+      ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: "" } : {}),
+    }))
+    setError("")
+  }
+
+  const hidePrimaryPanelQty = Boolean(formData.pdfPanelRangeKey)
+  const hideDcrPanelQty = Boolean(formData.pdfDcrPanelRangeKey)
+  const hideNonDcrPanelQty = Boolean(formData.pdfNonDcrPanelRangeKey)
 
   // Quick Select dropdown removed - configurations are now selected via Browse dialogs
   // The handlers below (handleDcrConfigSelect, handleNonDcrConfigSelect, handleBothConfigSelect)
@@ -604,11 +630,25 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
 
     if (formData.systemType === "both") {
-      if (!formData.dcrPanelBrand || !formData.dcrPanelSize || !formData.dcrPanelQuantity) {
+      if (
+        !isPanelRowComplete(
+          formData.dcrPanelBrand || "",
+          formData.dcrPanelSize || "",
+          formData.dcrPanelQuantity || 0,
+          formData.pdfDcrPanelRangeKey,
+        )
+      ) {
         setError("Please complete DCR panel selection")
         return
       }
-      if (!formData.nonDcrPanelBrand || !formData.nonDcrPanelSize || !formData.nonDcrPanelQuantity) {
+      if (
+        !isPanelRowComplete(
+          formData.nonDcrPanelBrand || "",
+          formData.nonDcrPanelSize || "",
+          formData.nonDcrPanelQuantity || 0,
+          formData.pdfNonDcrPanelRangeKey,
+        )
+      ) {
         setError("Please complete Non-DCR panel selection")
         return
       }
@@ -634,7 +674,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         return
       }
     } else if (formData.systemType !== "customize") {
-      if (!formData.panelBrand || !formData.panelSize || !formData.panelQuantity) {
+      if (
+        !isPanelRowComplete(
+          formData.panelBrand || "",
+          formData.panelSize || "",
+          formData.panelQuantity || 0,
+          formData.pdfPanelRangeKey,
+        )
+      ) {
         setError("Please complete panel selection")
         return
       }
@@ -818,10 +865,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100">
+                <div
+                  className={`grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100 ${hideDcrPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                >
                   <div>
                     <Label>DCR Panel Brand *</Label>
-                    <Select value={formData.dcrPanelBrand} onValueChange={(v) => updateFormData("dcrPanelBrand", v)}>
+                    <Select value={formData.dcrPanelBrand} onValueChange={(v) => updatePanelBrand("dcrPanelBrand", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
@@ -842,27 +891,36 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
                   </div>
-                  <div>
-                    <Label>DCR Panel Quantity *</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={formData.dcrPanelQuantity || ""}
-                      onChange={(e) => updateFormData("dcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
-                      placeholder="Enter quantity"
-                    />
-                    {(() => {
-                      const panelW = formData.dcrPanelSize ? Number.parseFloat(formData.dcrPanelSize.replace("W", "")) : 0
-                      const quantity = formData.dcrPanelQuantity || 0
-                      const totalW = panelW * quantity
-                      return totalW > 0 ? (
-                        <p className="text-xs text-muted-foreground mt-1 font-medium">
-                          Total: {totalW.toLocaleString()}W
-                        </p>
-                      ) : null
-                    })()}
-                  </div>
+                  {!hideDcrPanelQty && (
+                    <div>
+                      <Label>DCR Panel Quantity *</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={formData.dcrPanelQuantity || ""}
+                        onChange={(e) => updateFormData("dcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
+                        placeholder="Enter quantity"
+                      />
+                      {(() => {
+                        const panelW = formData.dcrPanelSize
+                          ? Number.parseFloat(formData.dcrPanelSize.replace("W", ""))
+                          : 0
+                        const quantity = formData.dcrPanelQuantity || 0
+                        const totalW = panelW * quantity
+                        return totalW > 0 ? (
+                          <p className="text-xs text-muted-foreground mt-1 font-medium">
+                            Total: {totalW.toLocaleString()}W
+                          </p>
+                        ) : null
+                      })()}
+                    </div>
+                  )}
                 </div>
+                <PanelPdfRangeOptions
+                  panelBrand={formData.dcrPanelBrand || ""}
+                  selectedKey={formData.pdfDcrPanelRangeKey}
+                  onChange={(key) => updateFormData("pdfDcrPanelRangeKey", key)}
+                />
               </div>
 
               {/* Non-DCR Panel Selection */}
@@ -884,12 +942,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100">
+                <div
+                  className={`grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100 ${hideNonDcrPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                >
                   <div>
                     <Label>Non-DCR Panel Brand *</Label>
                     <Select
                       value={formData.nonDcrPanelBrand}
-                      onValueChange={(v) => updateFormData("nonDcrPanelBrand", v)}
+                      onValueChange={(v) => updatePanelBrand("nonDcrPanelBrand", v)}
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Select brand" />
@@ -911,35 +971,37 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
                   </div>
-                  <div>
-                    <Label>Non-DCR Panel Quantity *</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={formData.nonDcrPanelQuantity || ""}
-                      onChange={(e) => updateFormData("nonDcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
-                      placeholder="Enter quantity"
-                    />
-                    {(() => {
-                      const panelW = formData.nonDcrPanelSize ? Number.parseFloat(formData.nonDcrPanelSize.replace("W", "")) : 0
-                      const quantity = formData.nonDcrPanelQuantity || 0
-                      const totalW = panelW * quantity
-                      return totalW > 0 ? (
-                        <p className="text-xs text-muted-foreground mt-1 font-medium">
-                          Total: {totalW.toLocaleString()}W
-                        </p>
-                      ) : null
-                    })()}
-                  </div>
+                  {!hideNonDcrPanelQty && (
+                    <div>
+                      <Label>Non-DCR Panel Quantity *</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={formData.nonDcrPanelQuantity || ""}
+                        onChange={(e) =>
+                          updateFormData("nonDcrPanelQuantity", Number.parseInt(e.target.value) || 0)
+                        }
+                        placeholder="Enter quantity"
+                      />
+                      {(() => {
+                        const panelW = formData.nonDcrPanelSize
+                          ? Number.parseFloat(formData.nonDcrPanelSize.replace("W", ""))
+                          : 0
+                        const quantity = formData.nonDcrPanelQuantity || 0
+                        const totalW = panelW * quantity
+                        return totalW > 0 ? (
+                          <p className="text-xs text-muted-foreground mt-1 font-medium">
+                            Total: {totalW.toLocaleString()}W
+                          </p>
+                        ) : null
+                      })()}
+                    </div>
+                  )}
                 </div>
-              </div>
-
-              <div className="mt-3">
-                <QuotationPdfDisplayOptions
-                  usePanelSizeRange={Boolean(formData.pdfUsePanelSizeRange)}
-                  useInverterBrandOptions={Boolean(formData.pdfUseInverterBrandOptions)}
-                  onPanelSizeRangeChange={(checked) => updateFormData("pdfUsePanelSizeRange", checked)}
-                  onInverterBrandOptionsChange={(checked) => updateFormData("pdfUseInverterBrandOptions", checked)}
+                <PanelPdfRangeOptions
+                  panelBrand={formData.nonDcrPanelBrand || ""}
+                  selectedKey={formData.pdfNonDcrPanelRangeKey}
+                  onChange={(key) => updateFormData("pdfNonDcrPanelRangeKey", key)}
                 />
               </div>
 
@@ -1349,10 +1411,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     ) : null
                   })()}
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                <div
+                  className={`grid grid-cols-1 gap-3 sm:gap-4 ${hidePrimaryPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                >
                   <div>
                     <Label>Panel Brand *</Label>
-                    <Select value={formData.panelBrand} onValueChange={(v) => updateFormData("panelBrand", v)}>
+                    <Select value={formData.panelBrand} onValueChange={(v) => updatePanelBrand("panelBrand", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select brand" />
                       </SelectTrigger>
@@ -1373,35 +1437,34 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
                   </div>
-                  <div>
-                    <Label>Panel Quantity *</Label>
-                    <Input
-                      type="number"
-                      min="1"
-                      value={formData.panelQuantity || ""}
-                      onChange={(e) => updateFormData("panelQuantity", Number.parseInt(e.target.value) || 0)}
-                      placeholder="Enter quantity"
-                    />
-                    {(() => {
-                      const panelW = formData.panelSize ? Number.parseFloat(formData.panelSize.replace("W", "")) : 0
-                      const quantity = formData.panelQuantity || 0
-                      const totalW = panelW * quantity
-                      return totalW > 0 ? (
-                        <p className="text-xs text-muted-foreground mt-1 font-medium">
-                          Total: {totalW.toLocaleString()}W
-                        </p>
-                      ) : null
-                    })()}
-                  </div>
+                  {!hidePrimaryPanelQty && (
+                    <div>
+                      <Label>Panel Quantity *</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        value={formData.panelQuantity || ""}
+                        onChange={(e) => updateFormData("panelQuantity", Number.parseInt(e.target.value) || 0)}
+                        placeholder="Enter quantity"
+                      />
+                      {(() => {
+                        const panelW = formData.panelSize ? Number.parseFloat(formData.panelSize.replace("W", "")) : 0
+                        const quantity = formData.panelQuantity || 0
+                        const totalW = panelW * quantity
+                        return totalW > 0 ? (
+                          <p className="text-xs text-muted-foreground mt-1 font-medium">
+                            Total: {totalW.toLocaleString()}W
+                          </p>
+                        ) : null
+                      })()}
+                    </div>
+                  )}
                 </div>
-                <div className="mt-3">
-                  <QuotationPdfDisplayOptions
-                    usePanelSizeRange={Boolean(formData.pdfUsePanelSizeRange)}
-                    useInverterBrandOptions={Boolean(formData.pdfUseInverterBrandOptions)}
-                    onPanelSizeRangeChange={(checked) => updateFormData("pdfUsePanelSizeRange", checked)}
-                    onInverterBrandOptionsChange={(checked) => updateFormData("pdfUseInverterBrandOptions", checked)}
-                  />
-                </div>
+                <PanelPdfRangeOptions
+                  panelBrand={formData.panelBrand || ""}
+                  selectedKey={formData.pdfPanelRangeKey}
+                  onChange={(key) => updateFormData("pdfPanelRangeKey", key)}
+                />
               </div>
 
               {/* Inverter Selection */}

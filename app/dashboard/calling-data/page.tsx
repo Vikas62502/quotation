@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
@@ -365,10 +365,10 @@ function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVis
   return true
 }
 
-export default function CallingDataPage() {
+function CallingDataPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isAuthenticated, dealer, role } = useAuth()
+  const { isAuthenticated, dealer, role, authReady } = useAuth()
   const { toast } = useToast()
   const [leads, setLeads] = useState<CallingLead[]>([])
   const [scheduledLeads, setScheduledLeads] = useState<CallingLead[]>([])
@@ -543,6 +543,8 @@ export default function CallingDataPage() {
   }
 
   useEffect(() => {
+    if (!authReady) return
+
     if (!isAuthenticated) {
       router.push("/login")
       return
@@ -551,7 +553,7 @@ export default function CallingDataPage() {
       router.push("/dashboard")
       return
     }
-  }, [isAuthenticated, role, router])
+  }, [authReady, isAuthenticated, role, router])
 
   const normalizeApiLead = (lead: any): CallingLead => {
     const source = lead?.lead || lead?.customerLead || lead
@@ -1997,7 +1999,7 @@ export default function CallingDataPage() {
     }
   }
 
-  if (!isAuthenticated) return null
+  if (!authReady || !isAuthenticated) return null
 
   return (
     <div className="min-h-screen bg-background">
@@ -3834,5 +3836,13 @@ export default function CallingDataPage() {
       </Tabs>
       </main>
     </div>
+  )
+}
+
+export default function CallingDataPage() {
+  return (
+    <Suspense fallback={null}>
+      <CallingDataPageContent />
+    </Suspense>
   )
 }

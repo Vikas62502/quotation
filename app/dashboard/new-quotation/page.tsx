@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useQuotation, type Customer, type ProductSelection } from "@/lib/quotation-context"
@@ -25,8 +25,8 @@ const steps = [
 
 const ADMIN_USERNAME = "admin"
 
-export default function NewQuotationPage() {
-  const { isAuthenticated, dealer } = useAuth()
+function NewQuotationPageContent() {
+  const { isAuthenticated, dealer, authReady } = useAuth()
   const { setCurrentCustomer, setCurrentProducts, currentCustomer, currentProducts, clearCurrent } = useQuotation()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -48,20 +48,18 @@ export default function NewQuotationPage() {
   const customerFormInitial = prefillCustomer ?? currentCustomer ?? undefined
 
   useEffect(() => {
+    if (!authReady) return
+
     if (!isAuthenticated) {
       router.push("/login")
       return
     }
-    
-    // Redirect admin to admin panel - admins cannot create quotations
+
     if (dealer?.username === ADMIN_USERNAME) {
       router.push("/dashboard/admin")
       return
     }
-    
-    // Only clear data if explicitly starting a new quotation (not on every mount)
-    // This allows data to persist when navigating between steps
-  }, [isAuthenticated, router, dealer])
+  }, [authReady, isAuthenticated, router, dealer])
 
   useEffect(() => {
     if (!prefillCustomer || !prefillSignature) return
@@ -71,7 +69,7 @@ export default function NewQuotationPage() {
     setCurrentStep(1)
   }, [prefillCustomer, prefillSignature, setCurrentCustomer])
 
-  if (!isAuthenticated) return null
+  if (!authReady || !isAuthenticated) return null
 
   const handleCustomerSubmit = (customer: Customer) => {
     setCurrentCustomer(customer)
@@ -202,5 +200,13 @@ export default function NewQuotationPage() {
         </div>
       </main>
     </div>
+  )
+}
+
+export default function NewQuotationPage() {
+  return (
+    <Suspense fallback={null}>
+      <NewQuotationPageContent />
+    </Suspense>
   )
 }

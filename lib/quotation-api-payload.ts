@@ -3,14 +3,23 @@ import type { Customer, ProductSelection } from "@/lib/quotation-context"
 /** PDF-only flags — strip before catalog validation until backend ignores them (§X). */
 export function stripPdfDisplayFlags(products: ProductSelection): ProductSelection {
   const {
+    pdfPanelRangeKey: _p,
+    pdfDcrPanelRangeKey: _d,
+    pdfNonDcrPanelRangeKey: _n,
     pdfUsePanelSizeRange: _a,
     pdfUseInverterBrandOptions: _b,
     ...rest
   } = products as ProductSelection & {
+    pdf_panel_range_key?: string
+    pdf_dcr_panel_range_key?: string
+    pdf_non_dcr_panel_range_key?: string
     pdf_use_panel_size_range?: boolean
     pdf_use_inverter_brand_options?: boolean
   }
   const stripped = { ...rest } as ProductSelection & Record<string, unknown>
+  delete stripped.pdf_panel_range_key
+  delete stripped.pdf_dcr_panel_range_key
+  delete stripped.pdf_non_dcr_panel_range_key
   delete stripped.pdf_use_panel_size_range
   delete stripped.pdf_use_inverter_brand_options
   return stripped as ProductSelection
@@ -18,9 +27,22 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
 
 export function extractPdfDisplayFlags(products: ProductSelection): Partial<ProductSelection> {
   const flags: Partial<ProductSelection> = {}
+  if (products.pdfPanelRangeKey) flags.pdfPanelRangeKey = products.pdfPanelRangeKey
+  if (products.pdfDcrPanelRangeKey) flags.pdfDcrPanelRangeKey = products.pdfDcrPanelRangeKey
+  if (products.pdfNonDcrPanelRangeKey) flags.pdfNonDcrPanelRangeKey = products.pdfNonDcrPanelRangeKey
   if (products.pdfUsePanelSizeRange) flags.pdfUsePanelSizeRange = true
   if (products.pdfUseInverterBrandOptions) flags.pdfUseInverterBrandOptions = true
   return flags
+}
+
+export function hasPdfDisplayFlags(flags: Partial<ProductSelection>): boolean {
+  return Boolean(
+    flags.pdfPanelRangeKey ||
+      flags.pdfDcrPanelRangeKey ||
+      flags.pdfNonDcrPanelRangeKey ||
+      flags.pdfUsePanelSizeRange ||
+      flags.pdfUseInverterBrandOptions,
+  )
 }
 
 /** Body for POST /customers — only fields the API schema documents. */

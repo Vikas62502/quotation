@@ -135,6 +135,8 @@ interface AuthContextType {
   hrUser: HrUser | null
   role: UserRole | null
   isAuthenticated: boolean
+  /** False until localStorage session has been read (avoids refresh redirect races). */
+  authReady: boolean
   login: (username: string, password: string) => Promise<boolean>
   loginAccountManagement: (username: string, password: string) => Promise<boolean>
   loginInstaller: (username: string, password: string) => Promise<boolean>
@@ -159,6 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [hrUser, setHrUser] = useState<HrUser | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -178,6 +181,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
+    try {
     // Check for existing session from API token
     const token = localStorage.getItem("authToken")
     const savedUser = localStorage.getItem("user")
@@ -387,6 +391,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setBaldev(null)
         setHrUser(null)
       }
+    }
+    } finally {
+      setAuthReady(true)
     }
   }, [])
 
@@ -1271,6 +1278,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         hrUser,
         role,
         isAuthenticated,
+        authReady,
         login,
         loginAccountManagement,
         loginInstaller,
