@@ -62,7 +62,7 @@ const companyInfo = {
     },
   ] as const,
   phone: "+91 9251666646",
-  email: "info@chairbordsolar.com",
+  email: "care@chairbord.com",
   supportFormUrl: "https://www.chairbord.com/support",
   website: "www.chairbord.com",
   gst: "08AAJCC8097M1ZT",
