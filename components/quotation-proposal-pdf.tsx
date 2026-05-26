@@ -49,6 +49,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
     warrantyRows,
     supportLine,
     termsRows,
+    page2CompactFont,
   } = data
 
   const customerAddress = [
@@ -149,7 +150,9 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
       </div>
 
       {/* Page 2 — Pricing, payment, bank, warranty */}
-      <div className="proposal-pdf-page proposal-pdf-page-2">
+      <div
+        className={`proposal-pdf-page proposal-pdf-page-2${page2CompactFont ? " proposal-pdf-page-2-compact" : ""}`}
+      >
         <div className="prop-p2-body">
         {panelNote ? <div className="prop-p2-intro prop-note-green">{panelNote}</div> : null}
 
@@ -222,18 +225,6 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
         <div className="prop-p2-section">
           <div className="prop-bar">Bank Details for Payment</div>
           <div className="prop-bank-grid">
-            <div className="prop-bank-box icici">
-              <strong>{banks.icici.bankName}</strong>
-              <p>
-                <strong>A/C Name:</strong> {banks.icici.accountName}
-              </p>
-              <p>
-                <strong>A/C No:</strong> {banks.icici.accountNumber}
-              </p>
-              <p>
-                <strong>IFSC:</strong> {banks.icici.ifscCode}
-              </p>
-            </div>
             <div className="prop-bank-box sbi">
               <strong>{banks.sbi.bankName}</strong>
               <p>
@@ -244,6 +235,18 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
               </p>
               <p>
                 <strong>IFSC:</strong> {banks.sbi.ifscCode}
+              </p>
+            </div>
+            <div className="prop-bank-box icici">
+              <strong>{banks.icici.bankName}</strong>
+              <p>
+                <strong>A/C Name:</strong> {banks.icici.accountName}
+              </p>
+              <p>
+                <strong>A/C No:</strong> {banks.icici.accountNumber}
+              </p>
+              <p>
+                <strong>IFSC:</strong> {banks.icici.ifscCode}
               </p>
             </div>
           </div>

@@ -17,7 +17,7 @@ export function SolarLogo({ className = "", size = "md", showText = true }: Sola
     <div className={`flex items-center gap-2 ${className}`}>
       {/* Chairbord Solar Logo */}
       <img
-        src="https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png"
+        src="/chairbord-solar-logo.png"
         alt="Chairbord Solar Logo"
         width={icon}
         height={icon}

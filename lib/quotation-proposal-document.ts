@@ -28,7 +28,7 @@ export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
 
 export const DEFAULT_PROPOSAL_SUPPORT_FORM_URL = "https://www.chairbord.com/support"
 export const DEFAULT_PROPOSAL_SUPPORT_PHONE = "+91 9785230023"
-export const DEFAULT_PROPOSAL_SUPPORT_EMAIL = "care@chairbord.com"
+export const DEFAULT_PROPOSAL_SUPPORT_EMAIL = "support@chairbord.com"
 
 export type ProposalOfficeLocation = {
   label: string
@@ -164,6 +164,8 @@ export type QuotationProposalDocumentData = {
   warrantyRows: WarrantyRow[]
   supportLine: string
   termsRows: TermsRow[]
+  /** BOTH system: page 2 PDF typography is 1px smaller to fit extra content. */
+  page2CompactFont: boolean
 }
 
 export function formatProposalDate(d: Date): string {
@@ -419,6 +421,10 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   return rows
 }
 
+export function shouldUseCompactPage2PdfFont(products?: ProductsLike | null): boolean {
+  return resolveProductsSystemType(products) === "both"
+}
+
 /** Normalize system type from products (camelCase or API snake_case). */
 export function resolveProductsSystemType(products?: ProductsLike | null): string {
   if (!products) return ""
@@ -670,5 +676,6 @@ export function buildQuotationProposalDocumentData(params: {
     warrantyRows: buildWarrantyRows(panelBrand),
     supportLine: buildAfterSalesSupportLine(params.company),
     termsRows: buildTermsRows(products, panelBrand),
+    page2CompactFont: shouldUseCompactPage2PdfFont(products),
   }
 }

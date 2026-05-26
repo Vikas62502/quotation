@@ -36,28 +36,29 @@ const companyInfo = {
   tagline: "Base of Innovation",
   address: "Plot No. 10, Ground Floor, Shri Shyam Vihar, Kalwar Road, Jhotwara, Jaipur, Rajasthan, India - 302012",
   phone: "+91 9251666646",
-  email: "care@chairbord.com",
+  email: "support@chairbord.com",
   supportFormUrl: "https://www.chairbord.com/support",
   website: "www.chairbord.com",
   gst: "08AAJCC8097M1ZT",
   license: "MNRE/2023/CB/001234",
-  logoUrl: "https://res.cloudinary.com/du0cxgoic/image/upload/v1753165862/logo_Chairbord_Solar_1_1_1_1_tnsdh8.png",
+  logoUrl: "/chairbord-solar-logo.png",
 }
 
 // Bank Details
 const bankDetails = {
-  icici: {
-    bankName: "ICICI Bank",
-    accountName: "CHAIRBORD PRIVATE LIMITED",
-    accountNumber: "777705926966",
-    ifscCode: "ICIC0004181",
-  },
   sbi: {
     bankName: "State Bank of India",
     accountName: "CHAIRBORD PRIVATE LIMITED",
     accountNumber: "44487702699",
     ifscCode: "SBIN0032365",
   },
+  icici: {
+    bankName: "ICICI Bank",
+    accountName: "CHAIRBORD PRIVATE LIMITED",
+    accountNumber: "777705926966",
+    ifscCode: "ICIC0004181",
+  },
+  
 }
 
 import {

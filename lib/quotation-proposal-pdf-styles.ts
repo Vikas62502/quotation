@@ -379,6 +379,28 @@ export const PROPOSAL_PDF_STYLES = `
   line-height: 1.45;
   white-space: pre-line;
 }
+/* BOTH system — page 2 only: all text 1px smaller */
+.proposal-pdf-page-2.proposal-pdf-page-2-compact {
+  font-size: 11.5px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-bar {
+  font-size: 11.5px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-table th {
+  font-size: 11px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-table td {
+  font-size: 10.5px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-support-line {
+  font-size: 10px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-bank-box {
+  font-size: 10.5px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-note-green {
+  font-size: 10.5px;
+}
 /* Page 3 — same typography & section rhythm as page 2 */
 .proposal-pdf-page-3 {
   display: flex;
