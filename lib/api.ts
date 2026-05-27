@@ -1997,6 +1997,8 @@ export const api = {
           bankIfsc?: string
           /** Subsidy cheque (cash or cash + loan) */
           subsidyChequeDetails?: string
+          /** Optional manual approve timestamp (ISO). */
+          statusApprovedAt?: string
         },
       ) => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
@@ -2011,6 +2013,14 @@ export const api = {
                   ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc } : {}),
                   ...(approval.subsidyChequeDetails?.trim()
                     ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
+                    : {}),
+                  ...(approval.statusApprovedAt
+                    ? {
+                        statusApprovedAt: approval.statusApprovedAt,
+                        status_approved_at: approval.statusApprovedAt,
+                        approvedAt: approval.statusApprovedAt,
+                        approved_at: approval.statusApprovedAt,
+                      }
                     : {}),
                 }
               : {}),
@@ -2068,6 +2078,7 @@ export const api = {
               bankName?: string
               bankIfsc?: string
               fileSubsidyChequeDetails?: string
+              fileLoginAt?: string
             },
       ) => {
         let body: Record<string, unknown>
@@ -2080,6 +2091,7 @@ export const api = {
             bankName?: string
             bankIfsc?: string
             fileSubsidyChequeDetails?: string
+            fileLoginAt?: string
           }
           body = {
             fileLoginStatus: p.fileLoginStatus,
@@ -2089,6 +2101,12 @@ export const api = {
             ...(p.bankIfsc ? { fileBankIfsc: p.bankIfsc, bankIfsc: p.bankIfsc } : {}),
             ...(p.fileSubsidyChequeDetails?.trim()
               ? { fileSubsidyChequeDetails: p.fileSubsidyChequeDetails.trim() }
+              : {}),
+            ...(p.fileLoginAt
+              ? {
+                  fileLoginAt: p.fileLoginAt,
+                  file_login_at: p.fileLoginAt,
+                }
               : {}),
           }
         }

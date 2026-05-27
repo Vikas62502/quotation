@@ -39,6 +39,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 
 // Payment Phase Interface
@@ -182,6 +183,24 @@ function getDisplayRemaining(payment: CustomerPayment): number {
     return Math.max(0, payment.remainingFromApi)
   }
   return computed
+}
+
+function formatInstallmentShortLabel(phase: PaymentPhase): string {
+  const raw = String(phase.phaseName || "").trim()
+  const matchedNumber = raw.match(/(\d+)/)
+  if (matchedNumber) return `I${matchedNumber[1]}`
+  return `I${phase.phaseNumber}`
+}
+
+type PaymentInstallmentFilter = "all" | "1" | "2" | "3" | "4" | "5"
+
+function paymentMatchesInstallmentFilter(
+  payment: CustomerPayment,
+  filter: PaymentInstallmentFilter,
+): boolean {
+  if (filter === "all") return true
+  const installmentNumber = Number(filter)
+  return payment.phases.some((phase) => phase.phaseNumber === installmentNumber)
 }
 
 function getStoredSubsidyChequesMap(): Record<string, SubsidyChequeRecord[]> {
@@ -495,6 +514,7 @@ export default function AccountManagementPage() {
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
+  const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
   /** Approve / file-login filters as calendar ranges (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [fileLoginDateRange, setFileLoginDateRange] = useState<DateRange | undefined>()
@@ -1000,10 +1020,12 @@ export default function AccountManagementPage() {
     const fileLoginBounds = paymentDateRangeToFilterStrings(fileLoginDateRange)
     const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
     const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
+    const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
     return (
       matchesSearch &&
       matchesPaymentType &&
       matchesPaymentStatus &&
+      matchesInstallment &&
       matchesApproveDateRange &&
       matchesFileLoginDateRange
     )
@@ -1794,7 +1816,7 @@ export default function AccountManagementPage() {
                   </div>
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 w-full lg:w-auto">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 w-full lg:flex-1">
                     <div className="w-full sm:min-w-30">
                       <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
                         <SelectTrigger className="h-9 text-sm">
@@ -1822,6 +1844,24 @@ export default function AccountManagementPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="w-full sm:min-w-36">
+                      <Select
+                        value={paymentInstallmentFilter}
+                        onValueChange={(value) => setPaymentInstallmentFilter(value as PaymentInstallmentFilter)}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Installment" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All installments</SelectItem>
+                          <SelectItem value="1">Installment 1</SelectItem>
+                          <SelectItem value="2">Installment 2</SelectItem>
+                          <SelectItem value="3">Installment 3</SelectItem>
+                          <SelectItem value="4">Installment 4</SelectItem>
+                          <SelectItem value="5">Installment 5</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <Button
                     type="button"
@@ -1840,7 +1880,8 @@ export default function AccountManagementPage() {
                     {(approveDateRange?.from ||
                       approveDateRange?.to ||
                       fileLoginDateRange?.from ||
-                      fileLoginDateRange?.to) && (
+                      fileLoginDateRange?.to ||
+                      paymentInstallmentFilter !== "all") && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -1849,9 +1890,10 @@ export default function AccountManagementPage() {
                         onClick={() => {
                           setApproveDateRange(undefined)
                           setFileLoginDateRange(undefined)
+                          setPaymentInstallmentFilter("all")
                         }}
                       >
-                        Clear dates
+                        Clear date & installment filters
                       </Button>
                     )}
                   </div>
@@ -1931,7 +1973,31 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
-                                <p className="text-sm font-semibold">₹{paidAmount.toLocaleString()}</p>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <p className="text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2">
+                                      ₹{paidAmount.toLocaleString()}
+                                    </p>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[300px]">
+                                    <div className="space-y-1.5">
+                                      <p className="font-semibold">Installments</p>
+                                      {payment.phases.length === 0 ? (
+                                        <p>No installments yet</p>
+                                      ) : (
+                                        payment.phases
+                                          .slice()
+                                          .sort((a, b) => a.phaseNumber - b.phaseNumber)
+                                          .map((phase) => (
+                                            <p key={`${payment.quotationId}-${phase.phaseNumber}`}>
+                                              {formatInstallmentShortLabel(phase)}: ₹
+                                              {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
+                                            </p>
+                                          ))
+                                      )}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
                               </div>
 
                               <div className="min-w-0">
@@ -2093,88 +2159,6 @@ export default function AccountManagementPage() {
                 <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm">
                   <span className="text-muted-foreground">Bank · IFSC </span>
                   <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
-                </div>
-              )}
-
-              {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-4 py-3 space-y-3">
-                  <div>
-                    <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Subsidy cheques</p>
-                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
-                      Example: subtotal ₹2,99,000 with loan ₹2,00,000 and subsidy by cheque ₹78,000 — record each
-                      cheque here. When it clears, use &quot;Apply to paid&quot; so the amount is spread across
-                      installments and Remaining drops. Then Submit to sync.
-                    </p>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <Label className="text-xs">Cheque details</Label>
-                      <Textarea
-                        value={subsidyDraftDetails}
-                        onChange={(e) => setSubsidyDraftDetails(e.target.value)}
-                        placeholder="Cheque no., bank, date, customer note…"
-                        rows={2}
-                        className="mt-1 resize-y min-h-[52px]"
-                      />
-                    </div>
-                    <div>
-                      <Label className="text-xs">Amount (₹)</Label>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={subsidyDraftAmount}
-                        onChange={(e) => setSubsidyDraftAmount(e.target.value)}
-                        placeholder="e.g. 78000"
-                        className="mt-1"
-                      />
-                    </div>
-                  </div>
-                  <Button type="button" size="sm" variant="secondary" onClick={handleAddSubsidyCheque}>
-                    Add pending cheque
-                  </Button>
-                  {(activePayment.subsidyCheques || []).length > 0 ? (
-                    <ul className="space-y-2 border-t border-amber-200/60 pt-3">
-                      {activePayment.subsidyCheques.map((sc) => (
-                        <li
-                          key={sc.id}
-                          className="rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm"
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-medium">₹{sc.amount.toLocaleString("en-IN")}</p>
-                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
-                                {sc.details || "—"}
-                              </p>
-                              {sc.status === "cleared" && sc.clearedAt ? (
-                                <p className="text-[10px] text-muted-foreground mt-1">
-                                  Cleared {formatAdminDate(sc.clearedAt)}
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <Badge variant={sc.status === "cleared" ? "default" : "outline"}>
-                                {sc.status === "cleared" ? "Cleared" : "Pending"}
-                              </Badge>
-                              {sc.status === "pending" ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="default"
-                                  onClick={() => handleMarkSubsidyChequeCleared(sc.id)}
-                                >
-                                  Apply to paid
-                                </Button>
-                              ) : null}
-                            </div>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-xs text-muted-foreground border-t border-amber-200/60 pt-2">
-                      No subsidy cheques recorded yet.
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -2463,6 +2447,87 @@ export default function AccountManagementPage() {
                     })}
                                 </div>
                 </>
+              )}
+              {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-4 py-3 space-y-3">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Subsidy cheques</p>
+                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
+                      Example: subtotal ₹2,99,000 with loan ₹2,00,000 and subsidy by cheque ₹78,000 — record each
+                      cheque here. When it clears, use &quot;Apply to paid&quot; so the amount is spread across
+                      installments and Remaining drops. Then Submit to sync.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Cheque details</Label>
+                      <Textarea
+                        value={subsidyDraftDetails}
+                        onChange={(e) => setSubsidyDraftDetails(e.target.value)}
+                        placeholder="Cheque no., bank, date, customer note…"
+                        rows={2}
+                        className="mt-1 resize-y min-h-[52px]"
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Amount (₹)</Label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={subsidyDraftAmount}
+                        onChange={(e) => setSubsidyDraftAmount(e.target.value)}
+                        placeholder="e.g. 78000"
+                        className="mt-1"
+                      />
+                    </div>
+                  </div>
+                  <Button type="button" size="sm" variant="secondary" onClick={handleAddSubsidyCheque}>
+                    Add pending cheque
+                  </Button>
+                  {(activePayment.subsidyCheques || []).length > 0 ? (
+                    <ul className="space-y-2 border-t border-amber-200/60 pt-3">
+                      {activePayment.subsidyCheques.map((sc) => (
+                        <li
+                          key={sc.id}
+                          className="rounded-md border border-border/60 bg-background/90 px-3 py-2 text-sm"
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-medium">₹{sc.amount.toLocaleString("en-IN")}</p>
+                              <p className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
+                                {sc.details || "—"}
+                              </p>
+                              {sc.status === "cleared" && sc.clearedAt ? (
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  Cleared {formatAdminDate(sc.clearedAt)}
+                                </p>
+                              ) : null}
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Badge variant={sc.status === "cleared" ? "default" : "outline"}>
+                                {sc.status === "cleared" ? "Cleared" : "Pending"}
+                              </Badge>
+                              {sc.status === "pending" ? (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="default"
+                                  onClick={() => handleMarkSubsidyChequeCleared(sc.id)}
+                                >
+                                  Apply to paid
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-muted-foreground border-t border-amber-200/60 pt-2">
+                      No subsidy cheques recorded yet.
+                    </p>
+                  )}
+                </div>
               )}
               <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
                 <Button

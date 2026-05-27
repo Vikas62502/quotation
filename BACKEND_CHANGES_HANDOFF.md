@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, dealer calling queue **§E / §H / §J**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §H / §J**, **§J.1**, **§X**). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params).
 
 ---
 
@@ -418,6 +418,8 @@ For **every** preset including **custom**, the SPA sends **`startDate` and `endD
 
 **Response:** array under `actions` / `callingActions` / `items` / `logs` / `data`; each item needs at minimum `id`, `leadId`, `dealerId`, `dealerName`, `action`, `actionAt`, `callRemark` (and customer fields if stored).
 
+**Summary cards (Interested / Follow Up / Not Interested / Others):** see **§7** — requires structured `statusText` + `statusCategory` (or parseable `callRemark`) on every row.
+
 **Weekly alignment:** same as `lib/calling-report-date-range.ts` — week = **Monday 00:00** through **Sunday end of day** in the timezone you document for reporting.
 
 ### Checklist
@@ -459,14 +461,163 @@ For **every** preset including **custom**, the SPA sends **`startDate` and `endD
 
 ---
 
+## 6. Dealer dashboard — Total Value (approved quotations only)
+
+**Frontend:** `app/dashboard/page.tsx` — the **Total Value** stat card sums amounts **only** where `status` is `approved` (case-insensitive). Uses the **same amount as the table AMOUNT column**: `subtotal` (package/set price) → `totalAmount` → `finalAmount`. Display: full INR (e.g. `₹1,89,000`), not lakhs shorthand. Subtitle: **“Approved quotation value”**.
+
+**Current API:** Dealer loads all quotations via `GET /api/quotations` and aggregates client-side. **No new endpoint is required** if list/detail responses are complete.
+
+### Required on `GET /api/quotations` (dealer JWT)
+
+Each quotation object must include:
+
+| Field | Notes |
+|-------|--------|
+| `status` | `pending`, `approved`, `rejected`, etc. — set to **`approved`** when admin approves |
+| `subtotal` | Root and/or `pricing.subtotal` — **primary** (matches AMOUNT column / set price) |
+| `totalAmount` | Root and/or `pricing.totalAmount` — fallback |
+| `finalAmount` | Root and/or `pricing.finalAmount` — last fallback (after subsidy; can be much lower than subtotal) |
+
+**Do not** include `pending` / `rejected` rows in any server-side `approvedQuotationValue` aggregate.
+
+### Optional — `GET /api/dealers/me/dashboard-stats` (recommended)
+
+Avoids loading full quotation lists for one number.
+
+```json
+{
+  "success": true,
+  "data": {
+    "totalQuotations": 27,
+    "uniqueCustomers": 23,
+    "thisMonthQuotations": 0,
+    "approvedQuotationCount": 5,
+    "approvedQuotationValue": 1250000
+  }
+}
+```
+
+| Field | Rule |
+|-------|------|
+| `approvedQuotationValue` | `SUM(ABS(COALESCE(final_amount, total_amount, 0)))` WHERE `LOWER(status) = 'approved'` AND `dealer_id =` authenticated dealer |
+| `approvedQuotationCount` | `COUNT(*)` with same filter |
+| `thisMonthQuotations` | `created_at` in current calendar month (dealer scope) |
+
+**SQL (adjust names):**
+
+```sql
+SELECT COALESCE(SUM(ABS(COALESCE(final_amount, total_amount, 0))), 0) AS approved_quotation_value,
+       COUNT(*) AS approved_quotation_count
+FROM quotations
+WHERE dealer_id = $dealerId
+  AND LOWER(TRIM(status)) = 'approved';
+```
+
+### Admin approval
+
+When admin sets quotation status to approved (`PATCH` admin quotation status — see `BACKEND_ADMIN_QUOTATION_STATUS.ts`), persist `status = 'approved'` and keep `final_amount` / `total_amount` in sync with pricing so dealer dashboard totals match the **Amount** column in the table.
+
+### Checklist
+
+- [ ] `GET /api/quotations` returns `status`, `finalAmount` (or `pricing.finalAmount`), `totalAmount` for every dealer row
+- [ ] Admin approve flow sets `status` to `approved` reliably
+- [ ] (Optional) `GET /api/dealers/me/dashboard-stats` with `approvedQuotationValue`
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` §7.9.
+
+---
+
+## 7. HR Dealer Actions — summary buckets (Interested / Follow Up / Not Interested)
+
+**Frontend:** `app/dashboard/hr/page.tsx` (Dealer Actions tab), `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts`. **API-only** — no `localStorage` merge for this tab.
+
+### Problem
+
+HR summary cards were wrong when backend returned only `action: "called"` without the dealer’s selected **status text** (e.g. `Already Installed Solar` counted as Interested). Counts must match the **dealer calling status picker** (`app/dashboard/calling-data/page.tsx`).
+
+**UI (May 2026):** Primary HR cards are **Connected** vs **Not Connected** (same rules as dealer Calling Data). Under **Connected**, sub-counts show Interested / Follow Up / Not Interested. Optional GET fields `connectedActions` / `notConnectedActions` on queue response are not required if each row has `statusText` or tagged `callRemark`.
+
+### Required on PATCH (dealer completes a call)
+
+`PATCH /api/dealers/me/calling-queue/{leadId}/action` (and HR/admin equivalents) must persist:
+
+| Field | Example |
+|-------|---------|
+| `action` | `called` \| `follow_up` \| `not_interested` \| `rescheduled` |
+| `callRemark` / `call_remark` | `[competition] Already Installed Solar \| optional note` |
+| `statusCategory` / `status_category` | `competition`, `customer_intent`, `schedule`, `call_connectivity`, … |
+| `statusText` / `status_text` | Exact label from picker, e.g. `Interested`, `Callback Later`, `Already Installed Solar` |
+
+Tagged remark format (frontend sends all of the above):
+
+```text
+[{statusCategory}] {statusText} | {freeRemark}
+```
+
+Reference: `enrichCallingActionPayload()` in `lib/calling-remark-payload.ts`, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchDealerCallingQueueAction`).
+
+### Required on GET (HR / Admin calling-actions)
+
+Each row in `GET /api/hr/calling-actions` (and admin paths in §4.8) must echo:
+
+| Field | Required for summary |
+|-------|----------------------|
+| `action`, `actionAt` | Yes |
+| `callRemark` or `call_remark` | Yes (fallback parse) |
+| `statusCategory` / `status_category` | **Strongly recommended** |
+| `statusText` / `status_text` | **Strongly recommended** — exact picker label |
+| `dealerId`, `dealerName`, `leadId` | Yes |
+| Customer `name`, `mobile`, `address` | Display only |
+
+Frontend classification (`lib/calling-action-summary.ts`):
+
+| Bucket | Examples |
+|--------|----------|
+| **Interested** | `Interested`, `Highly Interested`, `Site Visit Scheduled`, `Quotation Shared`, `Valid Lead`, … |
+| **Follow Up** | `Callback Later`, `Rescheduled`, `Follow-up Pending`, `action: follow_up` |
+| **Not Interested** | `Not Interested`, `Already Installed Solar`, `Chose Competitor`, `action: not_interested` |
+| **Others** | `start`, connectivity-only rows, unclassified |
+
+Do **not** classify using substring `includes("interested")` on status text.
+
+### Optional — server-side aggregates
+
+```json
+{
+  "actions": [ /* ... */ ],
+  "summary": {
+    "interested": 12,
+    "followUp": 5,
+    "notInterested": 48,
+    "others": 3,
+    "total": 68
+  }
+}
+```
+
+If omitted, frontend computes from `actions[]` using the same rules.
+
+### Checklist
+
+- [ ] PATCH persists `status_category` + `status_text` + `call_remark` on every submit
+- [ ] GET returns structured fields on every action row (not only `action: called`)
+- [ ] `Already Installed Solar` / `Not Interested` rows are **not** counted as Interested
+- [ ] `Interested` / `Highly Interested` rows count as Interested
+- [ ] HR GET honours `dealerId` + `startDate` / `endDate` for **All Dealers** and per-dealer filters
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` §J.1.
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.8 (calling queue, HR uploads), dealer queue (~2307), **§J** (calling-actions GET), §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.9 (calling queue, HR uploads, dealer dashboard stats), dealer queue (~2307), **§J** + **§J.1** (calling-actions GET + summary buckets), §X (PDF flags) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
 | `lib/calling-remark-payload.ts` | PATCH action body for remarks |
 | `lib/calling-report-date-range.ts` | HR **GET** `startDate` / `endDate` + `range` semantics |
 | `lib/calling-lead-session.ts` | Client-side draft keys (not a backend contract) |
+| `lib/calling-action-summary.ts` | HR Interested / Follow Up / Not Interested bucket rules |

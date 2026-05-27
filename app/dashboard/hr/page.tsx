@@ -27,6 +27,17 @@ import {
   getHrLeadRowDisplay,
   resolveHrUploadBatchCounts,
 } from "@/lib/hr-upload-lead-display"
+import {
+  buildCallingActionSummary,
+  buildCallingConnectionSummary,
+  CALLING_CONNECTION_LABELS,
+  CALLING_SUMMARY_BUCKET_LABELS,
+  classifyCallingActionSummaryBucket,
+  classifyCallingConnection,
+  getCallingActionSummaryBadgeClass,
+  getCallingConnectionBadgeClass,
+  resolveCallingActionFields,
+} from "@/lib/calling-action-summary"
 
 type DealerOption = {
   id: string
@@ -61,6 +72,8 @@ type CallingActionRecord = {
   customerAddress: string
   action: string
   callRemark: string
+  statusCategory?: string
+  statusText?: string
   actionAt: string
   nextFollowUpAt?: string
 }
@@ -250,6 +263,9 @@ export default function HrDashboardPage() {
   const [callingCustomFromDate, setCallingCustomFromDate] = useState("")
   const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingDealerFilter, setCallingDealerFilter] = useState("all")
+  const [callingConnectionFilter, setCallingConnectionFilter] = useState<"all" | "connected" | "not_connected">(
+    "all",
+  )
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -268,11 +284,6 @@ export default function HrDashboardPage() {
         })
       })
     return Array.from(uniqueMap.values())
-  }
-
-  const getLocalDealers = (): DealerOption[] => {
-    const localDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
-    return normalizeDealerList(localDealers)
   }
 
   const getAllDealersFromAdmin = async (): Promise<DealerOption[]> => {
@@ -353,7 +364,9 @@ export default function HrDashboardPage() {
       customerMobile: item?.mobile || item?.customerMobile || item?.lead?.mobile || item?.customer?.mobile || "",
       customerAddress: compactAddress,
       action: item?.action || item?.status || "unknown",
-      callRemark: item?.callRemark || item?.remark || "",
+      callRemark: item?.callRemark || item?.call_remark || item?.remark || "",
+      statusCategory: item?.statusCategory || item?.status_category || "",
+      statusText: item?.statusText || item?.status_text || "",
       actionAt,
       nextFollowUpAt: item?.nextFollowUpAt,
     }
@@ -465,13 +478,9 @@ export default function HrDashboardPage() {
     const loadDealers = async () => {
       setIsLoadingDealers(true)
       try {
-        if (useApi) {
-          // Use backend dealer directory as single source of truth (same as Admin).
-          const loadedDealers = await getAllDealersFromAdmin()
-          setDealers(loadedDealers)
-        } else {
-          setDealers(getLocalDealers())
-        }
+        // Use backend dealer directory as single source of truth (same as Admin).
+        const loadedDealers = await getAllDealersFromAdmin()
+        setDealers(loadedDealers)
       } catch {
         setDealers([])
         toast({
@@ -535,22 +544,6 @@ export default function HrDashboardPage() {
 
   useEffect(() => {
     const loadCallingActions = async () => {
-      const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
-      const normalizedLocal = Array.isArray(localCallingActions)
-        ? localCallingActions
-            .map((item: any, index: number) => normalizeCallingAction(item, dealers, index))
-            .sort(
-              (a, b) =>
-                (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
-            )
-        : []
-
-      if (!useApi) {
-        setCallingActions(normalizedLocal)
-        setCallingActionsUnavailable(normalizedLocal.length === 0)
-        return
-      }
-
       try {
         const dealerIdParam = !callingDealerFilter || callingDealerFilter === "all" || callingDealerFilter.startsWith("name:")
           ? undefined
@@ -570,26 +563,26 @@ export default function HrDashboardPage() {
           response?.data ||
           []
         const normalizedFromApi = Array.isArray(source)
-          ? source
-              .map((item: any, index: number) => normalizeCallingAction(item, dealers, index))
-              .sort(
-                (a, b) =>
-                  (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
-              )
+          ? source.map((item: any, index: number) => normalizeCallingAction(item, dealers, index))
           : []
-        const mergedById = new Map<string, CallingActionRecord>()
-        ;[...normalizedFromApi, ...normalizedLocal].forEach((item) => {
-          if (!item?.id) return
-          if (!mergedById.has(item.id)) mergedById.set(item.id, item)
+
+        // HR view must reflect backend truth for "All Dealers"; avoid mixing browser-local history.
+        const dedupedFromApi = new Map<string, CallingActionRecord>()
+        normalizedFromApi.forEach((item, index) => {
+          const stableKey =
+            item.id ||
+            `${item.leadId || "lead"}|${item.dealerId || item.dealerName || "dealer"}|${item.actionAt || "time"}|${item.action || "action"}|${index}`
+          if (!dedupedFromApi.has(stableKey)) dedupedFromApi.set(stableKey, item)
         })
-        const merged = Array.from(mergedById.values()).sort(
+
+        const finalApiActions = Array.from(dedupedFromApi.values()).sort(
           (a, b) => (parseActionDate(b.actionAt)?.getTime() || 0) - (parseActionDate(a.actionAt)?.getTime() || 0),
         )
-        setCallingActions(merged)
-        setCallingActionsUnavailable(merged.length === 0)
+        setCallingActions(finalApiActions)
+        setCallingActionsUnavailable(finalApiActions.length === 0)
       } catch {
-        setCallingActions(normalizedLocal)
-        setCallingActionsUnavailable(normalizedLocal.length === 0)
+        setCallingActions([])
+        setCallingActionsUnavailable(true)
       }
     }
     loadCallingActions()
@@ -956,24 +949,22 @@ export default function HrDashboardPage() {
     return Array.from(byValue.values()).sort((a, b) => a.label.localeCompare(b.label))
   }, [dealers, callingActions])
 
-  const callingSummary = useMemo(
-    () =>
-      filteredCallingActions.reduce(
-        (acc, item) => {
-          const parsed = parseCallRemarkParts(item.callRemark || "")
-          const action = String(item.action || "").toLowerCase()
-          const status = String(parsed.status || "").toLowerCase()
-          if (action === "not_interested" || status.includes("not interested")) acc.notInterested += 1
-          else if (action === "follow_up" || status.includes("follow-up") || status.includes("callback")) acc.followUp += 1
-          else if (action === "called" && (status.includes("interested") || status.includes("site visit") || status.includes("quotation"))) acc.interested += 1
-          else if (action === "called") acc.interested += 1
-          else acc.others += 1
-          return acc
-        },
-        { interested: 0, followUp: 0, notInterested: 0, others: 0, otherActions: 0 },
-      ),
+  const connectionSummary = useMemo(
+    () => buildCallingConnectionSummary(filteredCallingActions),
     [filteredCallingActions],
   )
+
+  const connectedOutcomeSummary = useMemo(
+    () => buildCallingActionSummary(filteredCallingActions.filter((item) => classifyCallingConnection(item) === "connected")),
+    [filteredCallingActions],
+  )
+
+  const displayCallingActions = useMemo(() => {
+    if (callingConnectionFilter === "all") return filteredCallingActions
+    return filteredCallingActions.filter((item) => classifyCallingConnection(item) === callingConnectionFilter)
+  }, [filteredCallingActions, callingConnectionFilter])
+
+  const callingSummary = connectedOutcomeSummary
 
   return (
     <div className="min-h-screen bg-background">
@@ -1156,7 +1147,7 @@ export default function HrDashboardPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
                   <Select
                     value={callingRange}
                     onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
@@ -1188,6 +1179,19 @@ export default function HrDashboardPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  <Select
+                    value={callingConnectionFilter}
+                    onValueChange={(value: "all" | "connected" | "not_connected") => setCallingConnectionFilter(value)}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All (Connected + Not Connected)</SelectItem>
+                      <SelectItem value="connected">Connected only</SelectItem>
+                      <SelectItem value="not_connected">Not Connected only</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 {callingRange === "custom" ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
@@ -1212,23 +1216,69 @@ export default function HrDashboardPage() {
                   </div>
                 ) : null}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <Card className="border-emerald-200 bg-emerald-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Interested</p><p className="text-xl font-semibold">{callingSummary.interested}</p></CardContent></Card>
-                  <Card className="border-blue-200 bg-blue-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Follow Up</p><p className="text-xl font-semibold">{callingSummary.followUp}</p></CardContent></Card>
-                  <Card className="border-rose-200 bg-rose-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Not Interested</p><p className="text-xl font-semibold">{callingSummary.notInterested}</p></CardContent></Card>
-                  <Card className="border-amber-200 bg-amber-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Others</p><p className="text-xl font-semibold">{callingSummary.others}</p></CardContent></Card>
-                  <Card className="border-border/60 bg-muted/20"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Total</p><p className="text-xl font-semibold">{filteredCallingActions.length}</p></CardContent></Card>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-emerald-200 bg-emerald-50/40">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Call answered — includes Interested / Follow Up / Not Interested outcomes
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-slate-300 bg-slate-50/80">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Not Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.notConnected}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Unanswered, switched off, wrong number, etc.
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-border/60 bg-muted/20">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-emerald-100 bg-emerald-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Interested</p>
+                      <p className="text-lg font-semibold">{callingSummary.interested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-blue-100 bg-blue-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
+                      <p className="text-lg font-semibold">{callingSummary.followUp}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-rose-100 bg-rose-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
+                      <p className="text-lg font-semibold">{callingSummary.notInterested}</p>
+                    </CardContent>
+                  </Card>
                 </div>
 
                 {callingActionsUnavailable ? (
                   <p className="text-sm text-muted-foreground">No dealer actions found yet.</p>
-                ) : filteredCallingActions.length === 0 ? (
+                ) : displayCallingActions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
                 ) : (
                   <div className="space-y-2">
-                    {filteredCallingActions.slice(0, 300).map((item) => {
-                      const parsedRemark = parseCallRemarkParts(item.callRemark || "")
-                      const statusLabel = ACTION_LABEL_MAP[item.action] || item.action || "N/A"
+                    {displayCallingActions.slice(0, 300).map((item) => {
+                      const parsedRemark = resolveCallingActionFields(item)
+                      const connectionKind = classifyCallingConnection(item)
+                      const connectionLabel = CALLING_CONNECTION_LABELS[connectionKind]
+                      const summaryBucket = classifyCallingActionSummaryBucket(item)
+                      const outcomeLabel =
+                        connectionKind === "connected"
+                          ? CALLING_SUMMARY_BUCKET_LABELS[summaryBucket]
+                          : parsedRemark.status || "—"
                       return (
                         <div key={item.id} className="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1239,21 +1289,15 @@ export default function HrDashboardPage() {
                             <p className="text-xs text-muted-foreground break-all">Phone: {item.customerMobile || "N/A"}</p>
                             <p className="text-xs text-muted-foreground break-words">Address: {item.customerAddress || "N/A"}</p>
                           </div>
-                          <div className="flex items-center gap-2 max-w-full">
-                            <Badge
-                              variant="outline"
-                              className={
-                                item.action === "not_interested"
-                                  ? "border-rose-200 text-rose-700 bg-rose-50"
-                                  : item.action === "follow_up"
-                                    ? "border-blue-200 text-blue-700 bg-blue-50"
-                                    : item.action === "called"
-                                      ? "border-emerald-200 text-emerald-700 bg-emerald-50"
-                                      : "border-border text-foreground"
-                              }
-                            >
-                              {statusLabel}
+                          <div className="flex flex-wrap items-center justify-end gap-2 max-w-full">
+                            <Badge variant="outline" className={getCallingConnectionBadgeClass(connectionKind)}>
+                              {connectionLabel}
                             </Badge>
+                            {connectionKind === "connected" ? (
+                              <Badge variant="outline" className={getCallingActionSummaryBadgeClass(summaryBucket)}>
+                                {outcomeLabel}
+                              </Badge>
+                            ) : null}
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
                               {item.actionAt ? new Date(item.actionAt).toLocaleString() : "N/A"}
                             </span>
@@ -1266,7 +1310,8 @@ export default function HrDashboardPage() {
                             </p>
                           ) : null}
                           <p className="break-words">
-                            <span className="font-medium">Status:</span> {parsedRemark.status || statusLabel}
+                            <span className="font-medium">Status:</span>{" "}
+                            {parsedRemark.status || ACTION_LABEL_MAP[item.action] || item.action || "N/A"}
                           </p>
                           {parsedRemark.remark ? (
                             <p className="break-words">

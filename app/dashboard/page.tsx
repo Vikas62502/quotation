@@ -24,6 +24,19 @@ import { formatPersonName } from "@/lib/name-display"
 
 const ADMIN_USERNAME = "admin"
 
+/** Same amount as the Recent Quotations AMOUNT column (subtotal / package price first). */
+function getQuotationDisplayAmount(quotation: {
+  subtotal?: number
+  totalAmount?: number
+  finalAmount?: number
+}): number {
+  return Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0)
+}
+
+function formatDashboardTotalValue(amount: number): string {
+  return `₹${amount.toLocaleString("en-IN")}`
+}
+
 export default function DashboardPage() {
   const { isAuthenticated, dealer, role } = useAuth()
   const router = useRouter()
@@ -216,7 +229,7 @@ export default function DashboardPage() {
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
             products: q.products || {},
             discount: q.discount || 0,
-            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
+            subtotal: q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
@@ -353,7 +366,9 @@ export default function DashboardPage() {
   })
 
   const uniqueCustomers = new Set(quotations.map((q) => q.customer?.mobile || "").filter((m) => m)).size
-  const totalRevenue = quotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || 0), 0)
+  const totalRevenue = quotations
+    .filter((q) => (q.status || "").toLowerCase() === "approved")
+    .reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
   const filteredQuotations = quotations.filter(
     (q) =>
@@ -566,8 +581,8 @@ export default function DashboardPage() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="text-xl sm:text-2xl font-bold">₹{(totalRevenue / 100000).toFixed(1)}L</div>
-              <p className="text-xs text-muted-foreground mt-1">Quotation value</p>
+              <div className="text-xl sm:text-2xl font-bold">{formatDashboardTotalValue(totalRevenue)}</div>
+              <p className="text-xs text-muted-foreground mt-1">Approved quotation value</p>
             </CardContent>
           </Card>
         </div>
@@ -620,7 +635,9 @@ export default function DashboardPage() {
                       </div>
                       <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                         <p className="text-muted-foreground">System: <span className="text-foreground">{getSystemSize(quotation)}</span></p>
-                        <p className="text-muted-foreground text-right">₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}</p>
+                        <p className="text-muted-foreground text-right">
+                          {formatDashboardTotalValue(getQuotationDisplayAmount(quotation))}
+                        </p>
                       </div>
                       <div className="mt-2 flex items-center justify-between gap-2">
                         <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
@@ -718,7 +735,7 @@ export default function DashboardPage() {
                             </span>
                           </td>
                           <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                            ₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}
+                            {formatDashboardTotalValue(getQuotationDisplayAmount(quotation))}
                           </td>
                           <td className="py-4 px-3 text-sm">
                             <Badge className={`text-xs ${getStatusBadgeColor(quotation.status)}`}>

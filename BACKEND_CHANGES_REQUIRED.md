@@ -1689,6 +1689,114 @@ After dealer actions or queue reallocation, emit **`calling:uploads-updated`** (
 
 ---
 
+### 7.9 Dealer dashboard — Total Value (approved quotations only)
+
+**Handoff summary:** `BACKEND_CHANGES_HANDOFF.md` §6.
+
+**Frontend:** `app/dashboard/page.tsx` — dealer **Dashboard** stat card **Total Value** shows the sum of quotation amounts where **`status === 'approved'`** only (not pending/rejected). Label: **“Approved quotation value”**. Calculation:
+
+```typescript
+quotations
+  .filter((q) => (q.status || "").toLowerCase() === "approved")
+  .reduce(
+    (sum, q) =>
+      sum + Math.abs(q.subtotal ?? q.totalAmount ?? q.finalAmount ?? 0),
+    0,
+  )
+```
+
+Display: full INR via `toLocaleString("en-IN")` (e.g. `₹1,89,000`) — same basis as the **AMOUNT** column (`subtotal` first, not `finalAmount` alone).
+
+#### A) Minimum contract — existing `GET /api/quotations`
+
+**Auth:** `dealer` JWT — return only that dealer’s quotations (existing behavior).
+
+Each item in `quotations[]` must expose:
+
+| Field | Location | Purpose |
+|-------|----------|---------|
+| `status` | Root | Filter approved rows |
+| `finalAmount` | Root and/or `pricing.finalAmount` | Primary amount for total |
+| `totalAmount` | Root and/or `pricing.totalAmount` | Fallback |
+| `createdAt` | Root | “This month” card (frontend; separate from Total Value) |
+
+**Snake_case aliases:** `final_amount`, `total_amount`, `created_at` — map to camelCase in API layer or document both.
+
+**Frontend mapping today** (`loadQuotations` in `app/dashboard/page.tsx`):
+
+```typescript
+finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
+totalAmount: q.pricing?.totalAmount || 0,
+status: q.status || "pending",
+```
+
+If `pricing` is omitted on list responses, root-level `finalAmount` / `totalAmount` must still be present or Total Value will under-report for approved rows.
+
+#### B) Admin approval must set `status`
+
+When admin approves a quotation (existing admin status PATCH / workflow):
+
+- Persist **`status: "approved"`** (consistent casing; frontend compares case-insensitively).
+- Do not leave approved business rows as `pending` while workflow flags say approved — dealer Total Value will show **₹0.0L** until `status` is correct.
+
+Reference: `BACKEND_ADMIN_QUOTATION_STATUS.ts`, account-management filter `GET /api/quotations?status=approved`.
+
+#### C) Optional — `GET /api/dealers/me/dashboard-stats`
+
+**Auth:** `dealer` only (same dealer scope as `GET /api/quotations`).
+
+**Response** (`data` object after standard envelope):
+
+```json
+{
+  "totalQuotations": 27,
+  "uniqueCustomers": 23,
+  "thisMonthQuotations": 0,
+  "approvedQuotationCount": 5,
+  "approvedQuotationValue": 1250000
+}
+```
+
+| Field | Definition |
+|-------|------------|
+| `approvedQuotationValue` | Sum of `ABS(COALESCE(final_amount, total_amount, 0))` where `LOWER(TRIM(status)) = 'approved'` and `dealer_id` = JWT dealer |
+| `approvedQuotationCount` | Count with same filter |
+| `uniqueCustomers` | Distinct customer mobile (or customer id) among dealer’s quotations |
+| `thisMonthQuotations` | Count where `created_at` is in current month (server timezone documented) |
+
+**SQL example:**
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE LOWER(TRIM(status)) = 'approved') AS approved_quotation_count,
+  COALESCE(SUM(ABS(COALESCE(final_amount, total_amount, 0)))
+    FILTER (WHERE LOWER(TRIM(status)) = 'approved'), 0) AS approved_quotation_value
+FROM quotations
+WHERE dealer_id = $dealerId;
+```
+
+Frontend can adopt this endpoint later; until then client-side aggregation on the full list is acceptable.
+
+#### D) Do not
+
+- Sum **all** quotations into `approvedQuotationValue` on a stats endpoint.
+- Return account-management / other dealers’ quotations on dealer stats or dealer-scoped list.
+
+#### E) Checklist
+
+- [ ] List `GET /api/quotations` includes `status` + amounts for dealer rows
+- [ ] Admin approve persists `status = approved`
+- [ ] Approved rows have non-null `final_amount` or `total_amount`
+- [ ] (Optional) `GET /api/dealers/me/dashboard-stats` with `approvedQuotationValue`
+
+#### F) QA
+
+1. Dealer has 3 pending + 2 approved quotations → dashboard **Total Value** = sum of 2 approved only.
+2. Admin approves one pending row → dealer refreshes → Total Value increases by that row’s `finalAmount`.
+3. Reject or revert approval → Total Value decreases accordingly when `status` is no longer `approved`.
+
+---
+
 ## API Response Structure Requirements
 
 ### Standard Response Format
@@ -2482,6 +2590,127 @@ Each row should include where possible: **`id`**, **`leadId`**, **`dealerId`**, 
 - [ ] `GET` supports `startDate` + `endDate` (ISO) on action timestamp
 - [ ] `range` accepts `custom` (or ignores unknown `range` when dates are present)
 - [ ] Response includes `actionAt` and `callRemark` for each row
+- [ ] Response includes `statusCategory` + `statusText` (or parseable tagged `callRemark`) — see **§J.1**
+
+---
+
+### J.1) HR Dealer Actions — Interested / Follow Up / Not Interested summary
+
+**Handoff summary:** `BACKEND_CHANGES_HANDOFF.md` §7.
+
+**Frontend:** `app/dashboard/hr/page.tsx` (Dealer Actions tab), `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts`. Data source is **API only** (no browser `callingActionHistory` merge on this tab).
+
+#### Why backend must return structured status
+
+Dealer UI saves outcomes from a fixed status picker (`app/dashboard/calling-data/page.tsx`). HR summary cards aggregate into four buckets:
+
+| Card | Meaning |
+|------|---------|
+| **Interested** | Positive intent / qualification / sales progress |
+| **Follow Up** | Callback, reschedule, decision pending |
+| **Not Interested** | Lost / rejection / already installed / invalid lead |
+| **Others** | `start`, unclassified, connectivity-only |
+
+If GET returns only `action: "called"` without `statusText` / tagged `callRemark`, HR cannot classify correctly (e.g. **Interested** stays `0` while dealers selected **Interested**).
+
+#### A) Persist on PATCH (dealer queue action)
+
+When dealer submits a call outcome, store **all** of:
+
+```json
+{
+  "action": "called",
+  "callRemark": "[customer_intent] Interested | wants site visit",
+  "call_remark": "[customer_intent] Interested | wants site visit",
+  "statusCategory": "customer_intent",
+  "status_category": "customer_intent",
+  "statusText": "Interested",
+  "status_text": "Interested",
+  "remark": "wants site visit",
+  "actionAt": "2026-05-27T05:33:58.000Z"
+}
+```
+
+**`action` mapping** (frontend `getActionFromStatus`):
+
+| Picker status examples | `action` |
+|------------------------|----------|
+| `Not Interested`, `Already Installed Solar`, most Part 4 rejection | `not_interested` |
+| `Callback Later`, `Rescheduled`, `Follow-up Pending` | `follow_up` |
+| `Interested`, `Highly Interested`, `Site Visit Scheduled`, … | `called` |
+
+Also accept `rescheduled` when follow-up datetime is set.
+
+**Allowed `statusCategory` enum** (normalize snake_case): `call_connectivity`, `lead_validity`, `customer_intent`, `financial`, `schedule`, `competition`, `other` — see `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `ALLOWED_STATUS_CATEGORIES`.
+
+#### B) Return on GET (HR / Admin calling-actions)
+
+Extend each action object (camelCase + snake_case):
+
+| Field | Example |
+|-------|---------|
+| `statusCategory` / `status_category` | `competition` |
+| `statusText` / `status_text` | `Already Installed Solar` |
+| `callRemark` / `call_remark` | `[competition] Already Installed Solar` |
+| `action` | `not_interested` or `called` |
+| `actionAt` / `action_at` | ISO timestamp |
+| `dealerId`, `dealerName`, `leadId` | For filters |
+| `name`, `mobile`, `address` | Customer display |
+
+Frontend resolves status as:
+
+```typescript
+statusText = row.statusText || row.status_text || parseTaggedCallRemark(callRemark).status
+```
+
+Then classifies with `classifyCallingActionSummaryBucket()` in `lib/calling-action-summary.ts` (same status sets as dealer calling page).
+
+#### C) Classification rules (reference for backend QA / optional server aggregates)
+
+| `statusText` (examples) | Bucket |
+|-------------------------|--------|
+| `Interested`, `Highly Interested`, `Site Visit Scheduled`, `Quotation Shared`, `Valid Lead` | **interested** |
+| `Callback Later`, `Rescheduled`, `Follow-up Pending` | **followUp** |
+| `Not Interested`, `Already Installed Solar`, `Chose Competitor`, `Call Unanswered` (closed) | **notInterested** |
+| `action: follow_up` / `rescheduled` | **followUp** |
+| `action: not_interested` | **notInterested** |
+
+**Do not** use `statusText.includes("interested")` — it mis-classifies unrelated strings.
+
+#### D) Optional response aggregates
+
+```json
+{
+  "success": true,
+  "data": {
+    "actions": [ /* rows */ ],
+    "summary": {
+      "interested": 12,
+      "followUp": 5,
+      "notInterested": 48,
+      "others": 3
+    }
+  }
+}
+```
+
+Frontend currently computes client-side; server aggregates are optional if they use the same rules.
+
+#### E) Checklist
+
+- [ ] PATCH stores `status_category`, `status_text`, `call_remark` on every dealer submit
+- [ ] GET echoes structured fields (not stripped)
+- [ ] `Interested` picker value → HR **Interested** count increases
+- [ ] `Already Installed Solar` → **Not Interested**, not Interested
+- [ ] `Callback Later` → **Follow Up**
+- [ ] All-dealer filter returns union of all dealers’ actions in date range
+
+#### F) QA
+
+1. Dealer submits **Interested** → HR Dealer Actions (Daily, All Dealers) shows **Interested ≥ 1**.
+2. Dealer submits **Already Installed Solar** → **Not Interested** increases, **Interested** unchanged.
+3. Dealer submits **Callback Later** with follow-up date → **Follow Up** increases.
+4. Row badge in HR list matches bucket (Interested / Follow Up / Not Interested / Others).
 
 ---
 
@@ -3411,7 +3640,9 @@ Align server default from **5 days → 7 days** after `createdAt` if `validUntil
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
+| High | HR Dealer Actions summary — persist/return `statusCategory` + `statusText` on calling-actions | §J.1, HANDOFF §7 | `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts` |
 | Medium | Persist `pdf*PanelRangeKey`, combined brands, dealer on GET, panel qty rules | §X, HANDOFF §2 | `lib/quotation-pdf-display.ts`, `lib/quotation-api-payload.ts` |
+| Medium | Dealer dashboard **Total Value** = approved quotations only (`status`, amounts on list GET) | §7.9, HANDOFF §6 | `app/dashboard/page.tsx` |
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
@@ -3430,6 +3661,8 @@ For questions or clarifications about these requirements, please refer to:
 - Admin metering tab (stage + MCO): `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getMeteringWorkflowStage`)
 - Quotation PDF display flags: `lib/quotation-pdf-display.ts`, `components/product-selection-form.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**
 - HR upload batch counts: `app/dashboard/hr/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`computeHrUploadLeadCounts`)
+- Dealer dashboard approved total value: `app/dashboard/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md` §6**, **§7.9**
 - HR/Admin calling-actions list + query params: `lib/api.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J**, **`BACKEND_CHANGES_HANDOFF.md` §4.8**
+- HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

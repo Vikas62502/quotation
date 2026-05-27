@@ -53,6 +53,17 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
 import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
+import {
+  buildCallingActionSummary,
+  buildCallingConnectionSummary,
+  CALLING_CONNECTION_LABELS,
+  CALLING_SUMMARY_BUCKET_LABELS,
+  classifyCallingActionSummaryBucket,
+  classifyCallingConnection,
+  getCallingActionSummaryBadgeClass,
+  getCallingConnectionBadgeClass,
+  resolveCallingActionFields,
+} from "@/lib/calling-action-summary"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
@@ -84,6 +95,56 @@ import {
 
 // Admin username check
 const ADMIN_USERNAME = "admin"
+
+/** Same basis as dealer dashboard / quotation AMOUNT column. */
+function getQuotationDisplayAmount(quotation: {
+  subtotal?: number
+  totalAmount?: number
+  finalAmount?: number
+}): number {
+  return Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0)
+}
+
+function formatOverviewRevenueLakh(amount: number): string {
+  return `₹${(amount / 100000).toFixed(1)}L`
+}
+
+function toDateTimeLocalValue(input?: string | null): string {
+  if (!input) return ""
+  const d = new Date(input)
+  if (Number.isNaN(d.getTime())) return ""
+  const pad = (n: number) => String(n).padStart(2, "0")
+  const yyyy = d.getFullYear()
+  const mm = pad(d.getMonth() + 1)
+  const dd = pad(d.getDate())
+  const hh = pad(d.getHours())
+  const min = pad(d.getMinutes())
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}`
+}
+
+function parseDateTimeLocalToIso(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const dt = new Date(trimmed)
+  if (Number.isNaN(dt.getTime())) return null
+  return dt.toISOString()
+}
+
+function getQuotationApprovalDate(quotation: Quotation): Date | null {
+  const qAny = quotation as unknown as Record<string, unknown>
+  const approvedRaw =
+    quotation.statusApprovedAt ||
+    qAny.status_approved_at ||
+    qAny.approvedAt ||
+    qAny.approved_at ||
+    qAny.approvedDate ||
+    qAny.approved_date
+  if (approvedRaw) {
+    const d = new Date(String(approvedRaw))
+    if (!Number.isNaN(d.getTime())) return d
+  }
+  return null
+}
 const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
   "installer_approved",
   "pending_metering",
@@ -321,8 +382,12 @@ type CallingActionRecord = {
   leadId: string
   dealerId: string
   dealerName: string
+  customerName: string
+  customerMobile: string
   action: string
   callRemark: string
+  statusCategory?: string
+  statusText?: string
   actionAt: string
   nextFollowUpAt?: string
 }
@@ -487,6 +552,7 @@ export default function AdminPanelPage() {
   const [callingCustomFromDate, setCallingCustomFromDate] = useState("")
   const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
+  const [callingConnectionFilter, setCallingConnectionFilter] = useState<"all" | "connected" | "not_connected">("all")
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -496,6 +562,7 @@ export default function AdminPanelPage() {
   const [approvalBankName, setApprovalBankName] = useState("")
   const [approvalBankIfsc, setApprovalBankIfsc] = useState("")
   const [approvalSubsidyCheque, setApprovalSubsidyCheque] = useState("")
+  const [approvalAtInput, setApprovalAtInput] = useState("")
   const [fileLoginDialogOpen, setFileLoginDialogOpen] = useState(false)
   const [fileLoginQuotationId, setFileLoginQuotationId] = useState<string | null>(null)
   const [fileLoginStatusChoice, setFileLoginStatusChoice] = useState<FileLoginStatus>("login_now")
@@ -503,6 +570,7 @@ export default function AdminPanelPage() {
   const [fileLoginBankName, setFileLoginBankName] = useState("")
   const [fileLoginBankIfsc, setFileLoginBankIfsc] = useState("")
   const [fileLoginSubsidyCheque, setFileLoginSubsidyCheque] = useState("")
+  const [fileLoginAtInput, setFileLoginAtInput] = useState("")
   const [optimisticFileLoginSelect, setOptimisticFileLoginSelect] = useState<Record<string, string>>({})
   const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
   const [statusHistoryQuotation, setStatusHistoryQuotation] = useState<Quotation | null>(null)
@@ -825,8 +893,16 @@ export default function AdminPanelPage() {
       leadId,
       dealerId,
       dealerName,
+      customerName:
+        item?.name ||
+        item?.customerName ||
+        item?.lead?.name ||
+        `${item?.customer?.firstName || ""} ${item?.customer?.lastName || ""}`.trim(),
+      customerMobile: item?.mobile || item?.customerMobile || item?.lead?.mobile || item?.customer?.mobile || "",
       action: item?.action || item?.status || "unknown",
-      callRemark: item?.callRemark || item?.remark || "",
+      callRemark: item?.callRemark || item?.call_remark || item?.remark || "",
+      statusCategory: item?.statusCategory || item?.status_category || "",
+      statusText: item?.statusText || item?.status_text || "",
       actionAt,
       nextFollowUpAt: item?.nextFollowUpAt,
     }
@@ -1116,10 +1192,30 @@ export default function AdminPanelPage() {
           })),
         )
 
-        // Load dealers
-        const dealersResponse = await api.admin.dealers.getAll()
-        const dealersList = (dealersResponse.dealers || []).map((d: any) => ({
-          id: d.id,
+        // Load dealers (all pages + include inactive) so UI count matches database.
+        const dealerRows: any[] = []
+        const firstDealersResponse: any = await api.admin.dealers.getAll({
+          page: 1,
+          limit: 1000,
+          includeInactive: true,
+        })
+        dealerRows.push(...(firstDealersResponse?.dealers || []))
+        const totalPages = Number(firstDealersResponse?.pagination?.totalPages || 1)
+        if (totalPages > 1) {
+          for (let page = 2; page <= totalPages; page += 1) {
+            const pageResponse: any = await api.admin.dealers.getAll({
+              page,
+              limit: 1000,
+              includeInactive: true,
+            })
+            dealerRows.push(...(pageResponse?.dealers || []))
+          }
+        }
+        const dedupedDealerRows = Array.from(
+          new Map(dealerRows.map((row) => [String(row?.id || row?._id || ""), row])).values(),
+        ).filter((row) => String(row?.id || row?._id || "").trim())
+        const dealersList = dedupedDealerRows.map((d: any) => ({
+          id: d.id || d._id,
           username: d.username,
           firstName: d.firstName,
           lastName: d.lastName,
@@ -1253,32 +1349,12 @@ export default function AdminPanelPage() {
                 .map((item: any, index: number) => normalizeCallingAction(item, dealersList as Dealer[], index))
                 .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
             : []
-          const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
-          const normalizedLocal = Array.isArray(localCallingActions)
-            ? localCallingActions.map((item: any, index: number) =>
-                normalizeCallingAction(item, dealersList as Dealer[], index + normalizedFromApi.length),
-              )
-            : []
-          const mergedById = new Map<string, CallingActionRecord>()
-          ;[...normalizedFromApi, ...normalizedLocal].forEach((item) => {
-            if (!item?.id) return
-            if (!mergedById.has(item.id)) mergedById.set(item.id, item)
-          })
-          const merged = Array.from(mergedById.values()).sort(
-            (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
-          )
-          setCallingActions(merged)
-          setCallingActionsUnavailable(false)
+          setCallingActions(normalizedFromApi)
+          setCallingActionsUnavailable(normalizedFromApi.length === 0)
         } catch (error) {
           console.error("Calling actions endpoint unavailable:", error)
-          const localCallingActions = JSON.parse(localStorage.getItem("callingActionHistory") || "[]")
-          const normalizedLocal = Array.isArray(localCallingActions)
-            ? localCallingActions
-                .map((item: any, index: number) => normalizeCallingAction(item, dealersList as Dealer[], index))
-                .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
-            : []
-          setCallingActions(normalizedLocal)
-          setCallingActionsUnavailable(normalizedLocal.length === 0)
+          setCallingActions([])
+          setCallingActionsUnavailable(true)
         }
       } else {
         // Fallback to localStorage
@@ -1458,19 +1534,25 @@ export default function AdminPanelPage() {
   // Calculate statistics
   const totalQuotations = quotations.length
   const approvedQuotations = quotations.filter((q) => q.status === "approved")
-  const totalRevenue = approvedQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
-  const uniqueCustomers = customers.length || new Set(quotations.map((q) => q.customer.mobile)).size
-  const activeDealers = new Set(quotations.map((q) => q.dealerId)).size
-  const totalVisitors = visitors.length
-  const activeVisitors = visitors.filter((v) => v.isActive !== false).length
+  const totalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
   const currentMonth = new Date().getMonth()
   const currentYear = new Date().getFullYear()
-  const thisMonthQuotations = approvedQuotations.filter((q) => {
-    const date = new Date(q.createdAt)
-    return date.getMonth() === currentMonth && date.getFullYear() === currentYear
+  const isInCurrentCalendarMonth = (date: Date) =>
+    date.getMonth() === currentMonth && date.getFullYear() === currentYear
+
+  const thisMonthAllQuotations = quotations.filter((q) => isInCurrentCalendarMonth(new Date(q.createdAt)))
+  const thisMonthApprovedQuotations = approvedQuotations.filter((q) => {
+    const approvedDate = getQuotationApprovalDate(q)
+    return approvedDate ? isInCurrentCalendarMonth(approvedDate) : false
   })
-  const thisMonthRevenue = thisMonthQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
+  const thisMonthRevenue = thisMonthApprovedQuotations.reduce(
+    (sum, q) => sum + getQuotationDisplayAmount(q),
+    0,
+  )
+  const thisMonthApprovedCustomers = new Set(
+    thisMonthApprovedQuotations.map((q) => String(q.customer.mobile || "").trim()).filter(Boolean),
+  ).size
 
   // Filter quotations by all active conditions together.
   const normalizedSearchTerm = searchTerm.trim().toLowerCase()
@@ -1622,8 +1704,22 @@ export default function AdminPanelPage() {
     return "pending"
   }
 
+  const getApprovedSortTime = (quotation: Quotation): number => {
+    const qAny = quotation as any
+    const approvedRaw =
+      quotation.statusApprovedAt ||
+      qAny.status_approved_at ||
+      qAny.approvedAt ||
+      qAny.approved_at ||
+      qAny.approvedDate ||
+      qAny.approved_date
+    const approvedTime = approvedRaw ? new Date(approvedRaw).getTime() : Number.NaN
+    if (!Number.isNaN(approvedTime)) return approvedTime
+    return new Date(quotation.createdAt || 0).getTime()
+  }
+
   const sortedQuotations = [...filteredQuotations].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    (a, b) => getApprovedSortTime(b) - getApprovedSortTime(a),
   )
   const installationPendingQuotations = sortedQuotations.filter((q) => getInstallerQueueStatusForAdmin(q) !== "approved")
   const installationApprovedQuotations = sortedQuotations.filter((q) => getInstallerQueueStatusForAdmin(q) === "approved")
@@ -1654,14 +1750,41 @@ export default function AdminPanelPage() {
     filterBankDetails,
   ].filter((v) => v !== "all").length
 
-  // Get dealer name by ID
-  function getDealerName(dealerId: string) {
-    const dealer = dealers.find((d) => d.id === dealerId)
-    return dealer ? `${dealer.firstName} ${dealer.lastName}` : "Unknown Dealer"
+  function findDealerById(dealerId?: string) {
+    const normalizedId = String(dealerId || "").trim()
+    if (!normalizedId) return undefined
+    return dealers.find((d) => {
+      const dAny = d as unknown as Record<string, unknown>
+      const candidateIds = [d.id, dAny._id, dAny.dealerId].map((value) => String(value || "").trim())
+      return candidateIds.includes(normalizedId)
+    })
   }
 
-  function getDealerMobile(dealerId: string) {
-    const dealer = dealers.find((d) => d.id === dealerId)
+  // Get dealer details with fallback to quotation nested dealer object.
+  function getDealerName(dealerId: string, quotation?: Quotation) {
+    const qAny = quotation as unknown as Record<string, unknown> | undefined
+    const nested = qAny?.dealer as Record<string, unknown> | undefined
+    const nestedName =
+      nested && typeof nested === "object"
+        ? formatPersonName(
+            String(nested.firstName || ""),
+            String(nested.lastName || ""),
+            String(nested.username || "").trim() || "Dealer",
+          )
+        : ""
+    if (nestedName) return nestedName
+
+    const dealer = findDealerById(dealerId || quotation?.dealerId)
+    return dealer ? formatPersonName(dealer.firstName, dealer.lastName, "Dealer") : "Unknown Dealer"
+  }
+
+  function getDealerMobile(dealerId: string, quotation?: Quotation) {
+    const qAny = quotation as unknown as Record<string, unknown> | undefined
+    const nested = qAny?.dealer as Record<string, unknown> | undefined
+    const nestedMobile = nested && typeof nested === "object" ? String(nested.mobile || nested.phone || "").trim() : ""
+    if (nestedMobile) return nestedMobile
+
+    const dealer = findDealerById(dealerId || quotation?.dealerId)
     return dealer?.mobile || "—"
   }
 
@@ -1782,18 +1905,14 @@ export default function AdminPanelPage() {
     return matchesEmployee && isWithinCallingRange(item.actionAt)
   })
 
-  const callingSummary = filteredCallingActions.reduce(
-    (acc, item) => {
-      const remark = item.callRemark || ""
-      if (item.action === "not_interested") acc.notInterested += 1
-      else if (item.action === "follow_up" && remark.includes("[Others]")) acc.others += 1
-      else if (item.action === "follow_up") acc.followUp += 1
-      else if (item.action === "called" && remark.includes("[Interested]")) acc.interested += 1
-      else acc.otherActions += 1
-      return acc
-    },
-    { interested: 0, followUp: 0, notInterested: 0, others: 0, otherActions: 0 },
+  const connectionSummary = buildCallingConnectionSummary(filteredCallingActions)
+  const connectedOutcomeSummary = buildCallingActionSummary(
+    filteredCallingActions.filter((item) => classifyCallingConnection(item) === "connected"),
   )
+  const displayCallingActions =
+    callingConnectionFilter === "all"
+      ? filteredCallingActions
+      : filteredCallingActions.filter((item) => classifyCallingConnection(item) === callingConnectionFilter)
 
   // Update quotation status
   const updateQuotationStatus = async (
@@ -1804,6 +1923,7 @@ export default function AdminPanelPage() {
       bankName?: string
       bankIfsc?: string
       subsidyChequeDetails?: string
+      statusApprovedAt?: string
     },
   ) => {
     try {
@@ -1816,7 +1936,7 @@ export default function AdminPanelPage() {
         await loadData()
       } else {
         // Fallback to localStorage
-        const at = new Date().toISOString()
+        const at = approval?.statusApprovedAt || new Date().toISOString()
         const updated = quotations.map((q) => {
           if (q.id !== quotationId) return q
           const nextHistory: StatusHistoryEntry[] = [
@@ -1854,7 +1974,6 @@ export default function AdminPanelPage() {
 
   const handleQuotationStatusChange = (quotationId: string, status: QuotationStatus) => {
     if (status === "approved") {
-      // Approve uses payment type already captured in file-login flow.
       const q = quotations.find((x) => x.id === quotationId)
       const paymentTypeRaw = String(
         q?.filePaymentType || (q as any)?.paymentType || q?.paymentMode || "",
@@ -1872,13 +1991,13 @@ export default function AdminPanelPage() {
         })
         return
       }
-
-      void updateQuotationStatus(quotationId, status, {
-        paymentType,
-        bankName: q?.fileBankName || q?.bankName,
-        bankIfsc: q?.fileBankIfsc || q?.bankIfsc,
-        subsidyChequeDetails: q?.fileSubsidyChequeDetails || q?.subsidyChequeDetails,
-      })
+      setApprovingQuotationId(quotationId)
+      setApprovalPaymentType(paymentType)
+      setApprovalBankName(q?.fileBankName || q?.bankName || "")
+      setApprovalBankIfsc(q?.fileBankIfsc || q?.bankIfsc || "")
+      setApprovalSubsidyCheque(q?.fileSubsidyChequeDetails || q?.subsidyChequeDetails || "")
+      setApprovalAtInput(toDateTimeLocalValue(q?.statusApprovedAt || new Date().toISOString()))
+      setApprovalDialogOpen(true)
       return
     }
     void updateQuotationStatus(quotationId, status)
@@ -2639,6 +2758,15 @@ export default function AdminPanelPage() {
 
   const confirmApprovalWithPaymentType = async () => {
     if (!approvingQuotationId) return
+    const approvedAtIso = parseDateTimeLocalToIso(approvalAtInput)
+    if (!approvedAtIso) {
+      toast({
+        title: "Approve date/time required",
+        description: "Choose a valid approve date and time.",
+        variant: "destructive",
+      })
+      return
+    }
     const needsBank = approvalPaymentType === "loan" || approvalPaymentType === "mix"
     const subsidyTrim = approvalSubsidyCheque.trim()
     const subsidyPayload =
@@ -2669,11 +2797,13 @@ export default function AdminPanelPage() {
         bankName,
         bankIfsc: ifscRaw,
         ...subsidyPayload,
+        statusApprovedAt: approvedAtIso,
       })
     } else {
       await updateQuotationStatus(approvingQuotationId, "approved", {
         paymentType: approvalPaymentType,
         ...subsidyPayload,
+        statusApprovedAt: approvedAtIso,
       })
     }
     setApprovalDialogOpen(false)
@@ -2696,6 +2826,7 @@ export default function AdminPanelPage() {
     setFileLoginBankName(q.fileBankName || "")
     setFileLoginBankIfsc(q.fileBankIfsc || "")
     setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
+    setFileLoginAtInput(toDateTimeLocalValue(q.fileLoginAt || new Date().toISOString()))
     setFileLoginDialogOpen(true)
   }
 
@@ -2769,13 +2900,23 @@ export default function AdminPanelPage() {
     }
     setIsSavingFileLogin(true)
     try {
-      const at = new Date().toISOString()
+      const at = parseDateTimeLocalToIso(fileLoginAtInput)
+      if (!at) {
+        toast({
+          title: "File login date/time required",
+          description: "Choose a valid file login date and time.",
+          variant: "destructive",
+        })
+        setIsSavingFileLogin(false)
+        return
+      }
       if (useApi) {
         const bankName = fileLoginBankName.trim()
         const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
         await api.admin.quotations.updateFileLogin(fileLoginQuotationId, {
           fileLoginStatus: fileLoginStatusChoice,
           filePaymentType: fileLoginPaymentType,
+          fileLoginAt: at,
           ...(needsBank ? { bankName, bankIfsc: ifscRaw } : {}),
           ...(subsidyTrim ? { fileSubsidyChequeDetails: subsidyTrim } : {}),
         })
@@ -3329,8 +3470,8 @@ export default function AdminPanelPage() {
                   <IndianRupee className="w-5 h-5 text-green-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">₹{(totalRevenue / 100000).toFixed(1)}L</div>
-                  <p className="text-xs text-muted-foreground mt-1">All time</p>
+                  <div className="text-2xl font-bold">{formatOverviewRevenueLakh(totalRevenue)}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Approved quotations · all time</p>
                 </CardContent>
               </Card>
 
@@ -3340,30 +3481,32 @@ export default function AdminPanelPage() {
                   <TrendingUp className="w-5 h-5 text-blue-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">₹{(thisMonthRevenue / 100000).toFixed(1)}L</div>
-                  <p className="text-xs text-muted-foreground mt-1">{thisMonthQuotations.length} quotations</p>
+                  <div className="text-2xl font-bold">{formatOverviewRevenueLakh(thisMonthRevenue)}</div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {thisMonthApprovedQuotations.length} approved this month
+                  </p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Active Dealers</CardTitle>
-                  <Users className="w-5 h-5 text-amber-500" />
+                  <CardTitle className="text-sm font-medium text-muted-foreground">This Month Quotation</CardTitle>
+                  <Calendar className="w-5 h-5 text-amber-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold">{activeDealers}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Out of {dealers.length} total</p>
+                  <div className="text-3xl font-bold">{thisMonthAllQuotations.length}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Created this month</p>
                 </CardContent>
               </Card>
 
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Active Visitors</CardTitle>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Approved Customers (Month)</CardTitle>
                   <UserCheck className="w-5 h-5 text-purple-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold">{activeVisitors}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Out of {totalVisitors} total</p>
+                  <div className="text-3xl font-bold">{thisMonthApprovedCustomers}</div>
+                  <p className="text-xs text-muted-foreground mt-1">Unique customers approved this month</p>
                 </CardContent>
               </Card>
             </div>
@@ -3527,29 +3670,17 @@ export default function AdminPanelPage() {
                   </div>
                 ) : null}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <Card className="border-border/60">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-emerald-200 bg-emerald-50/40">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Interested</p>
-                      <p className="text-xl font-semibold">{callingSummary.interested}</p>
+                      <p className="text-xs text-muted-foreground">Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-border/60">
+                  <Card className="border-slate-300 bg-slate-50/80">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Follow Up</p>
-                      <p className="text-xl font-semibold">{callingSummary.followUp}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/60">
-                    <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Not Interested</p>
-                      <p className="text-xl font-semibold">{callingSummary.notInterested}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-border/60">
-                    <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Others</p>
-                      <p className="text-xl font-semibold">{callingSummary.others}</p>
+                      <p className="text-xs text-muted-foreground">Not Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.notConnected}</p>
                     </CardContent>
                   </Card>
                   <Card className="border-border/60">
@@ -3559,32 +3690,90 @@ export default function AdminPanelPage() {
                     </CardContent>
                   </Card>
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-emerald-100 bg-emerald-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Interested</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.interested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-blue-100 bg-blue-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.followUp}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-rose-100 bg-rose-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.notInterested}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <Select
+                    value={callingConnectionFilter}
+                    onValueChange={(value: "all" | "connected" | "not_connected") => setCallingConnectionFilter(value)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Connection" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All (Connected + Not Connected)</SelectItem>
+                      <SelectItem value="connected">Connected only</SelectItem>
+                      <SelectItem value="not_connected">Not Connected only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
                 {callingActionsUnavailable ? (
                   <p className="text-sm text-muted-foreground">
                     Calling actions endpoint is not available on backend yet. Once enabled, all employee actions will appear here.
                   </p>
-                ) : filteredCallingActions.length === 0 ? (
+                ) : displayCallingActions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
                 ) : (
                   <div className="space-y-2">
-                    {filteredCallingActions.slice(0, 300).map((item) => (
+                    {displayCallingActions.slice(0, 300).map((item) => {
+                      const parsed = resolveCallingActionFields(item)
+                      const connectionKind = classifyCallingConnection(item)
+                      const summaryBucket = classifyCallingActionSummaryBucket(item)
+                      return (
                       <div key={item.id} className="rounded-md border border-border/70 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-sm break-words">{item.dealerName || "Unknown Employee"}</p>
                             <p className="text-xs text-muted-foreground break-all">Lead: {item.leadId || "N/A"}</p>
+                            <p className="text-xs text-muted-foreground break-words">Customer: {item.customerName || "N/A"}</p>
+                            <p className="text-xs text-muted-foreground break-all">Phone: {item.customerMobile || "N/A"}</p>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline">{item.action || "N/A"}</Badge>
+                          <div className="flex items-center gap-2 flex-wrap justify-end">
+                            <Badge variant="outline" className={getCallingConnectionBadgeClass(connectionKind)}>
+                              {CALLING_CONNECTION_LABELS[connectionKind]}
+                            </Badge>
+                            {connectionKind === "connected" ? (
+                              <Badge variant="outline" className={getCallingActionSummaryBadgeClass(summaryBucket)}>
+                                {CALLING_SUMMARY_BUCKET_LABELS[summaryBucket]}
+                              </Badge>
+                            ) : null}
                             <span className="text-xs text-muted-foreground whitespace-nowrap">
                               {item.actionAt ? new Date(item.actionAt).toLocaleString() : "N/A"}
                             </span>
                           </div>
                         </div>
-                        {item.callRemark ? <p className="text-sm mt-2 break-words">Remark: {item.callRemark}</p> : null}
+                        <div className="mt-2 space-y-1 text-sm">
+                          <p className="break-words">
+                            <span className="font-medium">Status:</span>{" "}
+                            {parsed.status || item.action || "N/A"}
+                          </p>
+                          {parsed.remark ? (
+                            <p className="break-words">
+                              <span className="font-medium">Remark:</span> {parsed.remark}
+                            </p>
+                          ) : null}
+                        </div>
                       </div>
-                    ))}
+                    )})}
                   </div>
                 )}
               </CardContent>
@@ -4678,9 +4867,9 @@ export default function AdminPanelPage() {
                                 <div className="flex items-center gap-2">
                                   <Building className="w-4 h-4 text-muted-foreground" />
                                   <div>
-                                    <span className="text-sm font-medium">{getDealerName(quotation.dealerId)}</span>
+                                    <span className="text-sm font-medium">{getDealerName(quotation.dealerId, quotation)}</span>
                                     <p className="text-xs text-muted-foreground">
-                                      Contact: {getDealerMobile(quotation.dealerId)}
+                                      Contact: {getDealerMobile(quotation.dealerId, quotation)}
                                     </p>
                                   </div>
                                 </div>
@@ -8183,6 +8372,7 @@ export default function AdminPanelPage() {
               setApprovalBankName("")
               setApprovalBankIfsc("")
               setApprovalSubsidyCheque("")
+              setApprovalAtInput("")
             }
           }}
         >
@@ -8217,6 +8407,15 @@ export default function AdminPanelPage() {
                     <SelectItem value="mix">Cash + loan</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="approval-at">Approve date & time</Label>
+                <Input
+                  id="approval-at"
+                  type="datetime-local"
+                  value={approvalAtInput}
+                  onChange={(e) => setApprovalAtInput(e.target.value)}
+                />
               </div>
 
               {(approvalPaymentType === "loan" || approvalPaymentType === "mix") && (
@@ -8275,6 +8474,7 @@ export default function AdminPanelPage() {
                   setApprovalBankName("")
                   setApprovalBankIfsc("")
                   setApprovalSubsidyCheque("")
+                  setApprovalAtInput("")
                 }}
               >
                 Cancel
@@ -8298,6 +8498,7 @@ export default function AdminPanelPage() {
               }
               setFileLoginQuotationId(null)
               resetFileLoginFormFields()
+              setFileLoginAtInput("")
             }
             setFileLoginDialogOpen(open)
           }}
@@ -8324,6 +8525,15 @@ export default function AdminPanelPage() {
                     <SelectItem value="login_now">Login now</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="file-login-at">File login date & time</Label>
+                <Input
+                  id="file-login-at"
+                  type="datetime-local"
+                  value={fileLoginAtInput}
+                  onChange={(e) => setFileLoginAtInput(e.target.value)}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="file-login-payment-type">File payment type</Label>

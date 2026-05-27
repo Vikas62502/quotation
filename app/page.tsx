@@ -49,7 +49,7 @@ export default function HomePage() {
     { label: "HR Login", path: "/hr-login" },
     { label: "Installer Login", path: "/installer-login" },
     { label: "Metering Login", path: "/metering-login" },
-    { label: "Baldev Login", path: "/baldev-login" },
+    { label: "Final Login", path: "/baldev-login" },
   ]
 
   return (
