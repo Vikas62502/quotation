@@ -228,7 +228,7 @@ export function InstallationCompletionPanel({
         <Input
           id={inputId}
           type="file"
-          accept="image/*"
+          accept="image/*,.heic,.heif"
           multiple={field.multiple === true}
           className="hidden"
           disabled={Boolean(uploadingKey)}

@@ -348,7 +348,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Customer Final Bill (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setFinalBillFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -359,7 +359,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Panel Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setPanelWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -370,7 +370,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Inverter Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setInverterWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -381,7 +381,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Work Completion Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setWorkCompletionWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -445,7 +445,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Customer Final Bill (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setFinalBillFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -456,7 +456,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Panel Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setPanelWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -467,7 +467,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Inverter Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setInverterWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
@@ -478,7 +478,7 @@ export default function BaldevDashboardPage() {
                             <p className="text-xs">Work Completion Warranty (PDF/JPG)</p>
                             <Input
                               type="file"
-                              accept="image/*,.pdf"
+                              accept="image/*,.heic,.heif,.pdf"
                               className="h-9 text-sm"
                               onChange={(e) =>
                                 setWorkCompletionWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))

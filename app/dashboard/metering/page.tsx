@@ -1043,7 +1043,7 @@ export default function MeteringDashboardPage() {
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Meter Document Image</p>
                 <Input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   className="h-9 text-sm"
                   onChange={(e) => {
                     if (!detailsQuotationId) return

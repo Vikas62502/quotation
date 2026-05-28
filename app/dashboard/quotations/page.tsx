@@ -818,7 +818,7 @@ export default function QuotationsPage() {
                           <Label>Aadhar Front Image *</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -838,7 +838,7 @@ export default function QuotationsPage() {
                           <Label>Aadhar Back Image *</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -893,7 +893,7 @@ export default function QuotationsPage() {
                               <Label className="text-sm font-medium">Compliant Aadhar Front Image *</Label>
                               <Input
                                 type="file"
-                                accept="image/*"
+                                accept="image/*,.heic,.heif"
                                 disabled={!!uploadingField}
                                 onChange={(e) =>
                                   void onDocumentFileSelected(
@@ -908,7 +908,7 @@ export default function QuotationsPage() {
                               <Label className="text-sm font-medium">Compliant Aadhar Back Image *</Label>
                               <Input
                                 type="file"
-                                accept="image/*"
+                                accept="image/*,.heic,.heif"
                                 disabled={!!uploadingField}
                                 onChange={(e) =>
                                   void onDocumentFileSelected(
@@ -939,7 +939,7 @@ export default function QuotationsPage() {
                               <Label className="text-sm font-medium">Compliant PAN Image *</Label>
                               <Input
                                 type="file"
-                                accept="image/*"
+                                accept="image/*,.heic,.heif"
                                 disabled={!!uploadingField}
                                 onChange={(e) =>
                                   void onDocumentFileSelected(
@@ -1000,7 +1000,7 @@ export default function QuotationsPage() {
                               <Label className="text-sm font-medium">Compliant Bank Passbook Image *</Label>
                               <Input
                                 type="file"
-                                accept="image/*"
+                                accept="image/*,.heic,.heif"
                                 disabled={!!uploadingField}
                                 onChange={(e) =>
                                   void onDocumentFileSelected(
@@ -1031,7 +1031,7 @@ export default function QuotationsPage() {
                           <Label>PAN Image *</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -1067,7 +1067,7 @@ export default function QuotationsPage() {
                           <Label>Electricity Bill Image *</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -1127,7 +1127,7 @@ export default function QuotationsPage() {
                           <Label>Bank Passbook Image *</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -1168,7 +1168,7 @@ export default function QuotationsPage() {
                           <Label>Geotag Roof Photo</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -1183,7 +1183,7 @@ export default function QuotationsPage() {
                           <Label>Customer Photo with House</Label>
                           <Input
                             type="file"
-                            accept="image/*"
+                            accept="image/*,.heic,.heif"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
