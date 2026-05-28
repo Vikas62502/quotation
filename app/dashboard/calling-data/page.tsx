@@ -31,7 +31,12 @@ import {
 } from "@/lib/calling-lead-session"
 import { enrichCallingActionPayload, parseTaggedCallRemark } from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
-import { formatYmdLocal } from "@/lib/calling-report-date-range"
+import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
+import {
+  buildCallingActionSummary,
+  buildCallingConnectionSummary,
+  classifyCallingConnection,
+} from "@/lib/calling-action-summary"
 import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
 
 type CallingLead = {
@@ -69,6 +74,10 @@ type ActionLogItem = {
   callRemark?: string
   nextFollowUpAt?: string
   status?: string
+  statusText?: string
+  statusCategory?: string
+  status_text?: string
+  status_category?: string
   kNumber?: string
   address?: string
   city?: string
@@ -437,10 +446,11 @@ export default function CallingDataPage() {
   const [isEditingLead, setIsEditingLead] = useState(false)
   const [flowTab, setFlowTab] = useState<"current_lead" | "scheduled" | "dialled" | "connected" | "not_connected">("current_lead")
   const [analyticsRange, setAnalyticsRange] = useState<
-    "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_year" | "custom"
-  >("today")
+    "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
+  >("daily")
   const [analyticsFromDate, setAnalyticsFromDate] = useState("")
   const [analyticsToDate, setAnalyticsToDate] = useState("")
+  const [analyticsActions, setAnalyticsActions] = useState<ActionLogItem[]>([])
   const [submittingLeadMap, setSubmittingLeadMap] = useState<Record<string, boolean>>({})
   /** Locks Current Lead until Submit — prevents Start from skipping through the queue. */
   const [pinnedCurrentLead, setPinnedCurrentLead] = useState<CallingLead | null>(null)
@@ -617,6 +627,9 @@ export default function CallingDataPage() {
 
   const normalizeActionLog = (entry: any): ActionLogItem => {
     const lead = entry?.lead || entry
+    const tagged = parseTaggedCallRemark(
+      entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
+    )
     return {
       id:
         entry?.id ||
@@ -630,6 +643,24 @@ export default function CallingDataPage() {
       callRemark: entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
       nextFollowUpAt: entry?.nextFollowUpAt || entry?.next_follow_up_at || lead?.nextFollowUpAt || lead?.next_follow_up_at,
       status: entry?.status || lead?.status || lead?.lead_status,
+      statusText:
+        entry?.statusText ||
+        entry?.status_text ||
+        lead?.statusText ||
+        lead?.status_text ||
+        entry?.status ||
+        lead?.status ||
+        tagged.status ||
+        "",
+      statusCategory:
+        entry?.statusCategory ||
+        entry?.status_category ||
+        lead?.statusCategory ||
+        lead?.status_category ||
+        tagged.statusCategory ||
+        "",
+      status_text: entry?.status_text || lead?.status_text || tagged.status || "",
+      status_category: entry?.status_category || lead?.status_category || tagged.statusCategory || "",
       kNumber: entry?.kNumber || lead?.kNumber || lead?.k_number || "",
       address: entry?.address || lead?.address || "",
       city: entry?.city || lead?.city || "",
@@ -640,14 +671,41 @@ export default function CallingDataPage() {
 
   const mergeActionLogEntries = (sources: any[]): ActionLogItem[] => {
     const map = new Map<string, ActionLogItem>()
+    const fingerprintMap = new Map<string, string>()
     sources.forEach((entry) => {
       const normalized = normalizeActionLog(entry)
       if (!normalized?.id) return
+      const fingerprint = [
+        normalized.leadId || "",
+        normalized.actionAt || "",
+        normalized.action || "",
+        normalized.statusText || normalized.status || "",
+        normalized.callRemark || "",
+      ].join("|")
+      const existingId = fingerprintMap.get(fingerprint)
+      if (existingId) {
+        map.set(existingId, { ...map.get(existingId), ...normalized })
+        return
+      }
       map.set(normalized.id, normalized)
+      fingerprintMap.set(fingerprint, normalized.id)
     })
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
     )
+  }
+
+  const extractCallingActionsFromResponse = (response: any): any[] => {
+    const source =
+      response?.actions ||
+      response?.callingActions ||
+      response?.items ||
+      response?.logs ||
+      response?.data ||
+      response?.recentActions ||
+      response?.actionHistory ||
+      []
+    return Array.isArray(source) ? source : []
   }
 
   const formatDateTime = (value?: string) => {
@@ -729,113 +787,37 @@ export default function CallingDataPage() {
     return diffMs >= 0 && diffMs <= 30 * 24 * 60 * 60 * 1000
   }
 
-  const getDayStart = (d: Date) => {
-    const x = new Date(d)
-    x.setHours(0, 0, 0, 0)
-    return x
-  }
-
-  const getDayEnd = (d: Date) => {
-    const x = new Date(d)
-    x.setHours(23, 59, 59, 999)
-    return x
-  }
-
-  const getWeekStart = (d: Date) => {
-    const x = getDayStart(d)
-    const day = x.getDay()
-    const diff = day === 0 ? 6 : day - 1
-    x.setDate(x.getDate() - diff)
-    return x
-  }
-
-  const getWeekEnd = (d: Date) => {
-    const start = getWeekStart(d)
-    const end = new Date(start)
-    end.setDate(start.getDate() + 6)
-    return getDayEnd(end)
-  }
-
   const analyticsRangeBounds = useMemo(() => {
-    const now = new Date()
-    if (analyticsRange === "today") return { start: getDayStart(now), end: getDayEnd(now) }
-    if (analyticsRange === "yesterday") {
-      const y = new Date(now)
-      y.setDate(now.getDate() - 1)
-      return { start: getDayStart(y), end: getDayEnd(y) }
-    }
-    if (analyticsRange === "this_week") return { start: getWeekStart(now), end: getWeekEnd(now) }
-    if (analyticsRange === "last_week") {
-      const prev = new Date(now)
-      prev.setDate(now.getDate() - 7)
-      return { start: getWeekStart(prev), end: getWeekEnd(prev) }
-    }
-    if (analyticsRange === "this_month") {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1)
-      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-      return { start: getDayStart(start), end: getDayEnd(end) }
-    }
-    if (analyticsRange === "last_month") {
-      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-      const end = new Date(now.getFullYear(), now.getMonth(), 0)
-      return { start: getDayStart(start), end: getDayEnd(end) }
-    }
-    if (analyticsRange === "last_year") {
-      const y = now.getFullYear() - 1
-      return { start: getDayStart(new Date(y, 0, 1)), end: getDayEnd(new Date(y, 11, 31)) }
-    }
+    if (analyticsRange === "all") return null
     if (analyticsRange === "custom") {
-      if (!analyticsFromDate || !analyticsToDate) {
-        return { start: getDayStart(now), end: getDayEnd(now) }
-      }
-      const start = getDayStart(new Date(analyticsFromDate))
-      const end = getDayEnd(new Date(analyticsToDate))
-      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-        return { start: getDayStart(now), end: getDayEnd(now) }
-      }
-      return { start, end }
+      return getCustomBoundsFromYmd(analyticsFromDate, analyticsToDate)
     }
+    return getPresetBounds(analyticsRange)
   }, [analyticsRange, analyticsFromDate, analyticsToDate])
 
   const rangeFilteredActionsForAnalytics = useMemo(() => {
+    const baseActions = analyticsActions.length > 0 ? analyticsActions : recentActions
+    if (analyticsRange === "all") return baseActions
     if (!analyticsRangeBounds) return []
-    return recentActions.filter((item) => {
+    return baseActions.filter((item) => {
       if (!item.actionAt) return false
       const at = new Date(item.actionAt)
       if (Number.isNaN(at.getTime())) return false
       return at >= analyticsRangeBounds.start && at <= analyticsRangeBounds.end
     })
-  }, [recentActions, analyticsRangeBounds])
+  }, [analyticsActions, recentActions, analyticsRange, analyticsRangeBounds])
 
-  const analyticsSummary = useMemo(() => {
-    let connected = 0
-    let notConnected = 0
-    let interested = 0
-    let notInterested = 0
-    let decisionPending = 0
-    rangeFilteredActionsForAnalytics.forEach((item) => {
-      const parsed = parseTaggedRemark(item.callRemark)
-      const status = (parsed.status || "").trim()
-      if (!status) return
-      if (NOT_CONNECTED_REASONS.includes(status)) {
-        notConnected += 1
-        return
-      }
-      connected += 1
-      const outcome = getConnectedOutcomeForStatus(status)
-      if (outcome === "interested") interested += 1
-      else if (outcome === "not_interested") notInterested += 1
-      else decisionPending += 1
-    })
-    return {
-      totalCalls: rangeFilteredActionsForAnalytics.length,
-      connected,
-      notConnected,
-      interested,
-      notInterested,
-      decisionPending,
-    }
-  }, [rangeFilteredActionsForAnalytics])
+  const analyticsConnectionSummary = useMemo(
+    () => buildCallingConnectionSummary(rangeFilteredActionsForAnalytics),
+    [rangeFilteredActionsForAnalytics],
+  )
+  const analyticsOutcomeSummary = useMemo(
+    () =>
+      buildCallingActionSummary(
+        rangeFilteredActionsForAnalytics.filter((item) => classifyCallingConnection(item) === "connected"),
+      ),
+    [rangeFilteredActionsForAnalytics],
+  )
 
   // Each "Recent Actions" card must have its own local editing state.
   // Using `leadId` can cause state collisions when multiple recent history rows exist for the same lead/customer.
@@ -1127,10 +1109,29 @@ export default function CallingDataPage() {
     }
   }
 
+  const loadDealerAnalyticsActions = async () => {
+    if (!useApi || !currentDealerId) return
+    try {
+      const response = await api.hr.callingActions.getAll({
+        dealerId: currentDealerId,
+        limit: 2000,
+      })
+      const normalized = mergeActionLogEntries(extractCallingActionsFromResponse(response))
+      setAnalyticsActions(normalized)
+    } catch {
+      setAnalyticsActions([])
+    }
+  }
+
   useEffect(() => {
     loadLeads()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useApi])
+
+  useEffect(() => {
+    void loadDealerAnalyticsActions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useApi, currentDealerId])
 
   useEffect(() => {
     if (!useApi) return
@@ -2025,7 +2026,7 @@ export default function CallingDataPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Select
                 value={analyticsRange}
-                onValueChange={(value: "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month" | "last_year" | "custom") =>
+                onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
                   setAnalyticsRange(value)
                 }
               >
@@ -2033,14 +2034,12 @@ export default function CallingDataPage() {
                   <SelectValue placeholder="Select range" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="today">Daily (today)</SelectItem>
-                  <SelectItem value="yesterday">Yesterday</SelectItem>
-                  <SelectItem value="this_week">Weekly (this week)</SelectItem>
-                  <SelectItem value="last_week">Last week</SelectItem>
-                  <SelectItem value="this_month">Monthly (this month)</SelectItem>
+                  <SelectItem value="daily">Daily</SelectItem>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
                   <SelectItem value="last_month">Last month</SelectItem>
-                  <SelectItem value="last_year">Last year</SelectItem>
                   <SelectItem value="custom">Custom date range</SelectItem>
+                  <SelectItem value="all">All time</SelectItem>
                 </SelectContent>
               </Select>
               {analyticsRange === "custom" ? (
@@ -2053,27 +2052,27 @@ export default function CallingDataPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Total Calls</p>
-                <p className="text-xl font-semibold">{analyticsSummary.totalCalls}</p>
+                <p className="text-xl font-semibold">{rangeFilteredActionsForAnalytics.length}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Connected</p>
-                <p className="text-xl font-semibold">{analyticsSummary.connected}</p>
+                <p className="text-xl font-semibold">{analyticsConnectionSummary.connected}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Not Connected</p>
-                <p className="text-xl font-semibold">{analyticsSummary.notConnected}</p>
+                <p className="text-xl font-semibold">{analyticsConnectionSummary.notConnected}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Interested</p>
-                <p className="text-xl font-semibold">{analyticsSummary.interested}</p>
+                <p className="text-xl font-semibold">{analyticsOutcomeSummary.interested}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Follow Up</p>
+                <p className="text-xl font-semibold">{analyticsOutcomeSummary.followUp}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Not Interested</p>
-                <p className="text-xl font-semibold">{analyticsSummary.notInterested}</p>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Decision Pending</p>
-                <p className="text-xl font-semibold">{analyticsSummary.decisionPending}</p>
+                <p className="text-xl font-semibold">{analyticsOutcomeSummary.notInterested}</p>
               </div>
             </div>
           </CardContent>
