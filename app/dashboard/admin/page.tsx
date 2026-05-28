@@ -3179,7 +3179,7 @@ export default function AdminPanelPage() {
       { label: "Compliant Aadhar Back", value: form.compliantAadharBack },
       { label: "PAN Image", value: form.panImage },
       { label: "Compliant PAN Image", value: form.compliantPanImage },
-      { label: "Electricity Bill Image", value: form.electricityBillImage },
+      { label: "Electricity Bill PDF", value: form.electricityBillImage },
       { label: "Bank Passbook Image", value: form.bankPassbookImage },
       { label: "Geotag Roof Photo", value: form.geotagRoofPhoto },
       { label: "Customer Photo with House", value: form.customerWithHousePhoto },
@@ -6163,10 +6163,10 @@ export default function AdminPanelPage() {
                             />
                           </div>
                           <div>
-                            <Label>Electricity Bill Image *</Label>
+                            <Label>Electricity Bill PDF *</Label>
                             <Input
                               type="file"
-                              accept="image/*,.heic,.heif,.pdf"
+                              accept="application/pdf,.pdf"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(

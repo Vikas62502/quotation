@@ -1064,10 +1064,10 @@ export default function QuotationsPage() {
                           />
                         </div>
                         <div>
-                          <Label>Electricity Bill Image *</Label>
+                          <Label>Electricity Bill PDF *</Label>
                           <Input
                             type="file"
-                            accept="image/*,.heic,.heif"
+                            accept="application/pdf,.pdf"
                             disabled={!!uploadingField}
                             onChange={(e) =>
                               void onDocumentFileSelected(
@@ -1178,6 +1178,11 @@ export default function QuotationsPage() {
                               )
                             }
                           />
+                          {form.geotagRoofPhoto ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.geotagRoofPhoto)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                         <div>
                           <Label>Customer Photo with House</Label>
@@ -1193,6 +1198,11 @@ export default function QuotationsPage() {
                               )
                             }
                           />
+                          {form.customerWithHousePhoto ? (
+                            <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.customerWithHousePhoto)}>
+                              View uploaded file
+                            </Button>
+                          ) : null}
                         </div>
                         <div className="md:col-span-2">
                           <Label>Property Documents (PDF) *</Label>

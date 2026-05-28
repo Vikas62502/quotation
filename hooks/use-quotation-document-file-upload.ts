@@ -25,6 +25,8 @@ export function useQuotationDocumentFileUpload(
         updateDocumentsForm(quotationId, { [field]: file })
         return
       }
+      // Show immediate preview/link while S3 upload is in progress.
+      updateDocumentsForm(quotationId, { [field]: file })
       setUploadingField(field)
       try {
         const url = await api.quotations.uploadQuotationDocumentFile(quotationId, field, file)

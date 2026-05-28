@@ -1021,7 +1021,7 @@ export default function DashboardPage() {
                               <Label className="text-sm font-medium">Compliant Aadhar Back Image *</Label>
                               <Input
                                 type="file"
-                                accept="image/*,.heic,.heif"
+                                accept="application/pdf,.pdf"
                                 disabled={!!uploadingField}
                                 onChange={(e) =>
                                   void onDocumentFileSelected(
@@ -1212,7 +1212,7 @@ export default function DashboardPage() {
                           />
                         </div>
                         <div>
-                          <Label>Electricity Bill Image *</Label>
+                          <Label>Electricity Bill PDF *</Label>
                               <Input
                                 type="file"
                                 accept="image/*,.heic,.heif"
