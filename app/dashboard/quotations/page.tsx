@@ -903,6 +903,11 @@ export default function QuotationsPage() {
                                   )
                                 }
                               />
+                              {form.compliantAadharFront ? (
+                                <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.compliantAadharFront)}>
+                                  View uploaded file
+                                </Button>
+                              ) : null}
                             </div>
                             <div>
                               <Label className="text-sm font-medium">Compliant Aadhar Back Image *</Label>
@@ -918,6 +923,11 @@ export default function QuotationsPage() {
                                   )
                                 }
                               />
+                              {form.compliantAadharBack ? (
+                                <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.compliantAadharBack)}>
+                                  View uploaded file
+                                </Button>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -949,6 +959,11 @@ export default function QuotationsPage() {
                                   )
                                 }
                               />
+                              {form.compliantPanImage ? (
+                                <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.compliantPanImage)}>
+                                  View uploaded file
+                                </Button>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -1010,6 +1025,11 @@ export default function QuotationsPage() {
                                   )
                                 }
                               />
+                              {form.compliantBankPassbookImage ? (
+                                <Button type="button" variant="link" className="h-auto p-0 mt-1 text-xs" onClick={() => openDocumentPreview(form.compliantBankPassbookImage)}>
+                                  View uploaded file
+                                </Button>
+                              ) : null}
                             </div>
                           </div>
                         </div>
@@ -1386,6 +1406,15 @@ export default function QuotationsPage() {
                     }
 
                     if (isCompliant) {
+                      if (form.compliantAadharNumber && !aadharPattern.test(form.compliantAadharNumber)) {
+                        toast({
+                          title: "Invalid compliant Aadhar",
+                          description: "Aadhar number must be 12 digits.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
                       if (!form.compliantContactPhone) {
                         toast({
                           title: "Compliant contact number is required",
@@ -1399,6 +1428,15 @@ export default function QuotationsPage() {
                         toast({
                           title: "Invalid compliant phone",
                           description: "Phone number must be 10 digits.",
+                          variant: "destructive",
+                        })
+                        return
+                      }
+
+                      if (form.compliantPanNumber && !panPattern.test(form.compliantPanNumber.toUpperCase())) {
+                        toast({
+                          title: "Invalid compliant PAN",
+                          description: "PAN must be in format ABCDE1234F.",
                           variant: "destructive",
                         })
                         return

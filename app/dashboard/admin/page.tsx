@@ -6478,21 +6478,16 @@ export default function AdminPanelPage() {
                         }
 
                         const missing =
-                          !form.compliantAadharNumber ||
                           !form.compliantContactPhone ||
                           !form.compliantAadharFront ||
                           !form.compliantAadharBack ||
-                          !form.compliantPanNumber ||
                           !form.compliantPanImage ||
-                          !form.compliantBankAccountNumber ||
-                          !form.compliantBankIfsc ||
-                          !form.compliantBankName ||
-                          !form.compliantBankBranch ||
                           !form.compliantBankPassbookImage
                         if (missing) {
                           toast({
                             title: "Missing compliant details",
-                            description: "Please fill compliant Aadhar, PAN, and bank details.",
+                            description:
+                              "Please add compliant contact number, Aadhar front/back images, PAN image, and Bank Passbook image.",
                             variant: "destructive",
                           })
                           return

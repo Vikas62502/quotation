@@ -39,22 +39,29 @@ export function buildDocumentsMultipartFormData(form: Record<string, any>): Form
     else if (typeof value === "string" && value.trim()) formData.append(key, value.trim())
   }
 
+  const resolvedCompliantAadharNumber = form.compliantAadharNumber || form.aadharNumber || ""
+  const resolvedCompliantPanNumber = form.compliantPanNumber || form.panNumber || ""
+  const resolvedCompliantBankAccountNumber = form.compliantBankAccountNumber || form.bankAccountNumber || ""
+  const resolvedCompliantBankIfsc = form.compliantBankIfsc || form.bankIfsc || ""
+  const resolvedCompliantBankName = form.compliantBankName || form.bankName || ""
+  const resolvedCompliantBankBranch = form.compliantBankBranch || form.bankBranch || ""
+
   appendIfValue("isCompliantSenior", form.isCompliantSenior ? "true" : "false")
   appendIfValue("aadharNumber", form.aadharNumber)
   appendIfValue("phoneNumber", form.contactPhone)
   appendFileOrUrl("aadharFront", form.aadharFront)
   appendFileOrUrl("aadharBack", form.aadharBack)
 
-  appendIfValue("compliantAadharNumber", form.compliantAadharNumber)
+  appendIfValue("compliantAadharNumber", resolvedCompliantAadharNumber)
   appendIfValue("compliantContactPhone", form.compliantContactPhone)
   appendFileOrUrl("compliantAadharFront", form.compliantAadharFront)
   appendFileOrUrl("compliantAadharBack", form.compliantAadharBack)
-  appendIfValue("compliantPanNumber", form.compliantPanNumber)
+  appendIfValue("compliantPanNumber", resolvedCompliantPanNumber)
   appendFileOrUrl("compliantPanImage", form.compliantPanImage)
-  appendIfValue("compliantBankAccountNumber", form.compliantBankAccountNumber)
-  appendIfValue("compliantBankIfsc", form.compliantBankIfsc)
-  appendIfValue("compliantBankName", form.compliantBankName)
-  appendIfValue("compliantBankBranch", form.compliantBankBranch)
+  appendIfValue("compliantBankAccountNumber", resolvedCompliantBankAccountNumber)
+  appendIfValue("compliantBankIfsc", resolvedCompliantBankIfsc)
+  appendIfValue("compliantBankName", resolvedCompliantBankName)
+  appendIfValue("compliantBankBranch", resolvedCompliantBankBranch)
   appendFileOrUrl("compliantBankPassbookImage", form.compliantBankPassbookImage)
 
   appendIfValue("panNumber", form.panNumber)
