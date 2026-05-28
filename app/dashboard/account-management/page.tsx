@@ -1941,6 +1941,7 @@ export default function AccountManagementPage() {
                       filteredCustomerPayments.map((payment) => {
                         const paidAmount = getTotalPaidPhases(payment.phases)
                         const remainingAmount = getDisplayRemaining(payment)
+                        const isZeroPaid = paidAmount <= 0
                         const isCompletedPayment =
                           payment.paymentStatus === "completed" || remainingAmount <= 0
 
@@ -1948,7 +1949,9 @@ export default function AccountManagementPage() {
                           <Card
                             key={payment.quotationId}
                             className={`shadow-sm px-3 py-3 ${
-                              isCompletedPayment
+                              isZeroPaid
+                                ? "border-red-200 bg-red-50/80 dark:border-red-900 dark:bg-red-950/20"
+                                : isCompletedPayment
                                 ? "border-green-200 bg-green-50/80 dark:border-green-900 dark:bg-green-950/20"
                                 : "border-border/60 bg-card/80"
                             }`}
@@ -1975,7 +1978,13 @@ export default function AccountManagementPage() {
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
-                                    <p className="text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2">
+                                    <p
+                                      className={`text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2 inline-block rounded px-1.5 py-0.5 ${
+                                        paidAmount <= 0
+                                          ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
+                                          : ""
+                                      }`}
+                                    >
                                       ₹{paidAmount.toLocaleString()}
                                     </p>
                                   </TooltipTrigger>
@@ -2203,7 +2212,9 @@ export default function AccountManagementPage() {
                               </div>
                               
                   <div className="space-y-3">
-                    {activePayment.phases.map((phase) => {
+                    {[...activePayment.phases]
+                      .sort((a, b) => b.phaseNumber - a.phaseNumber)
+                      .map((phase) => {
                                   const isCompleted = phase.status === "completed"
                                   const isPartial = phase.status === "partial"
                                   const isPending = phase.status === "pending"
@@ -2366,41 +2377,41 @@ export default function AccountManagementPage() {
                               </Select>
                                         </div>
                             <div>
-                              <Label className="text-xs text-muted-foreground">Transaction ID</Label>
+                              <Label className="text-xs text-muted-foreground">Notes</Label>
                               <Input
-                                value={phase.transactionId || ""}
+                                value={phase.note || ""}
                                 onChange={(e) => {
                                   const updated = customerPayments.map((p) =>
                                     p.quotationId === activePayment.quotationId
                                       ? {
                                           ...p,
                                           phases: p.phases.map((ph) =>
-                                            ph.phaseNumber === phase.phaseNumber
-                                              ? { ...ph, transactionId: e.target.value }
-                                              : ph
+                                            ph.phaseNumber === phase.phaseNumber ? { ...ph, note: e.target.value } : ph,
                                           ),
                                         }
-                                      : p
+                                      : p,
                                   )
                                   setCustomerPayments(updated)
                                 }}
                                 className="mt-1"
-                                placeholder="Optional"
+                                placeholder="Installment notes (optional)"
                               />
                             </div>
                           </div>
 
                           <div className="mt-3">
-                            <Label className="text-xs text-muted-foreground">Notes</Label>
+                            <Label className="text-xs text-muted-foreground">Transaction ID</Label>
                             <Textarea
-                              value={phase.note || ""}
+                              value={phase.transactionId || ""}
                               onChange={(e) => {
                                 const updated = customerPayments.map((p) =>
                                   p.quotationId === activePayment.quotationId
                                     ? {
                                         ...p,
                                         phases: p.phases.map((ph) =>
-                                          ph.phaseNumber === phase.phaseNumber ? { ...ph, note: e.target.value } : ph,
+                                          ph.phaseNumber === phase.phaseNumber
+                                            ? { ...ph, transactionId: e.target.value }
+                                            : ph,
                                         ),
                                       }
                                     : p,
@@ -2409,7 +2420,7 @@ export default function AccountManagementPage() {
                               }}
                               className="mt-1 resize-y min-h-[64px]"
                               rows={2}
-                              placeholder="Installment notes (optional)"
+                              placeholder="Optional"
                             />
                           </div>
                               
