@@ -1144,7 +1144,7 @@ export default function AdminPanelPage() {
             // Preserve all products data - don't default to { systemType: "N/A" } if products exists
             products: q.products || {},
             discount: q.discount || 0,
-            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
+            subtotal: q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
             finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
             createdAt: q.createdAt,
@@ -1851,7 +1851,7 @@ export default function AdminPanelPage() {
         quotation.customer.email || "",
         getDealerName(quotation.dealerId),
         getDealerMobile(quotation.dealerId),
-        Math.abs(quotation.finalAmount || 0),
+        Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0),
         quotation.status || "pending",
         fileLoginRowSummary(quotation),
         getQuotationPaymentTypeLabel(quotation),
@@ -3190,6 +3190,18 @@ export default function AdminPanelPage() {
     return previews.filter((item) => typeof item.value === "string" && item.value.trim() !== "")
   }
 
+  const openDocumentPreview = (value: unknown) => {
+    if (value instanceof File) {
+      const objectUrl = URL.createObjectURL(value)
+      window.open(objectUrl, "_blank", "noopener,noreferrer")
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+      return
+    }
+    if (typeof value === "string" && value.trim()) {
+      window.open(value, "_blank", "noopener,noreferrer")
+    }
+  }
+
   const openDocumentsDialog = async (quotation: Quotation) => {
     try {
       let quotationWithDocuments: any = quotation
@@ -4045,7 +4057,7 @@ export default function AdminPanelPage() {
                                   </div>
                                   <div className="min-w-[120px]">
                                     <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                    <p className="text-sm font-semibold">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                                    <p className="text-sm font-semibold">₹{Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0).toLocaleString()}</p>
                                   </div>
                                   <div className="min-w-[130px]">
                                     {confirmationStage === "final" ? (
@@ -4533,7 +4545,7 @@ export default function AdminPanelPage() {
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">Amount:</span>
-                              <span className="font-semibold">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</span>
+                              <span className="font-semibold">₹{Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0).toLocaleString()}</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">System:</span>
@@ -4717,7 +4729,7 @@ export default function AdminPanelPage() {
                               </td>
                               <td className="py-3 px-2 text-right align-top break-words">
                                 <div>
-                                  <p className="text-sm font-medium">₹{Math.abs(quotation.finalAmount || 0).toLocaleString()}</p>
+                                  <p className="text-sm font-medium">₹{Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0).toLocaleString()}</p>
                                   {quotation.discount > 0 && (
                                     <p className="text-xs text-muted-foreground">{quotation.discount}% off</p>
                                   )}
@@ -6154,7 +6166,7 @@ export default function AdminPanelPage() {
                             <Label>Electricity Bill Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*,.heic,.heif"
+                              accept="image/*,.heic,.heif,.pdf"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6164,6 +6176,16 @@ export default function AdminPanelPage() {
                                 )
                               }
                             />
+                            {form.electricityBillImage ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                className="h-auto p-0 mt-1 text-xs"
+                                onClick={() => openDocumentPreview(form.electricityBillImage)}
+                              >
+                                View uploaded file
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
                       </div>
@@ -6255,6 +6277,16 @@ export default function AdminPanelPage() {
                                 )
                               }
                             />
+                            {form.geotagRoofPhoto ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                className="h-auto p-0 mt-1 text-xs"
+                                onClick={() => openDocumentPreview(form.geotagRoofPhoto)}
+                              >
+                                View uploaded file
+                              </Button>
+                            ) : null}
                           </div>
                           <div>
                             <Label>Customer Photo with House</Label>
@@ -6270,6 +6302,16 @@ export default function AdminPanelPage() {
                                 )
                               }
                             />
+                            {form.customerWithHousePhoto ? (
+                              <Button
+                                type="button"
+                                variant="link"
+                                className="h-auto p-0 mt-1 text-xs"
+                                onClick={() => openDocumentPreview(form.customerWithHousePhoto)}
+                              >
+                                View uploaded file
+                              </Button>
+                            ) : null}
                           </div>
                           <div className="md:col-span-2">
                             <Label>Property Documents (PDF) *</Label>
