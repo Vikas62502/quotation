@@ -74,6 +74,10 @@ type ActionLogItem = {
   callRemark?: string
   nextFollowUpAt?: string
   status?: string
+  statusText?: string
+  statusCategory?: string
+  status_text?: string
+  status_category?: string
   kNumber?: string
   address?: string
   city?: string
@@ -444,6 +448,7 @@ function CallingDataPageContent() {
   const [analyticsRange, setAnalyticsRange] = useState<"daily" | "weekly" | "monthly" | "last_month" | "custom" | "all">("daily")
   const [analyticsFromDate, setAnalyticsFromDate] = useState("")
   const [analyticsToDate, setAnalyticsToDate] = useState("")
+  const [analyticsActions, setAnalyticsActions] = useState<ActionLogItem[]>([])
   const [submittingLeadMap, setSubmittingLeadMap] = useState<Record<string, boolean>>({})
   /** Locks Current Lead until Submit — prevents Start from skipping through the queue. */
   const [pinnedCurrentLead, setPinnedCurrentLead] = useState<CallingLead | null>(null)
@@ -622,6 +627,9 @@ function CallingDataPageContent() {
 
   const normalizeActionLog = (entry: any): ActionLogItem => {
     const lead = entry?.lead || entry
+    const tagged = parseTaggedCallRemark(
+      entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
+    )
     return {
       id:
         entry?.id ||
@@ -635,6 +643,24 @@ function CallingDataPageContent() {
       callRemark: entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
       nextFollowUpAt: entry?.nextFollowUpAt || entry?.next_follow_up_at || lead?.nextFollowUpAt || lead?.next_follow_up_at,
       status: entry?.status || lead?.status || lead?.lead_status,
+      statusText:
+        entry?.statusText ||
+        entry?.status_text ||
+        lead?.statusText ||
+        lead?.status_text ||
+        entry?.status ||
+        lead?.status ||
+        tagged.status ||
+        "",
+      statusCategory:
+        entry?.statusCategory ||
+        entry?.status_category ||
+        lead?.statusCategory ||
+        lead?.status_category ||
+        tagged.statusCategory ||
+        "",
+      status_text: entry?.status_text || lead?.status_text || tagged.status || "",
+      status_category: entry?.status_category || lead?.status_category || tagged.statusCategory || "",
       kNumber: entry?.kNumber || lead?.kNumber || lead?.k_number || "",
       address: entry?.address || lead?.address || "",
       city: entry?.city || lead?.city || "",
@@ -645,14 +671,43 @@ function CallingDataPageContent() {
 
   const mergeActionLogEntries = (sources: any[]): ActionLogItem[] => {
     const map = new Map<string, ActionLogItem>()
+    const fingerprintMap = new Map<string, string>()
     sources.forEach((entry) => {
       const normalized = normalizeActionLog(entry)
       if (!normalized?.id) return
+      const fingerprint = [
+        normalized.leadId || "",
+        normalized.actionAt || "",
+        normalized.action || "",
+        normalized.statusText || normalized.status || "",
+        normalized.callRemark || "",
+      ].join("|")
+
+      const existingId = fingerprintMap.get(fingerprint)
+      if (existingId) {
+        map.set(existingId, { ...map.get(existingId), ...normalized })
+        return
+      }
+
       map.set(normalized.id, normalized)
+      fingerprintMap.set(fingerprint, normalized.id)
     })
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
     )
+  }
+
+  const extractCallingActionsFromResponse = (response: any): any[] => {
+    const source =
+      response?.actions ||
+      response?.callingActions ||
+      response?.items ||
+      response?.logs ||
+      response?.data ||
+      response?.recentActions ||
+      response?.actionHistory ||
+      []
+    return Array.isArray(source) ? source : []
   }
 
   const formatDateTime = (value?: string) => {
@@ -743,15 +798,16 @@ function CallingDataPageContent() {
   }, [analyticsRange, analyticsFromDate, analyticsToDate])
 
   const rangeFilteredActionsForAnalytics = useMemo(() => {
-    if (analyticsRange === "all") return recentActions
+    const baseActions = analyticsActions.length > 0 ? analyticsActions : recentActions
+    if (analyticsRange === "all") return baseActions
     if (!analyticsRangeBounds) return []
-    return recentActions.filter((item) => {
+    return baseActions.filter((item) => {
       if (!item.actionAt) return false
       const at = new Date(item.actionAt)
       if (Number.isNaN(at.getTime())) return false
       return at >= analyticsRangeBounds.start && at <= analyticsRangeBounds.end
     })
-  }, [recentActions, analyticsRange, analyticsRangeBounds])
+  }, [analyticsActions, recentActions, analyticsRange, analyticsRangeBounds])
 
   const analyticsConnectionSummary = useMemo(
     () => buildCallingConnectionSummary(rangeFilteredActionsForAnalytics),
@@ -1053,10 +1109,30 @@ function CallingDataPageContent() {
     }
   }
 
+  const loadDealerAnalyticsActions = async () => {
+    if (!useApi || !currentDealerId) return
+    try {
+      const response = await api.hr.callingActions.getAll({
+        dealerId: currentDealerId,
+        limit: 2000,
+      })
+      const normalized = mergeActionLogEntries(extractCallingActionsFromResponse(response))
+      setAnalyticsActions(normalized)
+    } catch {
+      // Fall back to queue-derived recentActions when endpoint is unavailable.
+      setAnalyticsActions([])
+    }
+  }
+
   useEffect(() => {
     loadLeads()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useApi])
+
+  useEffect(() => {
+    void loadDealerAnalyticsActions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [useApi, currentDealerId])
 
   useEffect(() => {
     if (!useApi) return
