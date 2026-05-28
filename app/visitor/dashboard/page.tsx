@@ -2018,7 +2018,7 @@ export default function VisitorDashboardPage() {
                 <p className="text-xs text-muted-foreground mb-3">PNG, JPG up to 10MB each</p>
                 <Input
                   type="file"
-                  accept="image/*"
+                  accept="image/*,.heic,.heif"
                   multiple
                   onChange={handleImageUpload}
                   disabled={isUploadingCompleteAsset}
@@ -2070,7 +2070,7 @@ export default function VisitorDashboardPage() {
                   <Input
                     id="row-diagram-upload"
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.heic,.heif"
                     onChange={handleRowDiagramUpload}
                     disabled={isUploadingCompleteAsset}
                     className="hidden"
@@ -2111,7 +2111,7 @@ export default function VisitorDashboardPage() {
                   <Input
                     id="meter-image-upload"
                     type="file"
-                    accept="image/*"
+                    accept="image/*,.heic,.heif"
                     onChange={handleMeterImageUpload}
                     disabled={isUploadingCompleteAsset}
                     className="hidden"

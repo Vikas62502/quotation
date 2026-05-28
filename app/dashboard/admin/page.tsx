@@ -4240,7 +4240,7 @@ export default function AdminPanelPage() {
                                         <Label className="text-xs">Customer Final Bill (PDF/JPG)</Label>
                                         <Input
                                           type="file"
-                                          accept="image/*,.pdf"
+                                          accept="image/*,.heic,.heif,.pdf"
                                           className="h-9 text-sm"
                                           onChange={(e) =>
                                             setAdminFinalBillFileByQuotation((prev) => ({
@@ -4254,7 +4254,7 @@ export default function AdminPanelPage() {
                                         <Label className="text-xs">Panel Warranty (PDF/JPG)</Label>
                                         <Input
                                           type="file"
-                                          accept="image/*,.pdf"
+                                          accept="image/*,.heic,.heif,.pdf"
                                           className="h-9 text-sm"
                                           onChange={(e) =>
                                             setAdminPanelWarrantyFileByQuotation((prev) => ({
@@ -4268,7 +4268,7 @@ export default function AdminPanelPage() {
                                         <Label className="text-xs">Inverter Warranty (PDF/JPG)</Label>
                                         <Input
                                           type="file"
-                                          accept="image/*,.pdf"
+                                          accept="image/*,.heic,.heif,.pdf"
                                           className="h-9 text-sm"
                                           onChange={(e) =>
                                             setAdminInverterWarrantyFileByQuotation((prev) => ({
@@ -4282,7 +4282,7 @@ export default function AdminPanelPage() {
                                         <Label className="text-xs">Work Completion Warranty (PDF/JPG)</Label>
                                         <Input
                                           type="file"
-                                          accept="image/*,.pdf"
+                                          accept="image/*,.heic,.heif,.pdf"
                                           className="h-9 text-sm"
                                           onChange={(e) =>
                                             setAdminWorkCompletionWarrantyFileByQuotation((prev) => ({
@@ -6079,7 +6079,7 @@ export default function AdminPanelPage() {
                             <Label>Aadhar Front Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6094,7 +6094,7 @@ export default function AdminPanelPage() {
                             <Label>Aadhar Back Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6144,7 +6144,7 @@ export default function AdminPanelPage() {
                                 <Label className="text-sm font-medium">Compliant Aadhar Front Image *</Label>
                                 <Input
                                   type="file"
-                                  accept="image/*"
+                                  accept="image/*,.heic,.heif"
                                   disabled={!!uploadingField}
                                   onChange={(e) =>
                                     void onDocumentFileSelected(
@@ -6159,7 +6159,7 @@ export default function AdminPanelPage() {
                                 <Label className="text-sm font-medium">Compliant Aadhar Back Image *</Label>
                                 <Input
                                   type="file"
-                                  accept="image/*"
+                                  accept="image/*,.heic,.heif"
                                   disabled={!!uploadingField}
                                   onChange={(e) =>
                                     void onDocumentFileSelected(
@@ -6190,7 +6190,7 @@ export default function AdminPanelPage() {
                                 <Label className="text-sm font-medium">Compliant PAN Image *</Label>
                                 <Input
                                   type="file"
-                                  accept="image/*"
+                                  accept="image/*,.heic,.heif"
                                   disabled={!!uploadingField}
                                   onChange={(e) =>
                                     void onDocumentFileSelected(
@@ -6251,7 +6251,7 @@ export default function AdminPanelPage() {
                                 <Label className="text-sm font-medium">Compliant Bank Passbook Image *</Label>
                                 <Input
                                   type="file"
-                                  accept="image/*"
+                                  accept="image/*,.heic,.heif"
                                   disabled={!!uploadingField}
                                   onChange={(e) =>
                                     void onDocumentFileSelected(
@@ -6282,7 +6282,7 @@ export default function AdminPanelPage() {
                             <Label>PAN Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6313,7 +6313,7 @@ export default function AdminPanelPage() {
                             <Label>Electricity Bill Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6368,7 +6368,7 @@ export default function AdminPanelPage() {
                             <Label>Bank Passbook Image *</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6404,7 +6404,7 @@ export default function AdminPanelPage() {
                             <Label>Geotag Roof Photo</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -6419,7 +6419,7 @@ export default function AdminPanelPage() {
                             <Label>Customer Photo with House</Label>
                             <Input
                               type="file"
-                              accept="image/*"
+                              accept="image/*,.heic,.heif"
                               disabled={!!uploadingField}
                               onChange={(e) =>
                                 void onDocumentFileSelected(
@@ -8705,7 +8705,7 @@ export default function AdminPanelPage() {
                   <Label>Meter Document (image/pdf)</Label>
                   <Input
                     type="file"
-                    accept="image/*,.pdf"
+                    accept="image/*,.heic,.heif,.pdf"
                     onChange={(e) => {
                       const file = e.target.files?.[0] || null
                       if (!adminMeteringQuotationId) return
