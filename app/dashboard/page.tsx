@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Users, FileText, Calendar, Search, Eye, PlusCircle, IndianRupee, Download } from "lucide-react"
@@ -235,6 +236,14 @@ export default function DashboardPage() {
             createdAt: q.createdAt,
             dealerId: q.dealerId || dealer.id,
             status: q.status || "pending",
+            fileLoginStatus: q.fileLoginStatus ?? q.file_login_status,
+            file_login_status: q.file_login_status ?? q.fileLoginStatus,
+            fileLoginAt: q.fileLoginAt ?? q.file_login_at,
+            file_login_at: q.file_login_at ?? q.fileLoginAt,
+            installationStatus: q.installationStatus ?? q.installation_status,
+            installation_status: q.installation_status ?? q.installationStatus,
+            meteringStatus: q.meteringStatus ?? q.metering_status,
+            metering_status: q.metering_status ?? q.meteringStatus,
           }))
         setQuotations(dealerQuotations)
         // Load visits for all quotations
@@ -587,8 +596,16 @@ export default function DashboardPage() {
           </Card>
         </div>
 
+        <CustomerJourneyPanel
+          quotations={quotations}
+          title="Customer Journey"
+          description="Track where your customers are in approval, installation, metering, and final confirmation."
+          emptyMessage="No quotations yet. Create a quotation to see customer journey here."
+          maxHeightClassName="max-h-[480px]"
+        />
+
         {/* Search and Recent Quotations */}
-        <Card className="border-border/50 shadow-sm">
+        <Card className="border-border/50 shadow-sm mt-6 sm:mt-8">
           <CardHeader>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <CardTitle className="text-base sm:text-lg">Recent Quotations</CardTitle>

@@ -48,6 +48,7 @@ import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
+import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { InstallationCompletionPanel, type InstallationUploadedFile } from "@/components/installation-completion-panel"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
@@ -477,7 +478,6 @@ export default function AdminPanelPage() {
   const [accountManagers, setAccountManagers] = useState<AccountManager[]>([])
   const [customers, setCustomers] = useState<any[]>([])
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
-  const [journeySearchTerm, setJourneySearchTerm] = useState("")
   const [searchTerm, setSearchTerm] = useState("")
   const [filterDealer, setFilterDealer] = useState("all")
   const [filterMonth, setFilterMonth] = useState("all")
@@ -3013,87 +3013,6 @@ export default function AdminPanelPage() {
     }
   }
 
-  function getJourneyHoldInfo(quotation: Quotation) {
-    const opsStatus = String(
-      (quotation as any).installationStatus ||
-        (quotation as any).installation_status ||
-        "",
-    ).toLowerCase()
-    const approvalStatus = String(quotation.status || "pending").toLowerCase()
-
-    if (approvalStatus !== "approved") {
-      return { holder: "Admin Approval", stageLabel: "Pending Admin Approval" }
-    }
-    if (opsStatus === "pending_installer") {
-      return { holder: "Installer", stageLabel: "Pending Installer" }
-    }
-    if (opsStatus === "installer_in_progress") {
-      return { holder: "Installer", stageLabel: "Installer In Progress" }
-    }
-    if (opsStatus === "installer_approved") {
-      return { holder: "Metering", stageLabel: "Pending Metering" }
-    }
-    if (opsStatus === "pending_metering" || opsStatus === "metering_in_progress") {
-      return { holder: "Metering", stageLabel: "Metering Processing" }
-    }
-    if (opsStatus === "metering_approved") {
-      return { holder: "Metering", stageLabel: "Metering Approved" }
-    }
-    if (opsStatus === "mco") {
-      return { holder: "Metering", stageLabel: "MCO Docs Pending" }
-    }
-    if (opsStatus === "pending_baldev") {
-      return { holder: "Baldev", stageLabel: "Pending Final Confirmation" }
-    }
-    if (opsStatus === "baldev_approved" || opsStatus === "completed") {
-      return { holder: "Completed", stageLabel: "Final Approved" }
-    }
-    return { holder: "Operations", stageLabel: "Workflow Pending" }
-  }
-
-  function getJourneyStageProgress(quotation: Quotation) {
-    const approvalStatus = String(quotation.status || "pending").toLowerCase()
-    const opsStatus = String((quotation as any).installationStatus || (quotation as any).installation_status || "").toLowerCase()
-
-    const adminApproval =
-      approvalStatus === "approved"
-        ? "completed"
-        : "pending"
-
-    let installation: "completed" | "pending" | "in_progress" = "pending"
-    let metering: "completed" | "pending" | "in_progress" = "pending"
-    let finalConfirmation: "completed" | "pending" | "in_progress" = "pending"
-
-    if (["installer_in_progress"].includes(opsStatus)) installation = "in_progress"
-    if (
-      [
-        "installer_approved",
-        "pending_metering",
-        "metering_in_progress",
-        "metering_approved",
-        "mco",
-        "pending_baldev",
-        "baldev_approved",
-        "completed",
-      ].includes(opsStatus)
-    ) {
-      installation = "completed"
-    }
-
-    if (["pending_metering", "metering_in_progress", "mco"].includes(opsStatus)) metering = "in_progress"
-    if (["metering_approved", "pending_baldev", "baldev_approved", "completed"].includes(opsStatus)) metering = "completed"
-
-    if (["pending_baldev"].includes(opsStatus)) finalConfirmation = "in_progress"
-    if (["baldev_approved", "completed"].includes(opsStatus)) finalConfirmation = "completed"
-
-    return {
-      adminApproval,
-      installation,
-      metering,
-      finalConfirmation,
-    }
-  }
-
   // Get system size display
   const getSystemSize = (quotation: Quotation): string => {
     const products = quotation.products
@@ -3346,30 +3265,6 @@ export default function AdminPanelPage() {
     }
   })
 
-  const customerJourneyRows = [...quotations]
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  const normalizedJourneySearch = journeySearchTerm.trim().toLowerCase()
-  const filteredCustomerJourneyRows = customerJourneyRows.filter((quotation) => {
-    if (!normalizedJourneySearch) return true
-    const hold = getJourneyHoldInfo(quotation)
-    const progress = getJourneyStageProgress(quotation)
-    const tokens = [
-      quotation.id,
-      quotation.customer.firstName,
-      quotation.customer.lastName,
-      quotation.customer.mobile,
-      hold.holder,
-      hold.stageLabel,
-      progress.adminApproval,
-      progress.installation,
-      progress.metering,
-      progress.finalConfirmation,
-    ]
-      .map((v) => String(v || "").toLowerCase())
-      .join(" ")
-    return tokens.includes(normalizedJourneySearch)
-  })
-
   return (
     <div className="min-h-screen bg-background">
       <DashboardNav />
@@ -3539,70 +3434,16 @@ export default function AdminPanelPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Customer Journey (Current Hold)</CardTitle>
-                <CardDescription>Shows who currently holds each customer file in the workflow.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="relative mb-3">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search customer journey by name, mobile, quotation id, stage..."
-                    value={journeySearchTerm}
-                    onChange={(e) => setJourneySearchTerm(e.target.value)}
-                    className="pl-9"
-                  />
-                </div>
-                {filteredCustomerJourneyRows.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No quotations found.</p>
-                ) : (
-                  <div className="max-h-[520px] overflow-y-auto space-y-2 pr-1">
-                    {filteredCustomerJourneyRows.map((quotation) => {
-                      const hold = getJourneyHoldInfo(quotation)
-                      const progress = getJourneyStageProgress(quotation)
-                      const statusBadgeClass = (status: "completed" | "pending" | "in_progress") =>
-                        status === "completed"
-                          ? "bg-green-600 text-white"
-                          : status === "in_progress"
-                            ? "bg-amber-500 text-white"
-                            : "bg-muted text-muted-foreground"
-                      const statusLabel = (status: "completed" | "pending" | "in_progress") =>
-                        status === "completed" ? "Completed" : status === "in_progress" ? "In Progress" : "Pending"
-                      return (
-                        <div key={quotation.id} className="rounded-md border border-border/60 px-3 py-2 space-y-2">
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-medium">
-                                {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
-                              </p>
-                              <p className="text-xs text-muted-foreground">{quotation.customer.mobile || "No mobile"} • {quotation.id}</p>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="text-xs">{hold.holder}</Badge>
-                              <Badge className="text-xs">{hold.stageLabel}</Badge>
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
-                            {[
-                              { label: "Admin Approval", status: progress.adminApproval as "completed" | "pending" | "in_progress" },
-                              { label: "Installation", status: progress.installation },
-                              { label: "Metering", status: progress.metering },
-                              { label: "Final Confirmation", status: progress.finalConfirmation },
-                            ].map((item) => (
-                              <div key={item.label} className="rounded border border-border/60 px-2 py-1.5 flex items-center justify-between gap-2">
-                                <span className="text-[11px] text-muted-foreground">{item.label}</span>
-                                <Badge className={`text-[10px] ${statusBadgeClass(item.status)}`}>{statusLabel(item.status)}</Badge>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <CustomerJourneyPanel
+              quotations={quotations}
+              title="Customer Journey (Current Hold)"
+              description="Shows who currently holds each customer file in the workflow."
+              showDealerDetails
+              resolveDealerDetails={(quotation) => ({
+                name: getDealerName(quotation.dealerId, quotation),
+                mobile: getDealerMobile(quotation.dealerId, quotation),
+              })}
+            />
           </TabsContent>
 
           <TabsContent value="calling-reports" className="space-y-4">
