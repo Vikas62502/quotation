@@ -432,6 +432,7 @@ const GOVERNMENT_BANK_OPTIONS = [
   "Indian Overseas Bank",
   "Punjab & Sind Bank",
   "RMGB Bank",
+  "HDFC Bank",
 ] as const
 
 function createEmptyDocumentsForm(): Record<string, any> {
