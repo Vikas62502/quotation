@@ -1966,6 +1966,20 @@ export default function CallingDataPage() {
       return
     }
     const display = formatPhoneForDisplay(digits)
+    if (result === "dialer_opened_copied") {
+      toast({
+        title: "Number copied · Opening dialer",
+        description: `${display} — return here after the call to submit the outcome.`,
+      })
+      return
+    }
+    if (result === "dialer_opened") {
+      toast({
+        title: "Opening dialer",
+        description: `${display} — return here after the call to submit the outcome.`,
+      })
+      return
+    }
     if (result === "copied") {
       toast({
         title: "Number copied",

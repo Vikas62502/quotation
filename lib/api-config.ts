@@ -1,11 +1,13 @@
 // API Configuration
-// This file can be used to configure the API base URL at runtime
+import { DEFAULT_API_BASE_URL, resolveApiBaseUrl } from "./resolve-api-base-url"
+
+export { DEFAULT_API_BASE_URL, resolveApiBaseUrl }
 
 export const API_CONFIG = {
-  baseURL: typeof window !== "undefined" 
-    ? (window as any).__API_URL__ || process.env.NEXT_PUBLIC_API_URL || "http://localhost:3050/api"
-    : process.env.NEXT_PUBLIC_API_URL || "http://localhost:3050/api",
-  
+  get baseURL(): string {
+    return resolveApiBaseUrl()
+  },
+
   // Set this to false to use localStorage fallback instead of API
   useApi: process.env.NEXT_PUBLIC_USE_API !== "false",
 }

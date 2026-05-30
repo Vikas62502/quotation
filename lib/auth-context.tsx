@@ -494,10 +494,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return true
       } catch (error) {
         console.error("Login error:", error)
-        // Log more details for debugging
         if (error instanceof ApiError) {
           console.error("API Error Code:", error.code)
           console.error("API Error Message:", error.message)
+          throw error
+        }
+        if (error instanceof TypeError) {
+          throw new ApiError(
+            "Cannot reach the server. Check your internet connection and try again.",
+            "NETWORK_ERROR",
+          )
         }
         return false
       }

@@ -2,7 +2,7 @@
 import { API_CONFIG } from "./api-config"
 import { parseQuotationDocumentUploadUrl } from "./quotation-documents-form"
 
-const API_BASE_URL = API_CONFIG.baseURL
+const getApiBaseUrl = () => API_CONFIG.baseURL
 
 interface ApiResponse<T = any> {
   success: boolean
@@ -97,7 +97,7 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
   
   const { method = "GET", body, headers = {}, requiresAuth = true } = options
 
-  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
+  const url = `${getApiBaseUrl()}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
   console.log('[API] Full URL:', url)
 
   const requestHeaders: HeadersInit = {
@@ -347,7 +347,7 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
         console.error('[API] Network error detected:', error.message)
         console.error('[API] =================================')
         throw new ApiError(
-          "Cannot connect to the server. Please ensure the API server is running at http://localhost:3050/api",
+          `Cannot connect to the server (${getApiBaseUrl()}). Check your internet connection.`,
           "NETWORK_ERROR"
         )
       }
@@ -373,7 +373,7 @@ function cloneFormData(formData: FormData): FormData {
 // Multipart helper for file uploads through backend
 async function multipartRequest<T = any>(endpoint: string, method: "POST" | "PATCH", formData: FormData): Promise<T> {
   const token = getAuthToken()
-  const url = `${API_BASE_URL}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
+  const url = `${getApiBaseUrl()}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`
   const response = await fetch(url, {
     method,
     headers: {
@@ -532,7 +532,7 @@ export const api = {
       clearAuthTokens()
       if (!token) return
       try {
-        const url = `${API_BASE_URL}/auth/logout`
+        const url = `${getApiBaseUrl()}/auth/logout`
         await fetch(url, {
           method: "POST",
           headers: {
@@ -956,7 +956,7 @@ export const api = {
 
     updateDocuments: async (quotationId: string, formData: FormData) => {
       const token = getAuthToken()
-      const url = `${API_BASE_URL}/quotations/${quotationId}/documents`
+      const url = `${getApiBaseUrl()}/quotations/${quotationId}/documents`
       const response = await fetch(url, {
         method: "PATCH",
         headers: {
@@ -1019,7 +1019,7 @@ export const api = {
       formData.append("field", field)
       formData.append("file", file)
       const token = getAuthToken()
-      const url = `${API_BASE_URL}/quotations/${quotationId}/documents/upload`
+      const url = `${getApiBaseUrl()}/quotations/${quotationId}/documents/upload`
       const response = await fetch(url, {
         method: "POST",
         headers: {
@@ -1069,7 +1069,7 @@ export const api = {
 
     downloadPDF: async (quotationId: string) => {
       const token = getAuthToken()
-      const url = `${API_BASE_URL}/quotations/${quotationId}/pdf`
+      const url = `${getApiBaseUrl()}/quotations/${quotationId}/pdf`
       const response = await fetch(url, {
         headers: {
           Authorization: token ? `Bearer ${token}` : "",
@@ -1082,7 +1082,7 @@ export const api = {
 
     downloadDocumentsZip: async (quotationId: string) => {
       const token = getAuthToken()
-      const url = `${API_BASE_URL}/quotations/${quotationId}/documents/zip`
+      const url = `${getApiBaseUrl()}/quotations/${quotationId}/documents/zip`
       const response = await fetch(url, {
         headers: {
           Authorization: token ? `Bearer ${token}` : "",

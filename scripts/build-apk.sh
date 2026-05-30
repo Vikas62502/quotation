@@ -11,7 +11,9 @@ if command -v /usr/libexec/java_home >/dev/null 2>&1; then
 fi
 
 # Pin the WebView URL for release APKs so a dev-only .env (e.g. http://10.0.2.2:3000) cannot be synced by mistake.
+# Login/API use NEXT_PUBLIC_API_URL baked into the deployed site — production APK must load the deployed site.
 export CAPACITOR_LIVE_URL="${CAPACITOR_LIVE_URL:-https://quotation.chairbordsolar.com}"
+echo "Capacitor WebView URL: ${CAPACITOR_LIVE_URL}"
 
 npx cap sync android
 (cd android && ./gradlew assembleDebug --no-daemon)

@@ -5,6 +5,7 @@ import { Analytics } from "@vercel/analytics/next"
 import { AuthProvider } from "@/lib/auth-context"
 import { QuotationProvider } from "@/lib/quotation-context"
 import { Toaster } from "@/components/ui/toaster"
+import { CapacitorApiBootstrap } from "@/components/capacitor-api-bootstrap"
 import "./globals.css"
 
 const _geist = Geist({ subsets: ["latin"] })
@@ -38,6 +39,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="font-sans antialiased mobile-app-shell">
+        <CapacitorApiBootstrap />
         <AuthProvider>
           <QuotationProvider>{children}</QuotationProvider>
         </AuthProvider>
