@@ -79,6 +79,22 @@ npm run android:apk
 
 `android:usesCleartextTraffic` is enabled so `http://` dev URLs work.
 
+### Web and Android app — same UI
+
+There is **no separate app UI codebase**. The APK is a WebView that loads the same Next.js app as the browser (default URL: `https://quotation.chairbordsolar.com`). Admin, HR, Account Management, Visitor, and dealer flows are the **same pages** on web and app.
+
+**To ship final web changes to users on the app:**
+
+1. **Deploy** the Next.js app to the URL in `capacitor.config.ts` / `CAPACITOR_LIVE_URL` (production default: `https://quotation.chairbordsolar.com`).
+2. Users **do not need a new APK** for UI or filter logic changes — only deploy the web.
+3. After deploy, **force-close and reopen** the app. If the old UI persists, clear the app’s cache or WebView data once.
+
+**Rebuild the APK only when** you change `CAPACITOR_LIVE_URL`, Capacitor/native plugins, or Android permissions.
+
+**Test app against local web** before deploy: set `CAPACITOR_LIVE_URL` to `http://10.0.2.2:3000` (emulator) or your LAN IP, run `npm run dev`, then `npx cap sync android` and open the project on a device/emulator.
+
+Recent features (identical on web and app after deploy): Admin Overview → Dealers by Revenue (this month + dealer filters, scrollable list); Account Management → installment count filter (exact 1 / 2 / … match); active-dealer-only dropdowns; calling report card layout; duplicate-customer messages with dealer name.
+
 ## Important Notes
 
 - `NEXT_PUBLIC_*` variables are embedded at **build time** in Next.js

@@ -105,6 +105,13 @@
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Scroll regions inside Capacitor WebView (e.g. Dealers by Revenue list) */
+.native-scroll-list {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
 /* Mobile-first app feel */
 @media (max-width: 768px) {
   html,

@@ -8,7 +8,14 @@ import {
   buildCustomerCreatePayload,
   buildCustomerCreatePayloadWithNotes,
   extractPdfDisplayFlags,
+  findQuotationRowByMobile,
+  formatDuplicateQuotationError,
+  formatExistingCustomerAssignedError,
   normalizeCustomersListResponse,
+  normalizeMobileForMatch,
+  normalizeQuotationsListResponse,
+  resolveDealerNameFromCustomerRow,
+  resolveDealerNameFromQuotationRow,
   stripPdfDisplayFlags,
 } from "./quotation-api-payload"
 
@@ -171,6 +178,57 @@ interface QuotationContextType {
 
 const QuotationContext = createContext<QuotationContextType | undefined>(undefined)
 
+function isDuplicateCustomerError(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    if (err.code === "HTTP_409") return true
+    const detailsText = err.details?.map((d) => d.message).join(" ") || ""
+    const msg = `${err.message} ${detailsText}`.toLowerCase()
+    return /already exist|duplicate|mobile.*taken|customer.*exist|assigned to/.test(msg)
+  }
+  if (err instanceof Error) {
+    return /already exist|duplicate|mobile.*taken|customer.*exist|assigned to/i.test(err.message)
+  }
+  return false
+}
+
+async function resolveDealerNameForExistingMobile(mobile: string): Promise<string> {
+  const normalized = normalizeMobileForMatch(mobile)
+  try {
+    const existingQuotationsResponse = await api.quotations.getAll({
+      search: mobile,
+      page: 1,
+      limit: 1000,
+    })
+    const list = normalizeQuotationsListResponse(existingQuotationsResponse)
+    const match = findQuotationRowByMobile(list, mobile)
+    if (match) return resolveDealerNameFromQuotationRow(match)
+  } catch {
+    // Fall through to customer lookup.
+  }
+
+  try {
+    const customersResponse = await api.customers.getAll({ search: mobile })
+    const customersList = normalizeCustomersListResponse(customersResponse)
+    const existingCustomer = customersList.find(
+      (c) => normalizeMobileForMatch(c.mobile || "") === normalized,
+    )
+    if (existingCustomer) {
+      const dealerName = resolveDealerNameFromCustomerRow(existingCustomer)
+      if (dealerName) return dealerName
+    }
+  } catch {
+    // Ignore lookup failures.
+  }
+
+  return "Unknown Dealer"
+}
+
+function throwDuplicateQuotationError(list: unknown[], mobile: string): never {
+  const match = findQuotationRowByMobile(list, mobile)
+  const dealerName = match ? resolveDealerNameFromQuotationRow(match) : "Unknown Dealer"
+  throw new Error(formatDuplicateQuotationError(dealerName))
+}
+
 export function QuotationProvider({ children }: { children: ReactNode }) {
   const { dealer } = useAuth()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -320,7 +378,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
     try {
       if (useApi) {
-        const normalizeMobile = (value: string) => String(value || "").replace(/\D/g, "")
+        const normalizeMobile = normalizeMobileForMatch
         const currentMobileNormalized = normalizeMobile(currentCustomer.mobile)
 
         // First, create or get customer
@@ -334,6 +392,11 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           )
 
           if (existingCustomer) {
+            if (existingCustomer.dealerId && existingCustomer.dealerId !== dealer.id) {
+              const dealerName =
+                resolveDealerNameFromCustomerRow(existingCustomer) || "Unknown Dealer"
+              throw new Error(formatExistingCustomerAssignedError(dealerName))
+            }
             customerId = existingCustomer.id
           } else {
             const createCustomer = async (payload: Record<string, unknown>) => {
@@ -365,7 +428,12 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           }
         } catch (err: any) {
           console.error("Error creating customer:", err)
-          
+
+          if (isDuplicateCustomerError(err)) {
+            const dealerName = await resolveDealerNameForExistingMobile(currentCustomer.mobile)
+            throw new Error(formatExistingCustomerAssignedError(dealerName))
+          }
+
           // Provide more detailed error message
           let errorMessage = "Failed to create customer"
           if (err instanceof Error) {
@@ -392,32 +460,37 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             page: 1,
             limit: 1000,
           })
-          const list: any[] = Array.isArray(existingQuotationsResponse)
-            ? existingQuotationsResponse
-            : Array.isArray((existingQuotationsResponse as any)?.quotations)
-              ? (existingQuotationsResponse as any).quotations
-              : Array.isArray((existingQuotationsResponse as any)?.data?.quotations)
-                ? (existingQuotationsResponse as any).data.quotations
-                : []
-          const hasSameMobileQuotation = list.some((row: any) => {
+          const list = normalizeQuotationsListResponse(existingQuotationsResponse)
+          const hasSameMobileQuotation = list.some((row) => {
             const rowMobile = normalizeMobile(
-              row?.customer?.mobile || row?.mobile || row?.customerMobile || row?.customer_mobile || "",
+              String(
+                (row as any)?.customer?.mobile ||
+                  row?.mobile ||
+                  row?.customerMobile ||
+                  row?.customer_mobile ||
+                  "",
+              ),
             )
             return rowMobile && rowMobile === currentMobileNormalized
           })
           if (hasSameMobileQuotation) {
-            throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+            throwDuplicateQuotationError(list, currentCustomer.mobile)
           }
         } catch (dupErr) {
-          if (dupErr instanceof Error && dupErr.message.includes("already exists for this mobile")) {
+          if (dupErr instanceof Error && dupErr.message.includes("assigned to")) {
             throw dupErr
           }
           // If duplicate-check endpoint behavior is unavailable, fail-safe with loaded dealer quotations.
-          const hasDuplicateInLoadedData = quotations.some(
+          const duplicateInLoaded = quotations.find(
             (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
           )
-          if (hasDuplicateInLoadedData) {
-            throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+          if (duplicateInLoaded) {
+            const dealerName = duplicateInLoaded.dealer
+              ? `${duplicateInLoaded.dealer.firstName || ""} ${duplicateInLoaded.dealer.lastName || ""}`.trim() ||
+                duplicateInLoaded.dealer.username ||
+                "Unknown Dealer"
+              : "Unknown Dealer"
+            throw new Error(formatDuplicateQuotationError(dealerName))
           }
         }
 
@@ -747,14 +820,21 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // Fallback to localStorage
-        const normalizeMobile = (value: string) => String(value || "").replace(/\D/g, "")
+        const normalizeMobile = normalizeMobileForMatch
         const currentMobileNormalized = normalizeMobile(currentCustomer.mobile)
         const existingAllQuotations: Quotation[] = JSON.parse(localStorage.getItem("quotations") || "[]")
-        const hasDuplicateMobile = existingAllQuotations.some(
+        const duplicateQuotation = existingAllQuotations.find(
           (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
         )
-        if (hasDuplicateMobile) {
-          throw new Error("A quotation already exists for this mobile number. Please update the existing quotation instead of creating a fresh one.")
+        if (duplicateQuotation) {
+          const dealerName = duplicateQuotation.dealer
+            ? `${duplicateQuotation.dealer.firstName || ""} ${duplicateQuotation.dealer.lastName || ""}`.trim() ||
+              duplicateQuotation.dealer.username ||
+              "Unknown Dealer"
+            : duplicateQuotation.dealerId === dealer.id
+              ? `${dealer.firstName || ""} ${dealer.lastName || ""}`.trim() || dealer.username || "Unknown Dealer"
+              : "Unknown Dealer"
+          throw new Error(formatDuplicateQuotationError(dealerName))
         }
 
         // totalAmount is now subtotal (total project cost)

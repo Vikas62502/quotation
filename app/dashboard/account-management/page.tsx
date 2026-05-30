@@ -199,8 +199,9 @@ function paymentMatchesInstallmentFilter(
   filter: PaymentInstallmentFilter,
 ): boolean {
   if (filter === "all") return true
-  const installmentNumber = Number(filter)
-  return payment.phases.some((phase) => phase.phaseNumber === installmentNumber)
+  const expectedInstallmentCount = Number(filter)
+  if (!Number.isFinite(expectedInstallmentCount) || expectedInstallmentCount < 1) return true
+  return payment.phases.length === expectedInstallmentCount
 }
 
 function getStoredSubsidyChequesMap(): Record<string, SubsidyChequeRecord[]> {
@@ -1854,11 +1855,11 @@ export default function AccountManagementPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All installments</SelectItem>
-                          <SelectItem value="1">Installment 1</SelectItem>
-                          <SelectItem value="2">Installment 2</SelectItem>
-                          <SelectItem value="3">Installment 3</SelectItem>
-                          <SelectItem value="4">Installment 4</SelectItem>
-                          <SelectItem value="5">Installment 5</SelectItem>
+                          <SelectItem value="1">1 installment</SelectItem>
+                          <SelectItem value="2">2 installments</SelectItem>
+                          <SelectItem value="3">3 installments</SelectItem>
+                          <SelectItem value="4">4 installments</SelectItem>
+                          <SelectItem value="5">5 installments</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

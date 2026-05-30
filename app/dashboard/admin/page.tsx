@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -49,6 +49,7 @@ import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
+import { getJourneyDateRangeBounds, type JourneyDateRangeFilter } from "@/lib/customer-journey"
 import { InstallationCompletionPanel, type InstallationUploadedFile } from "@/components/installation-completion-panel"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
@@ -65,6 +66,7 @@ import {
   getCallingConnectionBadgeClass,
   resolveCallingActionFields,
 } from "@/lib/calling-action-summary"
+import { filterActiveDealers } from "@/lib/active-dealers"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
@@ -146,6 +148,20 @@ function getQuotationApprovalDate(quotation: Quotation): Date | null {
   }
   return null
 }
+
+function matchesOverviewTopDealersApprovalDate(
+  quotation: Quotation,
+  filter: JourneyDateRangeFilter,
+  customFromYmd: string,
+  customToYmd: string,
+): boolean {
+  const approvedDate = getQuotationApprovalDate(quotation)
+  if (!approvedDate) return false
+  const bounds = getJourneyDateRangeBounds(filter, customFromYmd, customToYmd)
+  if (!bounds) return true
+  return approvedDate >= bounds.start && approvedDate <= bounds.end
+}
+
 const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
   "installer_approved",
   "pending_metering",
@@ -156,6 +172,9 @@ const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
   "baldev_approved",
   "completed",
 ])
+
+/** Dealers by Revenue list: visible viewport fits this many rows before scrolling. */
+const DEALERS_BY_REVENUE_VISIBLE_ROWS = 5
 
 const ADMIN_OPERATIONAL_STAGES = [
   "pending_installer",
@@ -554,6 +573,10 @@ export default function AdminPanelPage() {
   const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
   const [callingConnectionFilter, setCallingConnectionFilter] = useState<"all" | "connected" | "not_connected">("all")
+  const [topDealersDateFilter, setTopDealersDateFilter] = useState<JourneyDateRangeFilter>("this_month")
+  const [topDealersDealerFilter, setTopDealersDealerFilter] = useState("all")
+  const [topDealersCustomFromDate, setTopDealersCustomFromDate] = useState("")
+  const [topDealersCustomToDate, setTopDealersCustomToDate] = useState("")
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
   const [editingQuotation, setEditingQuotation] = useState<Quotation | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
@@ -1517,9 +1540,81 @@ export default function AdminPanelPage() {
     setCallingCustomToDate(t)
   }, [callingRange, callingCustomFromDate, callingCustomToDate])
 
+  const activeDealers = useMemo(() => filterActiveDealers(dealers), [dealers])
+
+  useEffect(() => {
+    if (filterDealer !== "all" && !activeDealers.some((d) => d.id === filterDealer)) {
+      setFilterDealer("all")
+    }
+  }, [activeDealers, filterDealer])
+
+  useEffect(() => {
+    if (
+      callingActionDealerFilter !== "all" &&
+      !activeDealers.some((d) => d.id === callingActionDealerFilter)
+    ) {
+      setCallingActionDealerFilter("all")
+    }
+  }, [activeDealers, callingActionDealerFilter])
+
+  useEffect(() => {
+    if (topDealersDealerFilter !== "all" && !activeDealers.some((d) => d.id === topDealersDealerFilter)) {
+      setTopDealersDealerFilter("all")
+    }
+  }, [activeDealers, topDealersDealerFilter])
+
+  useEffect(() => {
+    if (topDealersDateFilter !== "custom") return
+    if (topDealersCustomFromDate || topDealersCustomToDate) return
+    const t = formatYmdLocal(new Date())
+    setTopDealersCustomFromDate(t)
+    setTopDealersCustomToDate(t)
+  }, [topDealersDateFilter, topDealersCustomFromDate, topDealersCustomToDate])
+
+  const dealerStats = useMemo(() => {
+    const dealersForStats =
+      topDealersDealerFilter === "all"
+        ? activeDealers
+        : activeDealers.filter((d) => d.id === topDealersDealerFilter)
+
+    return dealersForStats.map((d) => {
+      const dealerApprovedQuotations = quotations.filter(
+        (q) =>
+          q.dealerId === d.id &&
+          String(q.status || "").toLowerCase() === "approved" &&
+          matchesOverviewTopDealersApprovalDate(
+            q,
+            topDealersDateFilter,
+            topDealersCustomFromDate,
+            topDealersCustomToDate,
+          ),
+      )
+      const dealerRevenue = dealerApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+      return {
+        dealer: d,
+        quotationCount: dealerApprovedQuotations.length,
+        revenue: dealerRevenue,
+      }
+    })
+  }, [
+    activeDealers,
+    quotations,
+    topDealersDateFilter,
+    topDealersDealerFilter,
+    topDealersCustomFromDate,
+    topDealersCustomToDate,
+  ])
+
   if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
   const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
+
+  const quotationSubTabTriggerClass = (sub: AdminOperationalTab) =>
+    cn(
+      activeTab === "quotations" &&
+        operationalTab !== sub &&
+        "!bg-transparent !text-muted-foreground !shadow-none !border-transparent hover:!bg-muted/50 hover:!text-foreground",
+    )
 
   const onAdminMobileNavChange = (value: string) => {
     if (value.startsWith("quotations__")) {
@@ -3267,17 +3362,6 @@ export default function AdminPanelPage() {
     }
   }
 
-  // Get dealer stats
-  const dealerStats = dealers.map((d) => {
-    const dealerQuotations = quotations.filter((q) => q.dealerId === d.id)
-    const dealerRevenue = dealerQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
-    return {
-      dealer: d,
-      quotationCount: dealerQuotations.length,
-      revenue: dealerRevenue,
-    }
-  })
-
   return (
     <div className="min-h-screen bg-background">
       <DashboardNav />
@@ -3299,13 +3383,13 @@ export default function AdminPanelPage() {
                 <SelectItem value="overview">Overview</SelectItem>
                 <SelectItem value="calling-reports">Calling Reports</SelectItem>
                 <SelectItem value="quotations__all">Quotations (all)</SelectItem>
+                <SelectItem value="payments">Payments</SelectItem>
                 <SelectItem value="quotations__installation">Installation</SelectItem>
                 <SelectItem value="quotations__metering">Metering</SelectItem>
                 <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
                 <SelectItem value="dealers">Dealers</SelectItem>
                 <SelectItem value="customers">Customers</SelectItem>
                 <SelectItem value="visitors">Visitors</SelectItem>
-                <SelectItem value="payments">Payments</SelectItem>
                 <SelectItem value="products">Products</SelectItem>
                 <SelectItem value="account-management">Others</SelectItem>
               </SelectContent>
@@ -3318,14 +3402,17 @@ export default function AdminPanelPage() {
             <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
             <TabsTrigger
               value="quotations"
+              className={quotationSubTabTriggerClass("all")}
               onPointerDown={() => {
                 setOperationalTab("all")
               }}
             >
               Quotations
             </TabsTrigger>
+            <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger
               value="quotations"
+              className={quotationSubTabTriggerClass("installation")}
               onPointerDown={() => {
                 setOperationalTab("installation")
               }}
@@ -3334,6 +3421,7 @@ export default function AdminPanelPage() {
             </TabsTrigger>
             <TabsTrigger
               value="quotations"
+              className={quotationSubTabTriggerClass("metering")}
               onPointerDown={() => {
                 setOperationalTab("metering")
               }}
@@ -3342,6 +3430,7 @@ export default function AdminPanelPage() {
             </TabsTrigger>
             <TabsTrigger
               value="quotations"
+              className={quotationSubTabTriggerClass("confirmation")}
               onPointerDown={() => {
                 setOperationalTab("confirmation")
               }}
@@ -3351,7 +3440,6 @@ export default function AdminPanelPage() {
             <TabsTrigger value="dealers">Dealers</TabsTrigger>
             <TabsTrigger value="customers">Customers</TabsTrigger>
             <TabsTrigger value="visitors">Visitors</TabsTrigger>
-            <TabsTrigger value="payments">Payments</TabsTrigger>
             <TabsTrigger value="products">Products</TabsTrigger>
             <TabsTrigger value="account-management">Others</TabsTrigger>
             </TabsList>
@@ -3421,29 +3509,102 @@ export default function AdminPanelPage() {
 
             {/* Top Dealers  */}
             <Card>
-              <CardHeader>
-                <CardTitle>Top Dealers by Revenue</CardTitle>
+              <CardHeader className="space-y-4">
+                <div className="space-y-1">
+                  <CardTitle>Dealers by Revenue</CardTitle>
+                  <CardDescription>
+                    All active dealers ranked by approved quotation revenue (approval date). Defaults to this month.
+                  </CardDescription>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Select
+                    value={topDealersDateFilter}
+                    onValueChange={(value) => setTopDealersDateFilter(value as JourneyDateRangeFilter)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Date range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="this_month">This month</SelectItem>
+                      <SelectItem value="today">Today</SelectItem>
+                      <SelectItem value="yesterday">Yesterday</SelectItem>
+                      <SelectItem value="week">This week</SelectItem>
+                      <SelectItem value="last_month">Last month</SelectItem>
+                      <SelectItem value="year">This year</SelectItem>
+                      <SelectItem value="custom">Custom date range</SelectItem>
+                      <SelectItem value="all">All time</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={topDealersDealerFilter} onValueChange={setTopDealersDealerFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by dealer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Dealers</SelectItem>
+                      {activeDealers.map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.firstName} {d.lastName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {topDealersDateFilter === "custom" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        value={topDealersCustomFromDate}
+                        onChange={(e) => setTopDealersCustomFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        value={topDealersCustomToDate}
+                        onChange={(e) => setTopDealersCustomToDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
               </CardHeader>
               <CardContent>
-                <div className="space-y-4">
-                  {dealerStats
-                    .sort((a, b) => b.revenue - a.revenue)
-                    .slice(0, 5)
-                    .map((stat) => (
-                      <div key={stat.dealer.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div>
-                          <p className="font-semibold">
-                            {stat.dealer.firstName} {stat.dealer.lastName}
-                          </p>
-                          <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
+                {dealerStats.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6">
+                    No active dealers match the selected filter.
+                  </p>
+                ) : (
+                  <div
+                    className="native-scroll-list space-y-4 overflow-y-auto overscroll-y-contain pr-1"
+                    style={{
+                      maxHeight: `calc(${DEALERS_BY_REVENUE_VISIBLE_ROWS} * (5.5rem + 1rem) - 1rem)`,
+                    }}
+                  >
+                    {[...dealerStats]
+                      .sort((a, b) => b.revenue - a.revenue || b.quotationCount - a.quotationCount)
+                      .map((stat) => (
+                        <div
+                          key={stat.dealer.id}
+                          className="flex items-center justify-between p-4 border rounded-lg shrink-0"
+                        >
+                          <div>
+                            <p className="font-semibold">
+                              {stat.dealer.firstName} {stat.dealer.lastName}
+                            </p>
+                            <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-semibold">{formatOverviewRevenueLakh(stat.revenue)}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {stat.quotationCount} approved quotation{stat.quotationCount === 1 ? "" : "s"}
+                            </p>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="font-semibold">₹{(stat.revenue / 100000).toFixed(1)}L</p>
-                          <p className="text-sm text-muted-foreground">{stat.quotationCount} quotations</p>
-                        </div>
-                      </div>
-                    ))}
-                </div>
+                      ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -3495,7 +3656,7 @@ export default function AdminPanelPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Employees</SelectItem>
-                      {dealers.map((d) => (
+                      {activeDealers.map((d) => (
                         <SelectItem key={d.id} value={d.id}>
                           {d.firstName} {d.lastName}
                         </SelectItem>
@@ -3525,10 +3686,10 @@ export default function AdminPanelPage() {
                 ) : null}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Card className="border-emerald-200 bg-emerald-50/40">
+                  <Card className="border-border/60">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Connected</p>
-                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
+                      <p className="text-xs text-muted-foreground">Total Calls</p>
+                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
                     </CardContent>
                   </Card>
                   <Card className="border-slate-300 bg-slate-50/80">
@@ -3537,14 +3698,20 @@ export default function AdminPanelPage() {
                       <p className="text-xl font-semibold">{connectionSummary.notConnected}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-border/60">
+                  <Card className="border-emerald-200 bg-emerald-50/40">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
+                      <p className="text-xs text-muted-foreground">Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
                     </CardContent>
                   </Card>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-rose-100 bg-rose-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.notInterested}</p>
+                    </CardContent>
+                  </Card>
                   <Card className="border-emerald-100 bg-emerald-50/20">
                     <CardContent className="pt-3 pb-3">
                       <p className="text-xs text-muted-foreground">Connected — Interested</p>
@@ -3555,12 +3722,6 @@ export default function AdminPanelPage() {
                     <CardContent className="pt-3 pb-3">
                       <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
                       <p className="text-lg font-semibold">{connectedOutcomeSummary.followUp}</p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-rose-100 bg-rose-50/20">
-                    <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
-                      <p className="text-lg font-semibold">{connectedOutcomeSummary.notInterested}</p>
                     </CardContent>
                   </Card>
                 </div>
@@ -3650,7 +3811,7 @@ export default function AdminPanelPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="all">All Dealers</SelectItem>
-                        {dealers.map((d) => (
+                        {activeDealers.map((d) => (
                           <SelectItem key={d.id} value={d.id}>
                             {d.firstName} {d.lastName}
                           </SelectItem>
@@ -6957,7 +7118,7 @@ export default function AdminPanelPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {dealers.map((d) => (
+                      {activeDealers.map((d) => (
                         <SelectItem key={d.id} value={d.id}>
                           {d.firstName} {d.lastName} ({d.username})
                         </SelectItem>

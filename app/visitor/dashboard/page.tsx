@@ -63,6 +63,8 @@ const VISIT_STATUS_TAB_OPTIONS: Array<{ value: VisitStatusTab; label: string }> 
   { value: "all", label: "All" },
 ]
 
+const DEFAULT_VISITOR_DATE_FILTER = "thisMonth"
+
 interface Visit {
   id: string
   date: string
@@ -399,7 +401,7 @@ export default function VisitorDashboardPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [agentFilter, setAgentFilter] = useState("all")
   const [statusFilter, setStatusFilter] = useState<VisitStatus | "all">("all")
-  const [dateFilter, setDateFilter] = useState("all")
+  const [dateFilter, setDateFilter] = useState(DEFAULT_VISITOR_DATE_FILTER)
   const [activeStatusTab, setActiveStatusTab] = useState<VisitStatusTab>("pending")
   const [currentPage, setCurrentPage] = useState(1)
   const VISITS_PER_PAGE = 10
@@ -1231,14 +1233,14 @@ export default function VisitorDashboardPage() {
                       className="pl-9"
                     />
                   </div>
-                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending") && (
+                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== DEFAULT_VISITOR_DATE_FILTER || activeStatusTab !== "pending") && (
                     <Button
                       variant="outline"
                       onClick={() => {
                         setSearchTerm("")
                         setAgentFilter("all")
                         setStatusFilter("all")
-                        setDateFilter("all")
+                        setDateFilter(DEFAULT_VISITOR_DATE_FILTER)
                         setActiveStatusTab("pending")
                         setCurrentPage(1)
                       }}
@@ -1417,18 +1419,18 @@ export default function VisitorDashboardPage() {
                 <CardContent className="py-12 text-center text-muted-foreground">
                   <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
                   <p>
-                    {searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending"
+                    {searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== DEFAULT_VISITOR_DATE_FILTER || activeStatusTab !== "pending"
                       ? "No visits found matching your search/filters"
                       : "No visits assigned to you yet"}
                   </p>
-                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== "all" || activeStatusTab !== "pending") && (
+                  {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== DEFAULT_VISITOR_DATE_FILTER || activeStatusTab !== "pending") && (
                     <Button
                       variant="link"
                       onClick={() => {
                         setSearchTerm("")
                         setAgentFilter("all")
                         setStatusFilter("all")
-                        setDateFilter("all")
+                        setDateFilter(DEFAULT_VISITOR_DATE_FILTER)
                         setActiveStatusTab("pending")
                         setCurrentPage(1)
                       }}

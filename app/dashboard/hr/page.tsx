@@ -27,6 +27,12 @@ import {
   getHrLeadRowDisplay,
   resolveHrUploadBatchCounts,
 } from "@/lib/hr-upload-lead-display"
+import {
+  buildCallingActionSummary,
+  buildCallingConnectionSummary,
+  classifyCallingConnection,
+} from "@/lib/calling-action-summary"
+import { filterActiveDealers } from "@/lib/active-dealers"
 
 type DealerOption = {
   id: string
@@ -34,6 +40,7 @@ type DealerOption = {
   lastName: string
   mobile: string
   email: string
+  isActive: boolean
 }
 
 type ParsedCsvRow = {
@@ -265,6 +272,7 @@ export default function HrDashboardPage() {
           lastName: d.lastName || "",
           mobile: d.mobile || "",
           email: d.email || "",
+          isActive: d.isActive === true,
         })
       })
     return Array.from(uniqueMap.values())
@@ -272,7 +280,7 @@ export default function HrDashboardPage() {
 
   const getLocalDealers = (): DealerOption[] => {
     const localDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
-    return normalizeDealerList(localDealers)
+    return filterActiveDealers(normalizeDealerList(localDealers))
   }
 
   const getAllDealersFromAdmin = async (): Promise<DealerOption[]> => {
@@ -294,7 +302,7 @@ export default function HrDashboardPage() {
 
     while (page <= totalPages && page <= 100) {
       // Use HR-aware endpoint chain first, then admin dealers as fallback (handled in api.hr.dealers.getAll).
-      const response = await api.hr.dealers.getAll({ page, limit: pageSize, includeInactive: true })
+      const response = await api.hr.dealers.getAll({ page, limit: pageSize, isActive: true })
       const list = pickDealerRows(response)
       const before = seenIds.size
       list.forEach((dealer: any) => {
@@ -316,7 +324,7 @@ export default function HrDashboardPage() {
       page += 1
     }
 
-    return normalizeDealerList(merged)
+    return filterActiveDealers(normalizeDealerList(merged))
   }
 
   const normalizeCallingAction = (item: any, fallbackDealers: DealerOption[], index: number): CallingActionRecord => {
@@ -927,50 +935,36 @@ export default function HrDashboardPage() {
     })
   }, [callingActions, callingDealerFilter, callingRange, callingCustomFromDate, callingCustomToDate])
 
+  const activeDealers = useMemo(() => filterActiveDealers(dealers), [dealers])
+
   const dealerFilterOptions = useMemo(() => {
-    const byValue = new Map<string, { value: string; label: string }>()
+    return activeDealers
+      .map((d) => ({
+        value: d.id,
+        label: `${d.firstName} ${d.lastName}`.trim() || d.email || d.mobile || d.id,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label))
+  }, [activeDealers])
 
-    dealers.forEach((d) => {
-      const label = `${d.firstName} ${d.lastName}`.trim() || d.email || d.mobile || d.id
-      byValue.set(d.id, { value: d.id, label })
-    })
+  useEffect(() => {
+    if (callingDealerFilter === "all") return
+    if (callingDealerFilter.startsWith("name:")) {
+      setCallingDealerFilter("all")
+      return
+    }
+    if (!activeDealers.some((d) => d.id === callingDealerFilter)) {
+      setCallingDealerFilter("all")
+    }
+  }, [activeDealers, callingDealerFilter])
 
-    callingActions.forEach((item) => {
-      if (item.dealerId) {
-        if (!byValue.has(item.dealerId)) {
-          byValue.set(item.dealerId, {
-            value: item.dealerId,
-            label: item.dealerName || item.dealerId,
-          })
-        }
-        return
-      }
-      const normalizedName = (item.dealerName || "").trim()
-      if (!normalizedName) return
-      const value = `name:${normalizedName.toLowerCase()}`
-      if (!byValue.has(value)) {
-        byValue.set(value, { value, label: normalizedName })
-      }
-    })
-
-    return Array.from(byValue.values()).sort((a, b) => a.label.localeCompare(b.label))
-  }, [dealers, callingActions])
-
-  const callingSummary = useMemo(
+  const connectionSummary = useMemo(
+    () => buildCallingConnectionSummary(filteredCallingActions),
+    [filteredCallingActions],
+  )
+  const connectedOutcomeSummary = useMemo(
     () =>
-      filteredCallingActions.reduce(
-        (acc, item) => {
-          const parsed = parseCallRemarkParts(item.callRemark || "")
-          const action = String(item.action || "").toLowerCase()
-          const status = String(parsed.status || "").toLowerCase()
-          if (action === "not_interested" || status.includes("not interested")) acc.notInterested += 1
-          else if (action === "follow_up" || status.includes("follow-up") || status.includes("callback")) acc.followUp += 1
-          else if (action === "called" && (status.includes("interested") || status.includes("site visit") || status.includes("quotation"))) acc.interested += 1
-          else if (action === "called") acc.interested += 1
-          else acc.others += 1
-          return acc
-        },
-        { interested: 0, followUp: 0, notInterested: 0, others: 0, otherActions: 0 },
+      buildCallingActionSummary(
+        filteredCallingActions.filter((item) => classifyCallingConnection(item) === "connected"),
       ),
     [filteredCallingActions],
   )
@@ -1040,11 +1034,11 @@ export default function HrDashboardPage() {
               <CardContent>
                 {isLoadingDealers ? (
                   <p className="text-sm text-muted-foreground">Loading dealers...</p>
-                ) : dealers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No dealers found.</p>
+                ) : activeDealers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No active dealers found.</p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {dealers.map((dealer) => (
+                    {activeDealers.map((dealer) => (
                       <label key={dealer.id} className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40">
                         <Checkbox checked={selectedDealerIds.includes(dealer.id)} onCheckedChange={() => toggleDealer(dealer.id)} />
                         <div className="min-w-0">
@@ -1212,12 +1206,45 @@ export default function HrDashboardPage() {
                   </div>
                 ) : null}
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-                  <Card className="border-emerald-200 bg-emerald-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Interested</p><p className="text-xl font-semibold">{callingSummary.interested}</p></CardContent></Card>
-                  <Card className="border-blue-200 bg-blue-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Follow Up</p><p className="text-xl font-semibold">{callingSummary.followUp}</p></CardContent></Card>
-                  <Card className="border-rose-200 bg-rose-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Not Interested</p><p className="text-xl font-semibold">{callingSummary.notInterested}</p></CardContent></Card>
-                  <Card className="border-amber-200 bg-amber-50/40"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Others</p><p className="text-xl font-semibold">{callingSummary.others}</p></CardContent></Card>
-                  <Card className="border-border/60 bg-muted/20"><CardContent className="pt-4"><p className="text-xs text-muted-foreground">Total</p><p className="text-xl font-semibold">{filteredCallingActions.length}</p></CardContent></Card>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-border/60 bg-muted/20">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-slate-300 bg-slate-50/80">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Not Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.notConnected}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-emerald-200 bg-emerald-50/40">
+                    <CardContent className="pt-4">
+                      <p className="text-xs text-muted-foreground">Connected</p>
+                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <Card className="border-rose-100 bg-rose-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.notInterested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-emerald-100 bg-emerald-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Interested</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.interested}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-blue-100 bg-blue-50/20">
+                    <CardContent className="pt-3 pb-3">
+                      <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
+                      <p className="text-lg font-semibold">{connectedOutcomeSummary.followUp}</p>
+                    </CardContent>
+                  </Card>
                 </div>
 
                 {callingActionsUnavailable ? (
