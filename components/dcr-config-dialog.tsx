@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -18,6 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
   dcrPricing,
   DCR_PRICING_EFFECTIVE_FROM,
@@ -41,6 +42,7 @@ interface DcrConfigDialogProps {
 
 export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialogProps) {
   const [searchTerm, setSearchTerm] = useState("")
+  const [activeBrandTab, setActiveBrandTab] = useState<string>("")
 
   const filteredConfigs = useMemo(() => {
     const searchLower = searchTerm.toLowerCase().trim()
@@ -59,6 +61,23 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
   }, [searchTerm])
 
   const brandGroups = useMemo(() => groupDcrPricingByPanelType(filteredConfigs), [filteredConfigs])
+  const visiblePanelTypes = useMemo(() => brandGroups.map((group) => group.panelType), [brandGroups])
+
+  useEffect(() => {
+    if (visiblePanelTypes.length === 0) return
+    if (!activeBrandTab || !visiblePanelTypes.includes(activeBrandTab)) {
+      setActiveBrandTab(visiblePanelTypes[0])
+    }
+  }, [activeBrandTab, visiblePanelTypes])
+
+  const brandTabLabel = (panelType: string): string => {
+    if (panelType === "Adani") return "Adani (555W)"
+    if (panelType === "Adani Topcon") return "Adani Topcon (620W)"
+    if (panelType === "Waaree") return "Waaree (540W)"
+    if (panelType === "Premier Energies") return "Premier Energies (600-625W Topcon)"
+    if (panelType === "Tata") return "Tata (530W-570W)"
+    return panelType
+  }
 
   const handleSelect = (config: SystemPricing) => {
     onSelect(config)
@@ -178,62 +197,72 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
                   No configurations found matching your search.
                 </p>
               ) : (
-                brandGroups.map((group) => (
-                  <div key={group.panelType} className="space-y-2">
-                    <div className="rounded-md border border-primary/20 bg-primary/5 px-4 py-2 text-center">
-                      <p className="text-base sm:text-lg font-bold tracking-wide text-primary">{group.displayTitle}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Effective from {formatDate(DCR_PRICING_EFFECTIVE_FROM)} to {formatDate(DCR_PRICING_VALID_TILL)}
-                      </p>
-                    </div>
-                    <Table className="w-full">
-                      <TableHeader>
-                        <TableRow className="bg-primary/10 hover:bg-primary/10 border-b">
-                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">System Size</TableHead>
-                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Inverter Size</TableHead>
-                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Panel Range</TableHead>
-                          <TableHead className="font-semibold text-sm text-right px-4 py-3 whitespace-nowrap">
-                            Price (INR)
-                          </TableHead>
-                          <TableHead className="font-semibold text-sm text-center px-4 py-3 whitespace-nowrap">
-                            Action
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {group.rows.map((config, index) => (
-                          <TableRow
-                            key={`${group.panelType}-${config.systemSize}-${config.phase}-${index}`}
-                            className="hover:bg-muted/50 border-b transition-colors"
-                          >
-                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap">
-                              <span className="font-medium">{config.systemSize}</span>
-                              <span className="text-muted-foreground ml-1.5">({config.phase})</span>
-                            </TableCell>
-                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
-                              {dcrCatalogInverterLabel()}
-                            </TableCell>
-                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
-                              {dcrCatalogPanelRangeLabel(config.panelType)}
-                            </TableCell>
-                            <TableCell className="text-right text-sm font-semibold px-4 py-3 whitespace-nowrap">
-                              ₹{config.price.toLocaleString("en-IN")}
-                            </TableCell>
-                            <TableCell className="text-center px-4 py-3 whitespace-nowrap">
-                              <Button
-                                size="sm"
-                                onClick={() => handleSelect(config)}
-                                className="bg-primary hover:bg-primary/90 text-sm h-8 px-4 font-medium"
-                              >
-                                Select
-                              </Button>
-                            </TableCell>
+                <Tabs value={activeBrandTab} onValueChange={setActiveBrandTab} className="space-y-4">
+                  <TabsList className="w-full h-auto flex flex-wrap justify-start gap-2 bg-transparent p-0">
+                    {brandGroups.map((group) => (
+                      <TabsTrigger key={group.panelType} value={group.panelType} className="px-3 py-1.5 text-xs sm:text-sm">
+                        {brandTabLabel(group.panelType)}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+
+                  {brandGroups.map((group) => (
+                    <TabsContent key={group.panelType} value={group.panelType} className="space-y-2">
+                      <div className="rounded-md border border-primary/20 bg-primary/5 px-4 py-2 text-center">
+                        <p className="text-base sm:text-lg font-bold tracking-wide text-primary">{brandTabLabel(group.panelType)}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Effective from {formatDate(DCR_PRICING_EFFECTIVE_FROM)} to {formatDate(DCR_PRICING_VALID_TILL)}
+                        </p>
+                      </div>
+                      <Table className="w-full">
+                        <TableHeader>
+                          <TableRow className="bg-primary/10 hover:bg-primary/10 border-b">
+                            <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">System Size</TableHead>
+                            <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Inverter Size</TableHead>
+                            <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Panel Range</TableHead>
+                            <TableHead className="font-semibold text-sm text-right px-4 py-3 whitespace-nowrap">
+                              Price (INR)
+                            </TableHead>
+                            <TableHead className="font-semibold text-sm text-center px-4 py-3 whitespace-nowrap">
+                              Action
+                            </TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ))
+                        </TableHeader>
+                        <TableBody>
+                          {group.rows.map((config, index) => (
+                            <TableRow
+                              key={`${group.panelType}-${config.systemSize}-${config.phase}-${index}`}
+                              className="hover:bg-muted/50 border-b transition-colors"
+                            >
+                              <TableCell className="text-sm px-4 py-3 whitespace-nowrap">
+                                <span className="font-medium">{config.systemSize}</span>
+                                <span className="text-muted-foreground ml-1.5">({config.phase})</span>
+                              </TableCell>
+                              <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
+                                {dcrCatalogInverterLabel()}
+                              </TableCell>
+                              <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
+                                {dcrCatalogPanelRangeLabel(config.panelType)}
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-semibold px-4 py-3 whitespace-nowrap">
+                                ₹{config.price.toLocaleString("en-IN")}
+                              </TableCell>
+                              <TableCell className="text-center px-4 py-3 whitespace-nowrap">
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleSelect(config)}
+                                  className="bg-primary hover:bg-primary/90 text-sm h-8 px-4 font-medium"
+                                >
+                                  Select
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TabsContent>
+                  ))}
+                </Tabs>
               )}
             </div>
           </div>

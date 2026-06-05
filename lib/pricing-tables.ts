@@ -476,7 +476,7 @@ export function getAvailableStructureSizes(pricingData?: PricingTablesData): str
 export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   // ========== DCR SYSTEMS (1-Phase) ==========
   // Adani DCR 1-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
@@ -493,7 +493,7 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   
   // ========== DCR SYSTEMS (3-Phase) ==========
   // Adani DCR 3-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "4kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "5kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
@@ -590,7 +590,7 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   
   // ========== BOTH SYSTEMS (DCR + NON DCR) - 3-Phase Only ==========
   // Adani BOTH 3-Phase
-  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "both", systemSize: "6kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "both", systemSize: "8kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "both", systemSize: "10kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
@@ -612,20 +612,75 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "both", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
 ]
 
+function systemConfigPresetKey(config: SystemConfigurationPreset): string {
+  return `${config.systemType}|${config.systemSize}|${config.phase ?? ""}|${config.panelBrand}`
+}
+
+/** Merge API presets with local defaults; keep canonical DCR panel sizes (555W, 540W, etc.). */
+export function mergeSystemConfigsWithDefaults(
+  apiConfigs?: SystemConfigurationPreset[],
+): SystemConfigurationPreset[] {
+  if (!apiConfigs?.length) return defaultSystemConfigs
+
+  const byKey = new Map<string, SystemConfigurationPreset>()
+  for (const preset of defaultSystemConfigs) {
+    byKey.set(systemConfigPresetKey(preset), preset)
+  }
+
+  for (const apiPreset of apiConfigs) {
+    const key = systemConfigPresetKey(apiPreset)
+    const base = byKey.get(key)
+    if (!base) {
+      byKey.set(key, apiPreset)
+      continue
+    }
+
+    const merged: SystemConfigurationPreset = { ...base, ...apiPreset }
+    if (apiPreset.systemType === "dcr") {
+      const pricingType = resolveDcrPricingPanelType(apiPreset.panelBrand)
+      const canonicalSize = dcrPanelSizeForPricingType(pricingType)
+      if (canonicalSize !== DCR_AS_PER_THE_SET) {
+        merged.panelSize = canonicalSize
+      }
+      merged.panelBrand = dcrFormPanelBrandForPricingType(pricingType)
+    }
+    byKey.set(key, merged)
+  }
+
+  return Array.from(byKey.values())
+}
+
 // Function to get current pricing data (API or fallback)
 export function getPricingData(): PricingTablesData {
-  return apiPricingData || {
-    dcr: dcrPricing,
-    nonDcr: nonDcrPricing,
-    both: bothPricing,
-    panels: defaultPanelPricing,
-    inverters: defaultInverterPricing,
-    structures: defaultStructurePricing,
-    meters: defaultMeterPricing,
-    cables: defaultCablePricing,
-    acdb: defaultACDBPricing,
-    dcdb: defaultDCDBPricing,
-    systemConfigs: defaultSystemConfigs,
+  if (!apiPricingData) {
+    return {
+      dcr: dcrPricing,
+      nonDcr: nonDcrPricing,
+      both: bothPricing,
+      panels: defaultPanelPricing,
+      inverters: defaultInverterPricing,
+      structures: defaultStructurePricing,
+      meters: defaultMeterPricing,
+      cables: defaultCablePricing,
+      acdb: defaultACDBPricing,
+      dcdb: defaultDCDBPricing,
+      systemConfigs: defaultSystemConfigs,
+    }
+  }
+
+  return {
+    ...apiPricingData,
+    dcr: apiPricingData.dcr?.length ? apiPricingData.dcr : dcrPricing,
+    nonDcr: apiPricingData.nonDcr?.length ? apiPricingData.nonDcr : nonDcrPricing,
+    both: apiPricingData.both?.length ? apiPricingData.both : bothPricing,
+    panels: apiPricingData.panels?.length ? apiPricingData.panels : defaultPanelPricing,
+    inverters: apiPricingData.inverters?.length ? apiPricingData.inverters : defaultInverterPricing,
+    structures: apiPricingData.structures?.length ? apiPricingData.structures : defaultStructurePricing,
+    meters: apiPricingData.meters?.length ? apiPricingData.meters : defaultMeterPricing,
+    cables: apiPricingData.cables?.length ? apiPricingData.cables : defaultCablePricing,
+    acdb: apiPricingData.acdb?.length ? apiPricingData.acdb : defaultACDBPricing,
+    dcdb: apiPricingData.dcdb?.length ? apiPricingData.dcdb : defaultDCDBPricing,
+    systemConfigs: mergeSystemConfigsWithDefaults(apiPricingData.systemConfigs),
   }
 }
 
@@ -639,9 +694,9 @@ export function getSystemConfiguration(
   phase?: "1-Phase" | "3-Phase",
 ): SystemConfigurationPreset | null {
   const data = pricingData || getPricingData()
-  const configs = data.systemConfigs || defaultSystemConfigs
+  const configs = mergeSystemConfigsWithDefaults(data.systemConfigs)
 
-  const brandKey = panelBrand.trim()
+  const brandKey = dcrFormPanelBrandForPricingType(resolveDcrPricingPanelType(panelBrand.trim()))
 
   // Exact match — include phase when provided (e.g. 6kW Tata 1-Phase vs 3-Phase)
   let config: SystemConfigurationPreset | undefined
@@ -660,19 +715,29 @@ export function getSystemConfiguration(
     )
   }
 
-  // If no exact match, try to find by system type and size (any panel brand)
-  if (!config) {
+  // DCR: same structure/meter preset may be shared across panel columns — match size + phase only
+  if (!config && systemType === "dcr") {
     config = configs.find(
-      (c) => c.systemType === systemType && c.systemSize === systemSize && (!phase || c.phase === phase),
+      (c) =>
+        c.systemType === systemType &&
+        c.systemSize === systemSize &&
+        (!phase || c.phase === phase),
     )
   }
-  
-  // If still no match, try to find by system type only
-  if (!config) {
-    config = configs.find((c) => c.systemType === systemType)
+
+  if (!config) return null
+
+  if (systemType === "dcr") {
+    const pricingType = resolveDcrPricingPanelType(panelBrand.trim())
+    const canonicalSize = dcrPanelSizeForPricingType(pricingType)
+    return {
+      ...config,
+      panelBrand: brandKey,
+      ...(canonicalSize !== DCR_AS_PER_THE_SET ? { panelSize: canonicalSize } : {}),
+    }
   }
-  
-  return config || null
+
+  return config
 }
 
 // System Configuration Dropdown Option
@@ -902,6 +967,30 @@ export function dcrFormPanelBrandForPricingType(panelType: string): string {
   if (panelType === "Adani Topcon") return "Adani"
   if (panelType === "Premier Energies" || panelType === "Premier") return "Premier Energies"
   return panelType
+}
+
+/** Panel size + quantity for a DCR pricing-table row (fixed watt per column, not “best fit”). */
+export function dcrPanelPackageForPricingRow(config: SystemPricing): {
+  pricingPanelType: string
+  panelBrand: string
+  panelSize: string
+  panelQuantity: number
+} {
+  const pricingPanelType = (config.panelType || "Adani").trim()
+  const isTata = pricingPanelType === "Tata"
+  const panelSize = isTata ? DCR_AS_PER_THE_SET : dcrPanelSizeForPricingType(pricingPanelType)
+  const systemKw = Number.parseFloat(config.systemSize.replace(/kW/i, ""))
+  const panelQuantity =
+    isTata || !Number.isFinite(systemKw) || systemKw <= 0
+      ? 0
+      : panelQuantityForNominalSystemKw(systemKw, panelSize)
+
+  return {
+    pricingPanelType,
+    panelBrand: dcrFormPanelBrandForPricingType(pricingPanelType),
+    panelSize,
+    panelQuantity,
+  }
 }
 
 // NON DCR System Pricing (Without Subsidy - Adani and Waaree panels separated)
@@ -1285,13 +1374,20 @@ export function bestPanelConfigWithinSystemKw(
     return { panelSizeW: 0, quantity: 0, actualKw: 0 }
   }
 
-  let sizes: number[] = [...(options?.panelSizesToTry ?? COMMON_PANEL_SIZES_WATTS)]
   const preferredW = options?.preferredPanelSize
     ? parsePanelSizeWatts(options.preferredPanelSize)
     : 0
   if (preferredW > 0) {
-    sizes = [preferredW, ...sizes.filter((s) => s !== preferredW)]
+    const qty = panelQuantityForNominalSystemKw(targetSystemKw, preferredW)
+    const actualW = qty * preferredW
+    return {
+      panelSizeW: preferredW,
+      quantity: qty,
+      actualKw: actualW / 1000,
+    }
   }
+
+  let sizes: number[] = [...(options?.panelSizesToTry ?? COMMON_PANEL_SIZES_WATTS)]
 
   let best = { panelSizeW: sizes[0] || 550, quantity: 1, actualKw: 0 }
 

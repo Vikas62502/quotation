@@ -32,6 +32,7 @@ import {
   calculateSystemSize,
   dcrPanelSizeForPricingType,
   dcrFormPanelBrandForPricingType,
+  dcrPanelPackageForPricingRow,
   DCR_AS_PER_THE_SET,
   panelQuantityForNominalSystemKw,
   bestPanelConfigWithinSystemKw,
@@ -306,6 +307,40 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setError("")
   }
 
+  const parseNominalKwFromContext = (products: ProductSelection): number => {
+    const source = String(products.structureSize || products.inverterSize || "").trim()
+    const kw = Number.parseFloat(source.replace(/kW/i, ""))
+    return Number.isFinite(kw) && kw > 0 ? kw : 0
+  }
+
+  const updatePanelSizeWithAutoQuantity = (
+    field: "panelSize" | "dcrPanelSize" | "nonDcrPanelSize",
+    rawSize: string,
+  ) => {
+    setFormData((prev) => {
+      const next = { ...prev, [field]: rawSize }
+      const nominalKw = parseNominalKwFromContext(next)
+      if (nominalKw <= 0) return next
+
+      const parsedPanelW = parsePanelSizeWatts(rawSize)
+      if (parsedPanelW <= 0) return next
+
+      const qty = panelQuantityForNominalSystemKw(nominalKw, rawSize)
+      if (qty <= 0) return next
+
+      if (field === "panelSize") {
+        next.panelQuantity = qty
+        if (next.systemType === "dcr") next.dcrPanelQuantity = qty
+      } else if (field === "dcrPanelSize") {
+        next.dcrPanelQuantity = qty
+      } else {
+        next.nonDcrPanelQuantity = qty
+      }
+      return next
+    })
+    setError("")
+  }
+
   const updatePdfPanelRangeKey = (
     field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
     key: PdfPanelRangeKey | "",
@@ -337,10 +372,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
   const isTataDcrPackage =
     effectiveSystemType === "dcr" && formData.panelBrand?.trim().toLowerCase() === "tata"
+  const isTataRangeSelected =
+    isTataDcrPackage && formData.pdfPanelRangeKey === TATA_DCR_PANEL_RANGE_KEY
 
   /** DCR package set defines panel/inverter — not entered per SKU (e.g. Tata Jun 2026 sheet). */
   const dcrPackageAsPerSet =
-    isTataDcrPackage ||
+    isTataRangeSelected ||
     (formData.systemType === "dcr" &&
       (isAsPerTheSetLabel(formData.panelSize) ||
         isAsPerTheSetLabel(formData.inverterSize) ||
@@ -579,6 +616,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     const packagePhase =
       config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : undefined
 
+    const panelPackage = dcrPanelPackageForPricingRow(config)
+    const { pricingPanelType, panelBrand: selectedPanelBrand, panelSize: panelSizeToSet, panelQuantity: panelQuantityToSet } =
+      panelPackage
+    const isTataPackage = pricingPanelType === "Tata"
+
     const systemConfig = getSystemConfiguration(
       "dcr",
       config.systemSize,
@@ -590,27 +632,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
-      const pricingPanelType = (config.panelType || systemConfig.panelBrand || "").trim()
-      const isTataPackage = pricingPanelType === "Tata"
-      const panelSizeToSet = isTataPackage
-        ? DCR_AS_PER_THE_SET
-        : getClosestPanelSizeFromList(
-            dcrPanelSizeForPricingType(pricingPanelType) ||
-              systemConfig.panelSize ||
-              preFilledData.panelSize ||
-              "",
-          )
-      const systemKw = Number.parseFloat(config.systemSize.replace(/kW/i, ""))
-      const panelQuantityToSet = isTataPackage
-        ? 0
-        : panelQuantityForNominalSystemKw(systemKw, panelSizeToSet)
-      const selectedPanelBrand = dcrFormPanelBrandForPricingType(
-        pricingPanelType || preFilledData.panelBrand || "Adani",
-      )
-      const inverterSizeToSet = isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize
-      const inverterBrandToSet = isTataPackage
-        ? DCR_AS_PER_THE_SET
-        : preFilledData.inverterBrand || systemConfig.inverterBrand || ""
+      const inverterSizeToSet = config.inverterSize
+      const inverterBrandToSet = preFilledData.inverterBrand || systemConfig.inverterBrand || "Vsole/Xwatt"
 
       const effPhase: "1-Phase" | "3-Phase" =
         packagePhase ||
@@ -646,7 +669,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           // Store the system price from the selected configuration - CRITICAL: must be > 0
           systemPrice: config.price,
           pdfPanelRangeKey:
-            defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? "",
+            isTataPackage ? "" : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
         } satisfies ProductSelection
         console.log("[ProductSelectionForm] DCR config selected from dialog - filled all fields:", updated)
         console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
@@ -661,50 +684,32 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       })
       setHasSelectedDcrConfig(true)
     } else {
-      // Fallback to basic calculation if no preset found
-      const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
-      const pricingPanelType = (config.panelType || "Adani").trim()
-      const isTataPackage = pricingPanelType === "Tata"
-      const panelBrand = dcrFormPanelBrandForPricingType(pricingPanelType)
-      const panelSize = isTataPackage ? DCR_AS_PER_THE_SET : dcrPanelSizeForPricingType(pricingPanelType)
-      const dcrBest = isTataPackage
-        ? { panelSizeW: 0, quantity: 0 }
-        : bestPanelConfigWithinSystemKw(systemKw, {
-            panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
-            preferredPanelSize: panelSize,
-          })
-      const panelQty = isTataPackage
-        ? 0
-        : dcrBest.quantity > 0
-          ? dcrBest.quantity
-          : panelQuantityForNominalSystemKw(systemKw, panelSize)
-
-      // Determine phase based on system and inverter size
-      const systemSizeForPhase = config.systemSize
       const fallbackPhase: "1-Phase" | "3-Phase" =
         config.phase === "1-Phase" || config.phase === "3-Phase"
           ? config.phase
-          : determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
+          : determinePhase(config.systemSize, config.inverterSize, pricingTables || undefined)
       const { acdb: defaultAcdb, dcdb: defaultDcdb } = acdbDcdbLabelsForPhase(fallbackPhase)
 
       setFormData((prev) => ({
         ...prev,
         phase: fallbackPhase,
-        dcrPanelBrand: panelBrand,
-        dcrPanelSize: dcrBest.panelSizeW > 0 ? `${dcrBest.panelSizeW}W` : panelSize,
-        dcrPanelQuantity: panelQty,
-        panelBrand,
-        panelSize: dcrBest.panelSizeW > 0 ? `${dcrBest.panelSizeW}W` : panelSize,
-        panelQuantity: panelQty,
+        dcrPanelBrand: selectedPanelBrand,
+        dcrPanelSize: panelSizeToSet,
+        dcrPanelQuantity: panelQuantityToSet,
+        panelBrand: selectedPanelBrand,
+        panelSize: panelSizeToSet,
+        panelQuantity: panelQuantityToSet,
         inverterType: "String Inverter",
-        inverterBrand: isTataPackage ? DCR_AS_PER_THE_SET : "Polycab",
-        inverterSize: isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize,
+        inverterBrand: "Vsole/Xwatt",
+        inverterSize: config.inverterSize,
+        structureType: "GI Structure",
+        structureSize: config.systemSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
         systemPrice: config.price,
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
-        pdfPanelRangeKey: defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? "",
+        pdfPanelRangeKey: isTataPackage ? "" : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
       }))
       setHasSelectedDcrConfig(true)
     }
@@ -809,6 +814,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       return
     }
 
+    if (
+      effectiveSystemType !== "customize" &&
+      (!Number.isFinite(Number(formData.systemPrice)) || Number(formData.systemPrice) <= 0)
+    ) {
+      setError("Please select a pricing table configuration so system price is set correctly.")
+      return
+    }
+
     // Validate subsidies: DCR and BOTH systems require central subsidy
     if (effectiveSystemType === "dcr" || effectiveSystemType === "both") {
       if (!formData.centralSubsidy || formData.centralSubsidy <= 0) {
@@ -821,9 +834,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       ...formData,
       systemType: effectiveSystemType,
       phase: formData.phase || currentPhase,
-      ...(isTataDcrPackage
-        ? { pdfPanelRangeKey: TATA_DCR_PANEL_RANGE_KEY }
-        : {}),
     })
 
     setFormData(normalizedProducts)
@@ -947,7 +957,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     <Label>DCR Panel Size *</Label>
                     <Input
                       value={formData.dcrPanelSize || ""}
-                      onChange={(e) => updateFormData("dcrPanelSize", e.target.value)}
+                      onChange={(e) => updatePanelSizeWithAutoQuantity("dcrPanelSize", e.target.value)}
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
                   </div>
@@ -1025,11 +1035,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Non-DCR Panel Size *</Label>
-                    <Input
-                      value={formData.nonDcrPanelSize || ""}
-                      onChange={(e) => updateFormData("nonDcrPanelSize", e.target.value)}
-                      placeholder={`e.g., ${panelSizesList.join(", ")}`}
-                    />
+                      <Input
+                        value={formData.nonDcrPanelSize || ""}
+                        onChange={(e) => updatePanelSizeWithAutoQuantity("nonDcrPanelSize", e.target.value)}
+                        placeholder={`e.g., ${panelSizesList.join(", ")}`}
+                      />
                   </div>
                   {!hideNonDcrPanelQty && (
                     <div>
@@ -1508,7 +1518,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     ) : (
                       <Input
                         value={formData.panelSize || ""}
-                        onChange={(e) => updateFormData("panelSize", e.target.value)}
+                        onChange={(e) => updatePanelSizeWithAutoQuantity("panelSize", e.target.value)}
                         placeholder={`e.g., ${panelSizesList.join(", ")}`}
                       />
                     )}
@@ -1554,28 +1564,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     </div>
                   )}
                 </div>
-                {isTataDcrPackage ? (
-                  <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">
-                      Quotation PDF — panel size range
-                    </p>
-                    <label className="flex items-start gap-2 text-sm">
-                      <Checkbox checked disabled className="mt-0.5" />
-                      <span>
-                        Show <strong>{getPanelPdfRangeLabel(TATA_DCR_PANEL_RANGE_KEY)}</strong> on PDF
-                        <span className="block text-xs text-muted-foreground font-normal mt-0.5">
-                          Fixed for Tata DCR package sets
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                ) : (
-                  <PanelPdfRangeOptions
-                    panelBrand={formData.panelBrand || ""}
-                    selectedKey={formData.pdfPanelRangeKey}
-                    onChange={(key) => updatePdfPanelRangeKey("pdfPanelRangeKey", key)}
-                  />
-                )}
+                <PanelPdfRangeOptions
+                  panelBrand={formData.panelBrand || ""}
+                  selectedKey={formData.pdfPanelRangeKey}
+                  onChange={(key) => updatePdfPanelRangeKey("pdfPanelRangeKey", key)}
+                />
               </div>
 
               {/* Inverter Selection */}

@@ -8,6 +8,7 @@ import {
   buildCustomerCreatePayload,
   buildCustomerCreatePayloadWithNotes,
   productsWithPdfDisplayFlags,
+  restoreDcrPackageDisplayForForm,
   syncDcrPanelFieldsFromPrimary,
   findQuotationRowByMobile,
   formatDuplicateQuotationError,
@@ -804,13 +805,18 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         console.log("[saveQuotation] ===========================================")
 
         let quotation = await api.quotations.create(quotationData)
+        let savedProductsForUi: ProductSelection = currentProducts
 
         if (quotation?.id) {
           try {
-            await api.quotations.updateProducts(
+            const patched = await api.quotations.updateProducts(
               quotation.id,
               productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts }),
             )
+            const patchedProducts =
+              (patched as { products?: ProductSelection } | undefined)?.products ||
+              productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts })
+            savedProductsForUi = restoreDcrPackageDisplayForForm(patchedProducts)
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }
@@ -836,7 +842,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         return {
           id: quotation.id,
           customer: currentCustomer,
-          products: currentProducts,
+          products: savedProductsForUi,
           discount: quotation.discount || validatedDiscountAmount,
           // Use backend pricing values (from database) as source of truth
           totalAmount: backendPricing?.totalAmount ?? calculatedTotalAmount,

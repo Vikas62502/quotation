@@ -218,16 +218,6 @@ function pickPdfPanelRangeKey(
     }
   }
 
-  // Tata DCR package sets always show 530W–570W in the UI/PDF even if the PDF flags
-  // are not persisted by the backend yet.
-  if (field === "pdfPanelRangeKey") {
-    const systemType = String(products.systemType || "").toLowerCase()
-    const brand = normalizePanelBrandKey(
-      String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || ""),
-    )
-    if (systemType === "dcr" && brand === "tata") return TATA_DCR_PANEL_RANGE_KEY
-  }
-
   if (field === "pdfPanelRangeKey" && Boolean(products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range)) {
     const brand = normalizePanelBrandKey(
       String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || ""),
@@ -248,7 +238,6 @@ function pickPdfPanelRangeKey(
       return panelW >= 580 ? "waaree_580_700_bifacial_topcon" : "waaree_540_560_bifacial"
     }
     if (brand === "premierenergies" || brand === "premier") return "premier_600_625_bifacial_topcon"
-    if (brand === "tata") return TATA_DCR_PANEL_RANGE_KEY
     return "adani_610_625_bifacial_topcon"
   }
   return null
@@ -329,12 +318,6 @@ export function formatPanelBrandLineForPdf(
 
 export function getPdfInverterLine(products: ProductSelection): string {
   if (isAsPerTheSetLabel(products.inverterSize) || isAsPerTheSetLabel(products.inverterBrand)) {
-    return QUOTATION_AS_PER_THE_SET_LABEL
-  }
-  // Tata DCR package sets: inverter fields are stored as catalog values, but UI should still show "As per the set".
-  const systemType = String(products.systemType || "").toLowerCase()
-  const panelBrandKey = normalizePanelBrandKey(String(products.panelBrand || products.dcrPanelBrand || ""))
-  if (systemType === "dcr" && panelBrandKey === "tata") {
     return QUOTATION_AS_PER_THE_SET_LABEL
   }
   const segments: string[] = []

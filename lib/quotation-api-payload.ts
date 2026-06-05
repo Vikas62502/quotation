@@ -2,7 +2,6 @@ import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { DCR_AS_PER_THE_SET, panelQuantityForNominalSystemKw } from "@/lib/pricing-tables"
 import {
   isAsPerTheSetLabel,
-  resolvePdfPanelRangeKey,
   TATA_DCR_PANEL_RANGE_KEY,
 } from "@/lib/quotation-pdf-display"
 
@@ -104,15 +103,10 @@ function normalizeAsPerSetCableSize(size: string | undefined): string | undefine
 
 /** Tata DCR package rows use “as per the set” — backend catalog still expects concrete SKUs. */
 export function isTataDcrPackageSet(products: ProductSelection): boolean {
+  const systemType = String(products.systemType || "").trim().toLowerCase()
   const brand = (products.panelBrand || products.dcrPanelBrand || "").trim().toLowerCase()
-  if (brand !== "tata") return false
-  const record = products as ProductSelection & Record<string, unknown>
-  return (
-    isAsPerTheSetLabel(products.panelSize) ||
-    isAsPerTheSetLabel(products.dcrPanelSize) ||
-    resolvePdfPanelRangeKey(record, "primary") === TATA_DCR_PANEL_RANGE_KEY ||
-    Boolean(products.pdfPanelRangeKey === TATA_DCR_PANEL_RANGE_KEY)
-  )
+  if (systemType !== "dcr" || brand !== "tata") return false
+  return true
 }
 
 /**
@@ -188,22 +182,24 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
 
   const record = products as ProductSelection & Record<string, unknown>
   const brand = (products.panelBrand || products.dcrPanelBrand || "").trim().toLowerCase()
-  const isTata = brand === "tata"
-
   const existingRange = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
-  const pdfPanelRangeKey = existingRange || (isTata ? TATA_DCR_PANEL_RANGE_KEY : "")
+  const pdfPanelRangeKey = existingRange
+
+  const isTataDcrPackage =
+    brand === "tata" ||
+    pdfPanelRangeKey === TATA_DCR_PANEL_RANGE_KEY ||
+    String(record.tata_dcr_panel_range || "").trim() === "true"
 
   const asPerSetPackage =
-    isTata ||
     isAsPerTheSetLabel(products.panelSize) ||
     isAsPerTheSetLabel(products.dcrPanelSize) ||
     isAsPerTheSetLabel(products.inverterSize) ||
     isAsPerTheSetLabel(products.inverterBrand) ||
-    Boolean(pdfPanelRangeKey)
+    isTataDcrPackage
 
   if (!asPerSetPackage) return products
 
-  const panelBrand = products.panelBrand || products.dcrPanelBrand || (isTata ? "Tata" : "")
+  const panelBrand = products.panelBrand || products.dcrPanelBrand || ""
 
   return {
     ...products,
