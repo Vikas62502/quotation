@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin, CreditCard } from "lucide-react"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
+import { formatPersonName } from "@/lib/name-display"
 import { buildQuotationProposalDocumentData } from "@/lib/quotation-proposal-document"
 import { exportProposalPagesToPdf } from "@/lib/quotation-pdf-export"
 import {
@@ -37,6 +38,8 @@ import { useToast } from "@/hooks/use-toast"
 import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
+import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
+import { productsWithPdfDisplayFlags } from "@/lib/quotation-api-payload"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -422,7 +425,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const storedDiscountValue = displayQuotation.discount || 0
   const backendPricing = (displayQuotation as any).pricing
 
-  const products = displayQuotation.products ?? ({} as ProductSelection)
+  const products = (mergeQuotationProductSources(displayQuotation) || displayQuotation.products || {}) as ProductSelection
   const resolveProductPhase = (): "1-Phase" | "3-Phase" => {
     const explicitPhase = products.phase
     if (explicitPhase === "1-Phase" || explicitPhase === "3-Phase") {
@@ -627,7 +630,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
           .replace(/\s+/g, "_")
           .replace(/[^a-zA-Z0-9_-]/g, "")
           .replace(/_+/g, "_")
-      const customerName = sanitizeSegment(`${customer?.firstName || ""}_${customer?.lastName || ""}`) || "Customer"
+      const customerName =
+        sanitizeSegment(formatPersonName(customer?.firstName, customer?.lastName, "Customer")) || "Customer"
     const safeQuotationId = sanitizeSegment(displayQuotation.id) || "Quotation"
     const filename = `Solar_Proposal_${customerName}_${safeQuotationId}.pdf`
 
@@ -692,8 +696,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   const getSystemSizes = () => {
     if (products.systemType === "both") {
-      const dcrRange = resolvePdfPanelRangeKey(products, "dcr")
-      const nonDcrRange = resolvePdfPanelRangeKey(products, "nonDcr")
+      const dcrRange = resolvePdfPanelRangeKey(products as any, "dcr")
+      const nonDcrRange = resolvePdfPanelRangeKey(products as any, "nonDcr")
       const dcrSize = products.dcrPanelSize
         ? formatPanelSizeWithQuantityForPdf(products.dcrPanelSize, products.dcrPanelQuantity, dcrRange)
         : ""
@@ -713,7 +717,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       const sizes = products.customPanels.map((p) => `${p.size}W`).join(", ")
       return sizes || "As per selection"
     }
-    const primaryRange = resolvePdfPanelRangeKey(products, "primary")
+    const primaryRange = resolvePdfPanelRangeKey(products as any, "primary")
     return formatPanelSizeForPdf(products.panelSize, primaryRange) || "As per selection"
   }
 
@@ -966,9 +970,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                 products.dcrPanelBrand,
                               products.dcrPanelSize,
                                 products.dcrPanelQuantity,
-                                resolvePdfPanelRangeKey(products, "dcr"),
+                                resolvePdfPanelRangeKey(products as any, "dcr"),
                               )}
-                              {!shouldHidePanelQuantityOnPdf(products, "dcr") && (
+                              {!shouldHidePanelQuantityOnPdf(products as any, "dcr") && (
                               <span className="text-xs text-muted-foreground ml-1">
                                 (
                                 {(
@@ -988,9 +992,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                 products.nonDcrPanelBrand,
                               products.nonDcrPanelSize,
                                 products.nonDcrPanelQuantity,
-                                resolvePdfPanelRangeKey(products, "dcr"),
+                                resolvePdfPanelRangeKey(products as any, "dcr"),
                               )}
-                              {!shouldHidePanelQuantityOnPdf(products, "dcr") && (
+                              {!shouldHidePanelQuantityOnPdf(products as any, "dcr") && (
                               <span className="text-xs text-muted-foreground ml-1">
                                 (
                                 {(
@@ -1636,7 +1640,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     ...updatedCustomer,
                     firstName: (updatedCustomer.firstName || "").trim(),
                     // Backend currently validates non-empty strings for these fields.
-                    lastName: (updatedCustomer.lastName || "").trim() || "NA",
+                    lastName: (updatedCustomer.lastName || "").trim(),
                     email: (updatedCustomer.email || "").trim() || "na@chairbord.com",
                     mobile: (updatedCustomer.mobile || "").trim(),
                     address: {
@@ -1758,7 +1762,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   
                   if (useApi) {
                     // Update products via API
-                    const productsResponse = await api.quotations.updateProducts(displayQuotation.id, updatedProducts)
+                    const productsResponse = await api.quotations.updateProducts(
+                      displayQuotation.id,
+                      productsWithPdfDisplayFlags(updatedProducts),
+                    )
                     
                     if (productsResponse) {
                       // Update pricing with calculated subtotal and discount amount (not percentage)

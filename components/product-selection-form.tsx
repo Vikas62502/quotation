@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box, List } from "lucide-react"
 import { DcrConfigDialog } from "@/components/dcr-config-dialog"
 import { NonDcrConfigDialog } from "@/components/non-dcr-config-dialog"
@@ -28,20 +27,38 @@ import {
   getDCDBOptions,
   formatACDBOption,
   formatDCDBOption,
+  acdbDcdbLabelsForPhase,
   determinePhase,
-  calculateSystemSize
+  calculateSystemSize,
+  dcrPanelSizeForPricingType,
+  dcrFormPanelBrandForPricingType,
+  DCR_AS_PER_THE_SET,
+  panelQuantityForNominalSystemKw,
+  bestPanelConfigWithinSystemKw,
+  COMMON_PANEL_SIZES_WATTS,
+  clampPanelQuantityToNominalSystemKw,
+  maxAllowedWattsForNominalSystemKw,
+  parsePanelSizeWatts,
 } from "@/lib/pricing-tables"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import {
-  systemTypes,
-} from "@/lib/quotation-data"
 import { useProductCatalog } from "@/lib/use-product-catalog"
+
+/** New quotations: DCR only — NON DCR and BOTH are not offered in the UI. */
+const NEW_QUOTATION_SYSTEM_TYPE = "dcr" as const
 import {
   buildInverterBrandDropdownOptions,
+  QUOTATION_AS_PER_THE_SET_LABEL,
+  isAsPerTheSetLabel,
+  isPanelRowComplete,
+  isInverterInfoComplete,
   buildMeterBrandDropdownOptions,
   getPanelPdfRangeOptionsForBrand,
+  defaultPdfPanelRangeKeyForDcrPricingType,
+  getPanelPdfRangeLabel,
+  TATA_DCR_PANEL_RANGE_KEY,
   type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
+import { restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
 
 function PanelPdfRangeOptions({
   panelBrand,
@@ -78,17 +95,6 @@ function PanelPdfRangeOptions({
   )
 }
 
-function isPanelRowComplete(
-  brand: string,
-  size: string,
-  quantity: number,
-  rangeKey?: string,
-): boolean {
-  if (!brand?.trim() || !size?.trim()) return false
-  if (rangeKey?.trim()) return true
-  return quantity > 0
-}
-
 interface Props {
   onSubmit: (products: ProductSelection) => void
   onBack: () => void
@@ -119,10 +125,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const meterBrandsList = buildMeterBrandDropdownOptions(catalog?.meters?.brands)
   const cableBrandsList = catalog?.cables?.brands || []
   const cableSizesList = catalog?.cables?.sizes || []
-  const [formData, setFormData] = useState<ProductSelection>(
-    initialData || {
+  const emptyProductDefaults: ProductSelection = {
       phase: "",
-      systemType: "",
+      systemType: NEW_QUOTATION_SYSTEM_TYPE,
       panelBrand: "",
       panelSize: "",
       panelQuantity: 0,
@@ -153,15 +158,52 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       pdfPanelRangeKey: "",
       pdfDcrPanelRangeKey: "",
       pdfNonDcrPanelRangeKey: "",
-    },
+    }
+
+  const [formData, setFormData] = useState<ProductSelection>(() =>
+    initialData ? restoreDcrPackageDisplayForForm(initialData) : emptyProductDefaults,
   )
 
-  // Reset selection flags when system type changes
   useEffect(() => {
+    if (!initialData) return
+    const restored = restoreDcrPackageDisplayForForm(initialData)
+    setFormData(restored)
+    if (
+      restored.systemType === "dcr" &&
+      (restored.panelBrand?.trim() || restored.systemPrice)
+    ) {
+      setHasSelectedDcrConfig(true)
+    }
+  }, [initialData])
+
+  const isLegacyNonDcrOrBoth =
+    initialData?.systemType === "non-dcr" || initialData?.systemType === "both"
+
+  const effectiveSystemType = isLegacyNonDcrOrBoth
+    ? formData.systemType
+    : NEW_QUOTATION_SYSTEM_TYPE
+
+  // New quotations are DCR-only (no system-type picker for NON DCR / BOTH)
+  useEffect(() => {
+    if (isLegacyNonDcrOrBoth) return
+    setFormData((prev) => {
+      if (prev.systemType === NEW_QUOTATION_SYSTEM_TYPE) return prev
+      return {
+        ...prev,
+        systemType: NEW_QUOTATION_SYSTEM_TYPE,
+        centralSubsidy: (prev.centralSubsidy ?? 0) > 0 ? (prev.centralSubsidy ?? 0) : 78000,
+        stateSubsidy: prev.stateSubsidy || 0,
+      }
+    })
+  }, [isLegacyNonDcrOrBoth])
+
+  // Reset selection flags when system type changes (legacy edits only)
+  useEffect(() => {
+    if (!isLegacyNonDcrOrBoth) return
     setHasSelectedDcrConfig(false)
     setHasSelectedNonDcrConfig(false)
     setHasSelectedBothConfig(false)
-  }, [formData.systemType])
+  }, [formData.systemType, isLegacyNonDcrOrBoth])
 
   // When loading initialData (editing), show fields if config is already populated
   useEffect(() => {
@@ -264,11 +306,25 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setError("")
   }
 
+  const updatePdfPanelRangeKey = (
+    field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
+    key: PdfPanelRangeKey | "",
+  ) => {
+    setFormData((prev) => ({
+      ...prev,
+      [field]: key,
+      ...(field === "pdfPanelRangeKey"
+        ? { pdfUsePanelSizeRange: Boolean(key) }
+        : {}),
+    }))
+    setError("")
+  }
+
   const updatePanelBrand = (field: "panelBrand" | "dcrPanelBrand" | "nonDcrPanelBrand", brand: string) => {
     setFormData((prev) => ({
       ...prev,
       [field]: brand,
-      ...(field === "panelBrand" ? { pdfPanelRangeKey: "" } : {}),
+      ...(field === "panelBrand" ? { pdfPanelRangeKey: "", pdfUsePanelSizeRange: false } : {}),
       ...(field === "dcrPanelBrand" ? { pdfDcrPanelRangeKey: "", panelBrand: brand } : {}),
       ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: "" } : {}),
     }))
@@ -278,6 +334,24 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const hidePrimaryPanelQty = Boolean(formData.pdfPanelRangeKey)
   const hideDcrPanelQty = Boolean(formData.pdfDcrPanelRangeKey)
   const hideNonDcrPanelQty = Boolean(formData.pdfNonDcrPanelRangeKey)
+
+  const isTataDcrPackage =
+    effectiveSystemType === "dcr" && formData.panelBrand?.trim().toLowerCase() === "tata"
+
+  /** DCR package set defines panel/inverter — not entered per SKU (e.g. Tata Jun 2026 sheet). */
+  const dcrPackageAsPerSet =
+    isTataDcrPackage ||
+    (formData.systemType === "dcr" &&
+      (isAsPerTheSetLabel(formData.panelSize) ||
+        isAsPerTheSetLabel(formData.inverterSize) ||
+        isAsPerTheSetLabel(formData.inverterBrand)))
+  const hidePanelQtyForSet = hidePrimaryPanelQty || dcrPackageAsPerSet
+  const tataDcrPanelRangeLabel =
+    isTataDcrPackage && formData.pdfPanelRangeKey
+      ? getPanelPdfRangeLabel(formData.pdfPanelRangeKey)
+      : isTataDcrPackage
+        ? getPanelPdfRangeLabel(TATA_DCR_PANEL_RANGE_KEY)
+        : null
 
   // Quick Select dropdown removed - configurations are now selected via Browse dialogs
   // The handlers below (handleDcrConfigSelect, handleNonDcrConfigSelect, handleBothConfigSelect)
@@ -311,7 +385,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       "both",
       config.systemSize,
       config.panelType,
-      pricingTables || undefined
+      pricingTables || undefined,
+      config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : undefined,
     )
     
     if (systemConfig) {
@@ -325,8 +400,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const nonDcrW = nonDcrKw * 1000
       const panelSize = Number.parseFloat(systemConfig.panelSize.replace("W", ""))
       
-      const dcrQuantity = Math.ceil(dcrW / panelSize)
-      const nonDcrQuantity = Math.ceil(nonDcrW / panelSize)
+      const dcrQuantity = panelQuantityForNominalSystemKw(dcrKw, `${panelSize}W`)
+      const nonDcrQuantity = panelQuantityForNominalSystemKw(nonDcrKw, `${panelSize}W`)
 
       const effPhase: "1-Phase" | "3-Phase" =
         config.phase === "1-Phase" || config.phase === "3-Phase"
@@ -373,31 +448,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const nonDcrKw = Number.parseFloat(config.nonDcrCapacity.replace("kW", ""))
       const nonDcrW = nonDcrKw * 1000
       // Include all common panel sizes available in the market
-      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
-      
-      let bestDcrPanelSize = 550
-      let bestDcrQuantity = Math.ceil(dcrW / bestDcrPanelSize)
-      for (const size of panelSizesToTry) {
-        const qty = Math.ceil(dcrW / size)
-        const diff = Math.abs((qty * size) - dcrW)
-        const currentDiff = Math.abs((bestDcrQuantity * bestDcrPanelSize) - dcrW)
-        if (diff < currentDiff) {
-          bestDcrPanelSize = size
-          bestDcrQuantity = qty
-        }
-      }
-      
-      let bestNonDcrPanelSize = 550
-      let bestNonDcrQuantity = Math.ceil(nonDcrW / bestNonDcrPanelSize)
-      for (const size of panelSizesToTry) {
-        const qty = Math.ceil(nonDcrW / size)
-        const diff = Math.abs((qty * size) - nonDcrW)
-        const currentDiff = Math.abs((bestNonDcrQuantity * bestNonDcrPanelSize) - nonDcrW)
-        if (diff < currentDiff) {
-          bestNonDcrPanelSize = size
-          bestNonDcrQuantity = qty
-        }
-      }
+      const dcrBest = bestPanelConfigWithinSystemKw(dcrKw, { panelSizesToTry: COMMON_PANEL_SIZES_WATTS })
+      const nonDcrBest = bestPanelConfigWithinSystemKw(nonDcrKw, { panelSizesToTry: COMMON_PANEL_SIZES_WATTS })
+      const bestDcrPanelSize = dcrBest.panelSizeW
+      const bestDcrQuantity = dcrBest.quantity
+      const bestNonDcrPanelSize = nonDcrBest.panelSizeW
+      const bestNonDcrQuantity = nonDcrBest.quantity
       
       let panelBrand = "Adani"
       if (config.panelType === "Tata") panelBrand = "Tata"
@@ -437,23 +493,34 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       "non-dcr",
       config.systemSize,
       config.panelType,
-      pricingTables || undefined
+      pricingTables || undefined,
+      config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : undefined,
     )
     
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
       const panelSizeToSet = getClosestPanelSizeFromList(systemConfig.panelSize || preFilledData.panelSize || "")
-      
+      const effPhase: "1-Phase" | "3-Phase" =
+        config.phase === "1-Phase" || config.phase === "3-Phase"
+          ? config.phase
+          : systemConfig.phase === "1-Phase" || systemConfig.phase === "3-Phase"
+            ? systemConfig.phase
+            : "1-Phase"
+      const { acdb: acdbForPhase, dcdb: dcdbForPhase } = acdbDcdbLabelsForPhase(
+        effPhase,
+        systemConfig.acdb || preFilledData.acdb,
+        systemConfig.dcdb || preFilledData.dcdb,
+      )
+
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
-          phase: config.phase || systemConfig.phase || "",
+          phase: effPhase,
           panelSize: panelSizeToSet,
-          // Ensure ACDB/DCDB are set from config
-          acdb: systemConfig.acdb || preFilledData.acdb || "",
-          dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
+          acdb: acdbForPhase,
+          dcdb: dcdbForPhase,
           // NON-DCR systems should always have 0 subsidies
           centralSubsidy: 0,
           stateSubsidy: 0,
@@ -469,27 +536,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     } else {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
-      const systemW = systemKw * 1000
-      // Include all common panel sizes available in the market
-      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
-      let bestPanelSize = 550
-      let bestQuantity = Math.ceil(systemW / bestPanelSize)
-      
-      for (const size of panelSizesToTry) {
-        const qty = Math.ceil(systemW / size)
-        const diff = Math.abs((qty * size) - systemW)
-        const currentDiff = Math.abs((bestQuantity * bestPanelSize) - systemW)
-        if (diff < currentDiff) {
-          bestPanelSize = size
-          bestQuantity = qty
-        }
-      }
-      
-      let panelBrand = "Adani"
-      if (config.panelType === "Tata") panelBrand = "Tata"
-      else if (config.panelType === "Waaree") panelBrand = "Waaree"
-      
-      // Determine phase based on system and inverter size
+      const panelBrand = config.panelType === "Tata" ? "Tata" : config.panelType === "Waaree" ? "Waaree" : "Adani"
+      const nonDcrBest = bestPanelConfigWithinSystemKw(systemKw, {
+        panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
+        preferredPanelSize: config.panelType,
+      })
+
       const systemSizeForPhase = `${systemKw}kW`
       const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
       const defaultAcdb = formatACDBOption("Havells", fallbackPhase)
@@ -499,8 +551,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         ...prev,
         phase: fallbackPhase,
         panelBrand,
-        panelSize: `${bestPanelSize}W`,
-        panelQuantity: bestQuantity,
+        panelSize: `${nonDcrBest.panelSizeW}W`,
+        panelQuantity: nonDcrBest.quantity,
         inverterType: "String Inverter",
         inverterBrand: "Polycab",
         inverterSize: config.inverterSize,
@@ -524,25 +576,60 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
 
     // Find matching system configuration preset that includes all component details
+    const packagePhase =
+      config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : undefined
+
     const systemConfig = getSystemConfiguration(
       "dcr",
       config.systemSize,
       config.panelType,
-      pricingTables || undefined
+      pricingTables || undefined,
+      packagePhase,
     )
-    
+
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
-      const panelSizeToSet = getClosestPanelSizeFromList(systemConfig.panelSize || preFilledData.panelSize || "")
-      const panelQuantityToSet = preFilledData.panelQuantity || 0
-      const selectedPanelBrand = (config.panelType || systemConfig.panelBrand || preFilledData.panelBrand || "").trim()
-      
+      const pricingPanelType = (config.panelType || systemConfig.panelBrand || "").trim()
+      const isTataPackage = pricingPanelType === "Tata"
+      const panelSizeToSet = isTataPackage
+        ? DCR_AS_PER_THE_SET
+        : getClosestPanelSizeFromList(
+            dcrPanelSizeForPricingType(pricingPanelType) ||
+              systemConfig.panelSize ||
+              preFilledData.panelSize ||
+              "",
+          )
+      const systemKw = Number.parseFloat(config.systemSize.replace(/kW/i, ""))
+      const panelQuantityToSet = isTataPackage
+        ? 0
+        : panelQuantityForNominalSystemKw(systemKw, panelSizeToSet)
+      const selectedPanelBrand = dcrFormPanelBrandForPricingType(
+        pricingPanelType || preFilledData.panelBrand || "Adani",
+      )
+      const inverterSizeToSet = isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize
+      const inverterBrandToSet = isTataPackage
+        ? DCR_AS_PER_THE_SET
+        : preFilledData.inverterBrand || systemConfig.inverterBrand || ""
+
+      const effPhase: "1-Phase" | "3-Phase" =
+        packagePhase ||
+        (systemConfig.phase === "1-Phase" || systemConfig.phase === "3-Phase"
+          ? systemConfig.phase
+          : "1-Phase")
+      const { acdb: acdbForPhase, dcdb: dcdbForPhase } = acdbDcdbLabelsForPhase(
+        effPhase,
+        systemConfig.acdb || preFilledData.acdb,
+        systemConfig.dcdb || preFilledData.dcdb,
+      )
+
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
-          phase: config.phase || systemConfig.phase || "",
+          phase: effPhase,
+          inverterBrand: inverterBrandToSet,
+          inverterSize: inverterSizeToSet,
           // Keep DCR-specific fields in sync with selected configuration brand/size
           dcrPanelBrand: selectedPanelBrand,
           dcrPanelSize: panelSizeToSet,
@@ -551,15 +638,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           panelBrand: selectedPanelBrand,
           panelSize: panelSizeToSet,
           panelQuantity: panelQuantityToSet,
-          // Ensure ACDB/DCDB are set from config
-          acdb: systemConfig.acdb || preFilledData.acdb || "",
-          dcdb: systemConfig.dcdb || preFilledData.dcdb || "",
+          acdb: acdbForPhase,
+          dcdb: dcdbForPhase,
           // Set subsidies from config (DCR systems have fixed central subsidy of 78000)
           centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0)),
           stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
           // Store the system price from the selected configuration - CRITICAL: must be > 0
           systemPrice: config.price,
-        }
+          pdfPanelRangeKey:
+            defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? "",
+        } satisfies ProductSelection
         console.log("[ProductSelectionForm] DCR config selected from dialog - filled all fields:", updated)
         console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
         console.log("[ProductSelectionForm] System price from config:", config.price)
@@ -575,47 +663,48 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     } else {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
-      const systemW = systemKw * 1000
-      // Include all common panel sizes available in the market
-      const panelSizesToTry = [620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470, 460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320]
-      let bestPanelSize = 550
-      let bestQuantity = Math.ceil(systemW / bestPanelSize)
-      
-      for (const size of panelSizesToTry) {
-        const qty = Math.ceil(systemW / size)
-        const diff = Math.abs((qty * size) - systemW)
-        const currentDiff = Math.abs((bestQuantity * bestPanelSize) - systemW)
-        if (diff < currentDiff) {
-          bestPanelSize = size
-          bestQuantity = qty
-        }
-      }
-      
-      const panelBrand = (config.panelType || "Adani").trim()
-      
+      const pricingPanelType = (config.panelType || "Adani").trim()
+      const isTataPackage = pricingPanelType === "Tata"
+      const panelBrand = dcrFormPanelBrandForPricingType(pricingPanelType)
+      const panelSize = isTataPackage ? DCR_AS_PER_THE_SET : dcrPanelSizeForPricingType(pricingPanelType)
+      const dcrBest = isTataPackage
+        ? { panelSizeW: 0, quantity: 0 }
+        : bestPanelConfigWithinSystemKw(systemKw, {
+            panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
+            preferredPanelSize: panelSize,
+          })
+      const panelQty = isTataPackage
+        ? 0
+        : dcrBest.quantity > 0
+          ? dcrBest.quantity
+          : panelQuantityForNominalSystemKw(systemKw, panelSize)
+
       // Determine phase based on system and inverter size
-      const systemSizeForPhase = `${systemKw}kW`
-      const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
-      const defaultAcdb = formatACDBOption("Havells", fallbackPhase)
-      const defaultDcdb = formatDCDBOption("Havells", fallbackPhase)
-      
+      const systemSizeForPhase = config.systemSize
+      const fallbackPhase: "1-Phase" | "3-Phase" =
+        config.phase === "1-Phase" || config.phase === "3-Phase"
+          ? config.phase
+          : determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
+      const { acdb: defaultAcdb, dcdb: defaultDcdb } = acdbDcdbLabelsForPhase(fallbackPhase)
+
       setFormData((prev) => ({
         ...prev,
         phase: fallbackPhase,
         dcrPanelBrand: panelBrand,
-        dcrPanelSize: `${bestPanelSize}W`,
-        dcrPanelQuantity: bestQuantity,
+        dcrPanelSize: dcrBest.panelSizeW > 0 ? `${dcrBest.panelSizeW}W` : panelSize,
+        dcrPanelQuantity: panelQty,
         panelBrand,
-        panelSize: `${bestPanelSize}W`,
-        panelQuantity: bestQuantity,
+        panelSize: dcrBest.panelSizeW > 0 ? `${dcrBest.panelSizeW}W` : panelSize,
+        panelQuantity: panelQty,
         inverterType: "String Inverter",
-        inverterBrand: "Polycab",
-        inverterSize: config.inverterSize,
+        inverterBrand: isTataPackage ? DCR_AS_PER_THE_SET : "Polycab",
+        inverterSize: isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
-        // DCR systems require central subsidy (mandatory: 78000)
+        systemPrice: config.price,
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
+        pdfPanelRangeKey: defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? "",
       }))
       setHasSelectedDcrConfig(true)
     }
@@ -624,12 +713,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
-    if (!formData.systemType) {
+    if (!effectiveSystemType) {
       setError("Please select a system type")
       return
     }
 
-    if (formData.systemType === "both") {
+    if (effectiveSystemType === "both") {
       if (
         !isPanelRowComplete(
           formData.dcrPanelBrand || "",
@@ -652,7 +741,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete Non-DCR panel selection")
         return
       }
-      if (!formData.inverterType || !formData.inverterBrand || !formData.inverterSize) {
+      if (!formData.inverterType || !isInverterInfoComplete(formData.inverterBrand, formData.inverterSize)) {
         setError("Please complete inverter selection")
         return
       }
@@ -673,7 +762,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please select ACDB and DCDB")
         return
       }
-    } else if (formData.systemType !== "customize") {
+    } else if (effectiveSystemType !== "customize") {
       if (
         !isPanelRowComplete(
           formData.panelBrand || "",
@@ -685,7 +774,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please complete panel selection")
         return
       }
-      if (!formData.inverterType || !formData.inverterBrand || !formData.inverterSize) {
+      if (!formData.inverterType || !isInverterInfoComplete(formData.inverterBrand, formData.inverterSize)) {
         setError("Please complete inverter selection")
         return
       }
@@ -715,35 +804,40 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     // }
     
     // Ensure system type is not customize (should not be possible, but double-check)
-    if (formData.systemType === "customize") {
+    if (effectiveSystemType === "customize") {
       setError("Customize option is not available. Please select a pre-configured system.")
       return
     }
 
     // Validate subsidies: DCR and BOTH systems require central subsidy
-    if (formData.systemType === "dcr" || formData.systemType === "both") {
+    if (effectiveSystemType === "dcr" || effectiveSystemType === "both") {
       if (!formData.centralSubsidy || formData.centralSubsidy <= 0) {
         setError("Central subsidy is mandatory for DCR and BOTH systems. Please set a valid central subsidy amount.")
         return
       }
     }
 
-    const normalizedProducts: ProductSelection = {
+    const normalizedProducts = restoreDcrPackageDisplayForForm({
       ...formData,
+      systemType: effectiveSystemType,
       phase: formData.phase || currentPhase,
-    }
+      ...(isTataDcrPackage
+        ? { pdfPanelRangeKey: TATA_DCR_PANEL_RANGE_KEY }
+        : {}),
+    })
 
     setFormData(normalizedProducts)
     onSubmit(normalizedProducts)
   }
 
-  const showDcrFields = formData.systemType === "dcr"
-  const showBothFields = formData.systemType === "both"
+  const showDcrFields = effectiveSystemType === "dcr"
+  const showBothFields = isLegacyNonDcrOrBoth && formData.systemType === "both"
   const showCustomizeFields = formData.systemType === "customize"
-  const showStandardFields = formData.systemType && !showCustomizeFields && !showBothFields
+  const showStandardFields =
+    effectiveSystemType && !showCustomizeFields && !showBothFields
   const hasSelectedStandardConfig =
-    (formData.systemType === "non-dcr" && hasSelectedNonDcrConfig) ||
-    (formData.systemType === "dcr" && hasSelectedDcrConfig)
+    (effectiveSystemType === "non-dcr" && hasSelectedNonDcrConfig) ||
+    (effectiveSystemType === "dcr" && hasSelectedDcrConfig)
   const showBatteryFields = formData.inverterType === "Hybrid Inverter"
 
   return (
@@ -764,56 +858,22 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             </div>
           )}
 
-          {/* System Type Selection */}
-          <div>
-            <Label className="text-base font-medium">System Type *</Label>
-            <RadioGroup
-              value={formData.systemType}
-              onValueChange={(v) => {
-                const previousSystemType = formData.systemType
-                // If changing from "both" or "dcr" to "non-dcr", reset subsidies to 0
-                if (v === "non-dcr" && (previousSystemType === "both" || previousSystemType === "dcr")) {
-                  setFormData((prev) => ({
-                    ...prev,
-                    systemType: v,
-                    stateSubsidy: 0,
-                    centralSubsidy: 0,
-                  }))
-                } else if ((v === "dcr" || v === "both") && (previousSystemType === "non-dcr" || !previousSystemType)) {
-                  // When changing from "non-dcr" (or empty) to "dcr" or "both", set mandatory subsidies
-                  // DCR and BOTH systems require central subsidy (default: 78000)
-                  setFormData((prev) => ({
-                    ...prev,
-                    systemType: v,
-                    centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
-                    stateSubsidy: prev.stateSubsidy || 0,
-                    ...(v === "both" && prev.phase !== "1-Phase" && prev.phase !== "3-Phase"
-                      ? { phase: "3-Phase" as const }
-                      : {}),
-                  }))
-                } else {
-                  // For other transitions, preserve existing subsidies
-                  updateFormData("systemType", v)
-                }
-              }}
-              className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-3"
-            >
-              {systemTypes
-                .filter((type) => type.id !== "customize") // Filter out customize option
-                .map((type) => (
-                  <div key={type.id}>
-                    <RadioGroupItem value={type.id} id={type.id} className="peer sr-only" />
-                    <Label
-                      htmlFor={type.id}
-                      className="flex flex-col p-4 border-2 border-border rounded-lg cursor-pointer hover:border-primary/50 peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5 transition-all"
-                    >
-                      <span className="font-medium">{type.name}</span>
-                      <span className="text-xs text-muted-foreground mt-1">{type.description}</span>
-                    </Label>
-                  </div>
-                ))}
-            </RadioGroup>
-          </div>
+          {isLegacyNonDcrOrBoth ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
+              <span className="font-medium">System type: </span>
+              {formData.systemType === "both" ? "BOTH (DCR + NON DCR)" : "NON DCR"}
+              <span className="block text-xs text-amber-800/90 mt-1">
+                This quotation uses a legacy system type. New quotations are DCR only.
+              </span>
+            </div>
+          ) : (
+            <div className="rounded-lg border-2 border-primary bg-primary/5 px-4 py-3">
+              <span className="font-medium text-foreground">DCR</span>
+              <span className="block text-xs text-muted-foreground mt-1">
+                DCR panels — eligible for subsidy. Select a package below.
+              </span>
+            </div>
+          )}
 
           {showBothFields && (
             <>
@@ -919,7 +979,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <PanelPdfRangeOptions
                   panelBrand={formData.dcrPanelBrand || ""}
                   selectedKey={formData.pdfDcrPanelRangeKey}
-                  onChange={(key) => updateFormData("pdfDcrPanelRangeKey", key)}
+                  onChange={(key) => updatePdfPanelRangeKey("pdfDcrPanelRangeKey", key)}
                 />
               </div>
 
@@ -1001,7 +1061,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <PanelPdfRangeOptions
                   panelBrand={formData.nonDcrPanelBrand || ""}
                   selectedKey={formData.pdfNonDcrPanelRangeKey}
-                  onChange={(key) => updateFormData("pdfNonDcrPanelRangeKey", key)}
+                  onChange={(key) => updatePdfPanelRangeKey("pdfNonDcrPanelRangeKey", key)}
                 />
               </div>
 
@@ -1364,7 +1424,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* NON DCR Configuration Selector */}
-              {formData.systemType === "non-dcr" && (
+              {isLegacyNonDcrOrBoth && formData.systemType === "non-dcr" && (
                 <div className="border-t border-border pt-4 sm:pt-6">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -1412,7 +1472,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   })()}
                 </div>
                 <div
-                  className={`grid grid-cols-1 gap-3 sm:gap-4 ${hidePrimaryPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                  className={`grid grid-cols-1 gap-3 sm:gap-4 ${hidePanelQtyForSet ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
                 >
                   <div>
                     <Label>Panel Brand *</Label>
@@ -1431,40 +1491,91 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Panel Size *</Label>
-                    <Input
-                      value={formData.panelSize || ""}
-                      onChange={(e) => updateFormData("panelSize", e.target.value)}
-                      placeholder={`e.g., ${panelSizesList.join(", ")}`}
-                    />
+                    {dcrPackageAsPerSet ? (
+                      <>
+                        <Input
+                          readOnly
+                          disabled
+                          className="bg-muted"
+                          value={tataDcrPanelRangeLabel ?? QUOTATION_AS_PER_THE_SET_LABEL}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {tataDcrPanelRangeLabel
+                            ? "Panel watt range for the selected Tata DCR package"
+                            : "Varies with the selected DCR package set"}
+                        </p>
+                      </>
+                    ) : (
+                      <Input
+                        value={formData.panelSize || ""}
+                        onChange={(e) => updateFormData("panelSize", e.target.value)}
+                        placeholder={`e.g., ${panelSizesList.join(", ")}`}
+                      />
+                    )}
                   </div>
-                  {!hidePrimaryPanelQty && (
+                  {!hidePanelQtyForSet && (
                     <div>
                       <Label>Panel Quantity *</Label>
                       <Input
                         type="number"
                         min="1"
                         value={formData.panelQuantity || ""}
-                        onChange={(e) => updateFormData("panelQuantity", Number.parseInt(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const raw = Number.parseInt(e.target.value) || 0
+                          const nominalKw = Number.parseFloat(
+                            String(formData.structureSize || formData.inverterSize || "").replace(/kW/i, ""),
+                          )
+                          const qty =
+                            nominalKw > 0 && formData.panelSize
+                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.panelSize, raw)
+                              : raw
+                          updateFormData("panelQuantity", qty)
+                        }}
                         placeholder="Enter quantity"
                       />
                       {(() => {
-                        const panelW = formData.panelSize ? Number.parseFloat(formData.panelSize.replace("W", "")) : 0
+                        const panelW = formData.panelSize ? parsePanelSizeWatts(formData.panelSize) : 0
                         const quantity = formData.panelQuantity || 0
                         const totalW = panelW * quantity
+                        const nominalKw = Number.parseFloat(
+                          String(formData.inverterSize || formData.structureSize || "").replace(/kW/i, ""),
+                        )
+                        const maxW = nominalKw > 0 ? maxAllowedWattsForNominalSystemKw(nominalKw) : 0
+                        const overMax = maxW > 0 && totalW > maxW
                         return totalW > 0 ? (
-                          <p className="text-xs text-muted-foreground mt-1 font-medium">
+                          <p
+                            className={`text-xs mt-1 font-medium ${overMax ? "text-destructive" : "text-muted-foreground"}`}
+                          >
                             Total: {totalW.toLocaleString()}W
+                            {maxW > 0 ? ` (max ${maxW.toLocaleString()}W for ${nominalKw}kW package)` : ""}
                           </p>
                         ) : null
                       })()}
                     </div>
                   )}
                 </div>
-                <PanelPdfRangeOptions
-                  panelBrand={formData.panelBrand || ""}
-                  selectedKey={formData.pdfPanelRangeKey}
-                  onChange={(key) => updateFormData("pdfPanelRangeKey", key)}
-                />
+                {isTataDcrPackage ? (
+                  <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">
+                      Quotation PDF — panel size range
+                    </p>
+                    <label className="flex items-start gap-2 text-sm">
+                      <Checkbox checked disabled className="mt-0.5" />
+                      <span>
+                        Show <strong>{getPanelPdfRangeLabel(TATA_DCR_PANEL_RANGE_KEY)}</strong> on PDF
+                        <span className="block text-xs text-muted-foreground font-normal mt-0.5">
+                          Fixed for Tata DCR package sets
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                ) : (
+                  <PanelPdfRangeOptions
+                    panelBrand={formData.panelBrand || ""}
+                    selectedKey={formData.pdfPanelRangeKey}
+                    onChange={(key) => updatePdfPanelRangeKey("pdfPanelRangeKey", key)}
+                  />
+                )}
               </div>
 
               {/* Inverter Selection */}
@@ -1493,26 +1604,54 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>Inverter Brand *</Label>
-                    <Select value={formData.inverterBrand} onValueChange={(v) => updateFormData("inverterBrand", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select brand" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inverterBrandsList.map((brand) => (
-                          <SelectItem key={brand} value={brand}>
-                            {brand}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    {dcrPackageAsPerSet ? (
+                      <>
+                        <Input
+                          readOnly
+                          disabled
+                          className="bg-muted"
+                          value={QUOTATION_AS_PER_THE_SET_LABEL}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Varies with the selected DCR package set
+                        </p>
+                      </>
+                    ) : (
+                      <Select value={formData.inverterBrand} onValueChange={(v) => updateFormData("inverterBrand", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select brand" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {inverterBrandsList.map((brand) => (
+                            <SelectItem key={brand} value={brand}>
+                              {brand}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                   <div>
                     <Label>Inverter Size *</Label>
-                    <Input
-                      value={formData.inverterSize || ""}
-                      onChange={(e) => updateFormData("inverterSize", e.target.value)}
-                      placeholder={`e.g., ${inverterSizesList.join(", ")}`}
-                    />
+                    {dcrPackageAsPerSet ? (
+                      <>
+                        <Input
+                          readOnly
+                          disabled
+                          className="bg-muted"
+                          value={QUOTATION_AS_PER_THE_SET_LABEL}
+                        />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Varies with the selected DCR package set
+                        </p>
+                      </>
+                    ) : (
+                      <Input
+                        value={formData.inverterSize || ""}
+                        onChange={(e) => updateFormData("inverterSize", e.target.value)}
+                        placeholder={`e.g., ${inverterSizesList.join(", ")}`}
+                      />
+                    )}
                   </div>
                 </div>
               </div>
@@ -1555,7 +1694,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* Meter & Cables */}
-              {((formData.systemType === "non-dcr" && hasSelectedNonDcrConfig) || (formData.systemType === "dcr" && hasSelectedDcrConfig)) && (
+              {hasSelectedStandardConfig && (
               <>
               <div className="border-t border-border pt-4 sm:pt-6">
                 <div className="flex items-center gap-2 mb-4">
@@ -2215,7 +2354,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       )}
 
       {/* NON DCR Configuration Dialog */}
-      {formData.systemType === "non-dcr" && (
+      {isLegacyNonDcrOrBoth && formData.systemType === "non-dcr" && (
         <NonDcrConfigDialog
           open={nonDcrConfigDialogOpen}
           onOpenChange={setNonDcrConfigDialogOpen}

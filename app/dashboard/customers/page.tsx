@@ -498,7 +498,7 @@ export default function CustomersPage() {
                       if (useApi) {
                         await api.customers.update(editingCustomer.id, {
                           firstName: customerEditForm.firstName.trim(),
-                          lastName: (customerEditForm.lastName || "").trim() || "NA",
+                          lastName: (customerEditForm.lastName || "").trim(),
                           email: (customerEditForm.email || "").trim() || "na@chairbord.com",
                           mobile: customerEditForm.mobile,
                           address: {

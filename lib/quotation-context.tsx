@@ -7,7 +7,8 @@ import { calculateSystemSize, determinePhase } from "./pricing-tables"
 import {
   buildCustomerCreatePayload,
   buildCustomerCreatePayloadWithNotes,
-  extractPdfDisplayFlags,
+  productsWithPdfDisplayFlags,
+  syncDcrPanelFieldsFromPrimary,
   findQuotationRowByMobile,
   formatDuplicateQuotationError,
   formatExistingCustomerAssignedError,
@@ -17,7 +18,9 @@ import {
   resolveDealerNameFromCustomerRow,
   resolveDealerNameFromQuotationRow,
   stripPdfDisplayFlags,
+  toCatalogCompatibleProducts,
 } from "./quotation-api-payload"
+import { isInverterInfoComplete, isPanelRowComplete } from "./quotation-pdf-display"
 
 export interface Customer {
   firstName: string
@@ -591,24 +594,48 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         if (currentProducts.hybridInverter) {
           cleanedProducts.hybridInverter = currentProducts.hybridInverter
         }
-        const pdfDisplayFlags = extractPdfDisplayFlags(currentProducts)
-        const productsForApi = stripPdfDisplayFlags(cleanedProducts)
+        const syncedProducts = syncDcrPanelFieldsFromPrimary({
+          ...currentProducts,
+          ...cleanedProducts,
+        })
+        const productsForApi = stripPdfDisplayFlags(toCatalogCompatibleProducts(syncedProducts))
 
-        // Validate required fields based on system type
+        // Validate required fields (use syncedProducts — PDF range keys stripped from productsForApi)
         if (productsForApi.systemType === "both") {
-          if (!productsForApi.dcrPanelBrand || !productsForApi.dcrPanelSize || !productsForApi.dcrPanelQuantity) {
+          if (
+            !isPanelRowComplete(
+              syncedProducts.dcrPanelBrand || "",
+              syncedProducts.dcrPanelSize || "",
+              syncedProducts.dcrPanelQuantity || 0,
+              syncedProducts.pdfDcrPanelRangeKey,
+            )
+          ) {
             throw new Error("DCR panel information is required for BOTH system type")
           }
-          if (!productsForApi.nonDcrPanelBrand || !productsForApi.nonDcrPanelSize || !productsForApi.nonDcrPanelQuantity) {
+          if (
+            !isPanelRowComplete(
+              syncedProducts.nonDcrPanelBrand || "",
+              syncedProducts.nonDcrPanelSize || "",
+              syncedProducts.nonDcrPanelQuantity || 0,
+              syncedProducts.pdfNonDcrPanelRangeKey,
+            )
+          ) {
             throw new Error("Non-DCR panel information is required for BOTH system type")
           }
         } else if (productsForApi.systemType !== "customize") {
-          if (!productsForApi.panelBrand || !productsForApi.panelSize || !productsForApi.panelQuantity) {
+          if (
+            !isPanelRowComplete(
+              syncedProducts.panelBrand || "",
+              syncedProducts.panelSize || "",
+              syncedProducts.panelQuantity || 0,
+              syncedProducts.pdfPanelRangeKey,
+            )
+          ) {
             throw new Error("Panel information is required")
           }
         }
 
-        if (!productsForApi.inverterBrand || !productsForApi.inverterSize) {
+        if (!isInverterInfoComplete(productsForApi.inverterBrand, productsForApi.inverterSize)) {
           throw new Error("Inverter information is required")
         }
         if (!productsForApi.structureType || !productsForApi.structureSize) {
@@ -707,7 +734,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         const quotationData = {
           customerId,
           customer: currentCustomer,
-          products: cleanedProducts,
+          products: productsForApi,
           // REQUIRED FIELDS (at root level - matching backend destructuring)
           subtotal: validatedSubtotal, // Set price (complete package price) - REQUIRED
           totalAmount: validatedTotalAmount, // Amount after discount (Subtotal - Subsidy - Discount) - REQUIRED
@@ -778,12 +805,12 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
         let quotation = await api.quotations.create(quotationData)
 
-        if (quotation?.id && Object.keys(pdfDisplayFlags).length > 0) {
+        if (quotation?.id) {
           try {
-            await api.quotations.updateProducts(quotation.id, {
-              ...productsForApi,
-              ...pdfDisplayFlags,
-            })
+            await api.quotations.updateProducts(
+              quotation.id,
+              productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts }),
+            )
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }

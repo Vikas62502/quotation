@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { dcrPricing, type SystemPricing } from "@/lib/pricing-tables"
+import {
+  dcrPricing,
+  DCR_PRICING_EFFECTIVE_FROM,
+  DCR_PRICING_VALID_TILL,
+  type SystemPricing,
+} from "@/lib/pricing-tables"
+import {
+  dcrCatalogInverterLabel,
+  dcrCatalogPanelRangeLabel,
+  groupDcrPricingByPanelType,
+} from "@/lib/dcr-pricing-catalog-display"
 import { Search, Download } from "lucide-react"
 import jsPDF from "jspdf"
 import html2canvas from "html2canvas"
@@ -32,16 +42,23 @@ interface DcrConfigDialogProps {
 export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialogProps) {
   const [searchTerm, setSearchTerm] = useState("")
 
-  // Filter configurations based on search
-  const filteredConfigs = dcrPricing.filter((config) => {
-    const searchLower = searchTerm.toLowerCase()
-    return (
-      config.systemSize.toLowerCase().includes(searchLower) ||
-      config.inverterSize.toLowerCase().includes(searchLower) ||
-      config.panelType.toLowerCase().includes(searchLower) ||
-      config.phase.toLowerCase().includes(searchLower)
-    )
-  })
+  const filteredConfigs = useMemo(() => {
+    const searchLower = searchTerm.toLowerCase().trim()
+    if (!searchLower) return dcrPricing
+    return dcrPricing.filter((config) => {
+      return (
+        config.systemSize.toLowerCase().includes(searchLower) ||
+        config.inverterSize.toLowerCase().includes(searchLower) ||
+        config.panelType.toLowerCase().includes(searchLower) ||
+        config.phase.toLowerCase().includes(searchLower) ||
+        dcrCatalogInverterLabel().toLowerCase().includes(searchLower) ||
+        dcrCatalogPanelRangeLabel(config.panelType).toLowerCase().includes(searchLower) ||
+        dcrCatalogPanelRangeLabel("tata").toLowerCase().includes(searchLower)
+      )
+    })
+  }, [searchTerm])
+
+  const brandGroups = useMemo(() => groupDcrPricingByPanelType(filteredConfigs), [filteredConfigs])
 
   const handleSelect = (config: SystemPricing) => {
     onSelect(config)
@@ -64,27 +81,23 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
         allowTaint: false,
       })
 
-      const imgWidth = 210 // A4 width in mm
+      const imgWidth = 210
       const imgHeight = (canvas.height * imgWidth) / canvas.width
 
       const pdf = new jsPDF("p", "mm", "a4")
-      
-      // Add title
+
       pdf.setFontSize(18)
       pdf.text("DCR Configuration Catalog", 105, 15, { align: "center" })
       pdf.setFontSize(12)
       pdf.text("Pre-configured DCR Solar System Options", 105, 22, { align: "center" })
-      
-      // Add the table image
-      const pageHeight = 297 // A4 height in mm
+
+      const pageHeight = 297
       let heightLeft = imgHeight
-      let position = 30 // Start below title
+      let position = 30
 
-      // Add first page
       pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 10, position, imgWidth - 20, imgHeight)
-      heightLeft -= (pageHeight - position - 10)
+      heightLeft -= pageHeight - position - 10
 
-      // Add additional pages if needed
       while (heightLeft > 10) {
         position = heightLeft - imgHeight
         pdf.addPage()
@@ -92,15 +105,19 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
         heightLeft -= pageHeight
       }
 
-      // Generate filename
       const filename = `DCR_Configuration_Catalog_${new Date().toISOString().split("T")[0]}.pdf`
-
-      // Save
       pdf.save(filename)
     } catch (error) {
       console.error("Error generating PDF:", error)
     }
   }
+
+  const formatDate = (iso: string) =>
+    new Date(iso).toLocaleDateString("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -126,68 +143,98 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
         </DialogHeader>
 
         <div className="space-y-3 sm:space-y-4 flex-1 flex flex-col min-h-0">
-          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search by system size, inverter size, panel type..."
+              placeholder="Search by system size, panel brand, phase..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="pl-10 h-10 sm:h-11 text-sm"
             />
           </div>
 
-          {/* Note */}
-          <div className="p-3 sm:p-3.5 bg-muted/50 rounded-lg text-xs sm:text-sm text-muted-foreground leading-relaxed">
-            <strong>Note:</strong> Prices may vary based on customer requirements, site conditions, and system specifications.
+          <div className="p-3 sm:p-3.5 bg-muted/50 rounded-lg text-xs sm:text-sm text-muted-foreground leading-relaxed space-y-1">
+            <p>
+              <strong>Pricings</strong> — Effective from {formatDate(DCR_PRICING_EFFECTIVE_FROM)}, valid till{" "}
+              {formatDate(DCR_PRICING_VALID_TILL)}.
+            </p>
+            <p>
+              Inverter size and panel range columns show <strong>As per the set</strong> (package BOM). Actual inverter
+              brand and panel watts are filled when you select a row.
+            </p>
+            <p>
+              Brands: <strong>Adani (555W)</strong>, <strong>Adani Topcon (620W)</strong>, <strong>Waaree (540W)</strong>,{" "}
+              <strong>Premier Energies (600–625W Topcon)</strong>, <strong>Tata (530W–570W)</strong>.
+            </p>
           </div>
 
-          {/* Table */}
-          <div id="dcr-config-table" className="border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col bg-background shadow-sm">
-            <div className="overflow-y-auto overflow-x-auto flex-1 relative">
-              <Table className="w-full">
-                <TableHeader className="sticky top-0 z-30">
-                  <TableRow className="bg-primary/10 hover:bg-primary/10 border-b">
-                    <TableHead className="font-semibold text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-3.5 whitespace-nowrap bg-primary/10">System Size</TableHead>
-                    <TableHead className="font-semibold text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-3.5 whitespace-nowrap bg-primary/10">Inverter Size</TableHead>
-                    <TableHead className="font-semibold text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-3.5 whitespace-nowrap bg-primary/10">Panel Type</TableHead>
-                    <TableHead className="font-semibold text-sm text-right px-4 sm:px-5 md:px-6 py-3 sm:py-3.5 whitespace-nowrap bg-primary/10">Price (INR)</TableHead>
-                    <TableHead className="font-semibold text-sm text-center px-4 sm:px-5 md:px-6 py-3 sm:py-3.5 whitespace-nowrap bg-primary/10">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                {filteredConfigs.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-center text-muted-foreground py-8 sm:py-10 text-sm">
-                      No configurations found matching your search.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredConfigs.map((config, index) => (
-                    <TableRow key={index} className="hover:bg-muted/50 border-b transition-colors">
-                      <TableCell className="text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap">
-                        <span className="font-medium">{config.systemSize}</span>
-                        <span className="text-muted-foreground ml-1.5">({config.phase})</span>
-                      </TableCell>
-                      <TableCell className="text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap">{config.inverterSize}</TableCell>
-                      <TableCell className="text-sm px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap font-medium">{config.panelType}</TableCell>
-                      <TableCell className="text-right text-sm font-semibold px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap">
-                        ₹{config.price.toLocaleString("en-IN")}
-                      </TableCell>
-                      <TableCell className="text-center px-4 sm:px-5 md:px-6 py-3 sm:py-4 whitespace-nowrap">
-                        <Button
-                          size="sm"
-                          onClick={() => handleSelect(config)}
-                          className="bg-primary hover:bg-primary/90 text-sm h-8 sm:h-9 px-4 sm:px-5 font-medium"
-                        >
-                          Select
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-                </TableBody>
-              </Table>
+          <div
+            id="dcr-config-table"
+            className="border rounded-lg overflow-hidden flex-1 min-h-0 flex flex-col bg-background shadow-sm space-y-0"
+          >
+            <div className="overflow-y-auto overflow-x-auto flex-1 relative p-3 sm:p-4 space-y-6">
+              {brandGroups.length === 0 ? (
+                <p className="text-center text-muted-foreground py-8 text-sm">
+                  No configurations found matching your search.
+                </p>
+              ) : (
+                brandGroups.map((group) => (
+                  <div key={group.panelType} className="space-y-2">
+                    <div className="rounded-md border border-primary/20 bg-primary/5 px-4 py-2 text-center">
+                      <p className="text-base sm:text-lg font-bold tracking-wide text-primary">{group.displayTitle}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Effective from {formatDate(DCR_PRICING_EFFECTIVE_FROM)} to {formatDate(DCR_PRICING_VALID_TILL)}
+                      </p>
+                    </div>
+                    <Table className="w-full">
+                      <TableHeader>
+                        <TableRow className="bg-primary/10 hover:bg-primary/10 border-b">
+                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">System Size</TableHead>
+                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Inverter Size</TableHead>
+                          <TableHead className="font-semibold text-sm px-4 py-3 whitespace-nowrap">Panel Range</TableHead>
+                          <TableHead className="font-semibold text-sm text-right px-4 py-3 whitespace-nowrap">
+                            Price (INR)
+                          </TableHead>
+                          <TableHead className="font-semibold text-sm text-center px-4 py-3 whitespace-nowrap">
+                            Action
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {group.rows.map((config, index) => (
+                          <TableRow
+                            key={`${group.panelType}-${config.systemSize}-${config.phase}-${index}`}
+                            className="hover:bg-muted/50 border-b transition-colors"
+                          >
+                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap">
+                              <span className="font-medium">{config.systemSize}</span>
+                              <span className="text-muted-foreground ml-1.5">({config.phase})</span>
+                            </TableCell>
+                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
+                              {dcrCatalogInverterLabel()}
+                            </TableCell>
+                            <TableCell className="text-sm px-4 py-3 whitespace-nowrap text-muted-foreground">
+                              {dcrCatalogPanelRangeLabel(config.panelType)}
+                            </TableCell>
+                            <TableCell className="text-right text-sm font-semibold px-4 py-3 whitespace-nowrap">
+                              ₹{config.price.toLocaleString("en-IN")}
+                            </TableCell>
+                            <TableCell className="text-center px-4 py-3 whitespace-nowrap">
+                              <Button
+                                size="sm"
+                                onClick={() => handleSelect(config)}
+                                className="bg-primary hover:bg-primary/90 text-sm h-8 px-4 font-medium"
+                              >
+                                Select
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -195,6 +242,3 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
     </Dialog>
   )
 }
-
-
-

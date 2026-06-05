@@ -1,4 +1,5 @@
 import type { ProductSelection } from "@/lib/quotation-context"
+import { isTopconPdfPanelRangeKey, resolvePdfPanelRangeKey } from "@/lib/quotation-pdf-display"
 
 export type PanelNoteGrade = "dcr" | "non-dcr"
 
@@ -19,9 +20,18 @@ function normalizeBrandKey(brand?: string): string {
     .replace(/\s+/g, "")
 }
 
+const ADANI_DCR_TOPCON_NOTE_BODY =
+  "Adani DCR-grade bifacial TOPCon modules deliver high efficiency and long-term performance with domestic content compliance — " +
+  "optimized for subsidy-eligible installations with manufacturer performance warranty as per BOM."
+
 /** Body text only (no ■ prefix). */
-function getPanelTechnologyNoteBody(brand: string, grade: PanelNoteGrade): string {
+function getPanelTechnologyNoteBody(
+  brand: string,
+  grade: PanelNoteGrade,
+  options?: { useTopcon?: boolean },
+): string {
   const key = normalizeBrandKey(brand)
+  const useTopcon = options?.useTopcon === true
 
   if (key === "waaree") {
     if (grade === "non-dcr") {
@@ -29,6 +39,12 @@ function getPanelTechnologyNoteBody(brand: string, grade: PanelNoteGrade): strin
         "Waaree 610W/620W panels use Mono PERC Bifacial technology — capturing sunlight from both front " +
         "and rear surfaces for 10–20% higher energy yield. These are Non-DCR (Domestic Content Requirement) grade panels, optimized " +
         "for commercial applications with superior efficiency, durability, and 30-year linear power warranty."
+      )
+    }
+    if (useTopcon) {
+      return (
+        "Waaree DCR-grade bifacial TOPCon modules deliver high efficiency and long-term performance with domestic content compliance — " +
+        "optimized for subsidy-eligible installations with manufacturer performance warranty as per BOM."
       )
     }
     return (
@@ -40,14 +56,23 @@ function getPanelTechnologyNoteBody(brand: string, grade: PanelNoteGrade): strin
 
   if (key === "adani") {
     if (grade === "dcr") {
+      if (useTopcon) return ADANI_DCR_TOPCON_NOTE_BODY
       return (
-        "Adani DCR-grade bifacial TOPCon modules deliver high efficiency and long-term performance with domestic content compliance — " +
-        "optimized for subsidy-eligible installations with manufacturer performance warranty as per BOM."
+        "Adani DCR-grade bifacial modules use Mono PERC Bifacial technology — capturing sunlight from both front " +
+        "and rear surfaces for higher energy yield. These meet Domestic Content Requirement (DCR) norms for subsidy-eligible " +
+        "installations, with superior efficiency, durability, and 30-year linear power warranty."
       )
     }
     return (
       "Adani Non-DCR bifacial modules use advanced bifacial technology for enhanced yield from front and rear surfaces — " +
       "optimized for commercial and non-subsidy applications with extended performance warranty (as per manufacturer terms)."
+    )
+  }
+
+  if (key === "premierenergies" || key === "premier") {
+    return (
+      "Premier Energies DCR-grade bifacial TOPCon modules (600–625W class) deliver high efficiency with domestic content compliance — " +
+      "optimized for subsidy-eligible installations with manufacturer performance warranty as per BOM."
     )
   }
 
@@ -71,11 +96,20 @@ function getPanelTechnologyNoteBody(brand: string, grade: PanelNoteGrade): strin
   )
 }
 
-function formatNoteLine(label: string | null, brand: string, grade: PanelNoteGrade): string | null {
-  const body = getPanelTechnologyNoteBody(brand, grade)
+function formatNoteLine(
+  label: string | null,
+  brand: string,
+  grade: PanelNoteGrade,
+  options?: { useTopcon?: boolean },
+): string | null {
+  const body = getPanelTechnologyNoteBody(brand, grade, options)
   if (!body) return null
   if (label) return `${label} ${body}`
   return `■ Panel Technology Note: ${body}`
+}
+
+function topconForBrandScope(products: ProductsLike, scope: "primary" | "dcr" | "nonDcr"): boolean {
+  return isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(products, scope))
 }
 
 function resolvePanelBrandsForNotes(products: ProductsLike): {
@@ -130,21 +164,27 @@ export function buildPanelTechnologyNote(products: ProductSelection | null | und
   if (systemType === "both") {
     const lines: string[] = []
     if (dcrBrand) {
-      const line = formatNoteLine(`■ Panel Technology Note (DCR — ${dcrBrand}):`, dcrBrand, "dcr")
+      const line = formatNoteLine(`■ Panel Technology Note (DCR — ${dcrBrand}):`, dcrBrand, "dcr", {
+        useTopcon: topconForBrandScope(p, "dcr"),
+      })
       if (line) lines.push(line)
     }
     if (nonDcrBrand) {
-      const line = formatNoteLine(`■ Panel Technology Note (Non-DCR — ${nonDcrBrand}):`, nonDcrBrand, "non-dcr")
+      const line = formatNoteLine(`■ Panel Technology Note (Non-DCR — ${nonDcrBrand}):`, nonDcrBrand, "non-dcr", {
+        useTopcon: topconForBrandScope(p, "nonDcr"),
+      })
       if (line) lines.push(line)
     }
     if (lines.length > 0) return lines.join("\n\n")
     if (singleBrand) {
-      const line = formatNoteLine(null, singleBrand, "dcr")
+      const line = formatNoteLine(null, singleBrand, "dcr", { useTopcon: topconForBrandScope(p, "dcr") })
       return line ?? undefined
     }
     return undefined
   }
 
   if (!singleBrand) return undefined
-  return formatNoteLine(null, singleBrand, singleGrade) ?? undefined
+  const useTopcon =
+    singleGrade === "dcr" ? topconForBrandScope(p, "primary") || topconForBrandScope(p, "dcr") : topconForBrandScope(p, "primary")
+  return formatNoteLine(null, singleBrand, singleGrade, { useTopcon }) ?? undefined
 }

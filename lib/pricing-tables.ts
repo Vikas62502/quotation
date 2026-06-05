@@ -476,77 +476,68 @@ export function getAvailableStructureSizes(pricingData?: PricingTablesData): str
 export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   // ========== DCR SYSTEMS (1-Phase) ==========
   // Adani DCR 1-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Saatvik", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   // Waaree DCR 1-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   
-  // Tata DCR 1-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "530W", inverterBrand: "GoodWe", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  // Tata DCR 1-Phase (Jun 2026 — panel + inverter as per the set)
+  { systemType: "dcr", systemSize: "3.1kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5.1kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   
   // ========== DCR SYSTEMS (3-Phase) ==========
   // Adani DCR 3-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "7kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "8kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "10kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "12kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "15kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "20kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "25kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "30kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "4kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "7kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "8kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "10kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "12kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "15kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "20kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "25kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "30kW", phase: "3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   
   // Waaree DCR 3-Phase
-  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "7kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "8kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "10kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "12kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "15kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "20kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "25kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "30kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "3kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "4kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "7kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "8kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "10kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "12kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "15kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "20kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "25kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "30kW", phase: "3-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   
-  // Tata DCR 3-Phase
-  { systemType: "dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "5500W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "4kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "5kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "6kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "7kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "8kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "10kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "560W", inverterBrand: "GoodWe", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "12kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "15kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
-  { systemType: "dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  // Tata DCR 3-Phase (Jun 2026)
+  { systemType: "dcr", systemSize: "5.1kW", phase: "3-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "6kW", phase: "3-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "8kW", phase: "3-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "10kW", phase: "3-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)", centralSubsidy: 78000 },
   
   // ========== NON DCR SYSTEMS (1-Phase) ==========
   // Adani NON DCR 1-Phase
-  { systemType: "non-dcr", systemSize: "3kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "4kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "5kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "6kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "3kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "4kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "5kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "6kW", phase:"1-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
   
   // Waaree NON DCR 1-Phase
-  { systemType: "non-dcr", systemSize: "3kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "4kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "5kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
-  { systemType: "non-dcr", systemSize: "6kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "3kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "4kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "5kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
+  { systemType: "non-dcr", systemSize: "6kW", phase:"1-Phase", panelBrand: "Waaree", panelSize: "540W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
   
   // Tata NON DCR 1-Phase
   { systemType: "non-dcr", systemSize: "3kW", phase:"1-Phase", panelBrand: "Tata", panelSize: "610W", inverterBrand: "GoodWe", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)" },
@@ -556,32 +547,32 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   
   // ========== NON DCR SYSTEMS (3-Phase) ==========
   // Adani NON DCR 3-Phase
-  { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "4kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "6kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "7kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "8kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "10kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "12kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "15kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "4kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "6kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "7kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "8kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "10kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "12kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "15kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Waaree NON DCR 3-Phase
-  { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "4kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "5kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "6kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "7kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "8kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "10kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "12kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "15kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "4kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "4kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "5kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "6kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "7kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "7kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "8kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "10kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "12kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "15kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Tata NON DCR 3-Phase
   { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
@@ -599,26 +590,26 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   
   // ========== BOTH SYSTEMS (DCR + NON DCR) - 3-Phase Only ==========
   // Adani BOTH 3-Phase
-  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "6kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "8kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "10kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "12kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "15kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "20kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "25kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "30kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "610W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "6kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "8kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "10kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "12kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "15kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "20kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "25kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "30kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Waaree BOTH 3-Phase
-  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "6kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "8kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "10kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "12kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "15kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "20kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
-  { systemType: "both", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Saatvik", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "5kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "6kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "8kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "8kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "8kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "10kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "10kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "10kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "12kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "12kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "12kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "15kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "15kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "15kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "20kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "both", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "555W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
 ]
 
 // Function to get current pricing data (API or fallback)
@@ -644,22 +635,35 @@ export function getSystemConfiguration(
   systemType: "dcr" | "non-dcr" | "both",
   systemSize: string,
   panelBrand: string,
-  pricingData?: PricingTablesData
+  pricingData?: PricingTablesData,
+  phase?: "1-Phase" | "3-Phase",
 ): SystemConfigurationPreset | null {
   const data = pricingData || getPricingData()
   const configs = data.systemConfigs || defaultSystemConfigs
-  
-  // Try exact match first
-  let config = configs.find(
-    (c) => c.systemType === systemType && 
-           c.systemSize === systemSize && 
-           c.panelBrand === panelBrand
-  )
-  
+
+  const brandKey = panelBrand.trim()
+
+  // Exact match — include phase when provided (e.g. 6kW Tata 1-Phase vs 3-Phase)
+  let config: SystemConfigurationPreset | undefined
+  if (phase) {
+    config = configs.find(
+      (c) =>
+        c.systemType === systemType &&
+        c.systemSize === systemSize &&
+        c.panelBrand === brandKey &&
+        c.phase === phase,
+    )
+  }
+  if (!config) {
+    config = configs.find(
+      (c) => c.systemType === systemType && c.systemSize === systemSize && c.panelBrand === brandKey,
+    )
+  }
+
   // If no exact match, try to find by system type and size (any panel brand)
   if (!config) {
     config = configs.find(
-      (c) => c.systemType === systemType && c.systemSize === systemSize
+      (c) => c.systemType === systemType && c.systemSize === systemSize && (!phase || c.phase === phase),
     )
   }
   
@@ -728,18 +732,11 @@ export function configToProductSelection(
   config: SystemConfigurationPreset,
   panelQuantity?: number
 ): Partial<import("./quotation-context").ProductSelection> {
-  // Calculate panel quantity if not provided
+  // Calculate panel quantity if not provided — never exceed nominal package kW
   let calculatedQuantity = panelQuantity || 0
   if (calculatedQuantity === 0) {
     const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
-    const panelW = Number.parseFloat(config.panelSize.replace("W", ""))
-    if (!Number.isNaN(systemKw) && !Number.isNaN(panelW) && panelW > 0) {
-      const requiredPanels = (systemKw * 1000) / panelW
-      const floorPanels = Math.floor(requiredPanels)
-      const floorShortfallW = systemKw * 1000 - floorPanels * panelW
-      // Prefer floor when shortfall is practically negligible (e.g. 5kW with 555W => 9 panels).
-      calculatedQuantity = floorPanels > 0 && floorShortfallW <= 10 ? floorPanels : Math.ceil(requiredPanels)
-    }
+    calculatedQuantity = panelQuantityForNominalSystemKw(systemKw, config.panelSize)
   }
   
   return {
@@ -776,42 +773,136 @@ export function getSystemConfigById(
   return option ? option.value : null
 }
 
-// DCR System Pricing (With Subsidy - Adani and Waaree panels separated)
-export const dcrPricing: SystemPricing[] = [
-  // 1-Phase Systems
-  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Adani", price: 189000 },
-  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Waaree", price: 189000 },
-  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Tata", price: 206000 },
-  { systemSize: "4kW", phase: "1-Phase", inverterSize: "4kW", panelType: "Adani", price: 237000 },
-  { systemSize: "4kW", phase: "1-Phase", inverterSize: "4kW", panelType: "Waaree", price: 237000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Adani", price: 272000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Waaree", price: 272000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Tata", price: 292000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Adani", price: 299000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Waaree", price: 299000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Tata", price: 340000 },
-  
-  // 3-Phase Systems
-  { systemSize: "3kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 221000 },
-  { systemSize: "3kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 221000 },
-  { systemSize: "3kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Tata", price: 273000 },
-  { systemSize: "4kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 263000 },
-  { systemSize: "4kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 263000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 289000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 289000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Tata", price: 320000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Adani", price: 330000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Waaree", price: 330000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Tata", price: 365000 },
-  { systemSize: "7kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Adani", price: 370000 },
-  { systemSize: "7kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Waaree", price: 370000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Adani", price: 412000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Waaree", price: 412000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Tata", price: 462000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Adani", price: 475000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Waaree", price: 475000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Tata", price: 535000 },
+/** DCR package pricing — effective 03 Jun 2026, valid till 30 Jun 2026 */
+export const DCR_PRICING_EFFECTIVE_FROM = "2026-06-03"
+export const DCR_PRICING_VALID_TILL = "2026-06-30"
+
+/** Inverter / panel size on June 2026 package sheets (Tata and catalog display). */
+export const DCR_AS_PER_THE_SET = "As per the set"
+
+export const DCR_PRICING_PANEL_TYPES = [
+  "Adani",
+  "Adani Topcon",
+  "Waaree",
+  "Premier Energies",
+  "Tata",
+] as const
+
+function dcrInverterSizeForPackage(systemSize: string, phase: "1-Phase" | "3-Phase"): string {
+  const kw = Number.parseFloat(systemSize.replace(/kW/i, ""))
+  if (Number.isNaN(kw)) return systemSize
+  if (phase === "1-Phase") return systemSize
+  if (kw <= 4) return "5kW"
+  if (kw === 7) return "8kW"
+  return systemSize
+}
+
+type DcrPricingMatrixRow = {
+  systemSize: string
+  phase: "1-Phase" | "3-Phase"
+  adani555?: number
+  adaniTopcon620?: number
+  waaree540?: number
+  premierTopcon?: number
+}
+
+/** Tata DCR — Jun 2026 sheet (inverter + panel type as per the set). */
+const DCR_TATA_PRICING_ROWS: { systemSize: string; phase: "1-Phase" | "3-Phase"; tata: number }[] = [
+  { systemSize: "3.1kW", phase: "1-Phase", tata: 220000 },
+  { systemSize: "5.1kW", phase: "1-Phase", tata: 310000 },
+  { systemSize: "5.1kW", phase: "3-Phase", tata: 335000 },
+  { systemSize: "6kW", phase: "1-Phase", tata: 360000 },
+  { systemSize: "6kW", phase: "3-Phase", tata: 380000 },
+  { systemSize: "8kW", phase: "3-Phase", tata: 470000 },
+  { systemSize: "10kW", phase: "3-Phase", tata: 550000 },
 ]
+
+const DCR_PRICING_MATRIX: DcrPricingMatrixRow[] = [
+  { systemSize: "3kW", phase: "1-Phase", adani555: 195000, adaniTopcon620: 195000, waaree540: 189000, premierTopcon: 189000 },
+  { systemSize: "3kW", phase: "3-Phase", adani555: 230000, adaniTopcon620: 230000, waaree540: 225000, premierTopcon: 221000 },
+  { systemSize: "4kW", phase: "1-Phase", premierTopcon: 250000 },
+  { systemSize: "4kW", phase: "3-Phase", premierTopcon: 270000 },
+  { systemSize: "5kW", phase: "1-Phase", adani555: 275000, adaniTopcon620: 285000, waaree540: 275000, premierTopcon: 272000 },
+  { systemSize: "5kW", phase: "3-Phase", adani555: 299000, adaniTopcon620: 305000, waaree540: 292000, premierTopcon: 289000 },
+  { systemSize: "6kW", phase: "1-Phase", premierTopcon: 299000 },
+  { systemSize: "6kW", phase: "3-Phase", adani555: 330000, adaniTopcon620: 360000, waaree540: 320000, premierTopcon: 330000 },
+  { systemSize: "7kW", phase: "3-Phase", premierTopcon: 370000 },
+  { systemSize: "8kW", phase: "3-Phase", adani555: 425000, adaniTopcon620: 445000, waaree540: 405000, premierTopcon: 412000 },
+  { systemSize: "10kW", phase: "3-Phase", adani555: 505000, adaniTopcon620: 530000, waaree540: 490000, premierTopcon: 474000 },
+  { systemSize: "12kW", phase: "3-Phase", adani555: 620000, adaniTopcon620: 650000, waaree540: 580000 },
+  { systemSize: "15kW", phase: "3-Phase", adani555: 750000, adaniTopcon620: 780000, waaree540: 700000 },
+  { systemSize: "20kW", phase: "3-Phase", adani555: 940000, adaniTopcon620: 995000, waaree540: 900000 },
+  { systemSize: "25kW", phase: "3-Phase", adani555: 1145000, adaniTopcon620: 1210000, waaree540: 1090000 },
+  { systemSize: "30kW", phase: "3-Phase", adani555: 1350000, adaniTopcon620: 1420000, waaree540: 1350000 },
+  { systemSize: "40kW", phase: "3-Phase", adani555: 1760000, adaniTopcon620: 1870000, waaree540: 1760000 },
+  { systemSize: "50kW", phase: "3-Phase", adani555: 2150000, adaniTopcon620: 2280000, waaree540: 2150000 },
+  { systemSize: "60kW", phase: "3-Phase", adani555: 2600000, adaniTopcon620: 2760000, waaree540: 2600000 },
+  { systemSize: "80kW", phase: "3-Phase", adani555: 3450000, adaniTopcon620: 3660000, waaree540: 3450000 },
+  { systemSize: "100kW", phase: "3-Phase", adani555: 4200000, adaniTopcon620: 4465000, waaree540: 4200000 },
+]
+
+function buildDcrPricingFromMatrix(): SystemPricing[] {
+  const out: SystemPricing[] = []
+  for (const row of DCR_PRICING_MATRIX) {
+    const inverterSize = dcrInverterSizeForPackage(row.systemSize, row.phase)
+    const base = { systemSize: row.systemSize, phase: row.phase, inverterSize }
+    if (row.adani555 != null) out.push({ ...base, panelType: "Adani", price: row.adani555 })
+    if (row.adaniTopcon620 != null) out.push({ ...base, panelType: "Adani Topcon", price: row.adaniTopcon620 })
+    if (row.waaree540 != null) out.push({ ...base, panelType: "Waaree", price: row.waaree540 })
+    if (row.premierTopcon != null) out.push({ ...base, panelType: "Premier Energies", price: row.premierTopcon })
+  }
+  for (const row of DCR_TATA_PRICING_ROWS) {
+    out.push({
+      systemSize: row.systemSize,
+      phase: row.phase,
+      inverterSize: DCR_AS_PER_THE_SET,
+      panelType: "Tata",
+      price: row.tata,
+    })
+  }
+  return out
+}
+
+// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, Tata (Jun 2026)
+export const dcrPricing: SystemPricing[] = buildDcrPricingFromMatrix()
+
+/** Map form/catalog panel brand to DCR pricing table `panelType`. */
+export function resolveDcrPricingPanelType(panelBrand: string): string {
+  const brand = panelBrand.trim()
+  if (!brand) return "Adani"
+  if (brand === "Premier" || brand.startsWith("Premier")) return "Premier Energies"
+  if (brand === "Adani Topcon") return "Adani Topcon"
+  if (brand === "Tata") return "Tata"
+  if (DCR_PRICING_PANEL_TYPES.includes(brand as (typeof DCR_PRICING_PANEL_TYPES)[number])) return brand
+  if (brand.toLowerCase().includes("topcon") && brand.toLowerCase().includes("adani")) return "Adani Topcon"
+  if (brand.toLowerCase().includes("premier")) return "Premier Energies"
+  if (brand === "Waaree") return "Waaree"
+  return "Adani"
+}
+
+/** Default panel watt label per DCR pricing column (browse-config fallback). */
+export function dcrPanelSizeForPricingType(panelType: string): string {
+  switch (panelType) {
+    case "Adani Topcon":
+      return "620W"
+    case "Waaree":
+      return "540W"
+    case "Premier Energies":
+    case "Premier":
+      return "610W"
+    case "Tata":
+      return DCR_AS_PER_THE_SET
+    default:
+      return "555W"
+  }
+}
+
+/** Panel brand stored on quotation when a DCR package column is selected. */
+export function dcrFormPanelBrandForPricingType(panelType: string): string {
+  if (panelType === "Adani Topcon") return "Adani"
+  if (panelType === "Premier Energies" || panelType === "Premier") return "Premier Energies"
+  return panelType
+}
 
 // NON DCR System Pricing (Without Subsidy - Adani and Waaree panels separated)
 export const nonDcrPricing: SystemPricing[] = [
@@ -922,25 +1013,32 @@ export function getDcrPrice(
   // Use provided pricing data, API data, or fallback to hardcoded
   const data = pricingData || getPricingData()
   const pricingTable = data.dcr || dcrPricing
-  
-  // Use panel brand directly (Adani, Waaree, or Tata)
-  // If brand is not in pricing table, try to find closest match
-  let panelType = panelBrand
-  
-  // Map panel brands to pricing table types
-  if (panelBrand !== "Tata" && panelBrand !== "Adani" && panelBrand !== "Waaree") {
-    // Default to Adani for unknown brands (legacy support)
-    panelType = "Adani"
-  }
-  
-  const pricing = pricingTable.find(
+  const panelType = resolveDcrPricingPanelType(panelBrand)
+
+  let pricing = pricingTable.find(
     (p) =>
       p.systemSize === systemSize &&
       p.phase === phase &&
       p.inverterSize === inverterSize &&
-      p.panelType === panelType
+      p.panelType === panelType,
   )
-  
+
+  if (!pricing && panelType === "Tata") {
+    pricing = pricingTable.find(
+      (p) => p.systemSize === systemSize && p.phase === phase && p.panelType === "Tata",
+    )
+  }
+
+  const inv = inverterSize.trim().toLowerCase()
+  if (
+    !pricing &&
+    (inv === DCR_AS_PER_THE_SET.toLowerCase() || inv === "as per set" || inv === "as per the set")
+  ) {
+    pricing = pricingTable.find(
+      (p) => p.systemSize === systemSize && p.phase === phase && p.panelType === panelType,
+    )
+  }
+
   return pricing ? pricing.price : null
 }
 
@@ -1079,23 +1177,156 @@ export function determinePhase(
   return "1-Phase"
 }
 
+/** Parse panel label (e.g. `550W`, `540W-620W`) to watts for one panel. */
+export function parsePanelSizeWatts(panelSize: string | number | undefined | null): number {
+  if (panelSize === null || panelSize === undefined) return 0
+  if (typeof panelSize === "number" && panelSize > 0) return panelSize
+
+  const text = String(panelSize).trim()
+  if (!text) return 0
+
+  const rangeMatch = text.match(/(\d+(?:\.\d+)?)\s*w?\s*[-–—]\s*(\d+(?:\.\d+)?)\s*w?/i)
+  if (rangeMatch) {
+    const low = Number.parseFloat(rangeMatch[1])
+    const high = Number.parseFloat(rangeMatch[2])
+    if (!Number.isNaN(low) && !Number.isNaN(high) && low > 0 && high > 0) {
+      return (low + high) / 2
+    }
+  }
+
+  const wattMatch = text.match(/(\d+(?:\.\d+)?)\s*w/i)
+  if (wattMatch) {
+    const w = Number.parseFloat(wattMatch[1])
+    if (!Number.isNaN(w) && w > 0) return w
+  }
+
+  const digitsOnly = text.replace(/[^0-9.]/g, "")
+  if (digitsOnly.includes(".")) {
+    const w = Number.parseFloat(digitsOnly)
+    if (!Number.isNaN(w) && w > 0) return w
+  }
+
+  const asInt = Number.parseInt(text.replace(/[^0-9]/g, ""), 10)
+  return Number.isNaN(asInt) || asInt <= 0 ? 0 : asInt
+}
+
+/** Common panel wattages tried when auto-filling quantity from a package kW size. */
+export const COMMON_PANEL_SIZES_WATTS = [
+  620, 600, 590, 580, 570, 560, 555, 550, 545, 540, 530, 520, 510, 500, 490, 480, 470,
+  460, 455, 450, 445, 440, 430, 420, 410, 400, 390, 380, 370, 360, 350, 340, 330, 320,
+] as const
+
+/** Max watts above nominal package kW before reducing panel count (e.g. 8kW → up to 8400W). */
+export const MAX_PACKAGE_OVERSHOOT_WATTS = 400
+
+export function maxAllowedWattsForNominalSystemKw(systemKw: number): number {
+  if (!Number.isFinite(systemKw) || systemKw <= 0) return 0
+  return systemKw * 1000 + MAX_PACKAGE_OVERSHOOT_WATTS
+}
+
+export function isPanelCapacityWithinPackageTolerance(
+  systemKw: number,
+  panelSize: string | number | undefined | null,
+  panelQuantity: number,
+): boolean {
+  const panelW = parsePanelSizeWatts(panelSize)
+  if (panelW <= 0 || panelQuantity <= 0) return false
+  return panelW * panelQuantity <= maxAllowedWattsForNominalSystemKw(systemKw) + 0.5
+}
+
+/**
+ * Panel count for a pricing slab: actual DC watts may exceed nominal by at most {@link MAX_PACKAGE_OVERSHOOT_WATTS}.
+ * Example: 8kW + 610W → 13 panels (7930W), not 14 (8540W).
+ */
+export function panelQuantityForNominalSystemKw(
+  systemKw: number,
+  panelSize: string | number | undefined | null,
+): number {
+  const panelW = parsePanelSizeWatts(panelSize)
+  if (!Number.isFinite(systemKw) || systemKw <= 0 || panelW <= 0) return 0
+  const maxAllowedW = maxAllowedWattsForNominalSystemKw(systemKw)
+  const qty = Math.floor(maxAllowedW / panelW)
+  return Math.max(1, qty)
+}
+
+/** Reduce quantity when it would exceed nominal + 400W (e.g. manual entry). */
+export function clampPanelQuantityToNominalSystemKw(
+  systemKw: number,
+  panelSize: string | number | undefined | null,
+  panelQuantity: number,
+): number {
+  const capped = panelQuantityForNominalSystemKw(systemKw, panelSize)
+  if (capped <= 0) return panelQuantity
+  return Math.min(Math.max(1, panelQuantity), capped)
+}
+
+export function actualSystemKwFromPanels(
+  panelSize: string | number | undefined | null,
+  panelQuantity: number,
+): number {
+  const panelW = parsePanelSizeWatts(panelSize)
+  if (panelW <= 0 || panelQuantity <= 0) return 0
+  return (panelW * panelQuantity) / 1000
+}
+
+/**
+ * Pick panel size + quantity: highest actual kW that stays within nominal + {@link MAX_PACKAGE_OVERSHOOT_WATTS}.
+ */
+export function bestPanelConfigWithinSystemKw(
+  targetSystemKw: number,
+  options?: {
+    panelSizesToTry?: readonly number[]
+    preferredPanelSize?: string | number
+  },
+): { panelSizeW: number; quantity: number; actualKw: number } {
+  const targetW = targetSystemKw * 1000
+  const maxAllowedW = maxAllowedWattsForNominalSystemKw(targetSystemKw)
+  if (!Number.isFinite(targetSystemKw) || targetSystemKw <= 0 || targetW <= 0) {
+    return { panelSizeW: 0, quantity: 0, actualKw: 0 }
+  }
+
+  let sizes: number[] = [...(options?.panelSizesToTry ?? COMMON_PANEL_SIZES_WATTS)]
+  const preferredW = options?.preferredPanelSize
+    ? parsePanelSizeWatts(options.preferredPanelSize)
+    : 0
+  if (preferredW > 0) {
+    sizes = [preferredW, ...sizes.filter((s) => s !== preferredW)]
+  }
+
+  let best = { panelSizeW: sizes[0] || 550, quantity: 1, actualKw: 0 }
+
+  for (const sizeW of sizes) {
+    if (sizeW <= 0) continue
+    const qty = panelQuantityForNominalSystemKw(targetSystemKw, sizeW)
+    const actualW = qty * sizeW
+    if (actualW > maxAllowedW + 0.5) continue
+    const actualKw = actualW / 1000
+    if (actualKw > best.actualKw) {
+      best = { panelSizeW: sizeW, quantity: qty, actualKw }
+    }
+  }
+
+  return best
+}
+
 // Helper function to calculate system size from panel configuration
 export function calculateSystemSize(
-  panelSize: string | undefined | null,
-  panelQuantity: number | undefined | null
+  panelSize: string | number | undefined | null,
+  panelQuantity: number | string | undefined | null
 ): string {
-  // Handle undefined/null values
-  if (!panelSize || !panelQuantity || panelQuantity <= 0) {
+  const qty =
+    typeof panelQuantity === "string"
+      ? Number.parseFloat(panelQuantity.replace(/,/g, ""))
+      : panelQuantity
+
+  if (qty === undefined || qty === null || Number.isNaN(qty) || qty <= 0) {
     return "0kW"
   }
-  
+
   try {
-    const sizeW = Number.parseInt(panelSize.replace("W", ""))
-    if (Number.isNaN(sizeW) || sizeW <= 0) {
-      return "0kW"
-    }
-    const totalW = sizeW * panelQuantity
-    const totalKw = totalW / 1000
+    const sizeW = parsePanelSizeWatts(panelSize)
+    if (sizeW <= 0) return "0kW"
+    const totalKw = (sizeW * qty) / 1000
     return `${totalKw}kW`
   } catch (error) {
     console.error("Error calculating system size:", error)
@@ -1401,6 +1632,21 @@ export function formatACDBOption(brand: string, phase: "1-Phase" | "3-Phase"): s
 // Helper function to format DCDB option for display
 export function formatDCDBOption(brand: string, phase: "1-Phase" | "3-Phase"): string {
   return `${brand} (${phase})`
+}
+
+/** Ensure ACDB/DCDB labels match the package phase (e.g. 3-Phase → Havells (3-Phase)). */
+export function acdbDcdbLabelsForPhase(
+  phase: "1-Phase" | "3-Phase",
+  acdb?: string,
+  dcdb?: string,
+  defaultBrand = "Havells",
+): { acdb: string; dcdb: string } {
+  const acdbParsed = acdb?.trim() ? parseACDBOption(acdb) : null
+  const dcdbParsed = dcdb?.trim() ? parseACDBOption(dcdb) : null
+  return {
+    acdb: formatACDBOption(acdbParsed?.brand || defaultBrand, phase),
+    dcdb: formatDCDBOption(dcdbParsed?.brand || defaultBrand, phase),
+  }
 }
 
 // Helper function to parse ACDB/DCDB option string

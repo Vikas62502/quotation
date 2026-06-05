@@ -1,4 +1,10 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
+import { DCR_AS_PER_THE_SET, panelQuantityForNominalSystemKw } from "@/lib/pricing-tables"
+import {
+  isAsPerTheSetLabel,
+  resolvePdfPanelRangeKey,
+  TATA_DCR_PANEL_RANGE_KEY,
+} from "@/lib/quotation-pdf-display"
 
 /** PDF-only flags — strip before catalog validation until backend ignores them (§X). */
 export function stripPdfDisplayFlags(products: ProductSelection): ProductSelection {
@@ -25,14 +31,207 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
   return stripped as ProductSelection
 }
 
+type PdfFlagRecord = ProductSelection & Record<string, unknown>
+
+function pdfRangeKeyValue(products: PdfFlagRecord, camel: string, snake: string): string | null {
+  const raw = products[camel] ?? products[snake]
+  if (raw === null || raw === undefined) return null
+  const trimmed = String(raw).trim()
+  return trimmed || null
+}
+
+/**
+ * PDF display flags for API persist — always includes keys so unchecked boxes clear stored values.
+ */
+export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlagRecord {
+  const record = products as PdfFlagRecord
+  const primary = pdfRangeKeyValue(record, "pdfPanelRangeKey", "pdf_panel_range_key")
+  const dcr = pdfRangeKeyValue(record, "pdfDcrPanelRangeKey", "pdf_dcr_panel_range_key")
+  const nonDcr = pdfRangeKeyValue(record, "pdfNonDcrPanelRangeKey", "pdf_non_dcr_panel_range_key")
+  const useLegacyRange = primary != null
+
+  return {
+    pdfPanelRangeKey: primary ?? "",
+    pdfDcrPanelRangeKey: dcr ?? "",
+    pdfNonDcrPanelRangeKey: nonDcr ?? "",
+    pdf_panel_range_key: primary,
+    pdf_dcr_panel_range_key: dcr,
+    pdf_non_dcr_panel_range_key: nonDcr,
+    pdfUsePanelSizeRange: useLegacyRange,
+    pdf_use_panel_size_range: useLegacyRange,
+    pdfUseInverterBrandOptions: false,
+    pdf_use_inverter_brand_options: false,
+  }
+}
+
+const CATALOG_TATA_REP_PANEL_SIZE = "530W"
+const CATALOG_DEFAULT_INVERTER_BRAND = "Vsole/Xwatt"
+const CATALOG_INVERTER_KW_OPTIONS = [3, 5, 6, 8, 10, 12, 15, 20, 25, 30] as const
+
+function parseNominalSystemKw(...sources: (string | undefined)[]): number {
+  for (const source of sources) {
+    const match = String(source ?? "").match(/([\d.]+)\s*kW/i)
+    if (!match) continue
+    const kw = Number.parseFloat(match[1])
+    if (!Number.isNaN(kw) && kw > 0) return kw
+  }
+  return 0
+}
+
+/** Map decimal Tata slab labels (3.1kW, 5.1kW) to integer kW the catalog accepts. */
+function normalizeStructureSizeForCatalog(size: string): string {
+  const kw = parseNominalSystemKw(size)
+  if (kw <= 0) return size
+  if (Math.abs(kw - 3.1) < 0.05) return "3kW"
+  if (Math.abs(kw - 5.1) < 0.05) return "5kW"
+  if (Number.isInteger(kw)) return `${kw}kW`
+  return `${Math.round(kw)}kW`
+}
+
+function nominalInverterSizeForCatalog(systemKw: number): string {
+  if (systemKw <= 0) return "5kW"
+  for (const kw of CATALOG_INVERTER_KW_OPTIONS) {
+    if (kw >= systemKw) return `${kw}kW`
+  }
+  return `${CATALOG_INVERTER_KW_OPTIONS[CATALOG_INVERTER_KW_OPTIONS.length - 1]}kW`
+}
+
+function normalizeAsPerSetCableSize(size: string | undefined): string | undefined {
+  if (!size?.trim()) return size
+  if (isAsPerTheSetLabel(size)) return "As per Set"
+  return size
+}
+
+/** Tata DCR package rows use “as per the set” — backend catalog still expects concrete SKUs. */
+export function isTataDcrPackageSet(products: ProductSelection): boolean {
+  const brand = (products.panelBrand || products.dcrPanelBrand || "").trim().toLowerCase()
+  if (brand !== "tata") return false
+  const record = products as ProductSelection & Record<string, unknown>
+  return (
+    isAsPerTheSetLabel(products.panelSize) ||
+    isAsPerTheSetLabel(products.dcrPanelSize) ||
+    resolvePdfPanelRangeKey(record, "primary") === TATA_DCR_PANEL_RANGE_KEY ||
+    Boolean(products.pdfPanelRangeKey === TATA_DCR_PANEL_RANGE_KEY)
+  )
+}
+
+/**
+ * Map DCR package-set fields to catalog-valid values for create/update APIs.
+ * PDF flags (applied separately) preserve Tata range / as-per-set display.
+ */
+export function toCatalogCompatibleProducts(products: ProductSelection): ProductSelection {
+  let next: ProductSelection = { ...products }
+
+  if (next.structureSize && /[\d.]+kW/i.test(next.structureSize)) {
+    const normalizedStructure = normalizeStructureSizeForCatalog(next.structureSize)
+    if (normalizedStructure !== next.structureSize) {
+      next = { ...next, structureSize: normalizedStructure }
+    }
+  }
+
+  next = {
+    ...next,
+    acCableSize: normalizeAsPerSetCableSize(next.acCableSize) ?? next.acCableSize,
+    dcCableSize: normalizeAsPerSetCableSize(next.dcCableSize) ?? next.dcCableSize,
+  }
+
+  if (!isTataDcrPackageSet(next)) return next
+
+  const systemKw = parseNominalSystemKw(next.structureSize, next.inverterSize)
+  const panelSize = CATALOG_TATA_REP_PANEL_SIZE
+  const panelQty =
+    (next.panelQuantity ?? 0) > 0
+      ? next.panelQuantity!
+      : systemKw > 0
+        ? Math.max(1, panelQuantityForNominalSystemKw(systemKw, panelSize))
+        : 1
+  const inverterSize = nominalInverterSizeForCatalog(systemKw)
+  const structureSize = normalizeStructureSizeForCatalog(
+    next.structureSize || (systemKw > 0 ? `${systemKw}kW` : "5kW"),
+  )
+
+  return {
+    ...next,
+    panelBrand: next.panelBrand || "Tata",
+    panelSize,
+    panelQuantity: panelQty,
+    dcrPanelBrand: next.panelBrand || "Tata",
+    dcrPanelSize: panelSize,
+    dcrPanelQuantity: panelQty,
+    inverterBrand: CATALOG_DEFAULT_INVERTER_BRAND,
+    inverterSize,
+    structureSize,
+  }
+}
+
+/** Keep dcrPanel* in sync with primary panel fields for DCR-only quotations. */
+export function syncDcrPanelFieldsFromPrimary(products: ProductSelection): ProductSelection {
+  if (products.systemType !== "dcr") return products
+  if (!products.panelBrand?.trim() && !products.panelSize?.trim()) return products
+  return {
+    ...products,
+    dcrPanelBrand: products.panelBrand || products.dcrPanelBrand || "",
+    dcrPanelSize: products.panelSize || products.dcrPanelSize || "",
+    dcrPanelQuantity:
+      products.panelQuantity != null && products.panelQuantity > 0
+        ? products.panelQuantity
+        : products.dcrPanelQuantity || 0,
+  }
+}
+
+/**
+ * Restore DCR package-set values in the form after API round-trip (catalog stores 530W / Vsole, etc.).
+ * PDF flags and “as per the set” labels are kept for UI + proposal PDF.
+ */
+export function restoreDcrPackageDisplayForForm(products: ProductSelection): ProductSelection {
+  if (String(products.systemType || "").toLowerCase() !== "dcr") return products
+
+  const record = products as ProductSelection & Record<string, unknown>
+  const brand = (products.panelBrand || products.dcrPanelBrand || "").trim().toLowerCase()
+  const isTata = brand === "tata"
+
+  const existingRange = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const pdfPanelRangeKey = existingRange || (isTata ? TATA_DCR_PANEL_RANGE_KEY : "")
+
+  const asPerSetPackage =
+    isTata ||
+    isAsPerTheSetLabel(products.panelSize) ||
+    isAsPerTheSetLabel(products.dcrPanelSize) ||
+    isAsPerTheSetLabel(products.inverterSize) ||
+    isAsPerTheSetLabel(products.inverterBrand) ||
+    Boolean(pdfPanelRangeKey)
+
+  if (!asPerSetPackage) return products
+
+  const panelBrand = products.panelBrand || products.dcrPanelBrand || (isTata ? "Tata" : "")
+
+  return {
+    ...products,
+    panelBrand,
+    pdfPanelRangeKey: pdfPanelRangeKey || products.pdfPanelRangeKey,
+    panelSize: DCR_AS_PER_THE_SET,
+    panelQuantity: 0,
+    dcrPanelBrand: products.dcrPanelBrand || panelBrand,
+    dcrPanelSize: DCR_AS_PER_THE_SET,
+    dcrPanelQuantity: 0,
+    inverterBrand: DCR_AS_PER_THE_SET,
+    inverterSize: DCR_AS_PER_THE_SET,
+  }
+}
+
+/** Merge catalog-safe products with explicit PDF flag clears for updateProducts. */
+export function productsWithPdfDisplayFlags(products: ProductSelection): ProductSelection {
+  const synced = syncDcrPanelFieldsFromPrimary(products)
+  const catalogSafe = toCatalogCompatibleProducts(synced)
+  return {
+    ...catalogSafe,
+    ...buildPdfDisplayFlagsPayload(synced),
+  } as ProductSelection
+}
+
+/** @deprecated use buildPdfDisplayFlagsPayload */
 export function extractPdfDisplayFlags(products: ProductSelection): Partial<ProductSelection> {
-  const flags: Partial<ProductSelection> = {}
-  if (products.pdfPanelRangeKey) flags.pdfPanelRangeKey = products.pdfPanelRangeKey
-  if (products.pdfDcrPanelRangeKey) flags.pdfDcrPanelRangeKey = products.pdfDcrPanelRangeKey
-  if (products.pdfNonDcrPanelRangeKey) flags.pdfNonDcrPanelRangeKey = products.pdfNonDcrPanelRangeKey
-  if (products.pdfUsePanelSizeRange) flags.pdfUsePanelSizeRange = true
-  if (products.pdfUseInverterBrandOptions) flags.pdfUseInverterBrandOptions = true
-  return flags
+  return buildPdfDisplayFlagsPayload(products)
 }
 
 export function hasPdfDisplayFlags(flags: Partial<ProductSelection>): boolean {

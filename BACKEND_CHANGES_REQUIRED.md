@@ -1243,6 +1243,11 @@ Validation:
 
 For all quotation list endpoints used by account-management/installer/baldev, include:
 - `pricing.subtotal` (or ensure flattened `subtotal` is present)
+- `dealerId` / `dealer_id` and nested `dealer` (required for account-management **Payment Management** dealer filter)
+- `products` (full JSON **or** joined `quotationProduct` / root panel fields — required for admin **Overview** dealer kW sums; see `lib/merge-quotation-products.ts`, `lib/quotation-system-kw.ts`)
+- `installments` / `paymentPhases` / `payment_phases` (array length used for exact installment-count filter on Payment Management)
+- `statusApprovedAt` / `approved_at` and `fileLoginAt` / `file_login_at` (account-management date-range filters)
+- `paymentType`, `paymentStatus`, `paymentMode`, `bankName`, `bankIfsc`, `remaining` / `remainingAmount`
 - `installationStatus`
 - `approvedAt` (admin approval date)
 - `installerApprovedAt` (installer approval date, when available)
@@ -1271,6 +1276,85 @@ For final confirmation (Admin + Baldev) document UI:
   - `inverterWarrantyFileUrl` / `inverter_warranty_file_url`
   - `workCompletionWarrantyFileUrl` / `work_completion_warranty_file_url`
 - These fields should be returned for quotations in `pending_baldev`, `baldev_approved`, and `completed` states.
+
+#### 6.5.1 Admin Overview — dealer capacity (kW sum)
+
+**Feature:** Admin **Overview → Dealers by Revenue** shows per-dealer **total kW** = sum of system size from **approved** quotations in the selected date range (default: this month). Uses the same list as revenue: `GET /admin/quotations`.
+
+**Frontend files:** `lib/merge-quotation-products.ts`, `lib/quotation-system-kw.ts`, `app/dashboard/admin/page.tsx`.
+
+**No new endpoint required** if list rows include product/size data (see below).
+
+##### Required on `GET /admin/quotations` (and any admin overview quotation source)
+
+| Field | Purpose |
+|-------|---------|
+| `status` | Must be `approved` for kW to count |
+| `statusApprovedAt` / `status_approved_at` / `approvedAt` | Approval-date filter |
+| `dealerId` / `dealer_id` | Group by dealer |
+| Product / size data | See product sources table below |
+| `pricing.subtotal` or `subtotal` | Revenue (already required) |
+
+##### Product data — at least one source must be populated
+
+Backend may return product fields in **any** of these shapes (frontend merges all):
+
+| Source | Example |
+|--------|---------|
+| `products` (object or JSON string) | `{ "systemType": "non-dcr", "panelSize": "550W", "panelQuantity": 12 }` |
+| `quotationProduct` (joined row) | `{ "panel_size": "550W", "panel_quantity": 12, "system_type": "non-dcr" }` |
+| `quotationProducts[]` | `[{ "panelSize": "550W", "panelQuantity": 12 }]` — first row used |
+| Flattened on quotation root | `panelSize`, `panel_size`, `panelQuantity`, `panel_quantity`, … |
+| Precomputed (recommended) | `systemKw`: `6.6` or `systemSize`: `"6.6kW"` |
+
+**Anti-pattern (causes 0 kW):** `products: {}` with no `quotationProduct` join and no panel fields on the row.
+
+##### Fields by system type (camelCase or snake_case)
+
+| `systemType` | Fields needed for kW |
+|--------------|----------------------|
+| `dcr` / `non-dcr` | `panelSize`, `panelQuantity` |
+| `dcr` (DCR panels only) | `dcrPanelSize`, `dcrPanelQuantity` |
+| `both` | `dcrPanelSize`, `dcrPanelQuantity`, `nonDcrPanelSize`, `nonDcrPanelQuantity` |
+| `customize` | `customPanels[]`: `{ size, quantity }` |
+| Fallback | `inverterSize`, `structureSize` |
+
+##### kW calculation (server should match if precomputing)
+
+```
+panelSizeW = integer from panelSize string (e.g. "550W" → 550)
+kW = (panelSizeW × panelQuantity) / 1000
+```
+
+For BOTH systems: `kW = dcrKw + nonDcrKw`.
+
+##### Recommended backend implementation
+
+1. On quotation create/update (products PATCH), compute and store `system_kw` on the quotation row.
+2. On list serializer, include **either** merged `products` **or** joined `quotationProduct` with panel fields.
+3. Return `systemKw` / `system_kw` on list rows when column exists (frontend uses it first).
+
+```sql
+ALTER TABLE quotations ADD COLUMN IF NOT EXISTS system_kw NUMERIC(10,2) NULL;
+```
+
+##### Optional — aggregated endpoint
+
+```
+GET /api/admin/overview/dealer-stats?range=this_month&dealerId=
+```
+
+Response per dealer: `dealerId`, `dealerName`, `approvedCount`, `revenue`, `totalKw`.
+
+##### Backend checklist
+
+- [ ] List rows include product/size data (not empty `products` only)
+- [ ] `quotationProduct` join included when products stored in separate table
+- [ ] `statusApprovedAt` set on approve
+- [ ] (Recommended) Persist and return `system_kw`
+- [ ] (Optional) `GET /admin/overview/dealer-stats`
+
+**See also:** `BACKEND_CHANGES_HANDOFF.md` §7.
 
 For installer listing UI requirements:
 - support oldest-first ordering (`sortBy=approvedAt&sortOrder=asc`) so old approved jobs appear first
@@ -3559,13 +3643,15 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 | `pdfDcrPanelRangeKey` | `both` — DCR panels |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR panels |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`.
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`.
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
 **Legacy booleans (read-only for old rows):** `pdfUsePanelSizeRange`, `pdf_use_panel_size_range`. **`pdfUseInverterBrandOptions` is deprecated** — UI no longer sends it; inverter text comes from `inverterBrand` dropdown (`Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`, or catalog brands).
 
 **Frontend flow:** `POST /api/quotations` strips PDF keys from `products` for validation; **`PATCH /api/quotations/{id}/products`** persists PDF keys immediately after create.
+
+**Clear on uncheck:** `buildPdfDisplayFlagsPayload()` sends empty string `""` (camelCase) and `null` (snake_case) for cleared keys. PATCH must **unset** stored `pdf*PanelRangeKey` values — not leave previous keys in JSONB.
 
 ### 2.2 Combined brand strings
 
@@ -3621,7 +3707,8 @@ Align server default from **5 days → 7 days** after `createdAt` if `validUntil
 
 ### Checklist
 
-- [ ] Persist `pdfPanelRangeKey`, `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey`
+- [ ] Persist `pdfPanelRangeKey`, `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey` (incl. `premier_600_625_bifacial_topcon`)
+- [ ] PATCH clears keys when body sends `""` / `null`
 - [ ] Support POST + PATCH products (PATCH after create)
 - [ ] Relax panel qty when range keys set
 - [ ] Allow combined inverter/meter brand strings

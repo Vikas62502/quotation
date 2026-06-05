@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ArrowLeft, Check, FileText, Download, Edit, AlertCircle } from "lucide-react"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
+import { formatPersonName } from "@/lib/name-display"
 import { buildQuotationProposalDocumentData } from "@/lib/quotation-proposal-document"
 import { exportProposalPagesToPdf } from "@/lib/quotation-pdf-export"
 import {
@@ -577,7 +578,8 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
           .replace(/\s+/g, "_")
           .replace(/[^a-zA-Z0-9_-]/g, "")
           .replace(/_+/g, "_")
-      const customerName = sanitizeSegment(`${customer.firstName}_${customer.lastName}`) || "Customer"
+      const customerName =
+        sanitizeSegment(formatPersonName(customer.firstName, customer.lastName, "Customer")) || "Customer"
       const safeQuotationId = sanitizeSegment(quotationId) || "Quotation"
     const filename = `Solar_Proposal_${customerName}_${safeQuotationId}.pdf`
 
@@ -788,7 +790,7 @@ const getStructureDetails = (products: ProductSelection) => {
               </div>
               <div className="bg-muted/50 rounded-xl p-3 sm:p-4 border border-border">
                 <p className="font-semibold text-sm sm:text-base text-foreground">
-                  {customer.firstName} {customer.lastName}
+                  {formatPersonName(customer.firstName, customer.lastName, "—")}
                 </p>
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.mobile}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.email}</p>

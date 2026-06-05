@@ -20,6 +20,33 @@ interface RequestOptions {
   body?: any
   headers?: Record<string, string>
   requiresAuth?: boolean
+  /** Skip loud console.error for expected failures (optional endpoints, sign-out races). */
+  suppressErrorLog?: boolean
+}
+
+let apiSignOutInProgress = false
+
+/** Set before clearing tokens so in-flight requests do not spam the console on logout. */
+export function markApiSignOutInProgress(): void {
+  apiSignOutInProgress = true
+}
+
+export function clearApiSignOutInProgress(): void {
+  apiSignOutInProgress = false
+}
+
+function shouldQuietApiLog(
+  options: RequestOptions,
+  requiresAuth: boolean,
+  status?: number,
+  errorCode?: string,
+  errorMessage?: string,
+): boolean {
+  if (options.suppressErrorLog) return true
+  if (typeof window !== "undefined" && apiSignOutInProgress) return true
+  const signedOut = typeof window !== "undefined" && requiresAuth && !getAuthToken()
+  if (signedOut) return true
+  return isApiAuthFailure(status, errorCode, errorMessage)
 }
 
 class ApiError extends Error {
@@ -62,6 +89,7 @@ const getRefreshToken = (): string | null => {
 // Save auth tokens
 const saveAuthTokens = (token: string, refreshToken?: string) => {
   if (typeof window === "undefined") return
+  clearApiSignOutInProgress()
   localStorage.setItem("authToken", token)
   if (refreshToken) {
     localStorage.setItem("refreshToken", refreshToken)
@@ -73,6 +101,33 @@ const clearAuthTokens = () => {
   if (typeof window === "undefined") return
   localStorage.removeItem("authToken")
   localStorage.removeItem("refreshToken")
+}
+
+/** True for 401/403 and auth error codes/messages (including after logout). */
+export function isApiAuthFailure(
+  status: number | undefined,
+  errorCode: string | undefined,
+  errorMessage: string | undefined,
+): boolean {
+  const code = String(errorCode || "").toUpperCase()
+  const msg = String(errorMessage || "").toLowerCase()
+  if (status === 401 || status === 403) return true
+  if (code === "HTTP_401" || code === "HTTP_403") return true
+  if (code.startsWith("AUTH_")) return true
+  if (
+    msg.includes("not authenticated") ||
+    msg.includes("unauthorized") ||
+    msg.includes("session expired") ||
+    msg.includes("invalid token") ||
+    msg.includes("token expired") ||
+    msg.includes("please login") ||
+    msg.includes("access denied") ||
+    msg.includes("authentication required") ||
+    msg.includes("jwt expired")
+  ) {
+    return true
+  }
+  return false
 }
 
 /** Prefer `data`; if absent, return other top-level fields (e.g. `uploads`) for legacy backends. */
@@ -113,9 +168,8 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
       requestHeaders.Authorization = `Bearer ${token}`
       console.log('[API] Auth token added (length):', token.length)
     } else {
-      console.warn('[API] WARNING: Auth required but no token found')
-      // Don't throw error here - let the backend return 401 so we can handle it properly
-      // This allows the error handling flow to work correctly
+      console.debug("[API] Skipped — auth required but no token (signed out?)", { endpoint, method })
+      throw new ApiError("Unauthorized. Please login again.", "AUTH_003")
     }
   } else {
     console.log('[API] Auth not required for this request')
@@ -190,7 +244,13 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
       // For non-JSON error responses, extract text if possible
       console.log('[API] Non-JSON error response, extracting text...')
       const errorText = await response.text().catch(() => response.statusText)
-      console.error('[API] Non-JSON error:', errorText)
+      if (
+        shouldQuietApiLog(options, requiresAuth, response.status, `HTTP_${response.status}`, errorText)
+      ) {
+        console.debug("[API] Non-JSON error (quiet):", { endpoint, method, status: response.status, errorText })
+      } else {
+        console.error("[API] Non-JSON error:", errorText)
+      }
       throw new ApiError(
         errorText || `HTTP ${response.status}: ${response.statusText}`,
         `HTTP_${response.status}`
@@ -213,15 +273,24 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
       const errorMessage = data.error?.message || `HTTP ${response.status}: ${response.statusText}` || "An error occurred"
       const errorCode = data.error?.code || (response.status === 401 ? "AUTH_001" : `HTTP_${response.status}`) || "API_ERROR"
       const errorDetails = data.error?.details || undefined
-      const isUnauthorized =
-        response.status === 401 ||
-        errorCode === "AUTH_001" ||
-        errorCode === "AUTH_003" ||
-        errorCode === "HTTP_401"
+      const isUnauthorized = isApiAuthFailure(response.status, errorCode, errorMessage)
+      const quietLog = shouldQuietApiLog(
+        options,
+        requiresAuth,
+        response.status,
+        errorCode,
+        errorMessage,
+      )
 
-      // Expected after logout / expired session — avoid scary console noise during normal sign-out.
-      if (isUnauthorized) {
-        console.debug("[API] Unauthorized", { endpoint, method, errorMessage, errorCode })
+      // Expected after logout / expired session / optional endpoints — avoid scary console noise.
+      if (quietLog) {
+        console.debug("[API] Request failed (quiet)", {
+          endpoint,
+          method,
+          errorMessage,
+          errorCode,
+          status: response.status,
+        })
       } else {
         console.error("[API] ===== API ERROR DETECTED =====")
         // Log for debugging
@@ -252,8 +321,8 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
         }
       }
 
-      // Special logging for quotation creation errors (skip noise for auth failures)
-      if (!isUnauthorized && endpoint.includes("/quotations") && method === "POST") {
+      // Special logging for quotation creation errors (skip noise for quiet failures)
+      if (!quietLog && endpoint.includes("/quotations") && method === "POST") {
         console.error("[API] QUOTATION CREATION ERROR DETAILS:")
         if (errorDetails && Array.isArray(errorDetails)) {
           errorDetails.forEach((detail: any, index: number) => {
@@ -272,7 +341,7 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
           hasFinalAmount: body && typeof body === "object" ? "finalAmount" in body : false,
         })
       }
-      if (!isUnauthorized) {
+      if (!quietLog) {
         console.error("[API] =================================")
       }
 
@@ -327,6 +396,28 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
     console.log('[API] ========================================')
     return unwrapApiResponseBody<T>(data)
   } catch (error) {
+    const quietLog =
+      options.suppressErrorLog ||
+      apiSignOutInProgress ||
+      (typeof window !== "undefined" && requiresAuth && !getAuthToken()) ||
+      (error instanceof ApiError &&
+        isApiAuthFailure(undefined, error.code, error.message))
+
+    if (quietLog) {
+      console.debug("[API] Request failed (quiet, catch):", {
+        endpoint,
+        method,
+        ...(error instanceof ApiError
+          ? { code: error.code, message: error.message }
+          : { message: error instanceof Error ? error.message : String(error) }),
+      })
+      if (error instanceof ApiError) throw error
+      if (typeof window !== "undefined" && requiresAuth && !getAuthToken()) {
+        throw new ApiError("Unauthorized. Please login again.", "AUTH_003")
+      }
+      throw error
+    }
+
     console.error('[API] ===== EXCEPTION CAUGHT =====')
     console.error('[API] Error type:', error instanceof Error ? error.constructor.name : typeof error)
     console.error('[API] Error message:', error instanceof Error ? error.message : String(error))
@@ -776,6 +867,7 @@ export const api = {
       return apiRequest("/quotations/pricing-tables", {
         method: "GET",
         requiresAuth: true,
+        suppressErrorLog: true,
       })
     },
 
@@ -1986,6 +2078,22 @@ export const api = {
         }
         const query = queryParams.toString()
         return apiRequest(`/admin/quotations${query ? `?${query}` : ""}`)
+      },
+
+      /** Full quotation row (products / quotationProduct join). Tries admin route first. */
+      getById: async (quotationId: string) => {
+        const id = String(quotationId || "").trim()
+        if (!id) throw new Error("Quotation id is required")
+        const endpoints = [`/admin/quotations/${id}`, `/quotations/${id}`]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+          }
+        }
+        throw lastError
       },
 
       updateStatus: async (

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -22,6 +22,8 @@ import {
 } from "lucide-react"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
+import { useIncrementalList } from "@/hooks/use-incremental-list"
+import { IncrementalListSentinel } from "@/components/incremental-list-sentinel"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -70,6 +72,7 @@ interface CustomerPayment {
   customerMobile: string
   dealerName?: string
   dealerMobile?: string
+  dealerId?: string
   /** Payment cap: quotation subtotal / set price (not installment sum). */
   subtotal: number
   totalAmount: number
@@ -516,6 +519,7 @@ export default function AccountManagementPage() {
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
   const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
+  const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
   /** Approve / file-login filters as calendar ranges (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [fileLoginDateRange, setFileLoginDateRange] = useState<DateRange | undefined>()
@@ -894,6 +898,7 @@ export default function AccountManagementPage() {
             ? formatPersonName(q.dealer.firstName, q.dealer.lastName, "Unassigned")
             : "Unassigned",
           dealerMobile: q.dealer?.mobile || "",
+          dealerId: String(q.dealerId || q.dealer?.id || "").trim() || undefined,
           subtotal,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
@@ -921,34 +926,25 @@ export default function AccountManagementPage() {
     }
   }, [quotations, useApi])
 
-  // Show loading state while checking authentication
-  if (isInitialLoad) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <FileText className="w-8 h-8 text-primary opacity-50" />
-          </div>
-          <p className="text-muted-foreground">Loading Account Management...</p>
-        </div>
-      </div>
-    )
-  }
+  const paymentDealerOptions = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const payment of customerPayments) {
+      const id = payment.dealerId?.trim()
+      const name = payment.dealerName?.trim() || "Unassigned"
+      if (!id) {
+        byId.set("__unassigned__", "Unassigned")
+      } else {
+        byId.set(id, name)
+      }
+    }
+    return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: "base" }))
+  }, [customerPayments])
 
-  // Don't render if not authenticated or not allowed (account-management or admin)
-  const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
-  if (!isAuthenticated || !canAccess) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-            <FileText className="w-8 h-8 opacity-50" />
-          </div>
-          <p className="text-muted-foreground">Redirecting to login...</p>
-        </div>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (paymentDealerFilter === "all") return
+    if (paymentDealerOptions.some(([id]) => id === paymentDealerFilter)) return
+    setPaymentDealerFilter("all")
+  }, [paymentDealerFilter, paymentDealerOptions])
 
   const filteredQuotations = quotations.filter(
     (q) =>
@@ -1004,33 +1000,106 @@ export default function AccountManagementPage() {
     return true
   }
 
-  const filteredCustomerPayments = customerPayments.filter((payment) => {
-    const matchesSearch =
-      payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
-      payment.customerMobile.includes(paymentSearchTerm) ||
-      payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
-    const paymentTypeValue = getPaymentTypeValue(payment)
-    const matchesPaymentType =
-      paymentTypeFilter === "all" ||
-      (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
-    const paymentStatusValue = payment.paymentStatus || "pending"
-    const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
-    const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
-    const fileLoginYmd = toLocalCalendarDateString(payment.fileLoginAt)
-    const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
-    const fileLoginBounds = paymentDateRangeToFilterStrings(fileLoginDateRange)
-    const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
-    const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
-    const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
-    return (
-      matchesSearch &&
-      matchesPaymentType &&
-      matchesPaymentStatus &&
-      matchesInstallment &&
-      matchesApproveDateRange &&
-      matchesFileLoginDateRange
-    )
+  const filteredCustomerPayments = useMemo(
+    () =>
+      customerPayments.filter((payment) => {
+        const matchesSearch =
+          payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
+          payment.customerMobile.includes(paymentSearchTerm) ||
+          payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
+        const paymentTypeValue = getPaymentTypeValue(payment)
+        const matchesPaymentType =
+          paymentTypeFilter === "all" ||
+          (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
+        const paymentStatusValue = payment.paymentStatus || "pending"
+        const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
+        const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
+        const fileLoginYmd = toLocalCalendarDateString(payment.fileLoginAt)
+        const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
+        const fileLoginBounds = paymentDateRangeToFilterStrings(fileLoginDateRange)
+        const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
+        const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
+        const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
+        const matchesDealer =
+          paymentDealerFilter === "all" ||
+          (paymentDealerFilter === "__unassigned__"
+            ? !payment.dealerId
+            : payment.dealerId === paymentDealerFilter)
+        return (
+          matchesSearch &&
+          matchesPaymentType &&
+          matchesPaymentStatus &&
+          matchesInstallment &&
+          matchesDealer &&
+          matchesApproveDateRange &&
+          matchesFileLoginDateRange
+        )
+      }),
+    [
+      customerPayments,
+      paymentSearchTerm,
+      paymentTypeFilter,
+      paymentStatusFilter,
+      paymentInstallmentFilter,
+      paymentDealerFilter,
+      approveDateRange,
+      fileLoginDateRange,
+    ],
+  )
+
+  const paymentListResetKey = [
+    paymentSearchTerm,
+    paymentTypeFilter,
+    paymentStatusFilter,
+    paymentInstallmentFilter,
+    paymentDealerFilter,
+    approveDateRange?.from?.toISOString() ?? "",
+    approveDateRange?.to?.toISOString() ?? "",
+    fileLoginDateRange?.from?.toISOString() ?? "",
+    fileLoginDateRange?.to?.toISOString() ?? "",
+    filteredCustomerPayments.length,
+  ].join("|")
+
+  const {
+    visibleItems: visibleCustomerPayments,
+    hasMore: hasMoreCustomerPayments,
+    loadMore: loadMoreCustomerPayments,
+    sentinelRef: paymentListSentinelRef,
+    visibleCount: visiblePaymentCount,
+    totalCount: filteredPaymentTotal,
+  } = useIncrementalList(filteredCustomerPayments, {
+    batchSize: 15,
+    resetKey: paymentListResetKey,
+    enabled: activeTab === "payments",
   })
+
+  // Show loading state while checking authentication (after all hooks)
+  if (isInitialLoad) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <FileText className="w-8 h-8 text-primary opacity-50" />
+          </div>
+          <p className="text-muted-foreground">Loading Account Management...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
+  if (!isAuthenticated || !canAccess) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+            <FileText className="w-8 h-8 opacity-50" />
+          </div>
+          <p className="text-muted-foreground">Redirecting to login...</p>
+        </div>
+      </div>
+    )
+  }
 
   const downloadFilteredPaymentsExcel = () => {
     if (filteredCustomerPayments.length === 0) {
@@ -1817,7 +1886,7 @@ export default function AccountManagementPage() {
                   </div>
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 w-full lg:flex-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5 w-full lg:flex-1">
                     <div className="w-full sm:min-w-30">
                       <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
                         <SelectTrigger className="h-9 text-sm">
@@ -1863,6 +1932,21 @@ export default function AccountManagementPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="w-full sm:min-w-36">
+                      <Select value={paymentDealerFilter} onValueChange={setPaymentDealerFilter}>
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="Filter by dealer" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All Dealers</SelectItem>
+                          {paymentDealerOptions.map(([id, name]) => (
+                            <SelectItem key={id} value={id}>
+                              {name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <Button
                     type="button"
@@ -1882,7 +1966,8 @@ export default function AccountManagementPage() {
                       approveDateRange?.to ||
                       fileLoginDateRange?.from ||
                       fileLoginDateRange?.to ||
-                      paymentInstallmentFilter !== "all") && (
+                      paymentInstallmentFilter !== "all" ||
+                      paymentDealerFilter !== "all") && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -1892,9 +1977,10 @@ export default function AccountManagementPage() {
                           setApproveDateRange(undefined)
                           setFileLoginDateRange(undefined)
                           setPaymentInstallmentFilter("all")
+                          setPaymentDealerFilter("all")
                         }}
                       >
-                        Clear date & installment filters
+                        Clear filters
                       </Button>
                     )}
                   </div>
@@ -1933,13 +2019,13 @@ export default function AccountManagementPage() {
                     <p className="text-sm mt-1">Approved quotations will appear here for payment management</p>
                   </div>
                 ) : (
-                  <div className="space-y-2.5">
+                  <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-2.5 overflow-y-auto overscroll-y-contain pr-1">
                     {filteredCustomerPayments.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-md">
                         No rows match current filters.
                       </div>
                     ) : (
-                      filteredCustomerPayments.map((payment) => {
+                      visibleCustomerPayments.map((payment) => {
                         const paidAmount = getTotalPaidPhases(payment.phases)
                         const remainingAmount = getDisplayRemaining(payment)
                         const isZeroPaid = paidAmount <= 0
@@ -2098,6 +2184,15 @@ export default function AccountManagementPage() {
                         )
                       })
                     )}
+                    {filteredCustomerPayments.length > 0 ? (
+                      <IncrementalListSentinel
+                        sentinelRef={paymentListSentinelRef}
+                        visibleCount={visiblePaymentCount}
+                        totalCount={filteredPaymentTotal}
+                        hasMore={hasMoreCustomerPayments}
+                        onLoadMore={loadMoreCustomerPayments}
+                      />
+                    ) : null}
                   </div>
                 )}
               </CardContent>

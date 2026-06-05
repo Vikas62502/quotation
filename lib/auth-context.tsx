@@ -1,7 +1,13 @@
 "use client"
 
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
-import { api, ApiError } from "./api"
+import {
+  api,
+  ApiError,
+  isApiAuthFailure,
+  markApiSignOutInProgress,
+  clearApiSignOutInProgress,
+} from "./api"
 import { readInstallationTeams } from "./installation-teams"
 import { disconnectRealtime, initRealtime } from "./realtime"
 
@@ -176,6 +182,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     initRealtime(token)
+  }, [isAuthenticated])
+
+  useEffect(() => {
+    if (isAuthenticated) clearApiSignOutInProgress()
   }, [isAuthenticated])
 
   useEffect(() => {
@@ -585,16 +595,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
+    markApiSignOutInProgress()
     disconnectRealtime()
 
-    if (useApi) {
-      try {
-        await api.auth.logout()
-      } catch (error) {
-        console.error("Logout error:", error)
-      }
-    }
-
+    // Stop dashboard effects from starting new authenticated fetches before tokens are cleared.
+    setIsAuthenticated(false)
     setDealer(null)
     setVisitor(null)
     setAccountManager(null)
@@ -604,7 +609,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setBaldev(null)
     setHrUser(null)
     setRole(null)
-    setIsAuthenticated(false)
+
+    localStorage.removeItem("authToken")
+    localStorage.removeItem("refreshToken")
     localStorage.removeItem("dealer")
     localStorage.removeItem("visitor")
     localStorage.removeItem("accountManager")
@@ -614,9 +621,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("baldevUser")
     localStorage.removeItem("hrUser")
     localStorage.removeItem("userRole")
-    localStorage.removeItem("authToken")
-    localStorage.removeItem("refreshToken")
     localStorage.removeItem("user")
+
+    if (useApi) {
+      try {
+        await api.auth.logout()
+      } catch (error) {
+        if (!(error instanceof ApiError && isApiAuthFailure(undefined, error.code, error.message))) {
+          console.error("Logout error:", error)
+        }
+      }
+    }
   }
 
   const loginAccountManagement = async (username: string, password: string): Promise<boolean> => {

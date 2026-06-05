@@ -1,4 +1,5 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
+import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 import {
   calculateSystemSize,
   formatQuotationPhaseLabel,
@@ -10,6 +11,9 @@ import {
   getMountingStructurePdfBrandModel,
   getMountingStructurePdfSpecification,
   getPanelPdfRangeLabel,
+  isAsPerTheSetLabel,
+  normalizeInverterBrandForDisplay,
+  QUOTATION_AS_PER_THE_SET_LABEL,
   resolvePdfPanelRangeKey,
   type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
@@ -92,7 +96,7 @@ export function buildProposalDealerInfo(
   source?: ProposalDealerContactSource | null,
   company?: Pick<ProposalCompanyInfo, "name" | "phone" | "email">,
 ): ProposalDealerInfo {
-  const name = `${source?.firstName || ""} ${source?.lastName || ""}`.trim()
+  const name = formatPersonName(source?.firstName, source?.lastName, "")
   return {
     name: name || company?.name || "—",
     contact: source?.mobile?.trim() || company?.phone?.trim() || "—",
@@ -269,13 +273,14 @@ function getPanelGradeLabel(systemType: string | undefined): string {
 function resolvePrimaryPanelFields(products: ProductsLike) {
   const raw = products as Record<string, unknown>
   if (String(products.systemType || raw.system_type || "").toLowerCase() === "dcr") {
+    // Standard DCR flow saves panelSize/panelQuantity; prefer those over stale dcrPanel* copies.
     return {
-      size: pickNonEmpty(products.dcrPanelSize, raw.dcr_panel_size, products.panelSize, raw.panel_size),
+      size: pickNonEmpty(products.panelSize, raw.panel_size, products.dcrPanelSize, raw.dcr_panel_size),
       quantity:
-        products.dcrPanelQuantity ||
-        Number(raw.dcr_panel_quantity) ||
         products.panelQuantity ||
         Number(raw.panel_quantity) ||
+        products.dcrPanelQuantity ||
+        Number(raw.dcr_panel_quantity) ||
         0,
       brand: resolvePanelBrandForPdf(products),
     }
@@ -312,8 +317,11 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   const nonDcrRange = resolvePdfPanelRangeKey(p, "nonDcr")
 
   const buildPanelSpecText = (size: string, grade: string, rangeKey: PdfPanelRangeKey | null) => {
-    const rangeLabel = getPanelPdfRangeLabel(rangeKey)
-    if (rangeLabel) return `${rangeLabel} Mono PERC Bifacial Technology, ${grade}`
+    if (rangeKey) {
+      const rangeLabel = getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
+      return `${rangeLabel}, ${grade}`
+    }
+    if (isAsPerTheSetLabel(size)) return `${QUOTATION_AS_PER_THE_SET_LABEL}, ${grade}`
     return `${size || "—"} Mono PERC Bifacial Technology, ${grade}`
   }
 
@@ -327,7 +335,10 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   const panelQty = buildPanelQty(primary.quantity, primaryRange)
 
   const invSpec = `${p.inverterSize || "—"} ${p.inverterType || "String Inverter"}, ${formatQuotationPhaseLabel(resolveQuotationPhase(p))}, MPPT, IP65, Wi-Fi Monitoring`
-  const invBrand = p.inverterBrand || "Vsole/Xwatt/Saatvik"
+  const invBrand =
+    isAsPerTheSetLabel(p.inverterBrand) || isAsPerTheSetLabel(p.inverterSize)
+      ? QUOTATION_AS_PER_THE_SET_LABEL
+      : normalizeInverterBrandForDisplay(p.inverterBrand) || "Vsole/Xwatt"
   const dcrBrandForBoth = pickNonEmpty(
     p.dcrPanelBrand,
     (p as Record<string, unknown>).dcr_panel_brand,
@@ -658,7 +669,13 @@ export function buildQuotationProposalDocumentData(params: {
     quotationId: params.quotationId,
     quotationDate,
     validityDate,
-    customer: params.customer,
+    customer: {
+      ...params.customer,
+      firstName:
+        sanitizeNamePart(params.customer.firstName) ||
+        String(params.customer.firstName ?? "").trim(),
+      lastName: sanitizeNamePart(params.customer.lastName),
+    },
     products,
     company: params.company,
     dealer: buildProposalDealerInfo(params.dealer, params.company),

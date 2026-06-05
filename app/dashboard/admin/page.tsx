@@ -42,17 +42,24 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
+import { api, ApiError, apiErrorToUserMessage, getAuthToken, isApiAuthFailure } from "@/lib/api"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
+import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
 import { getJourneyDateRangeBounds, type JourneyDateRangeFilter } from "@/lib/customer-journey"
+import {
+  getQuotationApprovalDate,
+  matchesQuotationApprovalDateFilter,
+} from "@/lib/quotation-approval-date"
 import { InstallationCompletionPanel, type InstallationUploadedFile } from "@/components/installation-completion-panel"
-import { calculateSystemSize } from "@/lib/pricing-tables"
+import { calculateSystemSize, setPricingData } from "@/lib/pricing-tables"
 import { useToast } from "@/hooks/use-toast"
+import { useIncrementalList } from "@/hooks/use-incremental-list"
+import { IncrementalListSentinel } from "@/components/incremental-list-sentinel"
 import { formatPersonName } from "@/lib/name-display"
 import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
 import {
@@ -67,6 +74,14 @@ import {
   resolveCallingActionFields,
 } from "@/lib/calling-action-summary"
 import { filterActiveDealers } from "@/lib/active-dealers"
+import {
+  formatOverviewKw,
+  getQuotationSystemKw,
+  resolveQuotationProductsForKw,
+  sumQuotationsSystemKw,
+} from "@/lib/quotation-system-kw"
+import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
+import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
@@ -133,33 +148,13 @@ function parseDateTimeLocalToIso(value: string): string | null {
   return dt.toISOString()
 }
 
-function getQuotationApprovalDate(quotation: Quotation): Date | null {
-  const qAny = quotation as unknown as Record<string, unknown>
-  const approvedRaw =
-    quotation.statusApprovedAt ||
-    qAny.status_approved_at ||
-    qAny.approvedAt ||
-    qAny.approved_at ||
-    qAny.approvedDate ||
-    qAny.approved_date
-  if (approvedRaw) {
-    const d = new Date(String(approvedRaw))
-    if (!Number.isNaN(d.getTime())) return d
-  }
-  return null
-}
-
 function matchesOverviewTopDealersApprovalDate(
   quotation: Quotation,
   filter: JourneyDateRangeFilter,
   customFromYmd: string,
   customToYmd: string,
 ): boolean {
-  const approvedDate = getQuotationApprovalDate(quotation)
-  if (!approvedDate) return false
-  const bounds = getJourneyDateRangeBounds(filter, customFromYmd, customToYmd)
-  if (!bounds) return true
-  return approvedDate >= bounds.start && approvedDate <= bounds.end
+  return matchesQuotationApprovalDateFilter(quotation, filter, customFromYmd, customToYmd)
 }
 
 const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
@@ -555,8 +550,7 @@ export default function AdminPanelPage() {
   const [adminMeteringStageOverride, setAdminMeteringStageOverride] = useState<
     Record<string, "processing" | "approved" | "mco">
   >({})
-  const QUOTATIONS_PAGE_SIZE = 10
-  const [currentQuotationPage, setCurrentQuotationPage] = useState(1)
+  const QUOTATIONS_LIST_BATCH_SIZE = 12
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [documentsDialogOpen, setDocumentsDialogOpen] = useState(false)
@@ -934,6 +928,7 @@ export default function AdminPanelPage() {
 
   useEffect(() => {
     if (!isAuthenticated) {
+      adminLoadRequestRef.current += 1
       router.push("/login")
       return
     }
@@ -944,22 +939,13 @@ export default function AdminPanelPage() {
       return
     }
 
-    loadData()
-  }, [isAuthenticated, router, dealer])
+    const requestId = ++adminLoadRequestRef.current
+    void loadData(requestId)
 
-  useEffect(() => {
-    setCurrentQuotationPage(1)
-  }, [
-    searchTerm,
-    filterDealer,
-    filterMonth,
-    filterStatus,
-    filterFileLogin,
-    filterPaymentType,
-    filterBankDetails,
-    operationalTab,
-    operationalProgressTab,
-  ])
+    return () => {
+      adminLoadRequestRef.current += 1
+    }
+  }, [isAuthenticated, router, dealer])
 
   useEffect(() => {
     setOperationalProgressTab("all")
@@ -967,6 +953,12 @@ export default function AdminPanelPage() {
 
   const installDocEnrichAttemptedRef = useRef(new Set<string>())
   const installDocEnrichInFlightRef = useRef(new Set<string>())
+  const productKwEnrichAttemptedRef = useRef(new Set<string>())
+  const productKwEnrichInFlightRef = useRef(new Set<string>())
+  const productKwEnrichAttemptsRef = useRef(new Map<string, number>())
+  const productKwEnrichScopeRef = useRef("")
+  const PRODUCT_KW_ENRICH_MAX_ATTEMPTS = 3
+  const adminLoadRequestRef = useRef(0)
 
   useEffect(() => {
     if (!useApi) return
@@ -1019,6 +1011,94 @@ export default function AdminPanelPage() {
       cancelled = true
     }
   }, [useApi, operationalTab, operationalProgressTab, quotations])
+
+  // Admin list often omits panel fields; fetch detail for approved rows still at 0 kW (Dealers by Revenue).
+  useEffect(() => {
+    if (!useApi) return
+
+    const scopeKey = [
+      topDealersDateFilter,
+      topDealersDealerFilter,
+      topDealersCustomFromDate,
+      topDealersCustomToDate,
+    ].join("|")
+
+    if (productKwEnrichScopeRef.current !== scopeKey) {
+      productKwEnrichScopeRef.current = scopeKey
+      productKwEnrichAttemptedRef.current.clear()
+      productKwEnrichAttemptsRef.current.clear()
+    }
+
+    const candidates = quotations
+      .filter((q) => {
+        const id = String(q.id || "").trim()
+        if (!id) return false
+        if (String(q.status || "").toLowerCase() !== "approved") return false
+        if (
+          !matchesOverviewTopDealersApprovalDate(
+            q,
+            topDealersDateFilter,
+            topDealersCustomFromDate,
+            topDealersCustomToDate,
+          )
+        ) {
+          return false
+        }
+        if (topDealersDealerFilter !== "all" && q.dealerId !== topDealersDealerFilter) return false
+        if (productKwEnrichAttemptedRef.current.has(id) || productKwEnrichInFlightRef.current.has(id)) {
+          return false
+        }
+        const attempts = productKwEnrichAttemptsRef.current.get(id) || 0
+        if (attempts >= PRODUCT_KW_ENRICH_MAX_ATTEMPTS) return false
+        return getQuotationSystemKw(q) <= 0
+      })
+      .slice(0, 40)
+
+    if (candidates.length === 0) return
+
+    let cancelled = false
+    void (async () => {
+      for (const q of candidates) {
+        if (cancelled) break
+        const id = String(q.id || "").trim()
+        productKwEnrichInFlightRef.current.add(id)
+        try {
+          const detail = await api.admin.quotations.getById(id)
+          if (cancelled) break
+          setQuotations((prev) =>
+            prev.map((row) => {
+              if (row.id !== id) return row
+              const merged = applyQuotationDetailToRow(row, detail)
+              if (getQuotationSystemKw(merged) > 0) {
+                productKwEnrichAttemptedRef.current.add(id)
+              }
+              return merged
+            }),
+          )
+        } catch {
+          // Detail fetch failed — backend must return product fields on list/detail
+        } finally {
+          productKwEnrichInFlightRef.current.delete(id)
+          const attempts = (productKwEnrichAttemptsRef.current.get(id) || 0) + 1
+          productKwEnrichAttemptsRef.current.set(id, attempts)
+          if (attempts >= PRODUCT_KW_ENRICH_MAX_ATTEMPTS) {
+            productKwEnrichAttemptedRef.current.add(id)
+          }
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    useApi,
+    quotations,
+    topDealersDateFilter,
+    topDealersDealerFilter,
+    topDealersCustomFromDate,
+    topDealersCustomToDate,
+  ])
 
   // Fetch full quotation details when edit dialog opens
   useEffect(() => {
@@ -1094,9 +1174,23 @@ export default function AdminPanelPage() {
     return q.fileLoginStatus === "already_login" ? `Already logged in · ${pt}` : `Login now · ${pt}`
   }
 
-  const loadData = async () => {
+  const loadData = async (requestId?: number) => {
+    const loadId = requestId ?? adminLoadRequestRef.current
+    const isStale = () => loadId !== adminLoadRequestRef.current || !getAuthToken()
+
+    if (isStale()) return
+
     try {
       if (useApi) {
+        try {
+          const pricingTables = await api.quotations.getPricingTables()
+          setPricingData(pricingTables)
+        } catch {
+          // Uses hardcoded pricing fallback in getPricingData()
+        }
+
+        if (isStale()) return
+
         // Load quotations
         const quotationsResponse = await api.admin.quotations.getAll()
         setOptimisticFileLoginSelect({})
@@ -1150,6 +1244,7 @@ export default function AdminPanelPage() {
           const fileLoginStatusNorm =
             rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
           const queueExtra = installerQueueById[String(q.id || "").trim()]
+          const productSource = queueExtra ? { ...q, ...queueExtra } : q
           const mapped = {
             ...q,
             id: q.id,
@@ -1165,8 +1260,8 @@ export default function AdminPanelPage() {
                 pincode: "",
               },
             },
-            // Preserve all products data - don't default to { systemType: "N/A" } if products exists
-            products: q.products || {},
+            // Merge products from JSON, QuotationProduct row, installer queue, and flattened API fields
+            products: mergeQuotationProductSources(productSource),
             discount: q.discount || 0,
             subtotal: q.pricing?.subtotal ?? q.subtotal ?? q.totalAmount ?? 0,
             totalAmount: q.pricing?.totalAmount || 0,
@@ -1208,12 +1303,43 @@ export default function AdminPanelPage() {
         })
         const scheduledLocal = readInstallationScheduledMap()
         const teamAssignLocal = readTeamAssignments()
+        let localQuotationsBackup: Quotation[] = []
+        try {
+          localQuotationsBackup = JSON.parse(localStorage.getItem("quotations") || "[]")
+        } catch {
+          localQuotationsBackup = []
+        }
+        const localById = new Map(
+          localQuotationsBackup
+            .filter((row) => String(row?.id || "").trim())
+            .map((row) => [String(row.id), row]),
+        )
+
         setQuotations(
-          quotationsList.map((q: any) => ({
-            ...q,
-            installationScheduledAt: q.installationScheduledAt || scheduledLocal[q.id],
-            installationTeamId: q.installationTeamId || teamAssignLocal[q.id],
-          })),
+          quotationsList.map((q: any) => {
+            const localRow = localById.get(String(q.id || ""))
+            const withSchedule = {
+              ...q,
+              installationScheduledAt: q.installationScheduledAt || scheduledLocal[q.id],
+              installationTeamId: q.installationTeamId || teamAssignLocal[q.id],
+            }
+            if (!localRow) return withSchedule
+            const apiKw = getQuotationSystemKw(withSchedule)
+            const localSource = omitEmptyProductsField({
+              ...withSchedule,
+              products: localRow.products,
+              quotationProduct: (localRow as unknown as Record<string, unknown>).quotationProduct,
+            })
+            const localKw = getQuotationSystemKw({
+              ...withSchedule,
+              products: mergeQuotationProductSources(localSource),
+            })
+            if (localKw <= apiKw) return withSchedule
+            return {
+              ...withSchedule,
+              products: mergeQuotationProductSources(localSource),
+            }
+          }),
         )
 
         // Load dealers (all pages + include inactive) so UI count matches database.
@@ -1501,16 +1627,21 @@ export default function AdminPanelPage() {
         setCallingActionsUnavailable(false)
       }
     } catch (error) {
+      if (isStale()) return
+      if (error instanceof ApiError && isApiAuthFailure(undefined, error.code, error.message)) {
+        return
+      }
       console.error("Error loading admin data:", error)
     }
   }
 
   useEffect(() => {
     const socket = getRealtime()
-    if (!socket) return
+    if (!socket || !isAuthenticated) return
 
     const refetchAdminData = () => {
-      loadData()
+      if (!getAuthToken()) return
+      void loadData(++adminLoadRequestRef.current)
     }
 
     const onBackendMutation = (evt: any) => {
@@ -1530,7 +1661,7 @@ export default function AdminPanelPage() {
       socket.off("dealer:directory-updated", refetchAdminData)
       socket.off("backend:mutation", onBackendMutation)
     }
-  }, [activeTab])
+  }, [activeTab, isAuthenticated])
 
   useEffect(() => {
     if (callingRange !== "custom") return
@@ -1581,7 +1712,6 @@ export default function AdminPanelPage() {
       const dealerApprovedQuotations = quotations.filter(
         (q) =>
           q.dealerId === d.id &&
-          String(q.status || "").toLowerCase() === "approved" &&
           matchesOverviewTopDealersApprovalDate(
             q,
             topDealersDateFilter,
@@ -1590,10 +1720,20 @@ export default function AdminPanelPage() {
           ),
       )
       const dealerRevenue = dealerApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+      const totalKw = dealerApprovedQuotations.reduce(
+        (sum, q) =>
+          sum +
+          getQuotationSystemKw({
+            ...q,
+            products: mergeQuotationProductSources(q),
+          }),
+        0,
+      )
       return {
         dealer: d,
         quotationCount: dealerApprovedQuotations.length,
         revenue: dealerRevenue,
+        totalKw,
       }
     })
   }, [
@@ -1605,7 +1745,54 @@ export default function AdminPanelPage() {
     topDealersCustomToDate,
   ])
 
-  if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
+  const overviewPeriodApprovedQuotations = useMemo(
+    () =>
+      quotations.filter(
+        (q) =>
+          String(q.status || "").toLowerCase() === "approved" &&
+          matchesOverviewTopDealersApprovalDate(
+            q,
+            topDealersDateFilter,
+            topDealersCustomFromDate,
+            topDealersCustomToDate,
+          ) &&
+          (topDealersDealerFilter === "all" || q.dealerId === topDealersDealerFilter),
+      ),
+    [
+      quotations,
+      topDealersDateFilter,
+      topDealersDealerFilter,
+      topDealersCustomFromDate,
+      topDealersCustomToDate,
+    ],
+  )
+
+  const filteredOverviewTotalKw = useMemo(
+    () =>
+      overviewPeriodApprovedQuotations.reduce(
+        (sum, q) =>
+          sum +
+          getQuotationSystemKw({
+            ...q,
+            products: mergeQuotationProductSources(q),
+          }),
+        0,
+      ),
+    [overviewPeriodApprovedQuotations],
+  )
+
+  const filteredOverviewTotalRevenue = useMemo(
+    () => overviewPeriodApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0),
+    [overviewPeriodApprovedQuotations],
+  )
+
+  const dealersWithPeriodActivity = useMemo(
+    () =>
+      dealerStats.filter(
+        (stat) => stat.revenue > 0 || stat.totalKw > 0 || stat.quotationCount > 0,
+      ),
+    [dealerStats],
+  )
 
   const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
 
@@ -1632,12 +1819,17 @@ export default function AdminPanelPage() {
   const approvedQuotations = quotations.filter((q) => q.status === "approved")
   const totalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
-  const currentMonth = new Date().getMonth()
-  const currentYear = new Date().getFullYear()
-  const isInCurrentCalendarMonth = (date: Date) =>
-    date.getMonth() === currentMonth && date.getFullYear() === currentYear
+  const thisMonthBounds = getJourneyDateRangeBounds("this_month", "", "")
+  const isInCurrentCalendarMonth = (date: Date) => {
+    if (!thisMonthBounds) return false
+    const t = date.getTime()
+    return t >= thisMonthBounds.start.getTime() && t <= thisMonthBounds.end.getTime()
+  }
 
-  const thisMonthAllQuotations = quotations.filter((q) => isInCurrentCalendarMonth(new Date(q.createdAt)))
+  const thisMonthAllQuotations = quotations.filter((q) => {
+    const created = new Date(q.createdAt)
+    return !Number.isNaN(created.getTime()) && isInCurrentCalendarMonth(created)
+  })
   const thisMonthApprovedQuotations = approvedQuotations.filter((q) => {
     const approvedDate = getQuotationApprovalDate(q)
     return approvedDate ? isInCurrentCalendarMonth(approvedDate) : false
@@ -1646,6 +1838,7 @@ export default function AdminPanelPage() {
     (sum, q) => sum + getQuotationDisplayAmount(q),
     0,
   )
+  const thisMonthTotalKw = sumQuotationsSystemKw(thisMonthApprovedQuotations)
   const thisMonthApprovedCustomers = new Set(
     thisMonthApprovedQuotations.map((q) => String(q.customer.mobile || "").trim()).filter(Boolean),
   ).size
@@ -1828,15 +2021,65 @@ export default function AdminPanelPage() {
     ? sortedQuotations.find((quotation) => quotation.id === adminMeteringQuotationId) || null
     : null
 
-  const quotationTotalPages = Math.max(1, Math.ceil(sortedQuotations.length / QUOTATIONS_PAGE_SIZE))
-  const currentPage = Math.min(Math.max(currentQuotationPage, 1), quotationTotalPages)
-  const paginatedQuotations = sortedQuotations.slice(
-    (currentPage - 1) * QUOTATIONS_PAGE_SIZE,
-    currentPage * QUOTATIONS_PAGE_SIZE,
-  )
-  const showingFrom =
-    sortedQuotations.length === 0 ? 0 : (currentPage - 1) * QUOTATIONS_PAGE_SIZE + 1
-  const showingTo = Math.min(sortedQuotations.length, currentPage * QUOTATIONS_PAGE_SIZE)
+  const activeQuotationList = useMemo((): Quotation[] => {
+    if (operationalTab === "installation") {
+      if (operationalProgressTab === "pending") return installationPendingQuotations
+      if (operationalProgressTab === "done") return installationApprovedQuotations
+      return sortedQuotations
+    }
+    if (operationalTab === "metering") {
+      if (operationalProgressTab === "pending") return meteringProcessingQuotations
+      if (operationalProgressTab === "done") return meteringApprovedQuotations
+      if (operationalProgressTab === "mco") return meteringMcoQuotations
+      return sortedQuotations
+    }
+    if (operationalTab === "confirmation") {
+      if (operationalProgressTab === "pending") return confirmationQueueQuotations
+      if (operationalProgressTab === "done") return confirmationFinalQuotations
+      return sortedQuotations
+    }
+    return sortedQuotations
+  }, [
+    operationalTab,
+    operationalProgressTab,
+    sortedQuotations,
+    installationPendingQuotations,
+    installationApprovedQuotations,
+    meteringProcessingQuotations,
+    meteringApprovedQuotations,
+    meteringMcoQuotations,
+    confirmationQueueQuotations,
+    confirmationFinalQuotations,
+  ])
+
+  const quotationListResetKey = [
+    operationalTab,
+    operationalProgressTab,
+    searchTerm,
+    filterDealer,
+    filterMonth,
+    filterStatus,
+    filterFileLogin,
+    filterPaymentType,
+    filterBankDetails,
+    activeQuotationList.length,
+  ].join("|")
+
+  const {
+    visibleItems: visibleQuotationList,
+    hasMore: hasMoreQuotationList,
+    loadMore: loadMoreQuotationList,
+    sentinelRef: quotationListSentinelRef,
+    visibleCount: visibleQuotationCount,
+    totalCount: activeQuotationListTotal,
+  } = useIncrementalList(activeQuotationList, {
+    batchSize: QUOTATIONS_LIST_BATCH_SIZE,
+    resetKey: quotationListResetKey,
+    enabled: activeTab === "quotations",
+  })
+
+  if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
+
   const activeQuotationFilterCount = [
     filterDealer,
     filterMonth,
@@ -3111,8 +3354,8 @@ export default function AdminPanelPage() {
 
   // Get system size display
   const getSystemSize = (quotation: Quotation): string => {
-    const products = quotation.products
-    if (!products) {
+    const products = resolveQuotationProductsForKw(quotation)
+    if (!products || Object.keys(products).length === 0) {
       return "N/A"
     }
 
@@ -3479,7 +3722,7 @@ export default function AdminPanelPage() {
                 <CardContent>
                   <div className="text-2xl font-bold">{formatOverviewRevenueLakh(thisMonthRevenue)}</div>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {thisMonthApprovedQuotations.length} approved this month
+                    {thisMonthApprovedQuotations.length} approved · {formatOverviewKw(thisMonthTotalKw)} capacity
                   </p>
                 </CardContent>
               </Card>
@@ -3513,8 +3756,20 @@ export default function AdminPanelPage() {
                 <div className="space-y-1">
                   <CardTitle>Dealers by Revenue</CardTitle>
                   <CardDescription>
-                    All active dealers ranked by approved quotation revenue (approval date). Defaults to this month.
+                    Ranked by revenue from quotations approved in the selected period (approval date only — not
+                    creation date). Defaults to this month.
                   </CardDescription>
+                  <p className="text-sm font-semibold text-foreground pt-1">
+                    Total revenue (filtered):{" "}
+                    <span className="text-primary">{formatOverviewRevenueLakh(filteredOverviewTotalRevenue)}</span>
+                    <span className="text-muted-foreground font-normal mx-2">·</span>
+                    Total capacity (filtered):{" "}
+                    <span className="text-primary">{formatOverviewKw(filteredOverviewTotalKw)}</span>
+                    <span className="text-muted-foreground font-normal text-xs ml-1">
+                      ({overviewPeriodApprovedQuotations.length} approved quotation
+                      {overviewPeriodApprovedQuotations.length === 1 ? "" : "s"})
+                    </span>
+                  </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Select
@@ -3570,39 +3825,51 @@ export default function AdminPanelPage() {
                   </div>
                 ) : null}
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-6">
+                <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
                 {dealerStats.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-6">
                     No active dealers match the selected filter.
                   </p>
+                ) : dealersWithPeriodActivity.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-lg">
+                    No approved quotations in this period for the selected dealers.
+                  </p>
                 ) : (
-                  <div
-                    className="native-scroll-list space-y-4 overflow-y-auto overscroll-y-contain pr-1"
-                    style={{
-                      maxHeight: `calc(${DEALERS_BY_REVENUE_VISIBLE_ROWS} * (5.5rem + 1rem) - 1rem)`,
-                    }}
-                  >
-                    {[...dealerStats]
-                      .sort((a, b) => b.revenue - a.revenue || b.quotationCount - a.quotationCount)
-                      .map((stat) => (
-                        <div
-                          key={stat.dealer.id}
-                          className="flex items-center justify-between p-4 border rounded-lg shrink-0"
-                        >
-                          <div>
-                            <p className="font-semibold">
-                              {stat.dealer.firstName} {stat.dealer.lastName}
-                            </p>
-                            <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-3">Dealer breakdown</p>
+                    <div
+                      className="native-scroll-list space-y-4 overflow-y-auto overscroll-y-contain pr-1"
+                      style={{
+                        maxHeight: `calc(${DEALERS_BY_REVENUE_VISIBLE_ROWS} * (5.5rem + 1rem) - 1rem)`,
+                      }}
+                    >
+                      {[...dealersWithPeriodActivity]
+                        .sort((a, b) => b.revenue - a.revenue || b.quotationCount - a.quotationCount)
+                        .map((stat) => (
+                          <div
+                            key={stat.dealer.id}
+                            className="flex items-center justify-between p-4 border rounded-lg shrink-0"
+                          >
+                            <div>
+                              <p className="font-semibold">
+                                {stat.dealer.firstName} {stat.dealer.lastName}
+                              </p>
+                              <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-semibold">{formatOverviewRevenueLakh(stat.revenue)}</p>
+                              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                                {formatOverviewKw(stat.totalKw)}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {stat.quotationCount} approved quotation
+                                {stat.quotationCount === 1 ? "" : "s"}
+                              </p>
+                            </div>
                           </div>
-                          <div className="text-right">
-                            <p className="font-semibold">{formatOverviewRevenueLakh(stat.revenue)}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {stat.quotationCount} approved quotation{stat.quotationCount === 1 ? "" : "s"}
-                            </p>
-                          </div>
-                        </div>
-                      ))}
+                        ))}
+                    </div>
                   </div>
                 )}
               </CardContent>
@@ -4058,22 +4325,14 @@ export default function AdminPanelPage() {
               <CardContent>
                 {operationalTab === "metering" ? (
                   (() => {
-                    const meteringList =
-                      operationalProgressTab === "pending"
-                        ? meteringProcessingQuotations
-                        : operationalProgressTab === "done"
-                          ? meteringApprovedQuotations
-                          : operationalProgressTab === "mco"
-                            ? meteringMcoQuotations
-                            : sortedQuotations
-                    return meteringList.length === 0 ? (
+                    return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                         <p>No metering records found</p>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {meteringList.map((quotation) => {
+                      <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                        {visibleQuotationList.map((quotation) => {
                           const qAny = quotation as unknown as Record<string, unknown>
                           const meteringStage = getAdminMeteringStage(quotation)
                           const approvedDate =
@@ -4165,25 +4424,26 @@ export default function AdminPanelPage() {
                             </Card>
                           )
                         })}
+                        <IncrementalListSentinel
+                          sentinelRef={quotationListSentinelRef}
+                          visibleCount={visibleQuotationCount}
+                          totalCount={activeQuotationListTotal}
+                          hasMore={hasMoreQuotationList}
+                          onLoadMore={loadMoreQuotationList}
+                        />
                       </div>
                     )
                   })()
                 ) : operationalTab === "confirmation" ? (
                   (() => {
-                    const confirmationList =
-                      operationalProgressTab === "pending"
-                        ? confirmationQueueQuotations
-                        : operationalProgressTab === "done"
-                          ? confirmationFinalQuotations
-                          : sortedQuotations
-                    return confirmationList.length === 0 ? (
+                    return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                         <p>No confirmation records found</p>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {confirmationList.map((quotation) => {
+                      <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                        {visibleQuotationList.map((quotation) => {
                           const confirmationStage = getAdminConfirmationStage(quotation)
                           const installerApprovedDate =
                             (quotation as any).installerApprovedAt ||
@@ -4326,25 +4586,26 @@ export default function AdminPanelPage() {
                             </Card>
                           )
                         })}
+                        <IncrementalListSentinel
+                          sentinelRef={quotationListSentinelRef}
+                          visibleCount={visibleQuotationCount}
+                          totalCount={activeQuotationListTotal}
+                          hasMore={hasMoreQuotationList}
+                          onLoadMore={loadMoreQuotationList}
+                        />
                       </div>
                     )
                   })()
                 ) : operationalTab === "installation" ? (
                   (() => {
-                    const installerList =
-                      operationalProgressTab === "pending"
-                        ? installationPendingQuotations
-                        : operationalProgressTab === "done"
-                          ? installationApprovedQuotations
-                          : sortedQuotations
-                    return installerList.length === 0 ? (
+                    return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                         <p>No installer records found</p>
                       </div>
                     ) : (
-                      <div className="space-y-3">
-                        {installerList.map((quotation) => {
+                      <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                        {visibleQuotationList.map((quotation) => {
                           const installerStatus = getInstallerQueueStatusForAdmin(quotation)
                           const qAny = quotation as any
                           const sentToInstallationAt =
@@ -4669,10 +4930,17 @@ export default function AdminPanelPage() {
                             </Card>
                           )
                         })}
+                        <IncrementalListSentinel
+                          sentinelRef={quotationListSentinelRef}
+                          visibleCount={visibleQuotationCount}
+                          totalCount={activeQuotationListTotal}
+                          hasMore={hasMoreQuotationList}
+                          onLoadMore={loadMoreQuotationList}
+                        />
                       </div>
                     )
                   })()
-                ) : sortedQuotations.length === 0 ? (
+                ) : activeQuotationList.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                     <p>No quotations found</p>
@@ -4680,8 +4948,8 @@ export default function AdminPanelPage() {
                 ) : (
                   <>
                     {/* Mobile Card View */}
-                    <div className="block md:hidden space-y-3">
-                      {paginatedQuotations.map((quotation) => (
+                    <div className="block md:hidden space-y-3 native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain pr-1">
+                      {visibleQuotationList.map((quotation) => (
                         <div
                           key={quotation.id}
                           className={`p-4 rounded-lg border-2 ${getStatusColor(quotation.status)}`}
@@ -4861,7 +5129,7 @@ export default function AdminPanelPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {paginatedQuotations.map((quotation) => (
+                          {visibleQuotationList.map((quotation) => (
                             <tr
                               key={quotation.id}
                               className={`border-b border-border last:border-0 transition-colors ${getStatusColor(quotation.status)}`}
@@ -5016,32 +5284,14 @@ export default function AdminPanelPage() {
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex flex-col gap-1 mt-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        Showing {showingFrom}–{showingTo} of {sortedQuotations.length} quotations
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={currentPage <= 1}
-                          onClick={() => setCurrentQuotationPage((prev) => Math.max(prev - 1, 1))}
-                        >
-                          Previous
-                        </Button>
-                        <span className="text-xs">
-                          Page {currentPage} of {quotationTotalPages}
-                        </span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          disabled={currentPage >= quotationTotalPages}
-                          onClick={() => setCurrentQuotationPage((prev) => Math.min(prev + 1, quotationTotalPages))}
-                        >
-                          Next
-                        </Button>
-                      </div>
-                    </div>
+                    <IncrementalListSentinel
+                      sentinelRef={quotationListSentinelRef}
+                      visibleCount={visibleQuotationCount}
+                      totalCount={activeQuotationListTotal}
+                      hasMore={hasMoreQuotationList}
+                      onLoadMore={loadMoreQuotationList}
+                      className="pt-4"
+                    />
                   </>
                 )}
               </CardContent>

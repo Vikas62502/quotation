@@ -6,6 +6,7 @@ import {
   getProposalConsentText,
   getProposalOfficeLocations,
 } from "@/lib/quotation-proposal-document"
+import { formatPersonName } from "@/lib/name-display"
 import { PROPOSAL_PDF_STYLES } from "@/lib/quotation-proposal-pdf-styles"
 
 type Props = {
@@ -99,7 +100,10 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
               <h3>■ Customer Details</h3>
               <ProposalFieldTable
                 rows={[
-                  { label: "Name:", value: `${customer.firstName} ${customer.lastName}`.trim() },
+                  {
+                    label: "Name:",
+                    value: formatPersonName(customer.firstName, customer.lastName, "—"),
+                  },
                   { label: "Phone:", value: customer.mobile },
                   { label: "Address:", value: customerAddress },
                   { label: "System Type:", value: systemTypeLabel },

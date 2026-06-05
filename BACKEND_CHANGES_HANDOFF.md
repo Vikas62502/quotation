@@ -113,7 +113,7 @@ Proposal PDF is **client-generated**; backend stores/returns `products` and opti
 | `pdfDcrPanelRangeKey` | `both` — DCR |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`.
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`.
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
@@ -121,7 +121,11 @@ Proposal PDF is **client-generated**; backend stores/returns `products` and opti
 
 **Save flow:** `POST` strips PDF keys → **`PATCH /api/quotations/{id}/products`** saves them.
 
-When a range key is set, PDF hides panel count; allow **qty 0 / omitted** on backend validation.
+**Uncheck / clear:** Frontend sends `pdfPanelRangeKey: ""` (and snake_case `null`) when a box is unchecked. Backend must **remove or null out** stored keys on PATCH — do not ignore empty strings or leave stale keys (otherwise PDF keeps old “As per the set” behaviour).
+
+When a range key is set, PDF shows panel spec as **“As per the set”** and inverter brand as **“As per the set”** when any range is active; allow **qty 0 / omitted** on backend validation.
+
+**Panel size on GET:** Prefer `panelSize` over legacy `dcrPanelSize` when both exist for DCR quotations (frontend syncs on save; avoid returning conflicting duplicates).
 
 ### 2.2 Combined brand strings (if whitelisted)
 
@@ -167,13 +171,18 @@ Use PDF keys in pricing/catalog validation. Do not strip PDF keys on PATCH.
 ### Checklist
 
 - [ ] Persist `pdf*PanelRangeKey` on `products`
+- [ ] PATCH clears keys when frontend sends `""` / `null`
 - [ ] PATCH products after create works
 - [ ] Relax panel qty when range keys set
-- [ ] Allow combined inverter/meter brands
+- [ ] Allow combined inverter/meter brands (`Vsole/Xwatt`, etc.)
 - [ ] Return `dealer` on GET quotation
 - [ ] (Optional) `validUntil` +7 days
 
 **Full spec:** `BACKEND_CHANGES_REQUIRED.md` §X.
+
+### 2.5 Pricing tables API (optional but recommended)
+
+`GET /api/quotations/pricing-tables` — see `BACKEND_PRICING_TABLES_API.md`. Frontend **falls back** to `lib/pricing-tables.ts` if missing; implement to sync DCR set prices and presets from DB (June 2026 matrix: Adani 555W / Topcon 620W, Waaree 540W, Premier Energies, inverter preset **Vsole/Xwatt**). Response shape: `{ success, data: { dcr, nonDcr, both, panels, inverters, …, systemConfigurations } }`.
 
 ---
 
@@ -609,11 +618,234 @@ If omitted, frontend computes from `actions[]` using the same rules.
 
 ---
 
+## 6. Account Management — Payment Management dealer filter
+
+**Frontend:** `app/dashboard/account-management/page.tsx` — **Payment Management** tab filters approved payment rows by dealer (dropdown **All Dealers** / specific dealer / **Unassigned**).
+
+**Filtering is client-side today.** No new endpoint is required if list payloads already include dealer fields.
+
+### Required on approved quotation list
+
+Used by account-management: `GET /api/quotations?status=approved` (or role-scoped equivalent).
+
+Each row **must** include:
+
+| Field | Purpose |
+|-------|---------|
+| `dealerId` / `dealer_id` | Filter key (UUID) |
+| `dealer` | `{ id, firstName, lastName, mobile, email, username, role }` for display |
+| `statusApprovedAt` / `approved_at` | Approve-date range filter |
+| `fileLoginAt` / `file_login_at` | File-login date filter |
+| `paymentType` / `payment_type`, `paymentStatus`, `paymentMode` | Payment-type / status filters |
+| `installments` / `paymentPhases` / `payment_phases` | Installment **count** filter (array length) |
+| `subtotal`, `remaining`, `remainingAmount` | Payment amounts |
+| `bankName`, `bankIfsc` | Loan / cash+loan display |
+
+**Installment count filter:** Frontend matches `phases.length === N` (exact count). Persist the full installment array on PATCH; do not return stale partial arrays.
+
+### Optional — server-side dealer filter (performance)
+
+When the approved list is large:
+
+```
+GET /api/quotations?status=approved&dealerId={uuid}
+GET /api/quotations?status=approved&dealerId=unassigned
+```
+
+- Auth: **account-management**, **admin** (same as existing approved list).
+- `dealerId=unassigned` → rows with null/empty `dealer_id`.
+- Omit param → all dealers (current behaviour).
+
+### Optional — server-side installment count
+
+```
+GET /api/quotations?status=approved&installmentCount=2
+```
+
+Exact match on number of installment/phase rows (not “has installment 2”).
+
+### Checklist
+
+- [ ] Approved list returns `dealerId` + nested `dealer` on every row used by account-management
+- [ ] `installments` / `payment_phases` array reflects true count after PATCH
+- [ ] Approve / file-login timestamps exposed for date-range filters
+- [ ] (Optional) `dealerId` query param on approved list for account-management role
+
+**Reference:** `BACKEND_CHANGES_REQUIRED.md` §6.5, §7.9; `BACKEND_ADMIN_QUOTATION_STATUS.ts` (installments PATCH).
+
+---
+
+## 7. Admin Overview — total kW (capacity) by dealer
+
+**Frontend:** `app/dashboard/admin/page.tsx` — **Overview → Dealers by Revenue** sums **system kW** from each dealer’s **approved** quotations (same approval-date + dealer filters as revenue). Example: Sunil with 12 approved quotations this month → **total kW = sum of all 12 system sizes**.
+
+**Calculation is client-side** via:
+- `lib/merge-quotation-products.ts` — merges product fields from all API shapes
+- `lib/quotation-system-kw.ts` — computes kW per quotation and sums
+
+**Endpoint used today:** `GET /api/admin/quotations` (full list; no new endpoint required).
+
+---
+
+### Required — `GET /admin/quotations` list rows
+
+Each quotation row must include enough **product / system-size** data to compute kW. The frontend merges these sources (in priority order):
+
+| Source | Notes |
+|--------|--------|
+| `products` | JSON/JSONB object (preferred) — may be stringified JSON |
+| `quotationProduct` | Sequelize / separate-table row (object) |
+| `quotationProducts[]` | Array — first row used if present |
+| Flattened root fields | `panelSize` / `panel_size`, `panelQuantity` / `panel_quantity`, etc. |
+| Precomputed (best) | `systemKw` / `system_kw` or `systemSize` / `system_size` |
+
+**Do not** return `products: {}` with no panel fields anywhere else — that produces **0 kW** even when revenue is correct.
+
+#### Fields used to compute kW (by system type)
+
+| System type | Required fields (camelCase or snake_case) |
+|-------------|-------------------------------------------|
+| DCR / Non-DCR | `systemType`, `panelSize`, `panelQuantity` |
+| DCR-only | `dcrPanelSize`, `dcrPanelQuantity` (or same as panel fields) |
+| BOTH | `dcrPanelSize`, `dcrPanelQuantity`, `nonDcrPanelSize`, `nonDcrPanelQuantity` |
+| CUSTOMIZE | `customPanels[]` with `size`, `quantity` |
+| Fallback | `inverterSize`, then `structureSize` |
+| Precomputed | `systemKw` / `system_kw` (numeric kW) or `systemSize` / `system_size` (e.g. `"5.5kW"`) |
+
+#### kW formula (matches frontend `calculateSystemSize`)
+
+```
+kW = (panelSizeW × panelQuantity) / 1000
+```
+
+For BOTH: sum DCR kW + Non-DCR kW. For CUSTOMIZE: sum all custom panel rows.
+
+#### Also required on same rows (already used for revenue card)
+
+| Field | Purpose |
+|-------|---------|
+| `status` = `approved` | Only approved rows count toward kW |
+| `statusApprovedAt` / `status_approved_at` / `approvedAt` | Date-range filter (default: this month) |
+| `dealerId` / `dealer_id` + nested `dealer` | Per-dealer breakdown |
+| `pricing.subtotal` or flattened `subtotal` | Revenue (unchanged) |
+
+---
+
+### Recommended — normalized `products` on list responses
+
+If product data lives in `quotation_products` table, **either**:
+
+1. **Include joined row** as `quotationProduct` / `quotationProducts` on list (frontend merges automatically), **or**
+2. **Serialize merged `products`** on every list/detail response (simplest for all clients):
+
+```json
+{
+  "id": "uuid",
+  "status": "approved",
+  "statusApprovedAt": "2026-05-15T10:00:00Z",
+  "dealerId": "dealer-uuid",
+  "subtotal": 297000,
+  "products": {
+    "systemType": "non-dcr",
+    "panelSize": "550W",
+    "panelQuantity": 12
+  }
+}
+```
+
+Or with precomputed size (fastest, no parsing):
+
+```json
+{
+  "systemKw": 6.6,
+  "products": { "systemType": "non-dcr", "panelSize": "550W", "panelQuantity": 12 }
+}
+```
+
+---
+
+### Optional — server-side aggregates
+
+For faster admin dashboard when quotation volume is high:
+
+```
+GET /api/admin/overview/dealer-stats?range=this_month&dealerId=
+```
+
+```json
+{
+  "dealers": [
+    {
+      "dealerId": "uuid",
+      "dealerName": "Sunil Choudhry",
+      "approvedCount": 12,
+      "revenue": 2970000,
+      "totalKw": 72.6
+    }
+  ],
+  "totalKw": 842.3,
+  "totalRevenue": 125000000
+}
+```
+
+- `totalKw` = sum of per-quotation system size for **approved** rows in range (same rules as frontend, or use stored `system_kw`).
+- Filter params: `this_month`, `week`, `last_month`, `custom` + `from`/`to`, optional `dealerId`.
+
+---
+
+### Optional — persisted `system_kw` column
+
+```sql
+ALTER TABLE quotations ADD COLUMN system_kw NUMERIC(10,2) NULL;
+```
+
+Set on create/update from products (same formula as frontend). Return as `systemKw` / `system_kw` on list/detail. Frontend **prefers this** when present.
+
+Example trigger on product save:
+
+```sql
+-- Pseudocode: system_kw = (parse_w(panel_size) * panel_quantity) / 1000
+UPDATE quotations SET system_kw = computed_kw WHERE id = :id;
+```
+
+---
+
+### Backend checklist
+
+- [ ] `GET /admin/quotations` includes product data (`products` **or** `quotationProduct` **or** root panel fields **or** `system_kw`)
+- [ ] Empty `products: {}` without panel fields elsewhere is fixed (root cause of 0 kW in production)
+- [ ] `statusApprovedAt` set when status becomes `approved`
+- [ ] `dealerId` present on every quotation row
+- [ ] (Recommended) Merge `quotationProduct` into `products` on list serializer
+- [ ] (Optional) `system_kw` column maintained on quotation create/update
+- [ ] (Optional) `GET /admin/overview/dealer-stats` with `totalKw` per dealer
+
+### QA — verify kW matches revenue dealers
+
+1. Pick dealer with known approved count (e.g. 12 this month).
+2. Open admin **Overview → Dealers by Revenue** — kW should be **> 0** if quotations have panel config.
+3. Sum manually: each approved quotation’s `(panelSize × panelQuantity) / 1000` should match dealer total (± rounding).
+4. If revenue correct but kW still 0 → inspect API row: missing `products`, `quotationProduct`, and panel root fields.
+
+**Reference:** `lib/merge-quotation-products.ts`, `lib/quotation-system-kw.ts`, `lib/pricing-tables.ts` (`calculateSystemSize`).
+
+---
+
+## 8. Mobile app — API URL (HTTPS)
+
+**Frontend:** Capacitor WebView + `lib/resolve-api-base-url.ts` uses **`https://api.inventory.chairbordsolar.com/api`**.
+
+- HTTP URLs **301 redirect to HTTPS**; Android WebView **fails POST login** on redirect.
+- **No API code change** if production serves HTTPS on the same host.
+- Ensure CORS allows `https://quotation.chairbordsolar.com` (and dev origins if needed).
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §7.7–7.9 (calling queue, HR uploads, dealer dashboard stats), dealer queue (~2307), **§J** + **§J.1** (calling-actions GET + summary buckets), §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §6.5 + **§6.5.1** (admin kW / product merge), §7.7–7.9 (calling queue, HR uploads, dealer dashboard stats), dealer queue (~2307), **§J** + **§J.1** (calling-actions GET + summary buckets), §X (PDF flags) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
@@ -621,3 +853,5 @@ If omitted, frontend computes from `actions[]` using the same rules.
 | `lib/calling-report-date-range.ts` | HR **GET** `startDate` / `endDate` + `range` semantics |
 | `lib/calling-lead-session.ts` | Client-side draft keys (not a backend contract) |
 | `lib/calling-action-summary.ts` | HR Interested / Follow Up / Not Interested bucket rules |
+| `lib/quotation-system-kw.ts` | Admin overview kW sum per dealer (frontend; optional `system_kw` on API) |
+| `lib/merge-quotation-products.ts` | Merges `products` + `quotationProduct` + flat row fields for kW |

@@ -1,7 +1,43 @@
 import type { ProductSelection } from "@/lib/quotation-context"
+import { parsePanelSizeWatts } from "@/lib/pricing-tables"
+
+/** Shown on proposal PDF and DCR pricing catalog when a PDF panel range is selected. */
+export const QUOTATION_AS_PER_THE_SET_LABEL = "As per the set"
+
+export function isAsPerTheSetLabel(value?: string | null): boolean {
+  const v = String(value ?? "").trim().toLowerCase()
+  return v === QUOTATION_AS_PER_THE_SET_LABEL.toLowerCase() || v === "as per set"
+}
+
+/** Panel row is complete when brand/size are set and qty, PDF range, or package-set label applies. */
+export function isPanelRowComplete(
+  brand: string,
+  size: string,
+  quantity: number,
+  rangeKey?: string,
+): boolean {
+  if (!brand?.trim() || !size?.trim()) return false
+  if (rangeKey?.trim()) return true
+  if (isAsPerTheSetLabel(size)) return true
+  return quantity > 0
+}
+
+export function isInverterInfoComplete(inverterBrand?: string, inverterSize?: string): boolean {
+  if (isAsPerTheSetLabel(inverterBrand) || isAsPerTheSetLabel(inverterSize)) return true
+  return Boolean(inverterBrand?.trim() && inverterSize?.trim())
+}
 
 /** Extra combined inverter labels appended after catalog brands in the dropdown. */
-export const QUOTATION_EXTRA_INVERTER_BRAND_OPTIONS = ["Vsole/Xwatt/Saatvik", "Vsole/Xwatt"] as const
+export const QUOTATION_EXTRA_INVERTER_BRAND_OPTIONS = ["Vsole/Xwatt"] as const
+
+/** Map retired Saatvik labels to the current combined brand for display. */
+export function normalizeInverterBrandForDisplay(brand?: string): string {
+  const trimmed = (brand || "").trim()
+  if (!trimmed) return ""
+  const lower = trimmed.toLowerCase()
+  if (lower === "saatvik" || lower === "vsole/xwatt/saatvik") return "Vsole/Xwatt"
+  return trimmed
+}
 
 /** @deprecated use buildInverterBrandDropdownOptions */
 export const QUOTATION_INVERTER_BRAND_OPTIONS = QUOTATION_EXTRA_INVERTER_BRAND_OPTIONS
@@ -60,6 +96,37 @@ export type PdfPanelRangeKey =
   | "waaree_580_700_bifacial_topcon"
   | "adani_540_580_bifacial"
   | "adani_610_625_bifacial_topcon"
+  | "premier_600_625_bifacial_topcon"
+  | "tata_530_570"
+
+/** Fixed panel watt range for Tata DCR package sets (Jun 2026 sheet). */
+export const TATA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "tata_530_570"
+
+/** Default PDF panel range when a DCR browse package column is selected. */
+export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): PdfPanelRangeKey | null {
+  const normalized = panelType.trim().toLowerCase()
+  if (normalized === "adani topcon") return "adani_610_625_bifacial_topcon"
+  if (normalized === "adani") return "adani_540_580_bifacial"
+  if (normalized === "waaree") return "waaree_540_560_bifacial"
+  if (normalized === "premier energies" || normalized === "premier") return "premier_600_625_bifacial_topcon"
+  if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
+  return null
+}
+
+export function isTopconPdfPanelRangeKey(key?: string | null): boolean {
+  return String(key ?? "").toLowerCase().includes("topcon")
+}
+
+/** True when stored PDF range keys indicate a TOPCon package (Adani Topcon, Premier, Waaree 580+, etc.). */
+export function usesTopconPanelPackage(products: ProductSelection | null | undefined): boolean {
+  if (!products) return false
+  const source = products as PdfDisplaySource
+  return (
+    isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(source, "primary")) ||
+    isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(source, "dcr")) ||
+    isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(source, "nonDcr"))
+  )
+}
 
 export type PanelPdfRangeOption = {
   key: PdfPanelRangeKey
@@ -88,11 +155,24 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     label: "610-625W Bifacial Topcon",
     pdfSpecification: "610-625W Bifacial Topcon",
   },
+  {
+    key: "premier_600_625_bifacial_topcon",
+    label: "600-625W Bifacial Topcon",
+    pdfSpecification: "600-625W Bifacial Topcon",
+  },
+  {
+    key: "tata_530_570",
+    label: "530W - 570W",
+    pdfSpecification: "530W - 570W",
+  },
 ]
 
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
   waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon"],
   adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon"],
+  premierenergies: ["premier_600_625_bifacial_topcon"],
+  premier: ["premier_600_625_bifacial_topcon"],
+  tata: [TATA_DCR_PANEL_RANGE_KEY],
 }
 
 function normalizePanelBrandKey(brand?: string): string {
@@ -123,17 +203,52 @@ function pickPdfPanelRangeKey(
   field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
   snakeField: string,
 ): PdfPanelRangeKey | null {
+  const hasCamel = Object.prototype.hasOwnProperty.call(products, field)
+  const hasSnake = Object.prototype.hasOwnProperty.call(products, snakeField)
   const raw = products[field] ?? products[snakeField]
-  if (typeof raw === "string" && raw.trim()) {
-    const option = getPanelPdfRangeOption(raw.trim())
-    if (option) return option.key
+
+  if (hasCamel || hasSnake) {
+    if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) {
+      return null
+    }
+    if (typeof raw === "string" && raw.trim()) {
+      const option = getPanelPdfRangeOption(raw.trim())
+      if (option) return option.key
+      return null
+    }
   }
+
+  // Tata DCR package sets always show 530W–570W in the UI/PDF even if the PDF flags
+  // are not persisted by the backend yet.
+  if (field === "pdfPanelRangeKey") {
+    const systemType = String(products.systemType || "").toLowerCase()
+    const brand = normalizePanelBrandKey(
+      String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || ""),
+    )
+    if (systemType === "dcr" && brand === "tata") return TATA_DCR_PANEL_RANGE_KEY
+  }
+
   if (field === "pdfPanelRangeKey" && Boolean(products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range)) {
     const brand = normalizePanelBrandKey(
       String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || ""),
     )
-    if (brand === "adani") return "adani_610_625_bifacial_topcon"
-    if (brand === "waaree") return "waaree_580_700_bifacial_topcon"
+    const panelW = parsePanelSizeWatts(
+      String(
+        products.panelSize ||
+          products.dcrPanelSize ||
+          products.panel_size ||
+          products.dcr_panel_size ||
+          "",
+      ),
+    )
+    if (brand === "adani") {
+      return panelW >= 610 ? "adani_610_625_bifacial_topcon" : "adani_540_580_bifacial"
+    }
+    if (brand === "waaree") {
+      return panelW >= 580 ? "waaree_580_700_bifacial_topcon" : "waaree_540_560_bifacial"
+    }
+    if (brand === "premierenergies" || brand === "premier") return "premier_600_625_bifacial_topcon"
+    if (brand === "tata") return TATA_DCR_PANEL_RANGE_KEY
     return "adani_610_625_bifacial_topcon"
   }
   return null
@@ -178,8 +293,10 @@ export function formatPanelSizeForPdf(
   panelSize: string | undefined,
   rangeKey?: PdfPanelRangeKey | null,
 ): string {
-  const rangeLabel = getPanelPdfRangeLabel(rangeKey)
-  if (rangeLabel) return rangeLabel
+  if (rangeKey) {
+    return getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
+  }
+  if (isAsPerTheSetLabel(panelSize)) return QUOTATION_AS_PER_THE_SET_LABEL
   if (!panelSize?.trim()) return ""
   return panelSize.trim()
 }
@@ -211,9 +328,18 @@ export function formatPanelBrandLineForPdf(
 }
 
 export function getPdfInverterLine(products: ProductSelection): string {
+  if (isAsPerTheSetLabel(products.inverterSize) || isAsPerTheSetLabel(products.inverterBrand)) {
+    return QUOTATION_AS_PER_THE_SET_LABEL
+  }
+  // Tata DCR package sets: inverter fields are stored as catalog values, but UI should still show "As per the set".
+  const systemType = String(products.systemType || "").toLowerCase()
+  const panelBrandKey = normalizePanelBrandKey(String(products.panelBrand || products.dcrPanelBrand || ""))
+  if (systemType === "dcr" && panelBrandKey === "tata") {
+    return QUOTATION_AS_PER_THE_SET_LABEL
+  }
   const segments: string[] = []
-  const brand = products.inverterBrand?.trim()
-  if (brand) segments.push(brand)
+  const inverterBrand = normalizeInverterBrandForDisplay(products.inverterBrand)
+  if (inverterBrand) segments.push(inverterBrand)
   if (products.inverterType?.trim()) segments.push(products.inverterType.trim())
   if (products.inverterSize?.trim()) segments.push(products.inverterSize.trim())
   return segments.join(" - ") || "N/A"
