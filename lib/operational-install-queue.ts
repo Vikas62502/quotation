@@ -58,6 +58,35 @@ export function getMeteringWorkflowRaw(q: OperationalQuotationRecord): string {
   ).toLowerCase()
 }
 
+/** Installation finished — ready for admin “Send to Metering”. */
+export function isInstallationCompleteForMetering(q: OperationalQuotationRecord): boolean {
+  const install = getInstallationWorkflowStatus(q)
+  return (
+    install === "installer_approved" ||
+    install === "completed" ||
+    install === "pending_baldev" ||
+    install === "baldev_approved"
+  )
+}
+
+/** Quotation is already in (or past) the metering queue. */
+export function isAlreadyInMeteringPipeline(q: OperationalQuotationRecord): boolean {
+  const metering = getMeteringWorkflowRaw(q)
+  const install = getInstallationWorkflowStatus(q)
+  const meteringStages = new Set([
+    "pending_metering",
+    "metering_in_progress",
+    "metering_approved",
+    "mco",
+  ])
+  return meteringStages.has(metering) || meteringStages.has(install)
+}
+
+/** Installation approved — waiting for admin to manually send to metering. */
+export function isAwaitingManualMeteringHandoff(q: OperationalQuotationRecord): boolean {
+  return getInstallationWorkflowStatus(q) === "installer_approved" && !isAlreadyInMeteringPipeline(q)
+}
+
 export type MeteringWorkflowTab = "processing" | "approved" | "mco"
 
 /** Installation done; metering not approved yet — must not show Move to MCO. */
@@ -117,11 +146,17 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
     return "approved"
   }
 
-  if (!meteringRaw && !installRaw) {
-    return null
+  const inMeteringProcessing =
+    meteringRaw === "pending_metering" ||
+    meteringRaw === "metering_in_progress" ||
+    installRaw === "pending_metering" ||
+    installRaw === "metering_in_progress"
+
+  if (inMeteringProcessing) {
+    return "processing"
   }
 
-  return "processing"
+  return null
 }
 
 /** True when quotation should appear on installer / metering operational queues. */

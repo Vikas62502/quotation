@@ -35,6 +35,7 @@ import {
   Download,
   ChevronDown,
   RotateCcw,
+  Gauge,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -42,7 +43,7 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { api, ApiError, apiErrorToUserMessage, getAuthToken, isApiAuthFailure } from "@/lib/api"
+import { api, ApiError, apiErrorToUserMessage, getAuthToken, isApiAuthFailure, sendQuotationToMetering } from "@/lib/api"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { getRealtime } from "@/lib/realtime"
@@ -87,6 +88,8 @@ import { cn } from "@/lib/utils"
 import {
   getInstallationWorkflowStatus,
   getMeteringWorkflowRaw,
+  isAlreadyInMeteringPipeline,
+  isAwaitingManualMeteringHandoff,
   getMeteringWorkflowStage,
   isMeteringApprovedForTransition,
   INSTALLER_RELEASE_MAP_KEY,
@@ -449,6 +452,99 @@ const GOVERNMENT_BANK_OPTIONS = [
   "HDFC Bank",
 ] as const
 
+function getSendToMeteringMenuState(
+  quotation: Quotation,
+  options?: { surface?: "installation" | "quotations" },
+): {
+  visible: boolean
+  enabled: boolean
+  hint: string
+  sent: boolean
+} {
+  const q = quotation as unknown as Record<string, unknown>
+  const approved = String(quotation.status || "").toLowerCase() === "approved"
+  const install = getInstallationWorkflowStatus(q)
+  const awaitingHandoff = isAwaitingManualMeteringHandoff(q)
+
+  // Manual handoff lives on Installation → Pending Metering, not the main Quotations list.
+  if (options?.surface === "quotations") {
+    return { visible: false, enabled: false, hint: "", sent: false }
+  }
+
+  if (isAlreadyInMeteringPipeline(q)) {
+    return { visible: false, enabled: false, hint: "", sent: true }
+  }
+
+  if (!awaitingHandoff) {
+    return { visible: false, enabled: false, hint: "", sent: false }
+  }
+
+  if (!approved) {
+    return { visible: true, enabled: false, hint: "Approve the quotation first", sent: false }
+  }
+
+  return { visible: true, enabled: true, hint: "", sent: false }
+}
+
+function AdminQuotationRowActions({
+  quotation,
+  sendingToMeteringId,
+  onSendToMetering,
+  onTimeline,
+  onDocuments,
+  onView,
+  showSendToMetering = false,
+}: {
+  quotation: Quotation
+  sendingToMeteringId: string | null
+  onSendToMetering: (quotation: Quotation) => void
+  onTimeline: (quotation: Quotation) => void
+  onDocuments: (quotation: Quotation) => void
+  onView: (quotation: Quotation) => void
+  showSendToMetering?: boolean
+}) {
+  const sendToMetering = getSendToMeteringMenuState(quotation, {
+    surface: showSendToMetering ? "installation" : "quotations",
+  })
+  const isSending = sendingToMeteringId === quotation.id
+
+  return (
+    <div className="flex flex-col items-end gap-1.5">
+      <div className="flex items-center justify-end gap-0.5">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onTimeline(quotation)} title="Status timeline">
+          <History className="w-4 h-4" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onDocuments(quotation)} title="Document Submission">
+          <FileText className="w-4 h-4" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onView(quotation)} title="View Details">
+          <Eye className="w-4 h-4" />
+        </Button>
+      </div>
+      {showSendToMetering && sendToMetering.sent ? (
+        <Badge
+          variant="outline"
+          className="text-[10px] border-emerald-500 text-emerald-700 whitespace-nowrap"
+        >
+          Sent to metering
+        </Badge>
+      ) : showSendToMetering && sendToMetering.visible ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className={`h-7 text-[10px] px-2 whitespace-nowrap w-full ${!sendToMetering.enabled || isSending ? "opacity-60" : ""}`}
+          title={sendToMetering.hint || "Send this quotation to the metering team"}
+          onClick={() => onSendToMetering(quotation)}
+        >
+          <Gauge className="w-3 h-3 mr-1 shrink-0" />
+          {isSending ? "Sending..." : "Send to Metering"}
+        </Button>
+      ) : null}
+    </div>
+  )
+}
+
 function createEmptyDocumentsForm(): Record<string, any> {
   return {
     isCompliantSenior: false,
@@ -550,6 +646,7 @@ export default function AdminPanelPage() {
   const [adminMeteringStageOverride, setAdminMeteringStageOverride] = useState<
     Record<string, "processing" | "approved" | "mco">
   >({})
+  const [sendingToMeteringId, setSendingToMeteringId] = useState<string | null>(null)
   const QUOTATIONS_LIST_BATCH_SIZE = 12
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -1971,20 +2068,10 @@ export default function AdminPanelPage() {
     { processing: 0, approved: 0, mco: 0 },
   )
 
+  /** Rows awaiting manual admin handoff to metering (Installation → Approved by Installer). */
   const getInstallerQueueStatusForAdmin = (quotation: Quotation): "pending" | "inprogress" | "approved" => {
     const backendStatus = getInstallationWorkflowStatus(quotation as any)
-    // Backend often advances to pending_metering (or later) immediately after installer/admin completion upload.
-    // Those rows must still appear under Installation → "Approved by Installer", not stay in Pending.
-    if (
-      backendStatus === "installer_approved" ||
-      backendStatus === "pending_metering" ||
-      backendStatus === "metering_in_progress" ||
-      backendStatus === "metering_approved" ||
-      backendStatus === "mco" ||
-      backendStatus === "pending_baldev" ||
-      backendStatus === "baldev_approved" ||
-      backendStatus === "completed"
-    ) {
+    if (isAwaitingManualMeteringHandoff(quotation as unknown as Record<string, unknown>)) {
       return "approved"
     }
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
@@ -2358,6 +2445,7 @@ export default function AdminPanelPage() {
 
   function isInstallerVisible(quotation: Quotation) {
     const qAny = quotation as any
+    if (isAlreadyInMeteringPipeline(qAny)) return false
     let localReleaseMap: Record<string, any> = {}
     if (typeof window !== "undefined") {
       try {
@@ -2402,28 +2490,8 @@ export default function AdminPanelPage() {
     return releasedByAccounts
   }
 
-  function hasMeteringWorkflowSignal(quotation: Quotation) {
-    const qAny = quotation as any
-    const workflowStatus = getInstallationWorkflowStatus(qAny)
-    return (
-      [
-        "installer_approved",
-        "pending_metering",
-        "metering_in_progress",
-        "metering_approved",
-        "mco",
-        "pending_baldev",
-        "baldev_approved",
-        "completed",
-      ].includes(workflowStatus) ||
-      Boolean(qAny.meteringApprovedAt || qAny.metering_approved_at || qAny.mcoAt || qAny.mco_at)
-    )
-  }
-
   function isMeteringVisible(quotation: Quotation) {
-    const stage = getAdminMeteringStage(quotation)
-    if (stage === null) return false
-    return isInstallerVisible(quotation) || hasMeteringWorkflowSignal(quotation)
+    return getAdminMeteringStage(quotation) !== null
   }
 
   function isConfirmationVisible(quotation: Quotation) {
@@ -2432,21 +2500,10 @@ export default function AdminPanelPage() {
 
   function getOperationalProgressState(quotation: Quotation, tab: AdminOperationalTab): "pending" | "done" | "mco" | null {
     if (tab === "installation") {
-      // Read workflow from the quotation row, not getOperationalStage alone — avoids null progress when
-      // status is pending_metering (common after completion upload) or completed (now in ADMIN_OPERATIONAL_STAGES).
-      const backendStatus = getInstallationWorkflowStatus(quotation as any)
-      if (
-        backendStatus === "installer_approved" ||
-        backendStatus === "pending_metering" ||
-        backendStatus === "metering_in_progress" ||
-        backendStatus === "metering_approved" ||
-        backendStatus === "mco" ||
-        backendStatus === "pending_baldev" ||
-        backendStatus === "baldev_approved" ||
-        backendStatus === "completed"
-      ) {
+      if (isAwaitingManualMeteringHandoff(quotation as unknown as Record<string, unknown>)) {
         return "done"
       }
+      const backendStatus = getInstallationWorkflowStatus(quotation as any)
       if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") return "pending"
       if (backendStatus === "pending_installer" || backendStatus === "") return "pending"
       return null
@@ -2874,6 +2931,64 @@ export default function AdminPanelPage() {
         variant: "destructive",
       })
       return false
+    }
+  }
+
+  const handleSendToMetering = async (quotation: Quotation) => {
+    const menuState = getSendToMeteringMenuState(quotation, { surface: "installation" })
+    if (sendingToMeteringId === quotation.id) return
+    if (!menuState.enabled) {
+      toast({
+        title: "Cannot send to metering",
+        description: menuState.hint || "Approve the quotation and complete installation first.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setSendingToMeteringId(quotation.id)
+    try {
+      let ok = false
+      if (useApi) {
+        ok = await sendQuotationToMetering(quotation.id)
+        if (!ok) {
+          try {
+            await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
+            ok = true
+          } catch (error) {
+            console.error("Send to metering failed:", error)
+            toast({
+              title: "Send to metering failed",
+              description: error instanceof ApiError ? error.message : "Could not update metering status on the server.",
+              variant: "destructive",
+            })
+            return
+          }
+        }
+        applyAdminMeteringStageLocal(quotation.id, "processing")
+        await loadData()
+      } else {
+        applyAdminMeteringStageLocal(quotation.id, "processing")
+        setQuotations((prev) => {
+          const updated = prev.map((q) =>
+            q.id === quotation.id ? patchQuotationMeteringStageLocal(q, "processing") : q,
+          )
+          localStorage.setItem("quotations", JSON.stringify(updated))
+          return updated
+        })
+        ok = true
+      }
+
+      if (ok) {
+        setOperationalTab("metering")
+        setOperationalProgressTab("pending")
+        toast({
+          title: "Sent to Metering",
+          description: `${quotation.id} is now in Metering → Processing.`,
+        })
+      }
+    } finally {
+      setSendingToMeteringId(null)
     }
   }
 
@@ -4180,7 +4295,10 @@ export default function AdminPanelPage() {
                           },
                           {
                             key: "done" as const,
-                            label: operationalTab === "installation" ? "Approved by Installer" : "Done",
+                            label:
+                              operationalTab === "installation"
+                                ? "Pending Metering"
+                                : "Done",
                           },
                         ] as const)
                     ).map((item) => (
@@ -4716,7 +4834,7 @@ export default function AdminPanelPage() {
                                   <div className="min-w-0">
                                     <Badge variant="outline" className="text-xs capitalize">
                                       {installerStatus === "approved"
-                                        ? "Approved by Installer"
+                                        ? "Pending metering"
                                         : installerStatus === "inprogress"
                                           ? "Installer In Progress"
                                           : "Pending Installation"}
@@ -4747,6 +4865,25 @@ export default function AdminPanelPage() {
                                     </Button>
                                     {installerStatus === "approved" ? (
                                       <>
+                                        {(() => {
+                                          const sendToMetering = getSendToMeteringMenuState(quotation, {
+                                            surface: "installation",
+                                          })
+                                          if (!sendToMetering.visible) return null
+                                          return (
+                                            <Button
+                                              type="button"
+                                              size="sm"
+                                              onClick={() => void handleSendToMetering(quotation)}
+                                              disabled={sendingToMeteringId === quotation.id}
+                                              className={!sendToMetering.enabled ? "opacity-60" : ""}
+                                              title={sendToMetering.hint || "Send to metering team"}
+                                            >
+                                              <Gauge className="w-3.5 h-3.5 mr-1" />
+                                              {sendingToMeteringId === quotation.id ? "Sending..." : "Send to Metering"}
+                                            </Button>
+                                          )
+                                        })()}
                                         <Button
                                           type="button"
                                           size="sm"
@@ -5042,7 +5179,7 @@ export default function AdminPanelPage() {
                             <p className="text-[10px] text-muted-foreground leading-snug">
                               Ops: {getOperationalStage(quotation) ? getOperationalStage(quotation).replaceAll("_", " ") : "Not set"}
                             </p>
-                            
+
                             <div className="flex gap-2">
                               <Button
                                 variant="outline"
@@ -5089,6 +5226,7 @@ export default function AdminPanelPage() {
                                 <History className="w-3 h-3 mr-1" />
                                 Timeline
                               </Button>
+
                             </div>
                           </div>
                         </div>
@@ -5096,8 +5234,8 @@ export default function AdminPanelPage() {
                     </div>
 
                     {/* Desktop Table View */}
-                    <div className="hidden md:block overflow-x-hidden">
-                      <table className="w-full table-fixed">
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full min-w-[68rem]">
                         <thead>
                           <tr className="border-b border-border">
                             <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground w-[6rem]">
@@ -5123,7 +5261,7 @@ export default function AdminPanelPage() {
                             <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[9rem]">
                               Dates
                             </th>
-                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground w-[7rem]">
+                            <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground whitespace-nowrap sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                               Actions
                             </th>
                           </tr>
@@ -5246,38 +5384,18 @@ export default function AdminPanelPage() {
                                   ) : null}
                                 </div>
                               </td>
-                              <td className="py-3 px-2 text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => setStatusHistoryQuotation(quotation)}
-                                    title="Status timeline"
-                                  >
-                                    <History className="w-4 h-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                      openDocumentsDialog(quotation)
-                                    }}
-                                    title="Document Submission"
-                                  >
-                                    <FileText className="w-4 h-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    onClick={() => {
-                                      setSelectedQuotation(quotation)
-                                      setDialogOpen(true)
-                                    }}
-                                    title="View Details"
-                                  >
-                                    <Eye className="w-4 h-4" />
-                                  </Button>
-                                </div>
+                              <td className="py-3 px-2 text-right sticky right-0 bg-inherit z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                <AdminQuotationRowActions
+                                  quotation={quotation}
+                                  sendingToMeteringId={sendingToMeteringId}
+                                  onSendToMetering={(q) => void handleSendToMetering(q)}
+                                  onTimeline={setStatusHistoryQuotation}
+                                  onDocuments={openDocumentsDialog}
+                                  onView={(q) => {
+                                    setSelectedQuotation(q)
+                                    setDialogOpen(true)
+                                  }}
+                                />
                               </td>
                             </tr>
                           ))}

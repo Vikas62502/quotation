@@ -578,6 +578,11 @@ async function patchMeteringWorkflowAction(
   return false
 }
 
+/** Admin handoff: move approved + installation-complete quotation into metering queue. */
+export async function sendQuotationToMetering(quotationId: string): Promise<boolean> {
+  return patchOperationalWorkflowStatus(quotationId, "pending_metering")
+}
+
 /** Try every admin/metering path to reach MCO; returns true if any call succeeded. */
 export async function forceAdvanceQuotationToMco(quotationId: string): Promise<boolean> {
   let ok = false

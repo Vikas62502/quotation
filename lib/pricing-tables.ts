@@ -636,6 +636,8 @@ export function mergeSystemConfigsWithDefaults(
     }
 
     const merged: SystemConfigurationPreset = { ...base, ...apiPreset }
+    if (!apiPreset.acdb?.trim()) merged.acdb = base.acdb
+    if (!apiPreset.dcdb?.trim()) merged.dcdb = base.dcdb
     if (apiPreset.systemType === "dcr") {
       const pricingType = resolveDcrPricingPanelType(apiPreset.panelBrand)
       const canonicalSize = dcrPanelSizeForPricingType(pricingType)
@@ -1742,6 +1744,31 @@ export function acdbDcdbLabelsForPhase(
   return {
     acdb: formatACDBOption(acdbParsed?.brand || defaultBrand, phase),
     dcdb: formatDCDBOption(dcdbParsed?.brand || defaultBrand, phase),
+  }
+}
+
+/** Default Havells ACDB/DCDB for a package phase (1-Phase → Havells (1-Phase)). */
+export function defaultAcdbDcdbForPhase(phase: "1-Phase" | "3-Phase"): { acdb: string; dcdb: string } {
+  return acdbDcdbLabelsForPhase(phase)
+}
+
+/** Dropdown labels for ACDB/DCDB — API options plus local defaults so Select always has items. */
+export function listAcdbDcdbOptionsForPhase(
+  phase: "1-Phase" | "3-Phase",
+  pricingData?: PricingTablesData,
+): { acdb: string[]; dcdb: string[] } {
+  const acdbFromApi = getACDBOptions(phase, pricingData).map((opt) => formatACDBOption(opt.brand, opt.phase))
+  const dcdbFromApi = getDCDBOptions(phase, pricingData).map((opt) => formatDCDBOption(opt.brand, opt.phase))
+  const acdbFallback = defaultACDBPricing
+    .filter((p) => p.phase === phase)
+    .map((p) => formatACDBOption(p.brand, p.phase))
+  const dcdbFallback = defaultDCDBPricing
+    .filter((p) => p.phase === phase)
+    .map((p) => formatDCDBOption(p.brand, p.phase))
+
+  return {
+    acdb: [...new Set([...acdbFromApi, ...acdbFallback])],
+    dcdb: [...new Set([...dcdbFromApi, ...dcdbFallback])],
   }
 }
 

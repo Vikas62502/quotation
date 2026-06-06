@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import type { ProductSelection } from "@/lib/quotation-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -23,12 +23,13 @@ import {
   getSystemConfiguration,
   getAvailablePanelSizes,
   getAvailableStructureSizes,
-  getACDBOptions,
-  getDCDBOptions,
   formatACDBOption,
   formatDCDBOption,
   acdbDcdbLabelsForPhase,
+  defaultAcdbDcdbForPhase,
+  listAcdbDcdbOptionsForPhase,
   determinePhase,
+  resolveQuotationPhase,
   calculateSystemSize,
   dcrPanelSizeForPricingType,
   dcrFormPanelBrandForPricingType,
@@ -167,7 +168,17 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
   useEffect(() => {
     if (!initialData) return
-    const restored = restoreDcrPackageDisplayForForm(initialData)
+    let restored = restoreDcrPackageDisplayForForm(initialData)
+    const phase = resolveQuotationPhase(restored)
+    if (!restored.acdb?.trim() || !restored.dcdb?.trim()) {
+      const defaults = defaultAcdbDcdbForPhase(phase)
+      restored = {
+        ...restored,
+        phase: restored.phase || phase,
+        acdb: restored.acdb?.trim() || defaults.acdb,
+        dcdb: restored.dcdb?.trim() || defaults.dcdb,
+      }
+    }
     setFormData(restored)
     if (
       restored.systemType === "dcr" &&
@@ -251,13 +262,18 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       })()
     : "1-Phase" as "1-Phase" | "3-Phase"
   
-  // Get ACDB/DCDB options filtered by phase from pricing tables
-  const acdbOptions = getACDBOptions(currentPhase, pricingTables || undefined)
-  const dcdbOptions = getDCDBOptions(currentPhase, pricingTables || undefined)
-  
-  // Format options for display
-  const acdbOptionsList = acdbOptions.map((opt) => formatACDBOption(opt.brand, opt.phase))
-  const dcdbOptionsList = dcdbOptions.map((opt) => formatDCDBOption(opt.brand, opt.phase))
+  const acdbDcdbOptionLists = useMemo(
+    () => listAcdbDcdbOptionsForPhase(currentPhase, pricingTables || undefined),
+    [currentPhase, pricingTables],
+  )
+  const acdbOptionsList = useMemo(() => {
+    const merged = [...new Set([...acdbDcdbOptionLists.acdb, formData.acdb].filter(Boolean))]
+    return merged.length > 0 ? merged : [formatACDBOption("Havells", currentPhase)]
+  }, [acdbDcdbOptionLists.acdb, formData.acdb, currentPhase])
+  const dcdbOptionsList = useMemo(() => {
+    const merged = [...new Set([...acdbDcdbOptionLists.dcdb, formData.dcdb].filter(Boolean))]
+    return merged.length > 0 ? merged : [formatDCDBOption("Havells", currentPhase)]
+  }, [acdbDcdbOptionLists.dcdb, formData.dcdb, currentPhase])
 
   // Ensure non-dcr systems always have 0 subsidies
   useEffect(() => {
@@ -848,6 +864,32 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const hasSelectedStandardConfig =
     (effectiveSystemType === "non-dcr" && hasSelectedNonDcrConfig) ||
     (effectiveSystemType === "dcr" && hasSelectedDcrConfig)
+
+  // Auto-select Havells (1-Phase) / Havells (3-Phase) when package phase is known
+  useEffect(() => {
+    if (!hasSelectedStandardConfig && !showBothFields) return
+
+    const phase: "1-Phase" | "3-Phase" =
+      formData.phase === "1-Phase" || formData.phase === "3-Phase" ? formData.phase : currentPhase
+    const defaults = defaultAcdbDcdbForPhase(phase)
+
+    setFormData((prev) => {
+      const updates: Partial<ProductSelection> = {}
+      if (prev.phase !== phase) updates.phase = phase
+      if (!prev.acdb?.trim()) updates.acdb = defaults.acdb
+      if (!prev.dcdb?.trim()) updates.dcdb = defaults.dcdb
+      if (Object.keys(updates).length === 0) return prev
+      return { ...prev, ...updates }
+    })
+  }, [
+    hasSelectedStandardConfig,
+    showBothFields,
+    currentPhase,
+    formData.phase,
+    formData.acdb,
+    formData.dcdb,
+  ])
+
   const showBatteryFields = formData.inverterType === "Hybrid Inverter"
 
   return (
