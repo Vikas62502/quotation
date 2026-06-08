@@ -399,6 +399,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         isAsPerTheSetLabel(formData.inverterSize) ||
         isAsPerTheSetLabel(formData.inverterBrand)))
   const hidePanelQtyForSet = hidePrimaryPanelQty || dcrPackageAsPerSet
+  const isLockedDcrInverterBrand =
+    effectiveSystemType === "dcr" && hasSelectedDcrConfig && !isTataDcrPackage
   const tataDcrPanelRangeLabel =
     isTataDcrPackage && formData.pdfPanelRangeKey
       ? getPanelPdfRangeLabel(formData.pdfPanelRangeKey)
@@ -648,8 +650,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     if (systemConfig) {
       // Use the full system configuration preset to fill all fields
       const preFilledData = configToProductSelection(systemConfig)
-      const inverterSizeToSet = config.inverterSize
-      const inverterBrandToSet = preFilledData.inverterBrand || systemConfig.inverterBrand || "Vsole/Xwatt"
+      const inverterBrandToSet = isTataPackage
+        ? DCR_AS_PER_THE_SET
+        : systemConfig.inverterBrand || preFilledData.inverterBrand || "Vsole/Xwatt"
+      const inverterSizeToSet = isTataPackage
+        ? DCR_AS_PER_THE_SET
+        : config.inverterSize || systemConfig.inverterSize || preFilledData.inverterSize || ""
 
       const effPhase: "1-Phase" | "3-Phase" =
         packagePhase ||
@@ -684,8 +690,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
           // Store the system price from the selected configuration - CRITICAL: must be > 0
           systemPrice: config.price,
-          pdfPanelRangeKey:
-            isTataPackage ? "" : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
+          pdfPanelRangeKey: isTataPackage
+            ? TATA_DCR_PANEL_RANGE_KEY
+            : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
         } satisfies ProductSelection
         console.log("[ProductSelectionForm] DCR config selected from dialog - filled all fields:", updated)
         console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
@@ -716,8 +723,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         panelSize: panelSizeToSet,
         panelQuantity: panelQuantityToSet,
         inverterType: "String Inverter",
-        inverterBrand: "Vsole/Xwatt",
-        inverterSize: config.inverterSize,
+        inverterBrand: isTataPackage ? DCR_AS_PER_THE_SET : "Vsole/Xwatt",
+        inverterSize: isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize,
         structureType: "GI Structure",
         structureSize: config.systemSize,
         acdb: defaultAcdb,
@@ -725,7 +732,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         systemPrice: config.price,
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
-        pdfPanelRangeKey: isTataPackage ? "" : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
+        pdfPanelRangeKey: isTataPackage
+          ? TATA_DCR_PANEL_RANGE_KEY
+          : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
       }))
       setHasSelectedDcrConfig(true)
     }
@@ -1649,6 +1658,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         />
                         <p className="text-xs text-muted-foreground mt-1">
                           Varies with the selected DCR package set
+                        </p>
+                      </>
+                    ) : isLockedDcrInverterBrand ? (
+                      <>
+                        <Input readOnly disabled className="bg-muted" value="Vsole/Xwatt" />
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Standard inverter brand for this DCR package
                         </p>
                       </>
                     ) : (

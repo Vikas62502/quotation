@@ -1,5 +1,5 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
-import { DCR_AS_PER_THE_SET, panelQuantityForNominalSystemKw } from "@/lib/pricing-tables"
+import { DCR_AS_PER_THE_SET } from "@/lib/pricing-tables"
 import {
   isAsPerTheSetLabel,
   TATA_DCR_PANEL_RANGE_KEY,
@@ -63,10 +63,26 @@ export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlag
   }
 }
 
-const CATALOG_TATA_REP_PANEL_SIZE = "530W"
 const CATALOG_DEFAULT_INVERTER_BRAND = "Vsole/Xwatt"
-const CATALOG_INVERTER_KW_OPTIONS = [3, 5, 6, 8, 10, 12, 15, 20, 25, 30] as const
 
+export { CATALOG_DEFAULT_INVERTER_BRAND as DEFAULT_DCR_INVERTER_BRAND }
+
+/** DCR inverter brand: Tata package-set vs all other DCR slabs. */
+export function resolveDcrInverterBrandForPackage(products: ProductSelection): string {
+  if (isTataDcrPackageSet(products)) return DCR_AS_PER_THE_SET
+  if (String(products.systemType || "").trim().toLowerCase() === "dcr") {
+    return CATALOG_DEFAULT_INVERTER_BRAND
+  }
+  return products.inverterBrand || ""
+}
+
+export function resolveDcrInverterSizeForPackage(
+  products: ProductSelection,
+  fallbackSize?: string,
+): string {
+  if (isTataDcrPackageSet(products)) return DCR_AS_PER_THE_SET
+  return fallbackSize || products.inverterSize || ""
+}
 function parseNominalSystemKw(...sources: (string | undefined)[]): number {
   for (const source of sources) {
     const match = String(source ?? "").match(/([\d.]+)\s*kW/i)
@@ -85,14 +101,6 @@ function normalizeStructureSizeForCatalog(size: string): string {
   if (Math.abs(kw - 5.1) < 0.05) return "5kW"
   if (Number.isInteger(kw)) return `${kw}kW`
   return `${Math.round(kw)}kW`
-}
-
-function nominalInverterSizeForCatalog(systemKw: number): string {
-  if (systemKw <= 0) return "5kW"
-  for (const kw of CATALOG_INVERTER_KW_OPTIONS) {
-    if (kw >= systemKw) return `${kw}kW`
-  }
-  return `${CATALOG_INVERTER_KW_OPTIONS[CATALOG_INVERTER_KW_OPTIONS.length - 1]}kW`
 }
 
 function normalizeAsPerSetCableSize(size: string | undefined): string | undefined {
@@ -129,31 +137,31 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
     dcCableSize: normalizeAsPerSetCableSize(next.dcCableSize) ?? next.dcCableSize,
   }
 
+  if (String(next.systemType || "").trim().toLowerCase() === "dcr" && !isTataDcrPackageSet(next)) {
+    return {
+      ...next,
+      inverterBrand: CATALOG_DEFAULT_INVERTER_BRAND,
+    }
+  }
+
   if (!isTataDcrPackageSet(next)) return next
 
   const systemKw = parseNominalSystemKw(next.structureSize, next.inverterSize)
-  const panelSize = CATALOG_TATA_REP_PANEL_SIZE
-  const panelQty =
-    (next.panelQuantity ?? 0) > 0
-      ? next.panelQuantity!
-      : systemKw > 0
-        ? Math.max(1, panelQuantityForNominalSystemKw(systemKw, panelSize))
-        : 1
-  const inverterSize = nominalInverterSizeForCatalog(systemKw)
   const structureSize = normalizeStructureSizeForCatalog(
     next.structureSize || (systemKw > 0 ? `${systemKw}kW` : "5kW"),
   )
+  const panelBrand = next.panelBrand || next.dcrPanelBrand || "Tata"
 
   return {
     ...next,
-    panelBrand: next.panelBrand || "Tata",
-    panelSize,
-    panelQuantity: panelQty,
-    dcrPanelBrand: next.panelBrand || "Tata",
-    dcrPanelSize: panelSize,
-    dcrPanelQuantity: panelQty,
-    inverterBrand: CATALOG_DEFAULT_INVERTER_BRAND,
-    inverterSize,
+    panelBrand,
+    panelSize: DCR_AS_PER_THE_SET,
+    panelQuantity: 0,
+    dcrPanelBrand: panelBrand,
+    dcrPanelSize: DCR_AS_PER_THE_SET,
+    dcrPanelQuantity: 0,
+    inverterBrand: DCR_AS_PER_THE_SET,
+    inverterSize: DCR_AS_PER_THE_SET,
     structureSize,
   }
 }
