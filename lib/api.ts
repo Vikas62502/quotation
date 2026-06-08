@@ -1,6 +1,7 @@
 // API Configuration and Service Layer
 import { API_CONFIG } from "./api-config"
 import { parseQuotationDocumentUploadUrl } from "./quotation-documents-form"
+import { extractQuotationListFromApiResponse } from "./operational-install-queue"
 
 const getApiBaseUrl = () => API_CONFIG.baseURL
 
@@ -548,6 +549,9 @@ async function patchOperationalWorkflowStatus(quotationId: string, status: strin
   const endpoints = [
     `/admin/quotations/${quotationId}/installation-status`,
     `/admin/quotations/${quotationId}/workflow-status`,
+    `/installer/quotations/${quotationId}/installation-status`,
+    `/installer/quotations/${quotationId}/send-to-metering`,
+    `/installer/quotations/${quotationId}/metering-handoff`,
     `/quotations/${quotationId}/metering-status`,
     `/quotations/${quotationId}/status`,
     `/metering/quotations/${quotationId}/status`,
@@ -593,6 +597,26 @@ export async function forceAdvanceQuotationToMco(quotationId: string): Promise<b
   ok = (await patchMeteringWorkflowAction(quotationId, "send_to_mco")) || ok
   ok = (await patchOperationalWorkflowStatus(quotationId, "mco")) || ok
   return ok
+}
+
+/** Load rows sent from Payment Management — tries account + admin list endpoints. */
+export async function fetchSentToInstallerQuotationRows(): Promise<any[]> {
+  const queryAttempts = [
+    "/quotations?status=approved&limit=1000",
+    "/admin/quotations?limit=1000&status=approved",
+    "/admin/quotations?limit=1000&installationReadyForInstaller=true",
+    "/admin/quotations?limit=1000",
+  ]
+  for (const path of queryAttempts) {
+    try {
+      const response = await apiRequest(path, { suppressErrorLog: true })
+      const rows = extractQuotationListFromApiResponse(response)
+      if (rows.length > 0) return rows
+    } catch {
+      // try next endpoint
+    }
+  }
+  return []
 }
 
 // API Service Methods

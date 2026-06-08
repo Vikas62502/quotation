@@ -43,7 +43,7 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { api, ApiError, apiErrorToUserMessage, getAuthToken, isApiAuthFailure, sendQuotationToMetering } from "@/lib/api"
+import { api, ApiError, apiErrorToUserMessage, fetchSentToInstallerQuotationRows, getAuthToken, isApiAuthFailure, sendQuotationToMetering } from "@/lib/api"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { getRealtime } from "@/lib/realtime"
@@ -88,15 +88,24 @@ import { cn } from "@/lib/utils"
 import {
   getInstallationWorkflowStatus,
   getMeteringWorkflowRaw,
-  isAlreadyInMeteringPipeline,
   isAwaitingManualMeteringHandoff,
+  getQuotationOpsStageLabel,
+  getSendToMeteringMenuState,
   getMeteringWorkflowStage,
   isMeteringApprovedForTransition,
-  INSTALLER_RELEASE_MAP_KEY,
   readInstallationScheduledMap,
+  readInstallerReleaseMap,
+  isQuotationSentToInstaller,
+  shouldShowInAdminInstallationTab,
+  mergeInstallerReleaseOntoQuotation,
+  isInstallationApprovedForAdminTab,
+  getInstallationAdminTabProgress,
   setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
   flattenWrappedQuotationRow,
+  flattenQuotationListRow,
+  stampInstallerReleaseFromMap,
+  syncInstallerReleaseMapFromRows,
   mergeInstallationMediaSources,
 } from "@/lib/operational-install-queue"
 import { normalizeMediaUrl, pickMediaUrlFromValue, toPublicOpenHref } from "@/lib/media-url"
@@ -362,6 +371,17 @@ function gatherInstallationPublicImageUrls(q: Record<string, unknown>, max = 24)
   return out
 }
 
+/** Installation photos uploaded, or workflow advanced past installer completion. */
+function isInstallationUploadComplete(quotation: Quotation, approvedQueueIds?: Set<string>): boolean {
+  const q = quotation as unknown as Record<string, unknown>
+  const inApprovedQueue = approvedQueueIds?.has(quotation.id) ?? false
+  const imageCount = gatherInstallationPublicImageUrls(q).length
+  return isInstallationApprovedForAdminTab(q, {
+    imageUrlCount: imageCount,
+    inInstallerApprovedQueue: inApprovedQueue,
+  })
+}
+
 function AdminQuotationDealerBlock({
   quotation,
   dealers,
@@ -452,38 +472,18 @@ const GOVERNMENT_BANK_OPTIONS = [
   "HDFC Bank",
 ] as const
 
-function getSendToMeteringMenuState(
-  quotation: Quotation,
-  options?: { surface?: "installation" | "quotations" },
-): {
-  visible: boolean
-  enabled: boolean
-  hint: string
-  sent: boolean
-} {
-  const q = quotation as unknown as Record<string, unknown>
-  const approved = String(quotation.status || "").toLowerCase() === "approved"
-  const install = getInstallationWorkflowStatus(q)
-  const awaitingHandoff = isAwaitingManualMeteringHandoff(q)
-
-  // Manual handoff lives on Installation → Pending Metering, not the main Quotations list.
-  if (options?.surface === "quotations") {
-    return { visible: false, enabled: false, hint: "", sent: false }
-  }
-
-  if (isAlreadyInMeteringPipeline(q)) {
-    return { visible: false, enabled: false, hint: "", sent: true }
-  }
-
-  if (!awaitingHandoff) {
-    return { visible: false, enabled: false, hint: "", sent: false }
-  }
-
-  if (!approved) {
-    return { visible: true, enabled: false, hint: "Approve the quotation first", sent: false }
-  }
-
-  return { visible: true, enabled: true, hint: "", sent: false }
+function getOperationalStageForQuotation(quotation: Quotation): AdminOperationalStage | "" {
+  const raw = String(
+    (quotation as any).installationStatus ||
+      (quotation as any).installation_status ||
+      (quotation as any).meteringStatus ||
+      (quotation as any).metering_status ||
+      (quotation as any).mcoStatus ||
+      (quotation as any).mco_status ||
+      "",
+  ).toLowerCase()
+  if (ADMIN_OPERATIONAL_STAGES.includes(raw as AdminOperationalStage)) return raw as AdminOperationalStage
+  return ""
 }
 
 function AdminQuotationRowActions({
@@ -493,7 +493,6 @@ function AdminQuotationRowActions({
   onTimeline,
   onDocuments,
   onView,
-  showSendToMetering = false,
 }: {
   quotation: Quotation
   sendingToMeteringId: string | null
@@ -501,11 +500,8 @@ function AdminQuotationRowActions({
   onTimeline: (quotation: Quotation) => void
   onDocuments: (quotation: Quotation) => void
   onView: (quotation: Quotation) => void
-  showSendToMetering?: boolean
 }) {
-  const sendToMetering = getSendToMeteringMenuState(quotation, {
-    surface: showSendToMetering ? "installation" : "quotations",
-  })
+  const sendToMetering = getSendToMeteringMenuState(quotation)
   const isSending = sendingToMeteringId === quotation.id
 
   return (
@@ -521,20 +517,13 @@ function AdminQuotationRowActions({
           <Eye className="w-4 h-4" />
         </Button>
       </div>
-      {showSendToMetering && sendToMetering.sent ? (
-        <Badge
-          variant="outline"
-          className="text-[10px] border-emerald-500 text-emerald-700 whitespace-nowrap"
-        >
-          Sent to metering
-        </Badge>
-      ) : showSendToMetering && sendToMetering.visible ? (
+      {sendToMetering.visible ? (
         <Button
           type="button"
           variant="outline"
           size="sm"
           className={`h-7 text-[10px] px-2 whitespace-nowrap w-full ${!sendToMetering.enabled || isSending ? "opacity-60" : ""}`}
-          title={sendToMetering.hint || "Send this quotation to the metering team"}
+          title={sendToMetering.hint || "Manually send to metering team"}
           onClick={() => onSendToMetering(quotation)}
         >
           <Gauge className="w-3 h-3 mr-1 shrink-0" />
@@ -606,6 +595,7 @@ export default function AdminPanelPage() {
   const [installationTeamSubmitting, setInstallationTeamSubmitting] = useState(false)
   const [installationTeamsRefresh, setInstallationTeamsRefresh] = useState(0)
   const [installerQueueIds, setInstallerQueueIds] = useState<Set<string>>(new Set())
+  const [installerQueueApprovedIds, setInstallerQueueApprovedIds] = useState<Set<string>>(new Set())
   const [adminInstallExpandedId, setAdminInstallExpandedId] = useState<string | null>(null)
   const [adminInstallQuotation, setAdminInstallQuotation] = useState<Quotation | null>(null)
   const [adminInstallMediaByField, setAdminInstallMediaByField] = useState<
@@ -1045,7 +1035,7 @@ export default function AdminPanelPage() {
   }, [isAuthenticated, router, dealer])
 
   useEffect(() => {
-    setOperationalProgressTab("all")
+    setOperationalProgressTab(operationalTab === "installation" ? "pending" : "all")
   }, [operationalTab])
 
   const installDocEnrichAttemptedRef = useRef(new Set<string>())
@@ -1060,19 +1050,23 @@ export default function AdminPanelPage() {
   useEffect(() => {
     if (!useApi) return
     if (operationalTab !== "installation") return
-    if (operationalProgressTab !== "done" && operationalProgressTab !== "all") return
 
     const candidates = quotations
       .filter((q) => {
+        if (!shouldShowInAdminInstallationTab(q as unknown as Record<string, unknown>, readInstallerReleaseMap())) {
+          return false
+        }
         const ws = getInstallationWorkflowStatus(q as unknown as Record<string, unknown>)
-        if (!INSTALLATION_APPROVED_MEDIA_STATUSES.has(ws)) return false
+        const likelyApproved =
+          INSTALLATION_APPROVED_MEDIA_STATUSES.has(ws) || installerQueueApprovedIds.has(q.id)
+        if (!likelyApproved) return false
         const id = String(q.id || "").trim()
         if (!id || installDocEnrichAttemptedRef.current.has(id) || installDocEnrichInFlightRef.current.has(id)) {
           return false
         }
         return gatherInstallationPublicImageUrls(q as unknown as Record<string, unknown>).length === 0
       })
-      .slice(0, 12)
+      .slice(0, 20)
 
     if (candidates.length === 0) return
 
@@ -1084,7 +1078,7 @@ export default function AdminPanelPage() {
         installDocEnrichAttemptedRef.current.add(id)
         installDocEnrichInFlightRef.current.add(id)
         try {
-          const full = await api.quotations.getById(id)
+          const full = await api.admin.quotations.getById(id).catch(() => api.quotations.getById(id))
           if (cancelled) break
           setQuotations((prev) =>
             prev.map((row) =>
@@ -1107,7 +1101,7 @@ export default function AdminPanelPage() {
     return () => {
       cancelled = true
     }
-  }, [useApi, operationalTab, operationalProgressTab, quotations])
+  }, [useApi, operationalTab, quotations, installerQueueApprovedIds])
 
   // Admin list often omits panel fields; fetch detail for approved rows still at 0 kW (Dealers by Revenue).
   useEffect(() => {
@@ -1288,9 +1282,10 @@ export default function AdminPanelPage() {
 
         if (isStale()) return
 
-        // Load quotations
-        const quotationsResponse = await api.admin.quotations.getAll()
+        // Load quotations (high limit — default pagination hides released payment rows)
+        const quotationsResponse = await api.admin.quotations.getAll({ page: 1, limit: 1000 })
         setOptimisticFileLoginSelect({})
+        let releaseLocal = readInstallerReleaseMap()
         const installerQueueById: Record<string, Record<string, unknown>> = {}
         const ingestInstallerQueueRows = (rows: unknown[]) => {
           rows.forEach((row: unknown) => {
@@ -1305,6 +1300,7 @@ export default function AdminPanelPage() {
         }
 
         let installerQueueIdSet = new Set<string>()
+        let installerQueueApprovedIdSet = new Set<string>()
         try {
           const pending = extractQuotationListFromApiResponse(
             await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
@@ -1318,6 +1314,11 @@ export default function AdminPanelPage() {
             const flat = flattenWrappedQuotationRow(row)
             const id = String(flat.id || "").trim()
             if (id) installerQueueIdSet.add(id)
+          })
+          approvedQ.forEach((row: unknown) => {
+            const flat = flattenWrappedQuotationRow(row)
+            const id = String(flat.id || "").trim()
+            if (id) installerQueueApprovedIdSet.add(id)
           })
           if (installerQueueIdSet.size === 0) {
             const fallback = extractQuotationListFromApiResponse(
@@ -1334,15 +1335,139 @@ export default function AdminPanelPage() {
           installerQueueIdSet = new Set()
         }
         setInstallerQueueIds(installerQueueIdSet)
+        setInstallerQueueApprovedIds(installerQueueApprovedIdSet)
 
-        const quotationsList = (quotationsResponse.quotations || []).map((q: any) => {
+        let localQuotationsBackup: Quotation[] = []
+        try {
+          localQuotationsBackup = JSON.parse(localStorage.getItem("quotations") || "[]")
+        } catch {
+          localQuotationsBackup = []
+        }
+        const localByIdEarly = new Map(
+          localQuotationsBackup
+            .filter((row) => String(row?.id || "").trim())
+            .map((row) => [String(row.id), row]),
+        )
+
+        const adminRowsRaw = quotationsResponse.quotations || extractQuotationListFromApiResponse(quotationsResponse)
+        releaseLocal = syncInstallerReleaseMapFromRows(adminRowsRaw)
+
+        let paymentSentRows: unknown[] = []
+        try {
+          paymentSentRows = await fetchSentToInstallerQuotationRows()
+          if (isStale()) return
+          releaseLocal = syncInstallerReleaseMapFromRows([...adminRowsRaw, ...paymentSentRows])
+        } catch {
+          // release map from admin list still applies
+        }
+
+        const adminById = new Map<string, Record<string, unknown>>()
+        adminRowsRaw.forEach((row: Record<string, unknown>) => {
+          const id = String(row?.id || "").trim()
+          if (id) adminById.set(id, stampInstallerReleaseFromMap(row, releaseLocal) as Record<string, unknown>)
+        })
+        Object.entries(installerQueueById).forEach(([id, queueRow]) => {
+          if (!id) return
+          const rowWithStatus = installerQueueApprovedIdSet.has(id)
+            ? ({
+                ...queueRow,
+                installationStatus: queueRow.installationStatus ?? queueRow.installation_status ?? "installer_approved",
+                installation_status: queueRow.installation_status ?? queueRow.installationStatus ?? "installer_approved",
+              } as Record<string, unknown>)
+            : queueRow
+          const existing = adminById.get(id)
+          if (existing) {
+            adminById.set(
+              id,
+              stampInstallerReleaseFromMap(
+                mergeInstallationMediaSources(existing, rowWithStatus) as OperationalQuotationRecord,
+                releaseLocal,
+              ) as Record<string, unknown>,
+            )
+            return
+          }
+          if (isQuotationSentToInstaller(rowWithStatus, releaseLocal) || releaseLocal[id]) {
+            adminById.set(id, stampInstallerReleaseFromMap(rowWithStatus, releaseLocal) as Record<string, unknown>)
+          }
+        })
+        // Payment Management source — all approved rows with Send to Installer (API or release map)
+        const paymentRowsToMerge =
+          paymentSentRows.length > 0
+            ? paymentSentRows
+            : (await (async () => {
+                try {
+                  const approvedResp = await api.quotations.getAll({ status: "approved", page: 1, limit: 1000 })
+                  return extractQuotationListFromApiResponse(approvedResp)
+                } catch {
+                  return [] as unknown[]
+                }
+              })())
+        if (isStale()) return
+        releaseLocal = syncInstallerReleaseMapFromRows([
+          ...adminRowsRaw,
+          ...paymentRowsToMerge,
+          ...Object.values(installerQueueById),
+        ])
+        paymentRowsToMerge.forEach((row: unknown) => {
+          const flat = flattenQuotationListRow(row)
+          const id = String(flat.id || "").trim()
+          if (!id) return
+          const sent = isQuotationSentToInstaller(flat, releaseLocal) || Boolean(releaseLocal[id])
+          if (!sent) return
+          const existing = adminById.get(id)
+          const merged = stampInstallerReleaseFromMap(
+            existing
+              ? (mergeInstallationMediaSources(existing, flat) as OperationalQuotationRecord)
+              : flat,
+            releaseLocal,
+          )
+          adminById.set(id, merged as Record<string, unknown>)
+        })
+        // Browser release map (Payment Management) — local backup then detail fetch
+        Object.entries(releaseLocal).forEach(([id, entry]) => {
+          if (!id || adminById.has(id)) return
+          const localRow = localByIdEarly.get(id)
+          if (localRow) {
+            adminById.set(
+              id,
+              stampInstallerReleaseFromMap(localRow as unknown as OperationalQuotationRecord, releaseLocal) as Record<
+                string,
+                unknown
+              >,
+            )
+          }
+        })
+        const missingReleaseIds = Object.keys(releaseLocal)
+          .filter((id) => id.trim() && !adminById.has(id))
+          .slice(0, 24)
+        if (missingReleaseIds.length > 0) {
+          await Promise.all(
+            missingReleaseIds.map(async (id) => {
+              if (isStale()) return
+              try {
+                const detail = await api.admin.quotations.getById(id)
+                const payload = (detail as Record<string, unknown>)?.quotation ?? (detail as Record<string, unknown>)?.data ?? detail
+                const flat = flattenQuotationListRow(payload)
+                if (!String(flat.id || "").trim()) return
+                adminById.set(
+                  id,
+                  stampInstallerReleaseFromMap(flat, releaseLocal) as Record<string, unknown>,
+                )
+              } catch {
+                // Row stays missing until backend persists release flags
+              }
+            }),
+          )
+        }
+
+        const quotationsList = Array.from(adminById.values()).map((q: any) => {
           const customerData = q.customer || {}
           const rawFileLogin = q.fileLoginStatus ?? q.file_login_status
           const fileLoginStatusNorm =
             rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
           const queueExtra = installerQueueById[String(q.id || "").trim()]
           const productSource = queueExtra ? { ...q, ...queueExtra } : q
-          const mapped = {
+          const mappedBase = {
             ...q,
             id: q.id,
             customer: {
@@ -1394,31 +1519,23 @@ export default function AdminPanelPage() {
             installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
             installationTeamId: q.installationTeamId ?? q.installation_team_id,
           }
-          return queueExtra
-            ? (mergeInstallationMediaSources(mapped, queueExtra) as typeof mapped)
-            : mapped
+          const mapped = queueExtra
+            ? (mergeInstallationMediaSources(mappedBase, queueExtra) as typeof mappedBase)
+            : mappedBase
+          return mergeInstallerReleaseOntoQuotation(mapped, releaseLocal)
         })
         const scheduledLocal = readInstallationScheduledMap()
         const teamAssignLocal = readTeamAssignments()
-        let localQuotationsBackup: Quotation[] = []
-        try {
-          localQuotationsBackup = JSON.parse(localStorage.getItem("quotations") || "[]")
-        } catch {
-          localQuotationsBackup = []
-        }
-        const localById = new Map(
-          localQuotationsBackup
-            .filter((row) => String(row?.id || "").trim())
-            .map((row) => [String(row.id), row]),
-        )
+        const localById = localByIdEarly
 
         setQuotations(
           quotationsList.map((q: any) => {
             const localRow = localById.get(String(q.id || ""))
+            const withRelease = mergeInstallerReleaseOntoQuotation(q, releaseLocal, localRow ?? null)
             const withSchedule = {
-              ...q,
-              installationScheduledAt: q.installationScheduledAt || scheduledLocal[q.id],
-              installationTeamId: q.installationTeamId || teamAssignLocal[q.id],
+              ...withRelease,
+              installationScheduledAt: withRelease.installationScheduledAt || scheduledLocal[q.id],
+              installationTeamId: withRelease.installationTeamId || teamAssignLocal[q.id],
             }
             if (!localRow) return withSchedule
             const apiKw = getQuotationSystemKw(withSchedule)
@@ -2068,12 +2185,10 @@ export default function AdminPanelPage() {
     { processing: 0, approved: 0, mco: 0 },
   )
 
-  /** Rows awaiting manual admin handoff to metering (Installation → Approved by Installer). */
+  /** Installation sub-tab bucket: pending = sent, no upload; approved = photos uploaded. */
   const getInstallerQueueStatusForAdmin = (quotation: Quotation): "pending" | "inprogress" | "approved" => {
+    if (isInstallationUploadComplete(quotation, installerQueueApprovedIds)) return "approved"
     const backendStatus = getInstallationWorkflowStatus(quotation as any)
-    if (isAwaitingManualMeteringHandoff(quotation as unknown as Record<string, unknown>)) {
-      return "approved"
-    }
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
       return "inprogress"
     }
@@ -2430,64 +2545,11 @@ export default function AdminPanelPage() {
   }
 
   function getOperationalStage(quotation: Quotation): AdminOperationalStage | "" {
-    const raw = String(
-      (quotation as any).installationStatus ||
-        (quotation as any).installation_status ||
-        (quotation as any).meteringStatus ||
-        (quotation as any).metering_status ||
-        (quotation as any).mcoStatus ||
-        (quotation as any).mco_status ||
-        "",
-    ).toLowerCase()
-    if (ADMIN_OPERATIONAL_STAGES.includes(raw as AdminOperationalStage)) return raw as AdminOperationalStage
-    return ""
+    return getOperationalStageForQuotation(quotation)
   }
 
   function isInstallerVisible(quotation: Quotation) {
-    const qAny = quotation as any
-    if (isAlreadyInMeteringPipeline(qAny)) return false
-    let localReleaseMap: Record<string, any> = {}
-    if (typeof window !== "undefined") {
-      try {
-        localReleaseMap = JSON.parse(localStorage.getItem(INSTALLER_RELEASE_MAP_KEY) || "{}")
-      } catch {
-        localReleaseMap = {}
-      }
-    }
-    const releasedByAccounts =
-      qAny.installationReadyForInstaller === true ||
-      qAny.installation_ready_for_installer === true ||
-      qAny.readyForInstallation === true ||
-      qAny.ready_for_installation === true ||
-      qAny.releaseToInstaller === true ||
-      Boolean(qAny.installationReleasedAt || qAny.installation_released_at) ||
-      localReleaseMap?.[qAny.id]?.installationReadyForInstaller === true
-
-    const ws = getInstallationWorkflowStatus(qAny)
-    const hasPersistedInstallWorkflow = [
-      "pending_installer",
-      "installer_in_progress",
-      "in_progress",
-      "installer_approved",
-      "pending_metering",
-      "metering_in_progress",
-      "metering_approved",
-      "mco",
-      "pending_baldev",
-      "baldev_approved",
-      "completed",
-    ].includes(ws)
-
-    if (useApi && installerQueueIds.size > 0) {
-      // Require release to installation, then either still on an installer queue response OR
-      // a persisted workflow stage (e.g. installer_approved) so rows do not vanish after they leave
-      // GET installer queue?status=pending_installer.
-      return (
-        releasedByAccounts &&
-        (installerQueueIds.has(quotation.id) || hasPersistedInstallWorkflow)
-      )
-    }
-    return releasedByAccounts
+    return shouldShowInAdminInstallationTab(quotation as any, readInstallerReleaseMap())
   }
 
   function isMeteringVisible(quotation: Quotation) {
@@ -2500,13 +2562,11 @@ export default function AdminPanelPage() {
 
   function getOperationalProgressState(quotation: Quotation, tab: AdminOperationalTab): "pending" | "done" | "mco" | null {
     if (tab === "installation") {
-      if (isAwaitingManualMeteringHandoff(quotation as unknown as Record<string, unknown>)) {
-        return "done"
-      }
-      const backendStatus = getInstallationWorkflowStatus(quotation as any)
-      if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") return "pending"
-      if (backendStatus === "pending_installer" || backendStatus === "") return "pending"
-      return null
+      if (!shouldShowInAdminInstallationTab(quotation as any, readInstallerReleaseMap())) return null
+      return getInstallationAdminTabProgress(
+        quotation as any,
+        isInstallationUploadComplete(quotation, installerQueueApprovedIds),
+      )
     }
     if (tab === "metering") {
       const mStage = getAdminMeteringStage(quotation)
@@ -2935,7 +2995,7 @@ export default function AdminPanelPage() {
   }
 
   const handleSendToMetering = async (quotation: Quotation) => {
-    const menuState = getSendToMeteringMenuState(quotation, { surface: "installation" })
+    const menuState = getSendToMeteringMenuState(quotation)
     if (sendingToMeteringId === quotation.id) return
     if (!menuState.enabled) {
       toast({
@@ -3003,7 +3063,7 @@ export default function AdminPanelPage() {
         setAdminInstallExpandedId((prev) => (prev === id ? null : prev))
         toast({
           title: "Reverted to pending",
-          description: "This job is back under Pending Installations. You can upload or edit photos again from there.",
+          description: "This job is back under Pending Installation. You can upload or edit photos again from there.",
         })
       } else {
         toast({
@@ -3189,7 +3249,7 @@ export default function AdminPanelPage() {
         toast({
           title: "Saved",
           description:
-            "Installation completion saved. Showing Approved by Installer — your quotation is listed there.",
+            "Installation completion saved. Showing Approved Installation — your quotation is listed there.",
         })
       } else {
         toast({
@@ -4287,20 +4347,17 @@ export default function AdminPanelPage() {
                           { key: "done" as const, label: "Approved" },
                           { key: "mco" as const, label: "MCO" },
                         ] as const)
-                      : ([
-                          { key: "all" as const, label: "All" },
-                          {
-                            key: "pending" as const,
-                            label: operationalTab === "installation" ? "Pending Installations" : "Pending",
-                          },
-                          {
-                            key: "done" as const,
-                            label:
-                              operationalTab === "installation"
-                                ? "Pending Metering"
-                                : "Done",
-                          },
-                        ] as const)
+                      : operationalTab === "installation"
+                        ? ([
+                            { key: "all" as const, label: "All" },
+                            { key: "pending" as const, label: "Pending Installation" },
+                            { key: "done" as const, label: "Approved Installation" },
+                          ] as const)
+                        : ([
+                            { key: "all" as const, label: "All" },
+                            { key: "pending" as const, label: "Pending" },
+                            { key: "done" as const, label: "Done" },
+                          ] as const)
                     ).map((item) => (
                       <Button
                         key={item.key}
@@ -4834,7 +4891,7 @@ export default function AdminPanelPage() {
                                   <div className="min-w-0">
                                     <Badge variant="outline" className="text-xs capitalize">
                                       {installerStatus === "approved"
-                                        ? "Pending metering"
+                                        ? "Approved Installation"
                                         : installerStatus === "inprogress"
                                           ? "Installer In Progress"
                                           : "Pending Installation"}
@@ -4866,9 +4923,7 @@ export default function AdminPanelPage() {
                                     {installerStatus === "approved" ? (
                                       <>
                                         {(() => {
-                                          const sendToMetering = getSendToMeteringMenuState(quotation, {
-                                            surface: "installation",
-                                          })
+                                          const sendToMetering = getSendToMeteringMenuState(quotation)
                                           if (!sendToMetering.visible) return null
                                           return (
                                             <Button
@@ -5174,13 +5229,13 @@ export default function AdminPanelPage() {
                               </SelectContent>
                             </Select>
                             <div className="h-9 rounded-md border border-border/70 px-2 flex items-center text-xs capitalize bg-muted/30">
-                              {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
+                              {getQuotationOpsStageLabel(quotation)}
                             </div>
                             <p className="text-[10px] text-muted-foreground leading-snug">
-                              Ops: {getOperationalStage(quotation) ? getOperationalStage(quotation).replaceAll("_", " ") : "Not set"}
+                              Ops: {getQuotationOpsStageLabel(quotation)}
                             </p>
 
-                            <div className="flex gap-2">
+                            <div className="flex gap-2 flex-wrap">
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -5226,7 +5281,22 @@ export default function AdminPanelPage() {
                                 <History className="w-3 h-3 mr-1" />
                                 Timeline
                               </Button>
-
+                              {(() => {
+                                const sendToMetering = getSendToMeteringMenuState(quotation)
+                                if (!sendToMetering.visible) return null
+                                return (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={`flex-1 ${!sendToMetering.enabled || sendingToMeteringId === quotation.id ? "opacity-60" : ""}`}
+                                    onClick={() => void handleSendToMetering(quotation)}
+                                    title={sendToMetering.hint || "Send to Metering"}
+                                  >
+                                    <Gauge className="w-3 h-3 mr-1" />
+                                    {sendingToMeteringId === quotation.id ? "Sending..." : "Send to Metering"}
+                                  </Button>
+                                )
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -5327,10 +5397,10 @@ export default function AdminPanelPage() {
                                       (quotation.status || "pending").slice(1)}
                                   </Badge>
                                   <div className="w-full min-w-0 h-8 rounded-md border border-border/70 px-2 flex items-center text-xs capitalize bg-muted/30">
-                                    {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
+                                    {getQuotationOpsStageLabel(quotation)}
                                   </div>
                                   <Badge variant="outline" className="text-[10px] w-full justify-center capitalize">
-                                    {(getOperationalStage(quotation) || "not_set").replaceAll("_", " ")}
+                                    {getQuotationOpsStageLabel(quotation)}
                                   </Badge>
                                 </div>
                               </td>
@@ -9303,7 +9373,7 @@ export default function AdminPanelPage() {
                 {installRevertTarget ? (
                   <>
                     <span className="font-medium text-foreground">{installRevertTarget.label}</span> will move back to{" "}
-                    <strong>Pending Installations</strong>. Use this if photos need to be re-done or the job was approved by mistake.
+                    <strong>Pending Installation</strong>. Use this if photos need to be re-done or the job was approved by mistake.
                   </>
                 ) : null}
               </DialogDescription>

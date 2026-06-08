@@ -3184,6 +3184,16 @@ Now uploaded document fields must also support **View existing file** without re
 Requirement clarification: quotation should appear in Installation/Installer operational lists **only after Account Management clicks "Send to installation"** (release step).  
 Manual installer-stage selection in admin list must not be treated as release trigger.
 
+**Admin Installation sub-tabs (frontend, Jun 2026):**
+
+| Sub-tab | Backend signal |
+|---------|----------------|
+| **Pending Installation** | Released (`installation_ready_for_installer` / `installation_released_at`) AND `installation_status` is `pending_installer`, `installer_in_progress`, or empty — **no** completion images yet |
+| **Approved Installation** | Released AND (`installation_status` ≥ `installer_approved` **or** completion image URLs present on GET) |
+| **Hidden from Installation** | Not released from Payment Management, **or** already in metering pipeline (`pending_metering`+ after manual **Send to Metering**) |
+
+Do **not** auto-set `pending_metering` when installation photos are uploaded; wait for explicit admin/installation-team **Send to Metering** PATCH.
+
 ### Required backend behavior
 
 1. Installer queue eligibility must be gated by release flags/timestamp from Accounts action:

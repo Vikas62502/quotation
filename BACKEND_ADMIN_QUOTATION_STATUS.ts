@@ -1452,3 +1452,113 @@ export async function patchDealerCallingQueueAction(req, res, db) {
  *
  * If not provided, frontend can still derive from recentActions.
  */
+
+/**
+ * =============================================================================
+ * Installation release — Payment Management → Admin Installation tab
+ * See BACKEND_INSTALLATION_RELEASE.md (BLOCKER if not implemented)
+ * =============================================================================
+ *
+ * Frontend:
+ *   PATCH /quotations/:id/installation-release  (lib/api.ts releaseForInstallation)
+ *   GET   /admin/quotations                     (Admin → Installation tab)
+ *   GET   /quotations?status=approved           (Payment Management list)
+ *
+ * Visibility rule: Admin Installation shows a row ONLY when
+ *   installation_ready_for_installer = true OR installation_released_at IS NOT NULL
+ */
+
+export function serializeInstallationReleaseFields(row) {
+  const ready = Boolean(row.installation_ready_for_installer ?? row.installationReadyForInstaller)
+  const releasedAt =
+    row.installation_released_at ?? row.installationReleasedAt ?? null
+  const releasedIso =
+    releasedAt instanceof Date ? releasedAt.toISOString() : releasedAt
+  return {
+    installationReadyForInstaller: ready,
+    installation_ready_for_installer: ready,
+    installationReleasedAt: releasedIso,
+    installation_released_at: releasedIso,
+    installationStatus: row.installation_status ?? row.installationStatus ?? null,
+    installation_status: row.installation_status ?? row.installationStatus ?? null,
+    installationScheduledAt: row.installation_scheduled_at ?? row.installationScheduledAt ?? null,
+    installation_scheduled_at: row.installation_scheduled_at ?? row.installationScheduledAt ?? null,
+    installationTeamId: row.installation_team_id ?? row.installationTeamId ?? null,
+    installation_team_id: row.installation_team_id ?? row.installationTeamId ?? null,
+  }
+}
+
+/**
+ * PATCH /api/quotations/:quotationId/installation-release
+ * Auth: account-management, admin
+ */
+export async function patchQuotationInstallationRelease(req, res) {
+  try {
+    const { quotationId } = req.params
+    const body = req.body || {}
+    const role = req.user?.role
+    if (!["account-management", "admin"].includes(role)) {
+      return res.status(403).json({
+        success: false,
+        error: { code: "AUTH_004", message: "Insufficient permissions" },
+      })
+    }
+
+    const quotation = await Quotation.findByPk(quotationId)
+    if (!quotation) {
+      return res.status(404).json({
+        success: false,
+        error: { code: "NOT_FOUND", message: "Quotation not found" },
+      })
+    }
+
+    if (String(quotation.status || "").toLowerCase() !== "approved") {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VAL_001", message: "Quotation must be approved before release to installer" },
+      })
+    }
+
+    const releasedAtRaw = body.installationReleasedAt ?? body.installation_released_at
+    const releasedAt = releasedAtRaw ? new Date(releasedAtRaw) : new Date()
+    if (Number.isNaN(releasedAt.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VAL_002", message: "Invalid installationReleasedAt" },
+      })
+    }
+
+    quotation.installation_ready_for_installer = true
+    quotation.installation_released_at = releasedAt
+
+    const preInstallStatuses = new Set([null, "", "pending_installer"])
+    const current = String(quotation.installation_status || "").toLowerCase()
+    if (preInstallStatuses.has(quotation.installation_status) || preInstallStatuses.has(current)) {
+      quotation.installation_status = "pending_installer"
+    }
+
+    await quotation.save()
+
+    const payload = {
+      id: quotation.id,
+      ...serializeInstallationReleaseFields(quotation),
+    }
+
+    return res.status(200).json({ success: true, data: payload })
+  } catch (err) {
+    console.error("patchQuotationInstallationRelease", err)
+    return res.status(500).json({
+      success: false,
+      error: { code: "SYS_001", message: "Failed to release quotation to installer" },
+    })
+  }
+}
+
+/**
+ * Merge into GET /admin/quotations and GET /quotations list serializers:
+ *
+ *   return { ...baseFields, ...serializeInstallationReleaseFields(row) }
+ *
+ * Installer queue GET filter:
+ *   WHERE installation_ready_for_installer = TRUE OR installation_released_at IS NOT NULL
+ */

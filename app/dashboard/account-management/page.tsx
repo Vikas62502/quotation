@@ -42,6 +42,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  INSTALLER_RELEASE_MAP_KEY,
+  isQuotationSentToInstaller,
+  mergeInstallerReleaseOntoQuotation,
+  readInstallerReleaseMap,
+} from "@/lib/operational-install-queue"
 
 
 // Payment Phase Interface
@@ -93,19 +99,8 @@ interface CustomerPayment {
   subsidyCheques: SubsidyChequeRecord[]
 }
 
-function isInstallerReleaseEnabled(q: Partial<Quotation> & Record<string, any>): boolean {
-  return (
-    q.installationReadyForInstaller === true ||
-    q.installation_ready_for_installer === true ||
-    q.readyForInstallation === true ||
-    q.ready_for_installation === true ||
-    q.releaseToInstaller === true
-  )
-}
-
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
-const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -677,7 +672,7 @@ export default function AccountManagementPage() {
             const rem = optionalFiniteNumber(flat.remaining)
             const remAmt = optionalFiniteNumber(flat.remainingAmount)
             const fileLoginStatusRaw = flat.fileLoginStatus ?? flat.file_login_status
-            return {
+            const mapped = {
               id: String(flat.id ?? ""),
               customer: (flat.customer as Quotation["customer"]) || {},
               products: (flat.products as Quotation["products"]) || {},
@@ -710,13 +705,14 @@ export default function AccountManagementPage() {
               validUntil: flat.validUntil as string | undefined,
               statusApprovedAt: pickApprovalTimestampFromQuotation(flat),
               fileLoginAt: pickFileLoginTimestampFromQuotation(flat),
-              installationReadyForInstaller: isInstallerReleaseEnabled(flat),
+              installationReadyForInstaller: isQuotationSentToInstaller(flat, readInstallerReleaseMap()),
               installationReleasedAt: (flat.installationReleasedAt ?? flat.installation_released_at) as string | undefined,
               fileLoginStatus:
                 fileLoginStatusRaw === "already_login" || fileLoginStatusRaw === "login_now"
                   ? fileLoginStatusRaw
                   : undefined,
             }
+            return mergeInstallerReleaseOntoQuotation(mapped, readInstallerReleaseMap()) as typeof mapped
           })
         setQuotations(approvedQuotations as Quotation[])
       } else {
@@ -725,7 +721,8 @@ export default function AccountManagementPage() {
           const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
           const approvedQuotations = allQuotations
             .filter((q: Quotation) => String(q.status || "").toLowerCase() === "approved")
-            .map((q: Quotation) => ({ 
+            .map((q: Quotation) => {
+              const mapped = {
               ...q, 
               status: "approved" as const,
               id: q.id || `QT-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
@@ -736,11 +733,13 @@ export default function AccountManagementPage() {
               finalAmount: q.finalAmount ?? (q as any).pricing?.finalAmount ?? q.totalAmount ?? 0,
               createdAt: q.createdAt || new Date().toISOString(),
               dealerId: q.dealerId || null,
-              installationReadyForInstaller: isInstallerReleaseEnabled(q as Record<string, any>),
+              installationReadyForInstaller: isQuotationSentToInstaller(q as Record<string, any>, readInstallerReleaseMap()),
               installationReleasedAt:
                 ((q as any).installationReleasedAt as string | undefined) ||
                 ((q as any).installation_released_at as string | undefined),
-            }))
+            }
+              return mergeInstallerReleaseOntoQuotation(mapped, readInstallerReleaseMap()) as typeof mapped
+            })
           
           setQuotations(approvedQuotations)
           
@@ -1448,7 +1447,7 @@ export default function AccountManagementPage() {
 
   const handleReleaseToInstaller = async (quotation: Quotation) => {
     if (!quotation?.id) return
-    if (quotation.installationReadyForInstaller) {
+    if (isQuotationSentToInstaller(quotation as Record<string, unknown>, readInstallerReleaseMap())) {
       toast({
         title: "Already sent",
         description: "This quotation is already visible in installer dashboard.",
@@ -2142,7 +2141,10 @@ export default function AccountManagementPage() {
 
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 flex justify-end">
                                 <div className="flex flex-wrap items-center justify-end gap-2">
-                                  {payment.quotation.installationReadyForInstaller ? (
+                                  {isQuotationSentToInstaller(
+                                    payment.quotation as Record<string, unknown>,
+                                    readInstallerReleaseMap(),
+                                  ) ? (
                                     <Badge
                                       variant="outline"
                                       className="text-[10px] border-emerald-500 text-emerald-700 whitespace-nowrap"

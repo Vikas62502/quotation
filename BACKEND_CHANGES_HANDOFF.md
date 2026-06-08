@@ -841,11 +841,176 @@ UPDATE quotations SET system_kw = computed_kw WHERE id = :id;
 
 ---
 
+## 9. Payment Management → Admin Installation (Accounts release only)
+
+> **BLOCKER — data not showing:** Admin Installation tab stays empty until backend implements **`PATCH /quotations/{id}/installation-release`** and returns release fields on **`GET /admin/quotations`**.  
+> **Give backend team:** [`BACKEND_INSTALLATION_RELEASE.md`](./BACKEND_INSTALLATION_RELEASE.md) (step-by-step + SQL + curl QA) and `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchQuotationInstallationRelease`.
+
+**Frontend:** `app/dashboard/account-management/page.tsx` (Payment Management / **Send to Installer**), `app/dashboard/admin/page.tsx` (Admin → **Installation**), `lib/operational-install-queue.ts` (`shouldShowInAdminInstallationTab`, `isQuotationSentToInstaller`).
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` — **Installation release & planned installation date**, **§6.4.C.7–C.8**, **§M**.
+
+### Root cause (why Installation tab is empty today)
+
+| Step | Expected | If backend missing |
+|------|----------|-------------------|
+| Account team clicks **Send to Installer** | `PATCH …/installation-release` saves DB flags | 404/403 → only browser localStorage; admin refresh loses data |
+| Admin opens **Installation** tab | `GET /admin/quotations` returns `installationReadyForInstaller: true` | Field absent/false → frontend hides all rows |
+| Green badge in Payment Management | Same flags on `GET /quotations?status=approved` | Badge may show locally but admin panel empty |
+
+**Minimum backend deliverable:** Implement §A + §B below, then verify with curl in `BACKEND_INSTALLATION_RELEASE.md` §11.
+
+### Product rule (what the UI enforces)
+
+| Payment Management (Account team) | Admin → Installation tab |
+|-----------------------------------|---------------------------|
+| **Send to Installer** **not** clicked | Row **must not** appear |
+| **Sent to installer** (badge shown) | Row **appears** |
+| Sent, **no installation photos** | **Pending Installation** |
+| Sent, **photos uploaded** / `installer_approved` | **Approved Installation** |
+| After **Send to Metering** (manual) | Row leaves Installation → **Metering** tab |
+
+The frontend **only** treats a quotation as “sent” when **`installationReadyForInstaller === true`** and/or **`installationReleasedAt`** is set (from API or the release PATCH). It does **not** show approved quotations that were never released from Payment Management.
+
+### Problem if backend is incomplete
+
+- Payment Management shows **Sent to installer**, but Admin **Installation** is empty after refresh (especially on another browser/device) → release flags not persisted or not returned on **`GET /api/admin/quotations`**.
+- Non-released approved quotations appear in installer/admin lists → queue not gated on release fields.
+- Upload completes but row stays in **Pending** → `installationStatus` / image URLs not returned on admin list GET.
+
+### Required quotation fields (persist + return on GET)
+
+| Field (camelCase) | snake_case | Type | When set |
+|-------------------|------------|------|----------|
+| `installationReadyForInstaller` | `installation_ready_for_installer` | boolean | Account team clicks **Send to Installer** |
+| `installationReleasedAt` | `installation_released_at` | ISO 8601 | Same action |
+| `installationStatus` | `installation_status` | string | Workflow (see below) |
+| `installationScheduledAt` | `installation_scheduled_at` | `YYYY-MM-DD` | Optional; admin planned date |
+| `installationTeamId` | `installation_team_id` | UUID | Optional; team assignment |
+
+Also return installation **photo URLs** on list/detail (`documents`, `siteCompletionImages`, `installationImageUrls`, per-field `*Url`, etc.) so **Approved Installation** works after refresh without relying on browser cache.
+
+### A) PATCH — release to installer (Account Management)
+
+**Preferred:** `PATCH /api/quotations/{quotationId}/installation-release`
+
+**Body:**
+
+```json
+{
+  "installationReadyForInstaller": true,
+  "installationReleasedAt": "2026-06-05T10:30:00.000Z"
+}
+```
+
+**Backend must:**
+
+1. Set `installation_ready_for_installer = true` and `installation_released_at` (prefer client ISO or server `NOW()`).
+2. Set **`installation_status = pending_installer`** when first released (recommended — matches **Pending Installation** tab).
+3. **Do not** add the row to installer/admin operational lists until this PATCH succeeds.
+4. **Auth:** account-management role (or equivalent).
+
+**Fallback paths** (frontend tries in order — see `lib/api.ts` → `releaseForInstallation`):
+
+- `PATCH /api/quotations/{id}/installation/ready`
+- `PATCH /api/quotations/{id}/payment-details` (merge only release fields; do not wipe unrelated payment data)
+
+### B) GET — list endpoints must echo release + workflow
+
+Return the fields above on **each quotation object** (top level, not only nested under undocumented keys):
+
+| Endpoint | Used by |
+|----------|---------|
+| `GET /api/admin/quotations` | Admin → Installation tab |
+| `GET /api/quotations/{id}` | Row refresh after upload |
+| Account Management approved/payments list | Payment Management **Sent to installer** badge |
+| `GET /api/installer/quotations` | Installer dashboard (nested `quotation` OK if flattened fields also present) |
+
+**Installer queue filter:** Only return quotations where **`installation_ready_for_installer = true`** OR **`installation_released_at IS NOT NULL`**. Do **not** include rows that are merely `status = approved` without release. See **§M** in `BACKEND_CHANGES_REQUIRED.md`.
+
+### C) Installation workflow — Pending vs Approved tabs
+
+**Pending Installation** (sent, work not done):
+
+- `installation_status` in: `pending_installer`, `installer_in_progress`, `in_progress`, or empty/null right after release.
+
+**Approved Installation** (photos uploaded / install complete):
+
+- `installation_status` in: `installer_approved`, `pending_baldev`, `baldev_approved`, `completed`  
+  **or** (legacy) `pending_metering` / metering stages if already in pipeline.
+- **Plus:** persist and return at least one installation completion image URL on the quotation row.
+
+**On completion upload** (installer or admin):
+
+- `POST` / `PATCH` installer completion routes → set **`installation_status = installer_approved`** (preferred).
+- **Do not** auto-set **`pending_metering`** on upload — metering starts only when admin/installation team clicks **Send to Metering** (`PATCH` with `pending_metering`). See `sendQuotationToMetering()` in `lib/api.ts`.
+
+**Revert to pending** (admin):
+
+- Accept `installation_status = pending_installer` from admin JWT (idempotent **200**).
+
+### D) PATCH — Send to Metering (manual handoff)
+
+When admin/installation team sends to metering, accept:
+
+```json
+{
+  "installationStatus": "pending_metering",
+  "installation_status": "pending_metering"
+}
+```
+
+**Paths tried by frontend:** `PATCH /api/admin/quotations/{id}/installation-status` (and fallbacks in `lib/api.ts`).
+
+**Auth:** `admin`, `installation-team`, or `installer` (installation team uses same handoff).
+
+After success, row should appear under Admin → **Metering → Processing**, not Installation.
+
+### E) SQL / migration (if columns missing)
+
+```sql
+ALTER TABLE quotations
+  ADD COLUMN IF NOT EXISTS installation_ready_for_installer BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS installation_released_at TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS installation_scheduled_at DATE NULL,
+  ADD COLUMN IF NOT EXISTS installation_team_id UUID NULL,
+  ADD COLUMN IF NOT EXISTS installation_status TEXT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_quotations_installation_release
+  ON quotations (installation_ready_for_installer, installation_released_at)
+  WHERE installation_ready_for_installer = TRUE;
+```
+
+### Backend checklist
+
+- [ ] `PATCH …/installation-release` (or `/installation/ready`) persists release flag + timestamp
+- [ ] First release sets `installation_status = pending_installer` (recommended)
+- [ ] `GET /api/admin/quotations` returns `installationReadyForInstaller`, `installationReleasedAt`, `installationStatus` on every row
+- [ ] Account Management payments/approved list returns same release fields (for **Sent to installer** badge)
+- [ ] Installer queue GET **only** includes released quotations
+- [ ] Completion upload sets `installer_approved` + returns image URLs on subsequent GET
+- [ ] Upload does **not** auto-advance to `pending_metering`
+- [ ] Manual **Send to Metering** PATCH allowed for admin + installation-team
+- [ ] Non-released approved quotations **never** appear in installation/installer operational APIs
+
+### QA
+
+1. Approve quotation in admin — **do not** send from Payment Management → **must not** appear in Admin Installation or installer queue.
+2. Payment Management → **Send to Installer** → appears in Admin **Pending Installation** with **Sent to installation** date.
+3. Hard refresh / different browser (same user role) → row still visible (proves server persistence, not localStorage only).
+4. Upload installation photos → moves to **Approved Installation**; `GET /admin/quotations` shows `installationStatus: installer_approved` + URLs.
+5. **Send to Metering** → row disappears from Installation; appears in Metering **Processing**.
+6. Payment row still shows **Sent to installer**; unreleased neighbours stay out of Installation tab.
+
+**Reference:** `lib/operational-install-queue.ts`, `lib/api.ts` (`releaseForInstallation`, `sendQuotationToMetering`), `BACKEND_CHANGES_REQUIRED.md` §M.
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §6.5 + **§6.5.1** (admin kW / product merge), §7.7–7.9 (calling queue, HR uploads, dealer dashboard stats), dealer queue (~2307), **§J** + **§J.1** (calling-actions GET + summary buckets), §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
@@ -855,3 +1020,5 @@ UPDATE quotations SET system_kw = computed_kw WHERE id = :id;
 | `lib/calling-action-summary.ts` | HR Interested / Follow Up / Not Interested bucket rules |
 | `lib/quotation-system-kw.ts` | Admin overview kW sum per dealer (frontend; optional `system_kw` on API) |
 | `lib/merge-quotation-products.ts` | Merges `products` + `quotationProduct` + flat row fields for kW |
+| `lib/operational-install-queue.ts` | Payment **Send to Installer** gate + Admin Installation pending/approved rules |
+| **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |
