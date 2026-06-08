@@ -1430,6 +1430,68 @@ Response (200 OK):
 Note: This sets isActive = false instead of deleting the record
 
 
+K. GET ALL VISITS — ADMIN VISITOR REPORTS (Jun 2026)
+------------------------------------------------------------------------
+GET /admin/visits
+Authorization: Bearer {admin_token}
+Query Parameters:
+  - page (default: 1)
+  - limit (default: 50, max: 2000)
+  - status (optional): pending, approved, completed, incomplete, rejected, rescheduled, all
+  - visitorId (optional): filter by assigned visitor
+  - startDate (optional): YYYY-MM-DD (visitDate >= startDate)
+  - endDate (optional): YYYY-MM-DD (visitDate <= endDate)
+  - search (optional): customer name, mobile, quotation id, location, visitor/dealer name
+
+Response (200 OK):
+{
+  "success": true,
+  "data": {
+    "visits": [
+      {
+        "id": "visit_456",
+        "quotationId": "QT-ABC123",
+        "dealerId": "dealer_123",
+        "visitDate": "2025-12-20",
+        "visitTime": "14:00",
+        "location": "123 MG Road, Jaipur, Rajasthan - 302012",
+        "status": "completed",
+        "rejectionReason": null,
+        "notes": "Site ready",
+        "visitors": [
+          { "visitorId": "visitor_001", "visitorName": "Rajesh Kumar" }
+        ],
+        "customer": {
+          "firstName": "Amit",
+          "lastName": "Sharma",
+          "mobile": "9876543210"
+        },
+        "dealer": {
+          "id": "dealer_123",
+          "firstName": "John",
+          "lastName": "Doe"
+        },
+        "quotation": {
+          "id": "QT-ABC123",
+          "dealerId": "dealer_123",
+          "status": "approved",
+          "finalAmount": 285950
+        },
+        "createdAt": "2025-12-17T14:30:00Z"
+      }
+    ],
+    "pagination": {
+      "page": 1,
+      "limit": 2000,
+      "total": 87,
+      "totalPages": 1
+    }
+  }
+}
+
+Fallback: GET /visits with admin JWT may return the same payload if /admin/visits is not deployed.
+
+
 ================================================================================
                         8. SYSTEM CONFIG API
 ================================================================================

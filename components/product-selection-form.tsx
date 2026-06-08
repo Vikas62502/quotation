@@ -399,8 +399,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         isAsPerTheSetLabel(formData.inverterSize) ||
         isAsPerTheSetLabel(formData.inverterBrand)))
   const hidePanelQtyForSet = hidePrimaryPanelQty || dcrPackageAsPerSet
-  const isLockedDcrInverterBrand =
-    effectiveSystemType === "dcr" && hasSelectedDcrConfig && !isTataDcrPackage
   const tataDcrPanelRangeLabel =
     isTataDcrPackage && formData.pdfPanelRangeKey
       ? getPanelPdfRangeLabel(formData.pdfPanelRangeKey)
@@ -1660,15 +1658,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                           Varies with the selected DCR package set
                         </p>
                       </>
-                    ) : isLockedDcrInverterBrand ? (
-                      <>
-                        <Input readOnly disabled className="bg-muted" value="Vsole/Xwatt" />
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Standard inverter brand for this DCR package
-                        </p>
-                      </>
                     ) : (
-                      <Select value={formData.inverterBrand} onValueChange={(v) => updateFormData("inverterBrand", v)}>
+                      <Select
+                        value={formData.inverterBrand || "Vsole/Xwatt"}
+                        onValueChange={(v) => updateFormData("inverterBrand", v)}
+                      >
                         <SelectTrigger>
                           <SelectValue placeholder="Select brand" />
                         </SelectTrigger>

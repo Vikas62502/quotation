@@ -864,7 +864,7 @@ export default function CallingDataPage() {
     router.push(`/dashboard/new-quotation?${params.toString()}`)
   }
 
-  const applyQueueResponse = (response: any) => {
+  const applyQueueResponse = (response: any, options?: { preservePinnedLead?: boolean }) => {
     const readArray = (value: any): any[] => {
       if (Array.isArray(value)) return value
       if (Array.isArray(value?.items)) return value.items
@@ -873,6 +873,8 @@ export default function CallingDataPage() {
       return []
     }
 
+    const pinned = options?.preservePinnedLead ? pinnedCurrentLeadRef.current : null
+
     const queueCandidates = [
       ...readArray(response?.leads),
       ...readArray(response?.queue),
@@ -880,13 +882,22 @@ export default function CallingDataPage() {
       ...readArray(response?.assignedLeads),
       ...readArray(response?.currentQueue),
     ]
-    const rawLead =
+    let rawLead =
       response?.lead ||
-      response?.nextLead ||
       response?.currentLead ||
       response?.activeLead ||
+      response?.nextLead ||
       queueCandidates[0] ||
       null
+    // While a call is in progress, never swap the current lead for API `nextLead`.
+    if (pinned) {
+      const rawId = String(
+        rawLead?.id || rawLead?._id || rawLead?.leadId || rawLead?.lead_id || "",
+      ).trim()
+      if (!rawId || rawId !== pinned.id) {
+        rawLead = pinned
+      }
+    }
     const sanctionedIds = new Set<string>()
     for (const item of [
       response?.lead,
@@ -894,12 +905,14 @@ export default function CallingDataPage() {
       response?.currentLead,
       response?.activeLead,
       rawLead,
+      pinned,
     ]) {
       if (!item) continue
       const id = String(item?.id || item?._id || item?.leadId || item?.lead_id || "").trim()
       if (id) sanctionedIds.add(id)
     }
-    setQueueSanctionedLeadIds(sanctionedIds)
+    if (pinned?.id) sanctionedIds.add(pinned.id)
+    setQueueSanctionedLeadIds((prev) => new Set([...prev, ...sanctionedIds]))
 
     const mergedLeadMap = new Map<string, CallingLead>()
     ;[rawLead, ...queueCandidates]
@@ -909,7 +922,34 @@ export default function CallingDataPage() {
         if (!lead?.id) return
         mergedLeadMap.set(lead.id, lead)
       })
-    setLeads(Array.from(mergedLeadMap.values()))
+
+    if (pinned?.id) {
+      const fromApi = mergedLeadMap.get(pinned.id)
+      const mergedPin: CallingLead = {
+        ...(fromApi || pinned),
+        ...pinned,
+        ...(fromApi || {}),
+        status: "in_progress",
+      }
+      mergedLeadMap.set(pinned.id, mergedPin)
+      pinnedCurrentLeadRef.current = mergedPin
+      setPinnedCurrentLead(mergedPin)
+    }
+
+    setLeads((prev) => {
+      const fromResponse = Array.from(mergedLeadMap.values())
+      if (!pinned?.id) return fromResponse
+
+      const pinLead = mergedLeadMap.get(pinned.id)!
+      const merged = new Map<string, CallingLead>()
+      prev.forEach((lead) => merged.set(lead.id, lead))
+      fromResponse.forEach((lead) => {
+        const existing = merged.get(lead.id)
+        merged.set(lead.id, existing ? { ...existing, ...lead } : lead)
+      })
+      merged.set(pinned.id, pinLead)
+      return [pinLead, ...Array.from(merged.values()).filter((lead) => lead.id !== pinned.id)]
+    })
 
     const scheduledSource = [
       ...readArray(response?.scheduledLeads),
@@ -1017,7 +1057,13 @@ export default function CallingDataPage() {
     }
   }
 
-  const loadLeads = async () => {
+  const refreshCallingQueue = () => {
+    if (submittingLeadIdsRef.current.size > 0) return
+    const preservePinned = !!pinnedCurrentLeadRef.current
+    void loadLeads({ preservePinnedLead: preservePinned })
+  }
+
+  const loadLeads = async (options?: { preservePinnedLead?: boolean }) => {
     if (!useApi) {
       setLeads([])
       toast({
@@ -1027,6 +1073,8 @@ export default function CallingDataPage() {
       })
       return
     }
+
+    const preservePinnedLead = options?.preservePinnedLead ?? !!pinnedCurrentLeadRef.current
 
     try {
       const [nextResult, currentResult] = await Promise.allSettled([
@@ -1091,9 +1139,12 @@ export default function CallingDataPage() {
         (currentResponse as any)?.currentLead ||
         mergedResponse.lead
 
-      applyQueueResponse(mergedResponse)
-      if (pinnedCurrentLeadRef.current) {
+      if (preservePinnedLead && pinnedCurrentLeadRef.current) {
+        applyQueueMetadataFromResponse(mergedResponse)
+        applyQueueResponse(mergedResponse, { preservePinnedLead: true })
         restorePinnedLeadInQueue()
+      } else {
+        applyQueueResponse(mergedResponse)
       }
     } catch (error) {
       const message =
@@ -1137,16 +1188,16 @@ export default function CallingDataPage() {
     if (!useApi) return
 
     const refresh = () => {
-      loadLeads()
+      refreshCallingQueue()
     }
 
     // Auto-refresh queue every 5 minutes; tab focus / visibility still refreshes immediately.
     const interval = window.setInterval(refresh, 5 * 60 * 1000)
 
     const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") refresh()
+      if (document.visibilityState === "visible") refreshCallingQueue()
     }
-    const onWindowFocus = () => refresh()
+    const onWindowFocus = () => refreshCallingQueue()
 
     document.addEventListener("visibilitychange", onVisibilityChange)
     window.addEventListener("focus", onWindowFocus)
@@ -1165,7 +1216,7 @@ export default function CallingDataPage() {
     if (!socket) return
 
     const refresh = () => {
-      loadLeads()
+      refreshCallingQueue()
     }
 
     const onBackendMutation = (evt: any) => {
@@ -1585,6 +1636,7 @@ export default function CallingDataPage() {
 
   useEffect(() => {
     if (!currentLead) {
+      if (pinnedCurrentLeadRef.current || submittingLeadIdsRef.current.size > 0) return
       setEditableLeadDetails(null)
       setIsEditingLead(false)
       previousCurrentLeadIdRef.current = null
@@ -1592,6 +1644,7 @@ export default function CallingDataPage() {
     }
     const hasLeadChanged = previousCurrentLeadIdRef.current !== currentLead.id
     if (!hasLeadChanged) return
+    if (submittingLeadIdsRef.current.has(currentLead.id)) return
 
     previousCurrentLeadIdRef.current = currentLead.id
     const session = loadCallingLeadSession(currentLead.id)
@@ -1897,6 +1950,12 @@ export default function CallingDataPage() {
 
       if (payload.action === "start") {
         applyOptimisticCallStart(leadId)
+        const updatedLead = response?.lead || response?.currentLead || response?.activeLead
+        if (updatedLead && pinnedCurrentLeadRef.current?.id === leadId) {
+          pinCurrentLeadForActiveCall(
+            normalizeApiLead({ ...pinnedCurrentLeadRef.current, ...updatedLead, status: "in_progress" }),
+          )
+        }
         applyQueueMetadataFromResponse(response)
         return
       }
@@ -1933,8 +1992,8 @@ export default function CallingDataPage() {
         applyOptimisticCallStart(leadId)
         return
       }
-      if (payload.action === "start") {
-        clearPinnedCurrentLead()
+      if (payload.action === "start" && pinnedCurrentLeadRef.current?.id === leadId) {
+        restorePinnedLeadInQueue()
       }
       const message =
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Failed to update lead action."

@@ -36,6 +36,8 @@ import {
   ChevronDown,
   RotateCcw,
   Gauge,
+  ClipboardList,
+  MapPin,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -75,6 +77,20 @@ import {
   resolveCallingActionFields,
 } from "@/lib/calling-action-summary"
 import { filterActiveDealers } from "@/lib/active-dealers"
+import { AdminVisitDetailsDialog } from "@/components/admin-visit-details-dialog"
+import { loadAdminVisitorReportRows } from "@/lib/load-admin-visitor-reports"
+import {
+  buildVisitStatusSummary,
+  getVisitStatusBadgeClass,
+  getVisitStatusLabel,
+  type AdminVisitReportRow,
+  type VisitStatusFilter,
+  VISIT_STATUS_FILTER_OPTIONS,
+  visitMatchesDateRange,
+  visitMatchesSearch,
+  visitMatchesStatusFilter,
+  visitMatchesVisitorFilter,
+} from "@/lib/visit-report"
 import {
   formatOverviewKw,
   getQuotationSystemKw,
@@ -683,6 +699,22 @@ export default function AdminPanelPage() {
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
   const [editingVisitor, setEditingVisitor] = useState<Visitor | null>(null)
+  const [visitorReportRows, setVisitorReportRows] = useState<AdminVisitReportRow[]>([])
+  const [visitorReportLoading, setVisitorReportLoading] = useState(false)
+  const [visitorReportUnavailable, setVisitorReportUnavailable] = useState(false)
+  const [visitorReportLoadSource, setVisitorReportLoadSource] = useState<string | null>(null)
+  const [visitorReportVisitorFilter, setVisitorReportVisitorFilter] = useState("all")
+  const [visitorReportStatusFilter, setVisitorReportStatusFilter] = useState<VisitStatusFilter>("all")
+  const [visitorReportSearch, setVisitorReportSearch] = useState("")
+  const [visitorReportRange, setVisitorReportRange] = useState<
+    "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
+  >("monthly")
+  const [visitorReportCustomFromDate, setVisitorReportCustomFromDate] = useState("")
+  const [visitorReportCustomToDate, setVisitorReportCustomToDate] = useState("")
+  const [visitorReportSearchDebounced, setVisitorReportSearchDebounced] = useState("")
+  const [visitorReportRefreshing, setVisitorReportRefreshing] = useState(false)
+  const [visitorReportDetailsRow, setVisitorReportDetailsRow] = useState<AdminVisitReportRow | null>(null)
+  const [visitorReportDetailsOpen, setVisitorReportDetailsOpen] = useState(false)
   const [accountManagerSearchTerm, setAccountManagerSearchTerm] = useState("")
   const [accountManagerDialogOpen, setAccountManagerDialogOpen] = useState(false)
   const [editingAccountManager, setEditingAccountManager] = useState<AccountManager | null>(null)
@@ -1849,6 +1881,92 @@ export default function AdminPanelPage() {
     }
   }
 
+  const buildVisitorReportApiFilters = useCallback(() => {
+    let startDate: string | undefined
+    let endDate: string | undefined
+    if (visitorReportRange === "custom") {
+      const bounds = getCustomBoundsFromYmd(visitorReportCustomFromDate, visitorReportCustomToDate)
+      if (bounds) {
+        startDate = formatYmdLocal(bounds.start)
+        endDate = formatYmdLocal(bounds.end)
+      }
+    } else if (visitorReportRange !== "all") {
+      const bounds = getPresetBounds(visitorReportRange)
+      startDate = formatYmdLocal(bounds.start)
+      endDate = formatYmdLocal(bounds.end)
+    }
+    return {
+      status: visitorReportStatusFilter,
+      visitorId: visitorReportVisitorFilter,
+      startDate,
+      endDate,
+      search: visitorReportSearchDebounced,
+    }
+  }, [
+    visitorReportCustomFromDate,
+    visitorReportCustomToDate,
+    visitorReportRange,
+    visitorReportSearchDebounced,
+    visitorReportStatusFilter,
+    visitorReportVisitorFilter,
+  ])
+
+  const loadVisitorReports = useCallback(
+    async (options?: { background?: boolean }) => {
+      if (options?.background) {
+        setVisitorReportRefreshing(true)
+      } else {
+        setVisitorReportLoading(true)
+      }
+      try {
+        const result = await loadAdminVisitorReportRows({
+          quotations,
+          dealers,
+          visitors,
+          useApi,
+          filters: buildVisitorReportApiFilters(),
+        })
+        setVisitorReportRows(result.rows)
+        setVisitorReportUnavailable(result.unavailable)
+        setVisitorReportLoadSource(result.source)
+      } catch (error) {
+        console.error("Error loading visitor reports:", error)
+        if (!options?.background) {
+          setVisitorReportRows([])
+          setVisitorReportUnavailable(true)
+          setVisitorReportLoadSource(null)
+        }
+      } finally {
+        setVisitorReportLoading(false)
+        setVisitorReportRefreshing(false)
+      }
+    },
+    [buildVisitorReportApiFilters, dealers, quotations, useApi, visitors],
+  )
+
+  useEffect(() => {
+    if (!isAuthenticated || activeTab !== "visitor-reports") return
+    void loadVisitorReports()
+  }, [activeTab, isAuthenticated, loadVisitorReports])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setVisitorReportSearchDebounced(visitorReportSearch)
+    }, 350)
+    return () => window.clearTimeout(timer)
+  }, [visitorReportSearch])
+
+  useEffect(() => {
+    if (activeTab !== "visitor-reports") return
+    if (visitorReportLoadSource !== "admin_visits" && visitorReportLoadSource !== "visits") return
+    void loadVisitorReports({ background: true })
+  }, [
+    activeTab,
+    buildVisitorReportApiFilters,
+    loadVisitorReports,
+    visitorReportLoadSource,
+  ])
+
   useEffect(() => {
     const socket = getRealtime()
     if (!socket || !isAuthenticated) return
@@ -1864,6 +1982,9 @@ export default function AdminPanelPage() {
       if (domain === "admin" || domain === "hr" || domain === "dealers" || path.includes("calling")) {
         refetchAdminData()
       }
+      if (activeTab === "visitor-reports" && (path.includes("visit") || domain === "visitors")) {
+        void loadVisitorReports()
+      }
     }
 
     socket.on("calling:actions-updated", refetchAdminData)
@@ -1875,7 +1996,7 @@ export default function AdminPanelPage() {
       socket.off("dealer:directory-updated", refetchAdminData)
       socket.off("backend:mutation", onBackendMutation)
     }
-  }, [activeTab, isAuthenticated])
+  }, [activeTab, isAuthenticated, loadVisitorReports])
 
   useEffect(() => {
     if (callingRange !== "custom") return
@@ -1884,6 +2005,23 @@ export default function AdminPanelPage() {
     setCallingCustomFromDate(t)
     setCallingCustomToDate(t)
   }, [callingRange, callingCustomFromDate, callingCustomToDate])
+
+  useEffect(() => {
+    if (visitorReportRange !== "custom") return
+    if (visitorReportCustomFromDate || visitorReportCustomToDate) return
+    const t = formatYmdLocal(new Date())
+    setVisitorReportCustomFromDate(t)
+    setVisitorReportCustomToDate(t)
+  }, [visitorReportRange, visitorReportCustomFromDate, visitorReportCustomToDate])
+
+  useEffect(() => {
+    if (
+      visitorReportVisitorFilter !== "all" &&
+      !visitors.some((v) => v.id === visitorReportVisitorFilter)
+    ) {
+      setVisitorReportVisitorFilter("all")
+    }
+  }, [visitorReportVisitorFilter, visitors])
 
   const activeDealers = useMemo(() => filterActiveDealers(dealers), [dealers])
 
@@ -2280,8 +2418,6 @@ export default function AdminPanelPage() {
     enabled: activeTab === "quotations",
   })
 
-  if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
-
   const activeQuotationFilterCount = [
     filterDealer,
     filterMonth,
@@ -2454,6 +2590,80 @@ export default function AdminPanelPage() {
     callingConnectionFilter === "all"
       ? filteredCallingActions
       : filteredCallingActions.filter((item) => classifyCallingConnection(item) === callingConnectionFilter)
+
+  const visitorReportDateBounds = useMemo(() => {
+    if (visitorReportRange === "all") return null
+    if (visitorReportRange === "custom") {
+      return getCustomBoundsFromYmd(visitorReportCustomFromDate, visitorReportCustomToDate)
+    }
+    return getPresetBounds(visitorReportRange)
+  }, [visitorReportCustomFromDate, visitorReportCustomToDate, visitorReportRange])
+
+  const filteredVisitorReportRows = useMemo(() => {
+    const startDate = visitorReportDateBounds ? formatYmdLocal(visitorReportDateBounds.start) : undefined
+    const endDate = visitorReportDateBounds ? formatYmdLocal(visitorReportDateBounds.end) : undefined
+    const useClientFilters =
+      visitorReportLoadSource === "quotations" ||
+      visitorReportLoadSource === "local" ||
+      visitorReportLoadSource === null
+    return visitorReportRows.filter((row) => {
+      if (!useClientFilters) return true
+      if (!visitMatchesVisitorFilter(row, visitorReportVisitorFilter)) return false
+      if (!visitMatchesStatusFilter(row, visitorReportStatusFilter)) return false
+      if (!visitMatchesSearch(row, visitorReportSearchDebounced)) return false
+      if (!visitMatchesDateRange(row, startDate, endDate)) return false
+      return true
+    })
+  }, [
+    visitorReportDateBounds,
+    visitorReportLoadSource,
+    visitorReportRows,
+    visitorReportSearchDebounced,
+    visitorReportStatusFilter,
+    visitorReportVisitorFilter,
+  ])
+
+  const visitorReportSummary = useMemo(
+    () => buildVisitStatusSummary(filteredVisitorReportRows),
+    [filteredVisitorReportRows],
+  )
+
+  const visitorReportListResetKey = useMemo(
+    () =>
+      [
+        visitorReportVisitorFilter,
+        visitorReportStatusFilter,
+        visitorReportRange,
+        visitorReportCustomFromDate,
+        visitorReportCustomToDate,
+        visitorReportSearchDebounced,
+        visitorReportRows.length,
+      ].join("|"),
+    [
+      visitorReportCustomFromDate,
+      visitorReportCustomToDate,
+      visitorReportRange,
+      visitorReportRows.length,
+      visitorReportSearchDebounced,
+      visitorReportStatusFilter,
+      visitorReportVisitorFilter,
+    ],
+  )
+
+  const {
+    visibleItems: visibleVisitorReportRows,
+    visibleCount: visibleVisitorReportCount,
+    totalCount: filteredVisitorReportTotal,
+    hasMore: visitorReportHasMore,
+    loadMore: loadMoreVisitorReports,
+    sentinelRef: visitorReportSentinelRef,
+  } = useIncrementalList(filteredVisitorReportRows, {
+    batchSize: 15,
+    resetKey: visitorReportListResetKey,
+    enabled: activeTab === "visitor-reports",
+  })
+
+  if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
 
   // Update quotation status
   const updateQuotationStatus = async (
@@ -3800,6 +4010,7 @@ export default function AdminPanelPage() {
               <SelectContent>
                 <SelectItem value="overview">Overview</SelectItem>
                 <SelectItem value="calling-reports">Calling Reports</SelectItem>
+                <SelectItem value="visitor-reports">Visitor Reports</SelectItem>
                 <SelectItem value="quotations__all">Quotations (all)</SelectItem>
                 <SelectItem value="payments">Payments</SelectItem>
                 <SelectItem value="quotations__installation">Installation</SelectItem>
@@ -3818,6 +4029,7 @@ export default function AdminPanelPage() {
             <TabsList className="flex h-auto min-h-11 w-full flex-wrap gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:shrink-0 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
+            <TabsTrigger value="visitor-reports">Visitor Reports</TabsTrigger>
             <TabsTrigger
               value="quotations"
               className={quotationSubTabTriggerClass("all")}
@@ -4235,6 +4447,264 @@ export default function AdminPanelPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="visitor-reports" className="space-y-4">
+            <Card>
+              <CardHeader>
+                <CardTitle>Visitor Reports</CardTitle>
+                <CardDescription>
+                  All site visits assigned to visitors with live status. Filter by visitor, status, date range, or search.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                  <Select
+                    value={visitorReportRange}
+                    onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
+                      setVisitorReportRange(value)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Date range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Today</SelectItem>
+                      <SelectItem value="weekly">This week</SelectItem>
+                      <SelectItem value="monthly">This month</SelectItem>
+                      <SelectItem value="last_month">Last month</SelectItem>
+                      <SelectItem value="custom">Custom date range</SelectItem>
+                      <SelectItem value="all">All time</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={visitorReportVisitorFilter} onValueChange={setVisitorReportVisitorFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by visitor" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All visitors</SelectItem>
+                      {visitors.map((visitor) => (
+                        <SelectItem key={visitor.id} value={visitor.id}>
+                          {visitor.firstName} {visitor.lastName}
+                          {visitor.isActive === false ? " (inactive)" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select
+                    value={visitorReportStatusFilter}
+                    onValueChange={(value) => setVisitorReportStatusFilter(value as VisitStatusFilter)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Filter by status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VISIT_STATUS_FILTER_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search customer, quotation, location..."
+                      value={visitorReportSearch}
+                      onChange={(e) => setVisitorReportSearch(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                </div>
+
+                {visitorReportRange === "custom" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        value={visitorReportCustomFromDate}
+                        onChange={(e) => setVisitorReportCustomFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        value={visitorReportCustomToDate}
+                        onChange={(e) => setVisitorReportCustomToDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+                  <Card className="border-border/60">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Total</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.total}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-yellow-200 bg-yellow-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Pending</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.pending}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-green-200 bg-green-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Approved</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.approved}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-blue-200 bg-blue-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Completed</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.completed}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-orange-200 bg-orange-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Incomplete</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.incomplete}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-purple-200 bg-purple-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Rescheduled</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.rescheduled}</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="border-rose-200 bg-rose-50/30">
+                    <CardContent className="pt-4 pb-4">
+                      <p className="text-xs text-muted-foreground">Rejected</p>
+                      <p className="text-xl font-semibold">{visitorReportSummary.rejected}</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    {filteredVisitorReportTotal} visit{filteredVisitorReportTotal === 1 ? "" : "s"} match filters
+                    {visitorReportLoadSource === "quotations"
+                      ? ` (${visitorReportRows.length} loaded from all quotations)`
+                      : null}
+                    {visitorReportRefreshing ? " — updating…" : null}
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void loadVisitorReports()}
+                    disabled={visitorReportLoading || visitorReportRefreshing}
+                  >
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                    Refresh
+                  </Button>
+                </div>
+
+                {visitorReportLoading && visitorReportRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Loading visitor reports from all visitors...</p>
+                ) : visitorReportUnavailable ? (
+                  <p className="text-sm text-muted-foreground">
+                    Could not load visits. Enable{" "}
+                    <code className="text-xs">GET /admin/visits</code>, <code className="text-xs">GET /visits</code>{" "}
+                    (admin), or <code className="text-xs">GET /quotations/&#123;id&#125;/visits</code> for quotation
+                    lookups.
+                  </p>
+                ) : filteredVisitorReportTotal === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">
+                    <ClipboardList className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>No visits found for selected filters.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {visibleVisitorReportRows.map((row) => (
+                      <div key={row.id} className="rounded-md border border-border/70 p-3">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="font-medium text-sm break-words">{row.customerName}</p>
+                              <Badge className={getVisitStatusBadgeClass(row.status)}>
+                                {getVisitStatusLabel(row.status)}
+                              </Badge>
+                            </div>
+                            <p className="text-xs text-muted-foreground break-all">Quotation: {row.quotationId || "N/A"}</p>
+                            <p className="text-xs text-muted-foreground break-words">
+                              Visitor: {row.visitorNames}
+                            </p>
+                            <p className="text-xs text-muted-foreground break-words">Agent: {row.dealerName}</p>
+                            {row.customerMobile ? (
+                              <p className="text-xs text-muted-foreground break-all">Customer mobile: {row.customerMobile}</p>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="text-xs text-muted-foreground text-right space-y-1">
+                              <div className="flex items-center justify-end gap-1">
+                                <Calendar className="w-3.5 h-3.5" />
+                                <span>{row.date || "N/A"}</span>
+                              </div>
+                              {row.time ? (
+                                <div className="flex items-center justify-end gap-1">
+                                  <Clock3 className="w-3.5 h-3.5" />
+                                  <span>{row.time}</span>
+                                </div>
+                              ) : null}
+                            </div>
+                            {row.status === "completed" ? (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8"
+                                onClick={() => {
+                                  setVisitorReportDetailsRow(row)
+                                  setVisitorReportDetailsOpen(true)
+                                }}
+                              >
+                                <Eye className="w-4 h-4 mr-1" />
+                                Details
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        {row.location ? (
+                          <p className="mt-2 text-sm break-words flex items-start gap-1.5">
+                            <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0 text-muted-foreground" />
+                            <span>{row.location}</span>
+                          </p>
+                        ) : null}
+                        {row.rejectionReason ? (
+                          <p className="mt-2 text-sm break-words text-muted-foreground">
+                            <span className="font-medium text-foreground">Reason:</span> {row.rejectionReason}
+                          </p>
+                        ) : null}
+                        {row.notes ? (
+                          <p className="mt-1 text-sm break-words text-muted-foreground">
+                            <span className="font-medium text-foreground">Notes:</span> {row.notes}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                    <IncrementalListSentinel
+                      sentinelRef={visitorReportSentinelRef}
+                      visibleCount={visibleVisitorReportCount}
+                      totalCount={filteredVisitorReportTotal}
+                      hasMore={visitorReportHasMore}
+                      onLoadMore={loadMoreVisitorReports}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+            <AdminVisitDetailsDialog
+              row={visitorReportDetailsRow}
+              open={visitorReportDetailsOpen}
+              onOpenChange={setVisitorReportDetailsOpen}
+              useApi={useApi}
+            />
           </TabsContent>
 
           {/* All Quotations Tab */}

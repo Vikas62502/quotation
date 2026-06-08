@@ -73,6 +73,7 @@ Base URL: `http://localhost:3050/api`
 | PUT | `/admin/visitors/{visitorId}` | Yes (Admin) | Update visitor |
 | PUT | `/admin/visitors/{visitorId}/password` | Yes (Admin) | Update visitor password |
 | DELETE | `/admin/visitors/{visitorId}` | Yes (Admin) | Deactivate visitor |
+| GET | `/admin/visits` | Yes (Admin) | List all visits for Visitor Reports (status, visitor, date filters) |
 
 ## System Config API
 

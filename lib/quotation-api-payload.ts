@@ -71,7 +71,7 @@ export { CATALOG_DEFAULT_INVERTER_BRAND as DEFAULT_DCR_INVERTER_BRAND }
 export function resolveDcrInverterBrandForPackage(products: ProductSelection): string {
   if (isTataDcrPackageSet(products)) return DCR_AS_PER_THE_SET
   if (String(products.systemType || "").trim().toLowerCase() === "dcr") {
-    return CATALOG_DEFAULT_INVERTER_BRAND
+    return products.inverterBrand?.trim() || CATALOG_DEFAULT_INVERTER_BRAND
   }
   return products.inverterBrand || ""
 }
@@ -140,7 +140,7 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
   if (String(next.systemType || "").trim().toLowerCase() === "dcr" && !isTataDcrPackageSet(next)) {
     return {
       ...next,
-      inverterBrand: CATALOG_DEFAULT_INVERTER_BRAND,
+      inverterBrand: next.inverterBrand?.trim() || CATALOG_DEFAULT_INVERTER_BRAND,
     }
   }
 

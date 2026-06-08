@@ -2587,6 +2587,76 @@ Parse tagged format with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_S
 
 On **`LEAD_004`** (lead not assigned): allow `start` to set `assigned_dealer_id` to JWT dealer (claim on start). Frontend retries assign + optimistic `in_progress`.
 
+### E.1 Current lead persistence — `in_progress` until Submit (Jun 2026)
+
+**Symptom:** After **Start Call**, dealer fills status/remarks on **Current Lead**; lead data **disappears** or **next lead shows** before **Submit**.
+
+**Frontend:** `app/dashboard/calling-data/page.tsx` pins active lead and ignores `nextLead` on refresh during `in_progress`. **Backend is source of truth** for multi-tab / multi-device / polling.
+
+#### Endpoints
+
+| Method | Path | Rule |
+|--------|------|------|
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` | See `start` vs completion table in §E |
+| `GET` | `/api/dealers/me/calling-queue/current` | If dealer has `in_progress` lead → **`currentLead` = that row** (full payload) |
+| `GET` | `/api/dealers/me/calling-queue/next` | Do **not** return a **different** head lead while dealer has open `in_progress` |
+
+#### `start` response (required shape)
+
+- Include updated **`lead`** with same `id`, `status: "in_progress"`, `assignedDealerId` = JWT dealer.
+- **Omit** `nextLead` (or set `nextLead: null`).
+- Do **not** assign the next pool row to this dealer in the same transaction.
+
+#### `GET /current` while call is open
+
+```json
+{
+  "success": true,
+  "data": {
+    "currentLead": {
+      "id": "lead-A",
+      "status": "in_progress",
+      "assignedDealerId": "dealer-uuid",
+      "name": "…",
+      "mobile": "…",
+      "customerNote": "…",
+      "callRemark": "…"
+    },
+    "pendingCount": 41
+  }
+}
+```
+
+If `currentLead` is missing but an `in_progress` row exists for this dealer in DB, that is a **bug**.
+
+#### Completion response (after Submit)
+
+- Update lead A to `completed` / `rescheduled` (per action).
+- **Then** set and return **`nextLead`** (lead B) for the same dealer.
+- Include updated tab arrays (`dialledActions`, etc.) per §H.
+
+#### Concurrency (recommended)
+
+- At most **one** `in_progress` lead per `assigned_dealer_id`.
+- Reject `start` on lead B if dealer already has open `in_progress` on lead A (`409` or `LEAD_*` with clear message).
+
+#### Checklist
+
+- [ ] `start` → same lead, no `nextLead`
+- [ ] `GET /current` → dealer’s `in_progress` row when exists
+- [ ] `GET /next` → no queue skip while `in_progress` open
+- [ ] Completion PATCH → `nextLead` only after closing current lead
+- [ ] `callRemark` / `statusCategory` / `statusText` persisted on completion
+- [ ] `customerNote` on lead echoed on GET during open call
+
+#### QA
+
+1. Start lead A → refresh page → still lead A until submit.
+2. Submit → lead B appears.
+3. Two dealers: B never sees A as current while A is `in_progress` for dealer A.
+
+**Reference:** `BACKEND_CHANGES_HANDOFF.md` §4.5, §4.5.1; `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`.
+
 ### Optional: customer note on lead
 
 `PATCH /api/dealers/me/calling-queue/{leadId}` with `{ "customerNote": "..." }` / `customer_note`. Echo on GET queue responses.
@@ -3653,7 +3723,7 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 | `pdfDcrPanelRangeKey` | `both` — DCR panels |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR panels |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`.
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 — 530W–570W range on proposal PDF).
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
@@ -3667,12 +3737,79 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 
 Allow on `products` (if brand whitelist exists):
 
-- `inverterBrand`: `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`
+- `inverterBrand`: `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`, **any catalog inverter brand** (GoodWe, Polycab, XWatt, …), and **`As per the set`** (Tata DCR package-set rows only)
 - `meterBrand`: `L&T/HPL/Genus/Secure`
+
+If validation uses a fixed enum, **extend it** — do not reject dealer-selected catalog brands on non-Tata DCR.
+
+### 2.2.1 DCR inverter brand — Tata vs other packages (Jun 2026)
+
+**Frontend reference:** `lib/quotation-api-payload.ts`, `components/product-selection-form.tsx`.
+
+| Package | UI behaviour | Stored `inverterBrand` | Stored `inverterSize` |
+|---------|--------------|------------------------|------------------------|
+| **Tata DCR** (`panelBrand` = `Tata`) | Read-only “As per the set” | **`As per the set`** | **`As per the set`** |
+| **Other DCR** (Adani, Waaree, Premier Energies, …) | Dropdown; default **`Vsole/Xwatt`**; dealer may select another catalog brand | **Dealer’s selection** (default `Vsole/Xwatt` if field omitted on create) | Concrete kW (`5kW`, `10kW`, …) |
+
+**Tata DCR POST/PATCH `products` fragment (must round-trip unchanged on GET):**
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Tata",
+  "panelSize": "As per the set",
+  "panelQuantity": 0,
+  "dcrPanelBrand": "Tata",
+  "dcrPanelSize": "As per the set",
+  "dcrPanelQuantity": 0,
+  "inverterBrand": "As per the set",
+  "inverterSize": "As per the set",
+  "structureSize": "5.1kW",
+  "pdfPanelRangeKey": "tata_530_570",
+  "centralSubsidy": 78000
+}
+```
+
+**Non-Tata DCR with dealer override (must persist `GoodWe`, not force `Vsole/Xwatt`):**
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Adani",
+  "panelSize": "555W",
+  "panelQuantity": 10,
+  "inverterBrand": "GoodWe",
+  "inverterSize": "10kW",
+  "pdfPanelRangeKey": "adani_610_625_bifacial_topcon"
+}
+```
+
+**Server rules:**
+
+1. **Do not normalize** Tata `inverterBrand` / `inverterSize` / `panelSize` from `As per the set` → `Vsole/Xwatt` or `530W` (older frontend workaround; removed Jun 2026).
+2. **Do not overwrite** non-Tata `inverterBrand` on PATCH when the dealer chose a catalog brand other than `Vsole/Xwatt`.
+3. Treat `As per the set` and `As per Set` (cables) as valid **display/package-set** strings — not catalog SKUs — and skip `*W` / `*kW` regex checks for those fields.
+4. `structureSize` may be decimal slabs for Tata (`3.1kW`, `5.1kW`); accept as stored or normalize only if pricing logic requires integers (must not break GET round-trip for display).
+
+**`validateProductSelection` / catalog check — suggested exceptions:**
+
+```javascript
+const isAsPerSet = (v) => /^(as per the set|as per set)$/i.test(String(v || "").trim())
+const isTataDcr = (p) =>
+  p.systemType === "dcr" &&
+  String(p.panelBrand || p.dcrPanelBrand || "").trim().toLowerCase() === "tata"
+
+// inverterBrand valid if: catalog brand OR Vsole/Xwatt OR (Tata && isAsPerSet)
+// inverterSize valid if: /^\d+(\.\d+)?kW$/i OR isAsPerSet (Tata)
+```
 
 ### 2.3 Validation — panel quantity
 
-When the matching `pdf*PanelRangeKey` is set, allow `panelQuantity` / `dcrPanelQuantity` / `nonDcrPanelQuantity` to be **0 or omitted** (PDF does not show panel count).
+When **any** of the following is true, allow `panelQuantity` / `dcrPanelQuantity` / `nonDcrPanelQuantity` to be **0 or omitted**:
+
+- Matching `pdf*PanelRangeKey` is set (incl. `tata_530_570`)
+- `panelBrand` / `dcrPanelBrand` is **`Tata`** (DCR)
+- `panelSize` or `inverterBrand` is **`As per the set`**
 
 ### 2.4 GET quotation — `dealer` object
 
@@ -3717,13 +3854,148 @@ Align server default from **5 days → 7 days** after `createdAt` if `validUntil
 
 ### Checklist
 
-- [ ] Persist `pdfPanelRangeKey`, `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey` (incl. `premier_600_625_bifacial_topcon`)
+- [ ] Persist `pdfPanelRangeKey`, `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey` (incl. `premier_600_625_bifacial_topcon`, **`tata_530_570`**)
 - [ ] PATCH clears keys when body sends `""` / `null`
 - [ ] Support POST + PATCH products (PATCH after create)
-- [ ] Relax panel qty when range keys set
-- [ ] Allow combined inverter/meter brand strings
+- [ ] Relax panel qty when range keys set **or** Tata / as-per-set package rows
+- [ ] Allow combined inverter/meter brand strings **and** catalog inverter brands on non-Tata DCR
+- [ ] Accept **`As per the set`** on `inverterBrand`, `inverterSize`, `panelSize` for Tata DCR; persist on GET unchanged
+- [ ] Do **not** force non-Tata `inverterBrand` to `Vsole/Xwatt` when dealer selected another brand
 - [ ] Return `dealer` on GET quotation
 - [ ] (Optional) `validUntil` +7 days
+
+---
+
+## Z) Admin Visitor Reports — `GET /admin/visits` (Jun 2026)
+
+**Frontend reference:** `app/dashboard/admin/page.tsx` (Visitor Reports tab), `lib/visit-report.ts`, `lib/api.ts` → `api.admin.visits.getAll`.
+
+### Z.1 Problem
+
+Admin needs a **single list endpoint** for all site visits across the system — with **status**, assigned **visitor(s)**, customer, dealer, and quotation context — to power **Visitor Reports** (filters by visitor, status, date, search). Per-quotation `GET /quotations/{id}/visits` does not scale for admin reporting.
+
+### Z.2 Endpoint
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/admin/visits` | **admin** | List all visits (preferred) |
+| `GET` | `/api/visits` | **admin** (fallback) | Same handler if role is admin; frontend tries `/admin/visits` first |
+
+**Do not** return 404 for admin on `/visits` if `/admin/visits` is not implemented — implement at least one.
+
+### Z.3 Query parameters
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `page` | int | Default `1` |
+| `limit` | int | Default `50`, max `2000` (frontend requests `2000` on load) |
+| `status` | string | `pending`, `approved`, `completed`, `incomplete`, `rejected`, `rescheduled`, or **`all`** (no status filter) |
+| `visitorId` | string | Only visits where visitor is in `visit_assignments` |
+| `startDate` | `YYYY-MM-DD` | `visit_date >= startDate` |
+| `endDate` | `YYYY-MM-DD` | `visit_date <= endDate` |
+| `search` | string | ILIKE on customer name/mobile, quotation id, location, visitor name, dealer name |
+
+**Sorting:** `visit_date DESC`, then `visit_time DESC` (or `created_at DESC`).
+
+### Z.4 Response envelope
+
+```json
+{
+  "success": true,
+  "data": {
+    "visits": [ /* see Z.5 */ ],
+    "pagination": {
+      "page": 1,
+      "limit": 2000,
+      "total": 87,
+      "totalPages": 1
+    }
+  }
+}
+```
+
+Frontend unwraps `data` via `apiRequest` and reads `visits` from root or `data.visits` (`extractVisitsFromApiResponse` in `lib/visit-report.ts`).
+
+### Z.5 Visit list item (minimum fields)
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `id` | yes | Visit PK |
+| `quotationId` | yes | |
+| `dealerId` | yes | |
+| `visitDate` | yes | ISO date `YYYY-MM-DD` |
+| `visitTime` | recommended | `HH:mm` or combined range |
+| `visitStartTime`, `visitEndTime` | optional | Frontend builds time range display |
+| `location` | yes | |
+| `locationLink` | optional | |
+| `status` | yes | Enum — see Z.6 |
+| `notes` | optional | |
+| `rejectionReason` | optional | Incomplete / rejected / rescheduled |
+| `createdAt`, `updatedAt` | recommended | |
+| `visitors` | yes | `[{ visitorId, visitorName }]` from `visit_assignments` |
+| `customer` | recommended | `{ firstName, lastName, mobile }` — join via quotation |
+| `dealer` | recommended | `{ id, firstName, lastName }` |
+| `quotation` | optional | `{ id, dealerId, status, finalAmount }` |
+
+**Aliases:** snake_case (`visit_date`, `rejection_reason`, `visitor_id`) acceptable if camelCase also present.
+
+### Z.6 Status values
+
+Must match `visits.status` enum and visitor dashboard tabs:
+
+`pending` | `approved` | `completed` | `incomplete` | `rejected` | `rescheduled`
+
+When query `status=all`, return every status. When `status` is omitted, **recommended:** same as `all` for admin (not pending-only).
+
+### Z.7 Authorization
+
+```text
+admin     → all visits
+dealer    → 403 on /admin/visits (dealer uses quotation-scoped routes)
+visitor   → 403 (uses GET /visitors/me/visits)
+```
+
+Align with `DATABASE_SCHEMA.txt` — ADMIN: Read all visits.
+
+### Z.8 Relationship to existing APIs
+
+| Existing | Scope | Admin report |
+|----------|--------|----------------|
+| `GET /visitors/me/visits` | Logged-in visitor only | Same **row shape**; admin endpoint is superset across all visitors |
+| `GET /quotations/{id}/visits` | One quotation | Subset; do not require admin to call per quotation |
+| `GET /admin/visitors` | Visitor accounts + `visitCount` stats | Complements report; does not replace visit list |
+
+### Z.9 Optional aggregates (future)
+
+`GET /admin/visits/summary?startDate=&endDate=&visitorId=` returning counts per status — not required; frontend computes summary from filtered list client-side today.
+
+### Z.10 Checklist
+
+- [ ] `GET /api/admin/visits` with admin JWT
+- [ ] Query: `status=all`, per-status, `visitorId`, date range, `search`, pagination
+- [ ] Join `visit_assignments` → `visitors[]` on each row
+- [ ] Join customer + dealer for display without extra round-trips
+- [ ] Persist and return `rejectionReason` on incomplete/rejected/rescheduled
+- [ ] Document in `API_ENDPOINTS_SUMMARY.md`
+- [ ] (Optional) `backend:mutation` event on visit status PATCH for live admin refresh
+
+### Z.11 Completion details — `GET /quotations/{id}/visits` (admin eye modal)
+
+Admin **Details** on completed visits uses existing **`GET /api/quotations/{quotationId}/visits`** (no separate detail route). Backend must allow **admin** on this GET and return **completion fields** on each visit object (same as after `PATCH /visits/{id}/complete`):
+
+- `notes`, `length`, `width`, `backLegFeet`, `midLegFeet`, `frontLegFeet`, `unit`
+- `rowDiagramImage`, `meterImage`, `images` (or nested `completionDetails` / `siteDimensions`)
+- Image values must be **browser-openable** URLs (signed S3 or public CDN — see **§U**)
+
+List endpoint **`GET /admin/visits`** does **not** need to embed images; completion modal fetches per quotation on demand.
+
+### Z.12 QA
+
+1. Create visit with 2 visitors assigned → admin report shows both names.
+2. Visitor marks complete → admin list shows `status: completed`.
+3. `visitorId` filter returns only that visitor’s rows.
+4. `status=pending` excludes completed visits.
+5. Admin without endpoint sees empty state + message; after deploy, refresh loads rows.
 
 ---
 
@@ -3735,16 +4007,20 @@ Align server default from **5 days → 7 days** after `createdAt` if `validUntil
 |----------|--------|---------|-----------|
 | High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8, HANDOFF §1 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
+| **High** | **Current lead stays `in_progress` until Submit** — no `nextLead` on start; `GET /current` returns open call | **§E.1**, HANDOFF **§4.5.1** | `app/dashboard/calling-data/page.tsx` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
 | High | HR Dealer Actions summary — persist/return `statusCategory` + `statusText` on calling-actions | §J.1, HANDOFF §7 | `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts` |
 | Medium | Persist `pdf*PanelRangeKey`, combined brands, dealer on GET, panel qty rules | §X, HANDOFF §2 | `lib/quotation-pdf-display.ts`, `lib/quotation-api-payload.ts` |
+| Medium | **DCR inverter brand:** Tata = `As per the set`; other DCR = default `Vsole/Xwatt`, dealer may pick catalog brand | §X **§2.2.1**, HANDOFF §2.3 | `lib/quotation-api-payload.ts`, `components/product-selection-form.tsx` |
 | Medium | Dealer dashboard **Total Value** = approved quotations only (`status`, amounts on list GET) | §7.9, HANDOFF §6 | `app/dashboard/page.tsx` |
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
+| Medium | **Admin Visitor Reports** — `GET /admin/visits` with status, visitor filter, pagination | **§Z**, HANDOFF §8 | `lib/visit-report.ts`, `app/dashboard/admin/page.tsx` |
+| Medium | **Visit completion on GET** — `GET /quotations/{id}/visits` returns dimensions + image URLs for admin Details modal | **§Z.11**, HANDOFF §8 | `lib/visit-details.ts`, `components/admin-visit-details-dialog.tsx` |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
-**PDF / products — do not:** use `pdf*PanelRangeKey` in pricing. **Do:** store on `products`, allow PATCH after create, return `dealer` on GET, allow combined `inverterBrand`/`meterBrand` strings.
+**PDF / products — do not:** use `pdf*PanelRangeKey` in pricing; do not rewrite Tata `As per the set` to `Vsole/Xwatt`. **Do:** store on `products`, allow PATCH after create, return `dealer` on GET, allow combined + catalog `inverterBrand`, persist Tata package-set strings verbatim.
 
 ---
 
@@ -3760,6 +4036,8 @@ For questions or clarifications about these requirements, please refer to:
 - HR upload batch counts: `app/dashboard/hr/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md`**, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`computeHrUploadLeadCounts`)
 - Dealer dashboard approved total value: `app/dashboard/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md` §6**, **§7.9**
 - HR/Admin calling-actions list + query params: `lib/api.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J**, **`BACKEND_CHANGES_HANDOFF.md` §4.8**
+- Dealer calling current lead until Submit: `app/dashboard/calling-data/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §E.1**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.1**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
+- Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`

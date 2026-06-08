@@ -1227,6 +1227,7 @@ export const api = {
       page?: number
       limit?: number
       status?: string
+      visitorId?: string
       startDate?: string
       endDate?: string
       search?: string
@@ -2432,6 +2433,34 @@ export const api = {
       if (endDate) params.append("endDate", endDate)
       const query = params.toString()
       return apiRequest(`/admin/statistics${query ? `?${query}` : ""}`)
+    },
+
+    visits: {
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        status?: string
+        visitorId?: string
+        startDate?: string
+        endDate?: string
+        search?: string
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        try {
+          return await apiRequest(`/admin/visits${query ? `?${query}` : ""}`)
+        } catch (error) {
+          if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
+            return apiRequest(`/visits${query ? `?${query}` : ""}`)
+          }
+          throw error
+        }
+      },
     },
 
     visitors: {
