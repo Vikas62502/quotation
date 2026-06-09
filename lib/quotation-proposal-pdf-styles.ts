@@ -401,11 +401,14 @@ export const PROPOSAL_PDF_STYLES = `
 .proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-note-green {
   font-size: 10.5px;
 }
-/* Page 3 — same typography & section rhythm as page 2 */
+/* Page 3 — 1px smaller than page 2 compact */
 .proposal-pdf-page-3 {
   display: flex;
   flex-direction: column;
-  font-size: 11.5px;
+  font-size: 10.5px;
+}
+.proposal-pdf-page-3 .prop-bar {
+  font-size: 10.5px;
 }
 .proposal-pdf-page-3 .prop-p3-body {
   flex: 1 1 auto;
@@ -430,14 +433,14 @@ export const PROPOSAL_PDF_STYLES = `
 }
 .proposal-pdf-page-3 .prop-table th {
   padding: 8px 10px;
-  font-size: 11px;
+  font-size: 10px;
 }
 .proposal-pdf-page-3 .prop-table tbody tr td:nth-child(2) {
   white-space: pre-line;
 }
 .proposal-pdf-page-3 .prop-table td {
   padding: 8px 10px;
-  font-size: 10.5px;
+  font-size: 9.5px;
   line-height: 1.4;
 }
 .proposal-pdf-page-3 .prop-consent {
@@ -446,7 +449,7 @@ export const PROPOSAL_PDF_STYLES = `
   padding: 10px 12px;
   margin-top: 0;
   background: #ffffff;
-  font-size: 10.5px;
+  font-size: 9.5px;
   color: #2d3748;
 }
 .proposal-pdf-page-3 .prop-consent-check-table {
@@ -470,7 +473,7 @@ export const PROPOSAL_PDF_STYLES = `
 }
 .proposal-pdf-page-3 .prop-consent-check-text-cell {
   vertical-align: top;
-  font-size: 10.5px;
+  font-size: 9.5px;
   line-height: 1.45;
   color: #2d3748;
   text-align: justify;
@@ -480,13 +483,13 @@ export const PROPOSAL_PDF_STYLES = `
   border-collapse: collapse;
   margin-bottom: 12px;
   table-layout: fixed;
-  font-size: 10.5px;
+  font-size: 9.5px;
 }
 .proposal-pdf-page-3 .prop-consent-field-cell {
   vertical-align: middle;
   padding: 0 10px 0 0;
   width: 33.33%;
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #1a365d;
 }
@@ -532,7 +535,7 @@ export const PROPOSAL_PDF_STYLES = `
   min-height: 118px;
 }
 .proposal-pdf-page-3 .prop-consent-sign-head {
-  font-size: 10.5px;
+  font-size: 9.5px;
   font-weight: 700;
   color: #1a365d;
   text-align: center;
@@ -541,7 +544,7 @@ export const PROPOSAL_PDF_STYLES = `
   flex-shrink: 0;
 }
 .proposal-pdf-page-3 .prop-consent-sign-designation {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: #1a365d;
   margin-bottom: 6px;
@@ -556,7 +559,7 @@ export const PROPOSAL_PDF_STYLES = `
   min-height: 48px;
 }
 .proposal-pdf-page-3 .prop-consent-sign-caption {
-  font-size: 9.5px;
+  font-size: 8.5px;
   color: #4a5568;
   text-align: center;
   font-weight: 600;
@@ -576,12 +579,15 @@ export const PROPOSAL_PDF_STYLES = `
   margin-top: 0;
 }
 .proposal-pdf-page-3 .prop-closing p {
-  font-size: 10.5px;
+  font-size: 9.5px;
   line-height: 1.4;
   margin: 0 0 4px;
 }
 .proposal-pdf-page-3 .prop-closing .sig {
-  font-size: 10.5px;
+  font-size: 9.5px;
+}
+.proposal-pdf-page-3 .prop-offices p {
+  font-size: 8.5px;
 }
 .prop-offices p {
   margin: 0 0 3px;

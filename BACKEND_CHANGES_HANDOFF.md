@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead must stay `in_progress` until Submit — **§4.5.1** (handoff) / **§E.1** (required). Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -380,6 +380,8 @@ Browser **sessionStorage** holds drafts until Submit; **backend must persist** o
 | `statusCategory` / `status_category` | `call_connectivity` |
 | `statusText` / `status_text` | `Call Unanswered` |
 | `remark` | `Customer asked callback evening` (free text only) |
+| `nextFollowUpAt` / `next_follow_up_at` | ISO-8601 — **required** for reschedule / decision-pending hold (§4.5.2) |
+| `actionAt` / `action_at` | ISO-8601 — when the action occurred |
 
 **Tagged format** (parse with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`):
 
@@ -575,6 +577,128 @@ LIMIT 1;
 4. Dealer B cannot see A while A is `in_progress` for dealer A.
 5. HR upload pool lead: first **Start** assigns to dealer; no `LEAD_004`.
 
+### 4.5.2 Reschedule / Decision Pending — fix 500 on Submit (Jun 2026)
+
+**Symptom:** Dealer on **Calling Data → Current Lead** selects **Connected → Decision Pending → Callback Scheduled** (or other hold reason), sets **Reschedule date and time**, clicks **Submit** → toast **“Action failed — Internal server error”** (HTTP 500).
+
+**Frontend:** `app/dashboard/calling-data/page.tsx`, `lib/calling-remark-payload.ts` (`enrichCallingActionPayload`, `cleanFreeCallRemark`). On 500 / invalid transition, frontend retries `start` then falls back to **`action: "follow_up"`** with the same `nextFollowUpAt`. **Backend must accept both actions** and must not 500.
+
+#### UI → API mapping (Decision Pending + reschedule)
+
+| UI field | Backend field |
+|----------|----------------|
+| Hold Reason (e.g. Callback Scheduled) | `statusText` / `status_text` = `Callback Scheduled` |
+| (derived) | `statusCategory` / `status_category` = **`schedule`** |
+| Remarks textarea | `remark` (free text only) + combined `callRemark` |
+| Reschedule datetime | **`nextFollowUpAt`** / **`next_follow_up_at`** (ISO-8601 UTC) |
+| Submit | **`action`** = **`rescheduled`** (preferred) or **`follow_up`** (accepted alias) |
+
+#### Example PATCH body (frontend sends camelCase + snake_case)
+
+```json
+{
+  "action": "rescheduled",
+  "callRemark": "[schedule] Callback Scheduled | Adani panel 620w",
+  "call_remark": "[schedule] Callback Scheduled | Adani panel 620w",
+  "statusCategory": "schedule",
+  "status_category": "schedule",
+  "statusText": "Callback Scheduled",
+  "status_text": "Callback Scheduled",
+  "remark": "Adani panel 620w",
+  "nextFollowUpAt": "2026-06-11T05:07:00.000Z",
+  "next_follow_up_at": "2026-06-11T05:07:00.000Z",
+  "actionAt": "2026-06-05T10:37:00.000Z",
+  "action_at": "2026-06-05T10:37:00.000Z"
+}
+```
+
+#### Required server behavior
+
+| # | Rule |
+|---|------|
+| 1 | **`PATCH …/action`** with `action` in **`rescheduled`** \| **`follow_up`** and **`nextFollowUpAt` / `next_follow_up_at` present** — persist follow-up time; set lead **`status` = `rescheduled`** (not `completed`). |
+| 2 | **Do not return HTTP 500** for valid payloads — return **`400` `VAL_001`** if `nextFollowUpAt` missing/invalid, or **`LEAD_005`** for bad transition (never uncaught exception). |
+| 3 | **Accept `follow_up` as alias** when `nextFollowUpAt` is set and `status_category` = `schedule` — same DB update as `rescheduled`. |
+| 4 | **Transition:** `in_progress` → `rescheduled` (and `assigned` → `rescheduled` after implicit/auto `start` if your API requires it). |
+| 5 | **Replace** `call_remark` on submit — store **one** canonical tagged string; **do not append** nested `[schedule] Callback Scheduled` chains (causes VARCHAR overflow → 500). |
+| 6 | **`call_remark` / `remark` columns** — use **TEXT** (or length ≥ 4000); validate max length server-side before insert. |
+| 7 | Parse tagged `callRemark` with `parseTaggedCallRemark()`; normalize category via `normalizeStatusCategory()` — **`schedule`** must be allowed. |
+| 8 | **After success:** return updated **`lead`** + **`nextLead`** (per §4.5); include row in **`scheduledLeads`** / **`rescheduledLeads`** when `next_follow_up_at > NOW()`. |
+| 9 | Echo **`nextFollowUpAt`** on GET queue + history items (`dialledActions`, HR/admin calling-actions). |
+
+#### Wrong vs correct persistence
+
+**Wrong** (often causes 500 or bloated rows):
+
+```sql
+-- Appends to existing call_remark
+UPDATE hr_calling_leads SET call_remark = CONCAT(call_remark, ' | ', $new) ...
+
+-- action enum missing 'rescheduled'
+-- next_follow_up_at NOT NULL but body only had nextFollowUpAt and mapper ignored it
+```
+
+**Correct:**
+
+```sql
+UPDATE hr_calling_leads
+SET
+  status = 'rescheduled',
+  action = $action,  -- 'rescheduled' or 'follow_up'
+  status_category = 'schedule',
+  status_text = $status_text,
+  remark = $remark,
+  call_remark = $call_remark,
+  next_follow_up_at = $next_follow_up_at::timestamptz,
+  action_at = $action_at::timestamptz,
+  updated_at = NOW()
+WHERE id = $lead_id AND assigned_dealer_id = $dealer_id;
+```
+
+#### Example success response
+
+```json
+{
+  "success": true,
+  "data": {
+    "lead": {
+      "id": "lead-uuid",
+      "status": "rescheduled",
+      "action": "rescheduled",
+      "statusCategory": "schedule",
+      "statusText": "Callback Scheduled",
+      "callRemark": "[schedule] Callback Scheduled | Adani panel 620w",
+      "nextFollowUpAt": "2026-06-11T05:07:00.000Z"
+    },
+    "nextLead": { "id": "next-uuid", "status": "assigned", "name": "…" },
+    "scheduledLeads": [
+      { "id": "lead-uuid", "status": "rescheduled", "nextFollowUpAt": "2026-06-11T05:07:00.000Z" }
+    ],
+    "pendingCount": 40
+  }
+}
+```
+
+#### Backend checklist (reschedule)
+
+- [ ] `rescheduled` and `follow_up` + `nextFollowUpAt` both update lead to `status: rescheduled`
+- [ ] Accept `nextFollowUpAt` **and** `next_follow_up_at`
+- [ ] `status_category: schedule` + `Callback Scheduled` (and other hold reasons) persist without 500
+- [ ] `call_remark` TEXT / adequate length; replace not concat
+- [ ] `in_progress` → `rescheduled` transition allowed
+- [ ] Row appears in `scheduledLeads` when follow-up is in the future
+- [ ] No 500 for valid dealer-owned lead — use `VAL_001` / `LEAD_005` instead
+
+#### QA
+
+1. Start call → Connected → Decision Pending → Callback Scheduled → pick future datetime → Submit → **200**, lead in **Scheduled** tab.
+2. Same flow with long remark (repeat submit 5×) → still **200** (no remark bloat 500).
+3. Send only `action: follow_up` + `next_follow_up_at` → same result as `rescheduled`.
+4. Omit `nextFollowUpAt` → **400** `VAL_001`, not 500.
+5. HR/Admin calling-actions list shows `actionAt`, `callRemark`, `nextFollowUpAt` for the row.
+
+**Reference:** `BACKEND_CHANGES_REQUIRED.md` **§E.2**; `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`.
+
 ### 4.6 Reference
 
 - `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`, `parseTaggedCallRemark`, `callingActionToApiJson`
@@ -588,6 +712,7 @@ LIMIT 1;
 4. **Create Quotation** from calling → customer `notes` saved on `POST /customers`.
 5. Reload app → remarks visible from API (not only browser storage).
 6. HR **Dealer Calling Actions**: `GET` with `dealerId` + `startDate`/`endDate` returns filtered rows; **Custom** range sends both dates (see §4.8).
+7. **Decision Pending reschedule** → Submit returns 200; lead in Scheduled tab; no Internal Server Error (see §4.5.2).
 
 ### 4.8 HR / Admin — GET calling-actions (date & dealer filters)
 
@@ -625,6 +750,7 @@ For **every** preset including **custom**, the SPA sends **`startDate` and `endD
 - [ ] `start` does not return `nextLead`; completion actions do
 - [ ] **`GET /current` returns `in_progress` lead until Submit** (§4.5.1)
 - [ ] **`GET /next` does not skip past open `in_progress` call** (§4.5.1)
+- [ ] **Reschedule Submit** — `rescheduled` / `follow_up` + `nextFollowUpAt` → `status: rescheduled`, no 500 (§4.5.2)
 - [ ] HR/Admin **GET calling-actions** honours `dealerId` + `startDate` / `endDate` (and optional `range=custom`)
 
 ---

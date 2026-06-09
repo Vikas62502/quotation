@@ -71,6 +71,7 @@ import {
   resolveQuotationPhase,
   formatQuotationPhaseLabel,
 } from "@/lib/pricing-tables"
+import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
 
 // Get system price based on system type
 const getSystemPrice = (products: ProductSelection): number => {
@@ -649,35 +650,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
     return numeric
   }
 
-  const getTotalSystemKw = () => {
-    if (products.systemType === "both") {
-      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
-      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
-      const dcrKw = toKwValue(dcrSize)
-      const nonDcrKw = toKwValue(nonDcrSize)
-      return dcrKw + nonDcrKw
-    }
-
-    if (products.panelSize && products.panelQuantity) {
-      const total = toKwValue(products.panelSize) * (products.panelQuantity || 0)
-      if (total > 0) {
-        return total
-      }
-    }
-
-    if (products.systemType === "customize" && products.customPanels) {
-      return products.customPanels.reduce((sum, panel) => {
-        const panelKw = toKwValue(panel.size)
-        return sum + panelKw * (panel.quantity || 0)
-      }, 0)
-    }
-
-    if (products.inverterSize) {
-      return toKwValue(products.inverterSize)
-    }
-
-    return 0
-  }
+  const getTotalSystemKw = () => getQuotationSystemKwFromProducts(products)
 
   const getRoundedSystemSizeLabel = () => {
     const totalKw = getTotalSystemKw()

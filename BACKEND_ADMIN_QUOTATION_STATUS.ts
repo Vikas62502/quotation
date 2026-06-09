@@ -1438,6 +1438,43 @@ export async function patchDealerCallingQueueAction(req, res, db) {
  * - nextFollowUpAt required
  *
  * -----------------------------------------------------------------------------
+ * E.1) Reschedule PATCH — fix 500 "Internal server error" (Jun 2026)
+ * -----------------------------------------------------------------------------
+ *
+ * Frontend (Current Lead): Connected -> Decision Pending -> Hold Reason
+ * (e.g. Callback Scheduled) + datetime -> Submit with:
+ *   action: "rescheduled"
+ *   callRemark: "[schedule] Callback Scheduled | ..."
+ *   nextFollowUpAt + next_follow_up_at (ISO)
+ *   statusCategory/statusText/remark (camelCase + snake_case)
+ *
+ * On 500, frontend retries action: "follow_up" with same nextFollowUpAt.
+ *
+ * Backend MUST:
+ * 1) Accept action "rescheduled" AND "follow_up" when next_follow_up_at is set.
+ * 2) Map both to lead.status = "rescheduled" (not completed).
+ * 3) Read nextFollowUpAt OR next_follow_up_at from body.
+ * 4) REPLACE call_remark (do not CONCAT nested [schedule] tags) — use TEXT column.
+ * 5) Return 400 VAL_001 for missing/invalid datetime — never uncaught 500.
+ * 6) Allow in_progress -> rescheduled for assigned_dealer_id = JWT dealer.
+ * 7) Response: lead + nextLead + scheduledLeads (future nextFollowUpAt).
+ *
+ * Suggested handler branch (pseudo):
+ *   const nextAt = body.nextFollowUpAt ?? body.next_follow_up_at
+ *   const action = body.action
+ *   const isReschedule =
+ *     action === "rescheduled" ||
+ *     (action === "follow_up" && nextAt && normalizeCategory(...) === "schedule")
+ *   if (isReschedule && !nextAt) return 400 VAL_001
+ *   if (isReschedule) {
+ *     updates.status = "rescheduled"
+ *     updates.next_follow_up_at = nextAt
+ *     // persist remark fields from parseTaggedCallRemark(body.callRemark ?? body.call_remark)
+ *   }
+ *
+ * See BACKEND_CHANGES_HANDOFF.md §4.5.2 and BACKEND_CHANGES_REQUIRED.md §E.2.
+ *
+ * -----------------------------------------------------------------------------
  * E) Optional grouped response helper
  * -----------------------------------------------------------------------------
  *

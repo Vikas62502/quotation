@@ -40,6 +40,7 @@ import { ProductSelectionForm } from "@/components/product-selection-form"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
 import { productsWithPdfDisplayFlags } from "@/lib/quotation-api-payload"
+import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -735,35 +736,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     return numeric
   }
 
-  const getTotalSystemKw = () => {
-    if (products.systemType === "both") {
-      const dcrSize = calculateSystemSize(products.dcrPanelSize || "", products.dcrPanelQuantity || 0)
-      const nonDcrSize = calculateSystemSize(products.nonDcrPanelSize || "", products.nonDcrPanelQuantity || 0)
-      const dcrKw = toKwValue(dcrSize)
-      const nonDcrKw = toKwValue(nonDcrSize)
-      return dcrKw + nonDcrKw
-    }
-
-    if (products.panelSize && products.panelQuantity) {
-      const total = toKwValue(products.panelSize) * (products.panelQuantity || 0)
-      if (total > 0) {
-        return total
-      }
-    }
-
-    if (products.systemType === "customize" && products.customPanels) {
-      return products.customPanels.reduce((sum, panel) => {
-        const panelKw = toKwValue(panel.size)
-        return sum + panelKw * (panel.quantity || 0)
-      }, 0)
-    }
-
-    if (products.inverterSize) {
-      return toKwValue(products.inverterSize)
-    }
-
-    return 0
-  }
+  const getTotalSystemKw = () => getQuotationSystemKwFromProducts(products)
 
   const getRoundedSystemSizeLabel = () => {
     const totalKw = getTotalSystemKw()

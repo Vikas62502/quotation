@@ -2575,6 +2575,8 @@ When `action` is a **completion** action (`called`, `follow_up`, `not_interested
 | `statusCategory` | `status_category` | `call_connectivity`, `lead_validity`, `customer_intent`, `financial`, `competition`, `schedule`, `other` |
 | `statusText` | `status_text` | e.g. `Call Unanswered` |
 | `remark` | — | Free text only |
+| `nextFollowUpAt` | `next_follow_up_at` | Required for reschedule / schedule hold — see **§E.2** |
+| `actionAt` | `action_at` | When the action occurred |
 
 Parse tagged format with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`. Echo `callRemark` / structured fields on lead rows and history items.
 
@@ -2656,6 +2658,113 @@ If `currentLead` is missing but an `in_progress` row exists for this dealer in D
 3. Two dealers: B never sees A as current while A is `in_progress` for dealer A.
 
 **Reference:** `BACKEND_CHANGES_HANDOFF.md` §4.5, §4.5.1; `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`.
+
+### E.2 Reschedule / Decision Pending — `action: rescheduled` must not 500 (Jun 2026)
+
+**Symptom:** Dealer submits **Connected → Decision Pending → Callback Scheduled** with reschedule datetime → **`500 Internal server error`** / `SYS_001`.
+
+**Frontend:** `app/dashboard/calling-data/page.tsx` sends `enrichCallingActionPayload()` from `lib/calling-remark-payload.ts` (camelCase + snake_case). On 500, retries `start` then **`action: follow_up`** with same `nextFollowUpAt`. Backend **must implement both** without 500.
+
+#### Endpoint
+
+| Method | Path |
+|--------|------|
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` |
+
+#### Request body (required fields for reschedule)
+
+| Field | Alias | Required | Example |
+|-------|-------|----------|---------|
+| `action` | — | Yes | `rescheduled` (preferred) or `follow_up` |
+| `nextFollowUpAt` | `next_follow_up_at` | **Yes** for reschedule | ISO-8601 UTC |
+| `callRemark` | `call_remark` | Yes | `[schedule] Callback Scheduled \| note` |
+| `statusCategory` | `status_category` | Yes (or parse from `callRemark`) | `schedule` |
+| `statusText` | `status_text` | Yes | `Callback Scheduled`, `Follow-up Pending`, … |
+| `remark` | — | Optional | Free text only |
+| `actionAt` | `action_at` | Optional | ISO timestamp (defaults to now) |
+
+**Hold reasons** (frontend `DECISION_PENDING_REASONS`) map to `statusText` with `status_category: schedule`:
+
+- `Callback Scheduled`
+- `Follow-up Pending`
+- `Callback Later`
+- `Follow-up Required`
+- `Not Picking on Follow-up`
+- `Rescheduled`
+
+#### Server behavior
+
+1. **Validate** — if `action` is `rescheduled` or (`follow_up` + `nextFollowUpAt` + schedule category), require valid `nextFollowUpAt` / `next_follow_up_at`. Missing/invalid → **`400` `VAL_001`**, not 500.
+2. **Transition** — allow `in_progress` → `rescheduled` for dealer-owned lead (`assigned_dealer_id` = JWT dealer). If strict matrix requires `start` first, auto-promote or return **`LEAD_005`** (not 500).
+3. **Persist:**
+   - `status` = **`rescheduled`**
+   - `action` = request action (`rescheduled` or `follow_up`)
+   - `status_category`, `status_text`, `remark`, `call_remark` (single canonical tagged string — **replace**, do not concat history)
+   - `next_follow_up_at`, `action_at`
+4. **Treat `follow_up` + `nextFollowUpAt` + `schedule`** same as `rescheduled` for DB status (lead moves to Scheduled tab).
+5. **Column types** — `call_remark` / `remark` should be **TEXT** (≥ 4000 chars). Truncation or concat-append of nested `[schedule] …` tags often causes 500 on repeat submits.
+6. **Response** — return updated `lead`, `nextLead`, refreshed `scheduledLeads` / `rescheduledLeads` (future `nextFollowUpAt`), per §H.
+
+#### Example request
+
+```json
+{
+  "action": "rescheduled",
+  "callRemark": "[schedule] Callback Scheduled | 6 kw panels",
+  "statusCategory": "schedule",
+  "statusText": "Callback Scheduled",
+  "remark": "6 kw panels",
+  "nextFollowUpAt": "2026-06-11T05:07:00.000Z",
+  "actionAt": "2026-06-05T10:37:00.000Z"
+}
+```
+
+#### Example response
+
+```json
+{
+  "success": true,
+  "data": {
+    "lead": {
+      "id": "uuid",
+      "status": "rescheduled",
+      "nextFollowUpAt": "2026-06-11T05:07:00.000Z",
+      "callRemark": "[schedule] Callback Scheduled | 6 kw panels"
+    },
+    "nextLead": { "id": "next-uuid" },
+    "scheduledLeads": [{ "id": "uuid", "nextFollowUpAt": "2026-06-11T05:07:00.000Z" }]
+  }
+}
+```
+
+#### Common 500 root causes (fix these)
+
+| Cause | Fix |
+|-------|-----|
+| `action` enum omits `rescheduled` | Add to enum / switch; or map to `follow_up` internally |
+| Body mapper ignores camelCase `nextFollowUpAt` | Read both `nextFollowUpAt` and `next_follow_up_at` |
+| `NOT NULL` on `next_follow_up_at` without value | Validate → 400 before UPDATE |
+| `call_remark` VARCHAR(255) + append concat | TEXT column; replace on update |
+| Uncaught error in transition guard | Catch → `LEAD_005` / `VAL_001` |
+| `status_category` "schedule" not in allowlist | Add to `ALLOWED_STATUS_CATEGORIES` |
+
+#### Checklist
+
+- [ ] `rescheduled` PATCH with `nextFollowUpAt` → 200, `status: rescheduled`
+- [ ] `follow_up` + `nextFollowUpAt` + schedule → same as above
+- [ ] Both camelCase and snake_case datetime fields accepted
+- [ ] `in_progress` → `rescheduled` allowed for assignee
+- [ ] `call_remark` replace (not append); TEXT column
+- [ ] Lead in `scheduledLeads` when follow-up is future
+- [ ] Invalid/missing datetime → 400, not 500
+
+#### QA
+
+1. Decision Pending + Callback Scheduled + datetime → Submit → 200, Scheduled tab.
+2. Repeat submit 5× on same lead → no 500 from remark length.
+3. HR `GET /calling-actions` includes `nextFollowUpAt` on row.
+
+**Reference:** `BACKEND_CHANGES_HANDOFF.md` §4.5.2; `lib/calling-remark-payload.ts`; `BACKEND_ADMIN_QUOTATION_STATUS.ts`.
 
 ### Optional: customer note on lead
 
@@ -4008,6 +4117,7 @@ List endpoint **`GET /admin/visits`** does **not** need to embed images; complet
 | High | Live `assignedCount` / `unassignedCount` / `completedCount` on HR uploads | §7.8, HANDOFF §1 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `computeHrUploadLeadCounts`, `getHrLeadsUploads` |
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
 | **High** | **Current lead stays `in_progress` until Submit** — no `nextLead` on start; `GET /current` returns open call | **§E.1**, HANDOFF **§4.5.1** | `app/dashboard/calling-data/page.tsx` |
+| **High** | **Reschedule Submit** — `rescheduled` / `follow_up` + `nextFollowUpAt` → `status: rescheduled`, no 500 | **§E.2**, HANDOFF **§4.5.2** | `lib/calling-remark-payload.ts` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
 | High | HR Dealer Actions summary — persist/return `statusCategory` + `statusText` on calling-actions | §J.1, HANDOFF §7 | `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts` |
@@ -4037,6 +4147,7 @@ For questions or clarifications about these requirements, please refer to:
 - Dealer dashboard approved total value: `app/dashboard/page.tsx`, **`BACKEND_CHANGES_HANDOFF.md` §6**, **§7.9**
 - HR/Admin calling-actions list + query params: `lib/api.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J**, **`BACKEND_CHANGES_HANDOFF.md` §4.8**
 - Dealer calling current lead until Submit: `app/dashboard/calling-data/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §E.1**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.1**
+- Dealer calling reschedule (Decision Pending): `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_REQUIRED.md` §E.2**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.2**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - API specification: `API_SPECIFICATION.txt`

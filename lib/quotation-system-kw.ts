@@ -1,5 +1,6 @@
 import type { Quotation } from "@/lib/quotation-context"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
+import { isAsPerTheSetLabel } from "@/lib/quotation-pdf-display"
 import { calculateSystemSize, getPricingData, type QuotationProductsPhaseInput } from "@/lib/pricing-tables"
 
 type QuotationRow = Record<string, unknown>
@@ -127,6 +128,29 @@ export function getQuotationSystemKwFromProducts(
   }
 
   return Math.max(...panelCandidates)
+}
+
+/** Rounded kW label for PDF header / previews — never “As per the set” (Tata package uses structureSize). */
+export function getQuotationSystemKwLabelForPdf(
+  products: QuotationProductsPhaseInput | null | undefined,
+): string {
+  const kw = getQuotationSystemKwFromProducts(products)
+  if (kw > 0) return `${Math.max(1, Math.round(kw))} kW`
+
+  const fromCalc = calculateSystemSize(products?.panelSize || "", products?.panelQuantity || 0)
+  if (fromCalc && fromCalc !== "0kW") {
+    return fromCalc.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
+  }
+
+  const structureKw = kwFromSizeLabel(products?.structureSize)
+  if (structureKw > 0) return `${Math.max(1, Math.round(structureKw))} kW`
+
+  const inv = products?.inverterSize?.trim()
+  if (inv && !isAsPerTheSetLabel(inv)) {
+    return inv.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
+  }
+
+  return "—"
 }
 
 type PricedSystemRow = {

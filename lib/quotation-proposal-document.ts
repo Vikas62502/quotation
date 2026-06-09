@@ -1,10 +1,10 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 import {
-  calculateSystemSize,
   formatQuotationPhaseLabel,
   resolveQuotationPhase,
 } from "@/lib/pricing-tables"
+import { getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
 import { buildPanelTechnologyNote } from "@/lib/quotation-panel-technology-notes"
 import {
   formatPanelSizeWithQuantityForPdf,
@@ -218,39 +218,8 @@ export function resolvePanelBrandForPdf(products: ProductsLike): string {
   return panelBrand || nonDcrBrand || dcrBrand
 }
 
-function toKwFromProducts(products: ProductSelection): number {
-  const parseW = (size?: string, qty?: number) => {
-    if (!size || !qty) return 0
-    const w = Number.parseFloat(size.replace(/[^0-9.]/g, ""))
-    if (Number.isNaN(w)) return 0
-    return (w * qty) / 1000
-  }
-  if (products.systemType === "both") {
-    return (
-      parseW(products.dcrPanelSize, products.dcrPanelQuantity) +
-      parseW(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
-    )
-  }
-  if (products.systemType === "dcr") {
-    const fromDcr = parseW(products.dcrPanelSize, products.dcrPanelQuantity)
-    if (fromDcr > 0) return fromDcr
-  }
-  if (products.panelSize && products.panelQuantity) {
-    return parseW(products.panelSize, products.panelQuantity)
-  }
-  if (products.inverterSize) {
-    const n = Number.parseFloat(products.inverterSize.replace(/[^0-9.]/g, ""))
-    return Number.isNaN(n) ? 0 : n
-  }
-  return 0
-}
-
 export function getSystemKwLabel(products: ProductSelection): string {
-  const kw = toKwFromProducts(products)
-  if (kw > 0) return `${Math.max(1, Math.round(kw))} kW`
-  const fromCalc = calculateSystemSize(products.panelSize || "", products.panelQuantity || 0)
-  if (fromCalc && fromCalc !== "0kW") return fromCalc.replace(/kW/i, " kW").replace(" ", "")
-  return products.inverterSize || "—"
+  return getQuotationSystemKwLabelForPdf(products)
 }
 
 export function getSystemTypeLabel(systemType: string): string {
@@ -334,7 +303,10 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   const panelBrand = primary.brand || "—"
   const panelQty = buildPanelQty(primary.quantity, primaryRange)
 
-  const invSpec = `${p.inverterSize || "—"} ${p.inverterType || "String Inverter"}, ${formatQuotationPhaseLabel(resolveQuotationPhase(p))}, MPPT, IP65, Wi-Fi Monitoring`
+  const invSizeForSpec = isAsPerTheSetLabel(p.inverterSize)
+    ? QUOTATION_AS_PER_THE_SET_LABEL
+    : p.inverterSize || "—"
+  const invSpec = `${invSizeForSpec} ${p.inverterType || "String Inverter"}, ${formatQuotationPhaseLabel(resolveQuotationPhase(p))}, MPPT, IP65, Wi-Fi Monitoring`
   const invBrand =
     isAsPerTheSetLabel(p.inverterBrand) || isAsPerTheSetLabel(p.inverterSize)
       ? QUOTATION_AS_PER_THE_SET_LABEL
@@ -532,12 +504,51 @@ export function buildPaymentRows(subtotal: number): PaymentRow[] {
   ]
 }
 
-export function buildSubsidyTermsDetail(_products: ProductsLike): string {
-  return (
-    "Government subsidy is applicable to this customer for this quotation. " +
-    "ChairBord Solar will apply for the eligible subsidy on the customer's behalf as per prevailing MNRE/state norms and timelines. " +
-    "Subsidy sanction and disbursement are subject to government authorities; balance payment shall be as per the payment terms below."
-  )
+/** Normal DCR residential central subsidy (MNRE). */
+export const PROPOSAL_DEFAULT_CENTRAL_SUBSIDY = 78000
+/** Additional state subsidy — Rajasthan 100 Units Free Scheme only. */
+export const PROPOSAL_DEFAULT_STATE_SUBSIDY = 17000
+
+function resolveSubsidyAmountsForPdf(products: ProductsLike): { central: number; state: number } {
+  const raw = products as Record<string, unknown>
+  const centralRaw = Number(products.centralSubsidy ?? raw.central_subsidy ?? 0)
+  const stateRaw = Number(products.stateSubsidy ?? raw.state_subsidy ?? 0)
+  return {
+    central: centralRaw > 0 ? centralRaw : PROPOSAL_DEFAULT_CENTRAL_SUBSIDY,
+    state: stateRaw > 0 ? stateRaw : PROPOSAL_DEFAULT_STATE_SUBSIDY,
+  }
+}
+
+const SUBSIDY_TERMS_DISCLAIMER =
+  "All benefits depend on MNRE/state eligibility. Subsidy sanction, delay, denial, or disbursement is solely at government discretion. ChairBord Solar is not responsible for subsidy approval or payment; the balance is payable per the payment terms below."
+
+/** Separate T&C rows: central (₹78,000 residential) vs state (₹17,000 — 100 Units Free Scheme only). */
+export function buildSubsidyTermsRows(products: ProductsLike): TermsRow[] {
+  const { central, state } = resolveSubsidyAmountsForPdf(products)
+  const combined = central + state
+  return [
+    {
+      category: "Central Subsidy",
+      detail: `Eligible DCR residential customers may receive up to ${formatInr(central)} Central Government subsidy under normal residential MNRE/state norms.`,
+    },
+    {
+      category: "State Subsidy",
+      detail:
+        `Under the Rajasthan 100 Units Free Scheme only, qualifying customers may additionally receive up to ${formatInr(state)} State Government subsidy ` +
+        `(combined with ${formatInr(central)} central subsidy = ${formatInr(combined)} maximum).`,
+    },
+    {
+      category: "Subsidy",
+      detail: SUBSIDY_TERMS_DISCLAIMER,
+    },
+  ]
+}
+
+/** @deprecated Use buildSubsidyTermsRows — kept for single-block callers. */
+export function buildSubsidyTermsDetail(products: ProductsLike): string {
+  return buildSubsidyTermsRows(products)
+    .map((row) => row.detail)
+    .join("\n\n")
 }
 
 export function buildWarrantyRows(panelBrand: string): WarrantyRow[] {
@@ -610,7 +621,7 @@ export const DEFAULT_TERMS_ROWS: TermsRow[] = [
   {
     category: "Subsidy",
     detail:
-      "If subsidy is applicable to the customer, ChairBord Solar will apply; if not applicable, subsidy is not ChairBord Solar's responsibility. Payment as per payment terms below.",
+      "Subsidy amounts and eligibility are governed by the 100 Units Free Scheme and government authorities only; ChairBord Solar is not responsible for subsidy approval or payment.",
   },
   {
     category: "Inverter",
@@ -627,17 +638,18 @@ function buildTermsRows(products: ProductsLike, panelBrand: string): TermsRow[] 
     detail: `${brandLabel} bifacial modules with manufacturer performance warranty as per BOM.`,
   }
 
-  const rows = DEFAULT_TERMS_ROWS.filter(
-    (row) => showSubsidyTerms || row.category !== "Subsidy",
-  ).map((row) => {
-    if (row.category === "Payment") {
-      return { ...row, detail: PROPOSAL_PAYMENT_TERMS_DETAIL }
-    }
+  const rows: TermsRow[] = []
+  for (const row of DEFAULT_TERMS_ROWS) {
     if (row.category === "Subsidy") {
-      return { ...row, detail: buildSubsidyTermsDetail(products) }
+      if (showSubsidyTerms) rows.push(...buildSubsidyTermsRows(products))
+      continue
     }
-    return row
-  })
+    if (row.category === "Payment") {
+      rows.push({ ...row, detail: PROPOSAL_PAYMENT_TERMS_DETAIL })
+      continue
+    }
+    rows.push(row)
+  }
 
   const inverterIndex = rows.findIndex((row) => row.category === "Inverter")
   if (inverterIndex === -1) return [...rows, panelsRow]

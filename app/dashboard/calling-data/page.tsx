@@ -29,7 +29,13 @@ import {
   saveCallingLeadSession,
   setCallingActiveLeadId,
 } from "@/lib/calling-lead-session"
-import { enrichCallingActionPayload, parseTaggedCallRemark } from "@/lib/calling-remark-payload"
+import {
+  cleanFreeCallRemark,
+  enrichCallingActionPayload,
+  getRescheduleSubmitAction,
+  isCallingActionServerError,
+  parseTaggedCallRemark,
+} from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
 import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
 import {
@@ -1630,7 +1636,7 @@ export default function CallingDataPage() {
 
   const buildTaggedRemark = (groupKey: StatusGroupKey, status: string, remark: string) => {
     const backendCategory = getBackendStatusCategory(groupKey, status)
-    const trimmed = remark.trim()
+    const trimmed = cleanFreeCallRemark(remark)
     return `[${backendCategory}] ${status}${trimmed ? ` | ${trimmed}` : ""}`
   }
 
@@ -1648,7 +1654,7 @@ export default function CallingDataPage() {
 
     previousCurrentLeadIdRef.current = currentLead.id
     const session = loadCallingLeadSession(currentLead.id)
-    const parsedLeadRemark = parseTaggedCallRemark(currentLead.callRemark).remark
+    const parsedLeadRemark = cleanFreeCallRemark(currentLead.callRemark)
 
     setEditableLeadDetails({
       name: currentLead.name || "",
@@ -1679,7 +1685,7 @@ export default function CallingDataPage() {
     setDecisionReason(DECISION_PENDING_REASONS[0])
     setDecisionOverride("pending")
     setDealClosed(false)
-    setCallRemark(session?.callRemark ?? parsedLeadRemark ?? "")
+    setCallRemark(cleanFreeCallRemark(session?.callRemark ?? parsedLeadRemark ?? ""))
     setRescheduleAt("")
     setCallingActiveLeadId(currentLead.id)
   }, [currentLead])
@@ -1711,7 +1717,7 @@ export default function CallingDataPage() {
     const session = loadCallingLeadSession(leadId)
     if (!session) return
 
-    if (session.callRemark) setCallRemark(session.callRemark)
+    if (session.callRemark) setCallRemark(cleanFreeCallRemark(session.callRemark))
     if (session.callConnection === "connected" || session.callConnection === "not_connected") {
       setCallConnection(session.callConnection as "connected" | "not_connected")
     }
@@ -1908,13 +1914,37 @@ export default function CallingDataPage() {
           }
         }
 
-        // Many backends require `start` (assigned/queued → in_progress) before called / not_interested / etc.
-        if (!response && isInvalidTransition && payload.action !== "start" && payload.action !== "rescheduled") {
+        // Many backends require `start` (assigned/queued → in_progress) before completion actions.
+        if (!response && isInvalidTransition && payload.action !== "start") {
           try {
             await api.dealers.updateCallingLeadAction(leadId, { action: "start", actionAt })
             response = await api.dealers.updateCallingLeadAction(leadId, enrichCallingActionPayload({ ...payload, actionAt }))
           } catch {
-            // fall through to rescheduled fallback below
+            // fall through to alternate action fallbacks below
+          }
+        }
+
+        // Reschedule / follow-up: many backends 500 on `rescheduled` or require `start` first.
+        if (
+          !response &&
+          payload.nextFollowUpAt &&
+          (isInvalidTransition || isCallingActionServerError(innerError) || payload.action === "rescheduled")
+        ) {
+          try {
+            await api.dealers.updateCallingLeadAction(leadId, { action: "start", actionAt })
+          } catch {
+            // ignore — may already be in_progress
+          }
+          for (const retryAction of ["follow_up", "rescheduled"] as const) {
+            if (response) break
+            try {
+              response = await api.dealers.updateCallingLeadAction(
+                leadId,
+                enrichCallingActionPayload({ ...payload, action: retryAction, actionAt }),
+              )
+            } catch {
+              // try next action
+            }
           }
         }
 
@@ -1999,7 +2029,9 @@ export default function CallingDataPage() {
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Failed to update lead action."
       toast({
         title: "Action failed",
-        description: message,
+        description: isCallingActionServerError(error)
+          ? "Server could not save this reschedule. Please try again in a moment or contact support if it continues."
+          : message,
         variant: "destructive",
       })
     } finally {
@@ -2320,7 +2352,7 @@ export default function CallingDataPage() {
                                     }
                                     const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
                                     submitAction(lead.id, {
-                                      action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                                      action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                                       nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
                                       callRemark: remark,
                                       actionAt: new Date().toISOString(),
@@ -2515,7 +2547,7 @@ export default function CallingDataPage() {
                             if (!finalStatus) return
                             if (isReschedule && !editedTime) return
                             submitAction(item.leadId, {
-                              action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                              action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                               callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
                               nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
                               actionAt: new Date().toISOString(),
@@ -2663,7 +2695,7 @@ export default function CallingDataPage() {
                             } else if (connectedOutcome === "decision_pending") {
                               groupKey = "part_3_followup_sales"
                               finalStatus = "Follow-up Pending"
-                              nextAction = isReschedule ? "rescheduled" : "follow_up"
+                              nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
                               nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
                             }
                             if (isReschedule && !editedTime) return
@@ -2888,7 +2920,7 @@ export default function CallingDataPage() {
                                 if (isReschedule && !editedTime) return
                                 groupKey = "part_3_followup_sales"
                                 finalConnectedStatus = "Follow-up Pending"
-                                nextAction = isReschedule ? "rescheduled" : "follow_up"
+                                nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
                                 nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
                               }
                               if (isReschedule && !editedTime) return
@@ -3339,10 +3371,19 @@ export default function CallingDataPage() {
                                   })
                                   return
                                 }
+                                const followUpDate = new Date(rescheduleAt)
+                                if (Number.isNaN(followUpDate.getTime())) {
+                                  toast({
+                                    title: "Invalid reschedule time",
+                                    description: "Please choose a valid date and time.",
+                                    variant: "destructive",
+                                  })
+                                  return
+                                }
                                 groupKey = "part_3_followup_sales"
                                 finalStatus = decisionReason
-                                nextAction = "rescheduled"
-                                nextFollowUpAt = new Date(rescheduleAt).toISOString()
+                                nextAction = getRescheduleSubmitAction()
+                                nextFollowUpAt = followUpDate.toISOString()
                               }
                             } else {
                               toast({
@@ -3526,7 +3567,7 @@ export default function CallingDataPage() {
                                   }
                                   const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
                                   submitAction(lead.id, {
-                                    action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                                    action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                                     nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
                                     callRemark: remark,
                                     actionAt: new Date().toISOString(),
@@ -3781,7 +3822,7 @@ export default function CallingDataPage() {
                                   return
                                 }
                                 submitAction(item.leadId, {
-                                  action: isReschedule ? "rescheduled" : getActionFromStatus(finalStatus),
+                                  action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                                   callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
                                   nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
                                   actionAt: new Date().toISOString(),

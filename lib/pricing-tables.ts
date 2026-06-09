@@ -1438,6 +1438,7 @@ export type QuotationProductsPhaseInput = {
   panelSize?: string
   panelQuantity?: number
   inverterSize?: string
+  structureSize?: string
   dcrPanelSize?: string
   dcrPanelQuantity?: number
   nonDcrPanelSize?: string
