@@ -79,6 +79,7 @@ import {
 import { filterActiveDealers } from "@/lib/active-dealers"
 import { AdminVisitDetailsDialog } from "@/components/admin-visit-details-dialog"
 import { loadAdminVisitorReportRows } from "@/lib/load-admin-visitor-reports"
+import { fetchAllPaginatedQuotationListPages } from "@/lib/fetch-paginated-quotation-list"
 import {
   buildVisitStatusSummary,
   getVisitStatusBadgeClass,
@@ -107,6 +108,7 @@ import {
   isAwaitingManualMeteringHandoff,
   getQuotationOpsStageLabel,
   getSendToMeteringMenuState,
+  getAdminQuotationsTabSendToMeteringState,
   getMeteringWorkflowStage,
   isMeteringApprovedForTransition,
   readInstallationScheduledMap,
@@ -118,6 +120,7 @@ import {
   getInstallationAdminTabProgress,
   setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
+  extractQuotationListTotalFromApiResponse,
   flattenWrappedQuotationRow,
   flattenQuotationListRow,
   stampInstallerReleaseFromMap,
@@ -517,7 +520,7 @@ function AdminQuotationRowActions({
   onDocuments: (quotation: Quotation) => void
   onView: (quotation: Quotation) => void
 }) {
-  const sendToMetering = getSendToMeteringMenuState(quotation)
+  const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation)
   const isSending = sendingToMeteringId === quotation.id
 
   return (
@@ -589,6 +592,9 @@ export default function AdminPanelPage() {
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
+  /** Server-side total when list fetch is paginated (e.g. limit 1000). */
+  const [quotationsListTotal, setQuotationsListTotal] = useState<number | null>(null)
+  const [thisMonthQuotationsFromStats, setThisMonthQuotationsFromStats] = useState<number | null>(null)
   const [dealers, setDealers] = useState<Dealer[]>([])
   const [visitors, setVisitors] = useState<Visitor[]>([])
   const [accountManagers, setAccountManagers] = useState<AccountManager[]>([])
@@ -1314,8 +1320,43 @@ export default function AdminPanelPage() {
 
         if (isStale()) return
 
-        // Load quotations (high limit — default pagination hides released payment rows)
-        const quotationsResponse = await api.admin.quotations.getAll({ page: 1, limit: 1000 })
+        // Load all quotation pages (API defaults to 1000 per page)
+        const { rows: adminQuotationRows, total: paginatedQuotationsTotal } =
+          await fetchAllPaginatedQuotationListPages((page, limit) =>
+            api.admin.quotations.getAll({ page, limit }),
+          )
+        let resolvedQuotationsTotal = paginatedQuotationsTotal
+        try {
+          const statsResponse = await api.admin.statistics()
+          const statsRoot =
+            statsResponse && typeof statsResponse === "object"
+              ? (statsResponse as Record<string, unknown>)
+              : null
+          const statsData =
+            statsRoot?.data && typeof statsRoot.data === "object" && !Array.isArray(statsRoot.data)
+              ? (statsRoot.data as Record<string, unknown>)
+              : statsRoot
+          const overview =
+            statsData?.overview && typeof statsData.overview === "object"
+              ? (statsData.overview as Record<string, unknown>)
+              : null
+          const thisMonth =
+            statsData?.thisMonth && typeof statsData.thisMonth === "object"
+              ? (statsData.thisMonth as Record<string, unknown>)
+              : null
+          const statsTotal = Number(overview?.totalQuotations)
+          if (Number.isFinite(statsTotal) && statsTotal >= 0) {
+            resolvedQuotationsTotal = Math.max(resolvedQuotationsTotal ?? 0, statsTotal)
+          }
+          const monthTotal = Number(thisMonth?.quotations)
+          setThisMonthQuotationsFromStats(
+            Number.isFinite(monthTotal) && monthTotal >= 0 ? monthTotal : null,
+          )
+        } catch {
+          setThisMonthQuotationsFromStats(null)
+        }
+        if (isStale()) return
+        setQuotationsListTotal(resolvedQuotationsTotal)
         setOptimisticFileLoginSelect({})
         let releaseLocal = readInstallerReleaseMap()
         const installerQueueById: Record<string, Record<string, unknown>> = {}
@@ -1381,7 +1422,7 @@ export default function AdminPanelPage() {
             .map((row) => [String(row.id), row]),
         )
 
-        const adminRowsRaw = quotationsResponse.quotations || extractQuotationListFromApiResponse(quotationsResponse)
+        const adminRowsRaw: any[] = adminQuotationRows
         releaseLocal = syncInstallerReleaseMapFromRows(adminRowsRaw)
 
         let paymentSentRows: unknown[] = []
@@ -1587,6 +1628,7 @@ export default function AdminPanelPage() {
             }
           }),
         )
+        setQuotationsListTotal((prev) => Math.max(prev ?? 0, quotationsList.length))
 
         // Load dealers (all pages + include inactive) so UI count matches database.
         const dealerRows: any[] = []
@@ -1767,6 +1809,8 @@ export default function AdminPanelPage() {
           installationTeamId: (q as any).installationTeamId || teamAssignFallback[q.id],
         }))
         setQuotations(quotationsWithStatus)
+        setQuotationsListTotal(quotationsWithStatus.length)
+        setThisMonthQuotationsFromStats(null)
         setInstallerQueueIds(new Set(quotationsWithStatus.map((q: Quotation) => q.id)))
         // Update localStorage with status if needed
         if (allQuotations.some((q: Quotation) => !q.status)) {
@@ -2167,7 +2211,7 @@ export default function AdminPanelPage() {
   }
 
   // Calculate statistics
-  const totalQuotations = quotations.length
+  const totalQuotations = Math.max(quotationsListTotal ?? quotations.length, quotations.length)
   const approvedQuotations = quotations.filter((q) => q.status === "approved")
   const totalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
@@ -2182,6 +2226,7 @@ export default function AdminPanelPage() {
     const created = new Date(q.createdAt)
     return !Number.isNaN(created.getTime()) && isInCurrentCalendarMonth(created)
   })
+  const thisMonthQuotationCount = thisMonthQuotationsFromStats ?? thisMonthAllQuotations.length
   const thisMonthApprovedQuotations = approvedQuotations.filter((q) => {
     const approvedDate = getQuotationApprovalDate(q)
     return approvedDate ? isInCurrentCalendarMonth(approvedDate) : false
@@ -2392,6 +2437,17 @@ export default function AdminPanelPage() {
     confirmationFinalQuotations,
   ])
 
+  const quotationListUsesServerTotal =
+    operationalTab === "all" &&
+    operationalProgressTab === "all" &&
+    normalizedSearchTerm.length === 0 &&
+    filterDealer === "all" &&
+    filterMonth === "all" &&
+    filterStatus === "all" &&
+    filterFileLogin === "all" &&
+    filterPaymentType === "all" &&
+    filterBankDetails === "all"
+
   const quotationListResetKey = [
     operationalTab,
     operationalProgressTab,
@@ -2403,6 +2459,7 @@ export default function AdminPanelPage() {
     filterPaymentType,
     filterBankDetails,
     activeQuotationList.length,
+    quotationsListTotal,
   ].join("|")
 
   const {
@@ -2416,6 +2473,10 @@ export default function AdminPanelPage() {
     batchSize: QUOTATIONS_LIST_BATCH_SIZE,
     resetKey: quotationListResetKey,
     enabled: activeTab === "quotations",
+    totalCount:
+      quotationListUsesServerTotal && quotationsListTotal != null
+        ? Math.max(quotationsListTotal, activeQuotationList.length)
+        : undefined,
   })
 
   const activeQuotationFilterCount = [
@@ -3070,12 +3131,12 @@ export default function AdminPanelPage() {
         return
       }
       if (useApi) {
-        const formData = new FormData()
-        if (finalBillFile) formData.append("customerFinalBillFile", finalBillFile)
-        if (panelWarrantyFile) formData.append("panelWarrantyFile", panelWarrantyFile)
-        if (inverterWarrantyFile) formData.append("inverterWarrantyFile", inverterWarrantyFile)
-        if (workCompletionWarrantyFile) formData.append("workCompletionWarrantyFile", workCompletionWarrantyFile)
-        await api.quotations.updateDocuments(quotation.id, formData)
+        await api.quotations.uploadFinalConfirmationDocuments(quotation.id, {
+          customerFinalBillFile: finalBillFile,
+          panelWarrantyFile,
+          inverterWarrantyFile,
+          workCompletionWarrantyFile,
+        })
       }
       await loadData()
       setAdminFinalExpandedId(null)
@@ -3205,7 +3266,10 @@ export default function AdminPanelPage() {
   }
 
   const handleSendToMetering = async (quotation: Quotation) => {
-    const menuState = getSendToMeteringMenuState(quotation)
+    const menuState =
+      operationalTab === "all"
+        ? getAdminQuotationsTabSendToMeteringState(quotation)
+        : getSendToMeteringMenuState(quotation)
     if (sendingToMeteringId === quotation.id) return
     if (!menuState.enabled) {
       toast({
@@ -4085,7 +4149,7 @@ export default function AdminPanelPage() {
                   <FileText className="w-5 h-5 text-primary" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold">{totalQuotations}</div>
+                  <div className="text-3xl font-bold">{totalQuotations.toLocaleString()}</div>
                   <p className="text-xs text-muted-foreground mt-1">All time</p>
                 </CardContent>
               </Card>
@@ -4120,7 +4184,7 @@ export default function AdminPanelPage() {
                   <Calendar className="w-5 h-5 text-amber-500" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-3xl font-bold">{thisMonthAllQuotations.length}</div>
+                  <div className="text-3xl font-bold">{thisMonthQuotationCount.toLocaleString()}</div>
                   <p className="text-xs text-muted-foreground mt-1">Created this month</p>
                 </CardContent>
               </Card>
@@ -5752,7 +5816,7 @@ export default function AdminPanelPage() {
                                 Timeline
                               </Button>
                               {(() => {
-                                const sendToMetering = getSendToMeteringMenuState(quotation)
+                                const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation)
                                 if (!sendToMetering.visible) return null
                                 return (
                                   <Button

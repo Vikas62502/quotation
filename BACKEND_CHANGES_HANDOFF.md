@@ -1248,9 +1248,9 @@ Return the fields above on **each quotation object** (top level, not only nested
 
 **Approved Installation** (photos uploaded / install complete):
 
-- `installation_status` in: `installer_approved`, `pending_baldev`, `baldev_approved`, `completed`  
-  **or** (legacy) `pending_metering` / metering stages if already in pipeline.
+- `installation_status` in: `installer_approved`, `pending_baldev`, `baldev_approved`, `completed`
 - **Plus:** persist and return at least one installation completion image URL on the quotation row.
+- **Exclude** rows already in metering: `pending_metering`, `metering_in_progress`, `metering_approved`, `mco` — these belong only on Admin → **Metering** (see **§11**).
 
 **On completion upload** (installer or admin):
 
@@ -1501,11 +1501,168 @@ Emit `backend:mutation` with `path` containing `visit` when visit status changes
 
 ---
 
+## 10. Final confirmation — document upload (`Invalid quotation document payload`)
+
+**Symptom:** Admin → **Final confirmation** → **Update Final Details** → **Save Details** fails with **`Invalid quotation document payload`**.
+
+**Frontend (done):** `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts`, `app/dashboard/admin/page.tsx`, `app/dashboard/baldev/page.tsx`.
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` **§M**.
+
+### Root cause
+
+| What happened | Why |
+|---------------|-----|
+| UI sent `panelWarrantyFile`, `workCompletionWarrantyFile`, etc. | Correct field names for final confirmation |
+| Request went to **`PATCH /quotations/{id}/documents`** | That route is **KYC-only** (Aadhaar, PAN, bank, `emailId`, …) |
+| Server allowlists KYC keys only | Unknown keys → **`400`** `Invalid quotation document payload` |
+
+**Fix:** Implement a **separate POST** handler for final-confirmation files. Do **not** add these keys to the KYC PATCH allowlist unless you intentionally merge both flows (not recommended).
+
+### Minimum backend deliverable
+
+**Implement:**
+
+```
+POST /api/admin/quotations/{quotationId}/final-confirmation-documents
+Content-Type: multipart/form-data
+Roles: admin, baldev
+```
+
+**Multipart keys (any subset per request):**
+
+- `customerFinalBillFile`
+- `panelWarrantyFile`
+- `inverterWarrantyFile`
+- `workCompletionWarrantyFile`
+
+**Persist + return on GET** (each quotation row):
+
+- `customerFinalBillFileUrl`, `panelWarrantyFileUrl`, `inverterWarrantyFileUrl`, `workCompletionWarrantyFileUrl`
+- Optional: matching `*FileName` fields
+- snake_case mirrors accepted
+
+**Optional fallback** (frontend already tries if POST batch missing):
+
+```
+POST /api/quotations/{quotationId}/documents/upload
+field=panelWarrantyFile&file=…
+```
+
+Extend existing per-file upload allowlist to include the four final-confirmation `field` values.
+
+### Frontend retry order (for backend routing)
+
+1. `POST /admin/quotations/{id}/final-confirmation-documents` ← **implement this first**
+2. `POST /admin/quotations/{id}/documents`
+3. `POST /quotations/{id}/final-confirmation-documents`
+4. `POST /baldev/quotations/{id}/final-confirmation-documents`
+5. `POST /quotations/{id}/documents`
+6. Per-file: `POST …/documents/upload` with `field` + `file`
+
+### QA
+
+1. Upload Panel Warranty + Work Completion PDFs → **`200`**, URLs in response.
+2. Re-open same quotation → GET list shows saved URLs (no re-upload required).
+3. Baldev dashboard same flow with `baldev` JWT.
+4. Dealer KYC **PATCH** `/documents` still works unchanged.
+
+**Reference handler:** `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `postAdminFinalConfirmationDocuments`
+
+---
+
+## 11. Admin Quotations tab — Send to Metering (manual handoff)
+
+**Frontend (done):** Admin → **Quotations → All** — **Send to Metering** on each row (`app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` → `getAdminQuotationsTabSendToMeteringState`, `lib/api.ts` → `sendQuotationToMetering`).
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` **§L.1**.
+
+### What the UI does
+
+| Trigger | Who | When button shows |
+|---------|-----|-------------------|
+| **Send to Metering** | `admin` | Quotation **not** already in metering pipeline (`pending_metering`+) |
+| Same button | `admin` | **`status` = `pending` or `approved`** (rejected/completed hidden) |
+| After success | — | UI opens **Metering → Processing**; row **leaves Installation** tab |
+
+This is the same PATCH as Installation tab **Send to Metering**, but callable earlier (e.g. **Pending Installer** while `installation_status` is still `pending_installer`).
+
+### Required backend endpoint
+
+**Preferred:**
+
+```
+PATCH /api/admin/quotations/{quotationId}/installation-status
+Authorization: Bearer {admin}
+```
+
+**Body (frontend sends all mirrors):**
+
+```json
+{
+  "installationStatus": "pending_metering",
+  "installation_status": "pending_metering",
+  "meteringStatus": "pending_metering",
+  "metering_status": "pending_metering"
+}
+```
+
+**Fallback paths** (frontend tries until one returns 2xx): see `patchOperationalWorkflowStatus()` in `lib/api.ts` — includes `/installer/quotations/…/send-to-metering`, `/quotations/…/metering-status`, etc.
+
+### Persist + return on GET
+
+After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotations`**) must return:
+
+| Field | Value after handoff |
+|-------|---------------------|
+| `installationStatus` / `installation_status` | `pending_metering` (or keep `installer_approved` only if you mirror metering on separate column — frontend reads **both**) |
+| `meteringStatus` / `metering_status` | `pending_metering` |
+| Prior release flags | **Unchanged** — `installationReadyForInstaller`, `installationReleasedAt` stay set |
+
+**Metering queue:** Row must appear in `GET /api/metering/quotations?status=processing` (or equivalent filter for `pending_metering` / `metering_in_progress`).
+
+**Installation tab:** Row must **not** be treated as Pending/Approved Installation once `pending_metering`+ — frontend hides it; backend should not require installation queue APIs to still list it.
+
+### Business rules (recommended)
+
+| Rule | Recommendation |
+|------|----------------|
+| Quotation `status` still **pending** | **Allow** admin override (frontend enables send) **or** return **`400` `VAL_001`** with clear message — do not **500** |
+| Not released from Payment Management | **Allow** admin force handoff **or** reject with **`400`** — document your choice |
+| Already `pending_metering` | Idempotent **`200`** with current row |
+| Auto-advance on photo upload | **Do not** set `pending_metering` on upload — only explicit PATCH |
+
+### Auth
+
+- **`admin`** JWT: **required** on `PATCH /admin/quotations/{id}/installation-status`
+- Optional: same for `installation-team` / `installer` on installer-scoped routes (unchanged)
+
+### Checklist
+
+- [ ] `PATCH …/installation-status` accepts `pending_metering` from **admin**
+- [ ] Persists `installation_status` and/or `metering_status` on `quotations` table
+- [ ] `GET /admin/quotations` returns updated stage on next load (no stale cache)
+- [ ] `GET /metering/quotations` includes the row under processing/pending_metering
+- [ ] Does **not** require `installer_approved` before `pending_metering` when caller is admin (Quotations tab early send)
+- [ ] Optional: allow `status = pending` on quotation or return explicit validation error
+
+### QA
+
+1. Admin → Quotations → **Approved** row with **Pending Installer** → **Send to Metering** → **200**.
+2. Row in **Metering → Processing**; **not** in Installation Pending/Approved.
+3. `GET /admin/quotations` shows `installationStatus` / `meteringStatus` = `pending_metering` (or equivalent).
+4. **Pending** quotation status row → send succeeds or **`400`** with message (no **500**).
+5. Metering user sees row in their queue after handoff.
+
+**Reference:** `lib/operational-install-queue.ts` (`shouldHideSentQuotationFromAdminInstallationTab`, `getAdminQuotationsTabSendToMeteringState`), `BACKEND_CHANGES_HANDOFF.md` §9.D.
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (final confirmation uploads + accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
@@ -1517,4 +1674,7 @@ Emit `backend:mutation` with `path` containing `visit` when visit status changes
 | `lib/merge-quotation-products.ts` | Merges `products` + `quotationProduct` + flat row fields for kW |
 | `lib/operational-install-queue.ts` | Payment **Send to Installer** gate + Admin Installation pending/approved rules |
 | `lib/visit-report.ts` | Admin Visitor Reports — status normalization, filters, row mapping |
+| `lib/final-confirmation-documents.ts` | Final confirmation multipart field names + FormData builder |
+| `lib/api.ts` | `uploadFinalConfirmationDocuments`, `sendQuotationToMetering` |
+| `lib/operational-install-queue.ts` | `getAdminQuotationsTabSendToMeteringState`, installation vs metering visibility |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |

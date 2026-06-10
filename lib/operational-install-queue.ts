@@ -122,6 +122,16 @@ export function getQuotationOpsStageLabel(q: OperationalQuotationRecord): string
   if (isAwaitingManualMeteringHandoff(q)) return "Pending metering"
   const install = getInstallationWorkflowStatus(q)
   const metering = getMeteringWorkflowRaw(q)
+  if (isAlreadyInMeteringPipeline(q)) {
+    const meteringStages = new Set([
+      "pending_metering",
+      "metering_in_progress",
+      "metering_approved",
+      "mco",
+    ])
+    const stage = meteringStages.has(metering) ? metering : install
+    return stage ? stage.replaceAll("_", " ") : "Pending metering"
+  }
   const stage = metering || install
   return stage ? stage.replaceAll("_", " ") : "Not set"
 }
@@ -148,6 +158,45 @@ export function getSendToMeteringMenuState(q: OperationalQuotationRecord): SendT
   }
 
   return { visible: true, enabled: true, hint: "", sent: false }
+}
+
+/**
+ * Admin → Quotations (All tab): manual handoff to Metering without waiting for
+ * installer_approved. Pending or approved quotations not already in the metering
+ * pipeline may be sent (e.g. Pending Installer after Payment Management release).
+ */
+export function getAdminQuotationsTabSendToMeteringState(
+  q: OperationalQuotationRecord,
+): SendToMeteringMenuState {
+  const status = String(q.status || "pending").toLowerCase()
+
+  if (isAlreadyInMeteringPipeline(q)) {
+    return { visible: false, enabled: false, hint: "", sent: true }
+  }
+
+  if (status === "rejected" || status === "completed") {
+    return { visible: false, enabled: false, hint: "", sent: false }
+  }
+
+  if (status === "pending") {
+    return {
+      visible: true,
+      enabled: true,
+      hint: "Send to Metering (quotation status is still Pending)",
+      sent: false,
+    }
+  }
+
+  if (isAwaitingManualMeteringHandoff(q)) {
+    return { visible: true, enabled: true, hint: "", sent: false }
+  }
+
+  return {
+    visible: true,
+    enabled: true,
+    hint: "Manually send to the Metering tab (installation may still be in progress)",
+    sent: false,
+  }
 }
 
 export type MeteringWorkflowTab = "processing" | "approved" | "mco"
@@ -278,9 +327,11 @@ export function shouldHideSentQuotationFromAdminInstallationTab(q: OperationalQu
   const metering = getMeteringWorkflowRaw(q)
 
   if (
+    metering === "pending_metering" ||
     metering === "metering_in_progress" ||
     metering === "metering_approved" ||
     metering === "mco" ||
+    install === "pending_metering" ||
     install === "metering_in_progress" ||
     install === "metering_approved" ||
     install === "mco"
@@ -288,8 +339,6 @@ export function shouldHideSentQuotationFromAdminInstallationTab(q: OperationalQu
     return true
   }
 
-  // Keep pending_metering in Approved Installation until metering team actively processes
-  // (backend often sets pending_metering on upload; manual Send to Metering should still show here).
   return false
 }
 
@@ -433,6 +482,33 @@ export function extractQuotationListFromApiResponse(response: any): any[] {
     return response.data
   }
   return []
+}
+
+/** Total row count from paginated quotation list responses (not limited to returned page size). */
+export function extractQuotationListTotalFromApiResponse(response: unknown): number | null {
+  if (!response || typeof response !== "object") return null
+  const root = response as Record<string, unknown>
+  const nested =
+    root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? (root.data as Record<string, unknown>)
+      : null
+  const pagination = (root.pagination ?? nested?.pagination) as Record<string, unknown> | undefined
+  const meta = (root.meta ?? nested?.meta) as Record<string, unknown> | undefined
+  const candidates = [
+    pagination?.total,
+    meta?.total,
+    root.total,
+    nested?.total,
+    root.totalCount,
+    nested?.totalCount,
+    root.totalQuotations,
+    nested?.totalQuotations,
+  ]
+  for (const value of candidates) {
+    const n = Number(value)
+    if (Number.isFinite(n) && n >= 0) return n
+  }
+  return null
 }
 
 /** Merge installer-queue / detail payloads into admin list rows without clobbering mapped customer/status. */

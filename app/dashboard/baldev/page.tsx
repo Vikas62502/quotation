@@ -212,12 +212,12 @@ export default function BaldevDashboardPage() {
     try {
       setFinalDocsSavingId(quotationId)
       if (useApi) {
-        const formData = new FormData()
-        if (finalBillFile) formData.append("customerFinalBillFile", finalBillFile)
-        if (panelFile) formData.append("panelWarrantyFile", panelFile)
-        if (inverterFile) formData.append("inverterWarrantyFile", inverterFile)
-        if (workFile) formData.append("workCompletionWarrantyFile", workFile)
-        await api.quotations.updateDocuments(quotationId, formData)
+        await api.quotations.uploadFinalConfirmationDocuments(quotationId, {
+          customerFinalBillFile: finalBillFile,
+          panelWarrantyFile: panelFile,
+          inverterWarrantyFile: inverterFile,
+          workCompletionWarrantyFile: workFile,
+        })
       }
       toast({
         title: "Saved",

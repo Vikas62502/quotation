@@ -25,7 +25,7 @@ export function IncrementalListSentinel({
   return (
     <div className={className ?? "pt-3 pb-1"}>
       <p className="text-xs text-center text-muted-foreground">
-        Showing {visibleCount} of {totalCount}
+        Showing {visibleCount.toLocaleString()} of {totalCount.toLocaleString()}
         {hasMore ? " — scroll for more" : ""}
       </p>
       {hasMore ? (

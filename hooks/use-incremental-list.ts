@@ -9,6 +9,8 @@ type UseIncrementalListOptions = {
   /** When this changes, visible count resets to one batch. */
   resetKey?: string | number
   enabled?: boolean
+  /** Server-side total when `items` is only a loaded subset (e.g. paginated API). */
+  totalCount?: number
 }
 
 /**
@@ -22,6 +24,7 @@ export function useIncrementalList<T>(
   const batchSize = options?.batchSize ?? DEFAULT_BATCH_SIZE
   const enabled = options?.enabled ?? true
   const resetKey = options?.resetKey
+  const totalCountOverride = options?.totalCount
 
   const [visibleCount, setVisibleCount] = useState(batchSize)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
@@ -53,12 +56,13 @@ export function useIncrementalList<T>(
   }, [enabled, items.length, loadMore, visibleCount])
 
   const visibleItems = items.slice(0, Math.min(visibleCount, items.length))
+  const listTotal = Math.max(totalCountOverride ?? items.length, items.length)
   const hasMore = visibleCount < items.length
 
   return {
     visibleItems,
     visibleCount: visibleItems.length,
-    totalCount: items.length,
+    totalCount: listTotal,
     hasMore,
     loadMore,
     sentinelRef,

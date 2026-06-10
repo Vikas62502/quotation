@@ -1599,3 +1599,137 @@ export async function patchQuotationInstallationRelease(req, res) {
  * Installer queue GET filter:
  *   WHERE installation_ready_for_installer = TRUE OR installation_released_at IS NOT NULL
  */
+
+// -----------------------------------------------------------------------------
+// FINAL CONFIRMATION DOCUMENT UPLOADS (Admin + Baldev)
+// See BACKEND_CHANGES_REQUIRED.md §M and BACKEND_CHANGES_HANDOFF.md §10
+// -----------------------------------------------------------------------------
+
+const FINAL_CONFIRMATION_UPLOAD_FIELDS = [
+  "customerFinalBillFile",
+  "panelWarrantyFile",
+  "inverterWarrantyFile",
+  "workCompletionWarrantyFile",
+] as const
+
+type FinalConfirmationField = (typeof FINAL_CONFIRMATION_UPLOAD_FIELDS)[number]
+
+const FINAL_CONFIRMATION_URL_COLUMNS: Record<FinalConfirmationField, string> = {
+  customerFinalBillFile: "customer_final_bill_file_url",
+  panelWarrantyFile: "panel_warranty_file_url",
+  inverterWarrantyFile: "inverter_warranty_file_url",
+  workCompletionWarrantyFile: "work_completion_warranty_file_url",
+}
+
+const FINAL_CONFIRMATION_NAME_COLUMNS: Record<FinalConfirmationField, string> = {
+  customerFinalBillFile: "customer_final_bill_file_name",
+  panelWarrantyFile: "panel_warranty_file_name",
+  inverterWarrantyFile: "inverter_warranty_file_name",
+  workCompletionWarrantyFile: "work_completion_warranty_file_name",
+}
+
+function isAllowedFinalConfirmationMime(mimetype: string, originalname: string): boolean {
+  const mt = String(mimetype || "").toLowerCase()
+  const name = String(originalname || "").toLowerCase()
+  if (mt.startsWith("image/")) return true
+  if (mt === "application/pdf" || name.endsWith(".pdf")) return true
+  return false
+}
+
+/**
+ * POST /api/admin/quotations/:quotationId/final-confirmation-documents
+ * multipart/form-data — any subset of FINAL_CONFIRMATION_UPLOAD_FIELDS.
+ *
+ * Do NOT use PATCH /quotations/:id/documents (KYC allowlist only).
+ */
+export async function postAdminFinalConfirmationDocuments(req: any, res: any) {
+  try {
+    const role = String(req.user?.role || "").toLowerCase()
+    if (role !== "admin" && role !== "baldev") {
+      return res.status(403).json({
+        success: false,
+        error: { code: "AUTH_004", message: "Only admin or baldev may upload final confirmation documents" },
+      })
+    }
+
+    const quotationId = String(req.params?.quotationId || "").trim()
+    if (!quotationId) {
+      return res.status(400).json({
+        success: false,
+        error: { code: "VAL_001", message: "Quotation ID required" },
+      })
+    }
+
+    const files = (req.files || {}) as Record<string, Express.Multer.File[]>
+    const present = FINAL_CONFIRMATION_UPLOAD_FIELDS.filter((field) => files[field]?.[0])
+    if (present.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: {
+          code: "VAL_001",
+          message: "Upload at least one final confirmation document",
+          details: FINAL_CONFIRMATION_UPLOAD_FIELDS.map((field) => ({
+            field,
+            message: "Optional file; send one or more of these multipart keys",
+          })),
+        },
+      })
+    }
+
+    // const quotation = await db.quotations.findById(quotationId)
+    // if (!quotation) return 404 QUOTATION_NOT_FOUND
+
+    const updates: Record<string, string> = {}
+    for (const field of present) {
+      const file = files[field][0]
+      if (!isAllowedFinalConfirmationMime(file.mimetype, file.originalname)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "VAL_001",
+            message: `Unsupported file type for ${field}`,
+            details: [{ field, message: "PDF or image required" }],
+          },
+        })
+      }
+
+      // const key = `quotations/${quotationId}/final-confirmation/${field}-${uuid}${ext}`
+      // const url = await s3.putObject({ Key: key, Body: file.buffer, ContentType: file.mimetype })
+      const url = "" // replace with presigned/public URL from your storage layer
+      updates[FINAL_CONFIRMATION_URL_COLUMNS[field]] = url
+      updates[FINAL_CONFIRMATION_NAME_COLUMNS[field]] = file.originalname
+    }
+
+    // await db.quotations.update(quotationId, updates)
+
+    const data = {
+      quotationId,
+      customerFinalBillFileUrl: updates.customer_final_bill_file_url ?? null,
+      panelWarrantyFileUrl: updates.panel_warranty_file_url ?? null,
+      inverterWarrantyFileUrl: updates.inverter_warranty_file_url ?? null,
+      workCompletionWarrantyFileUrl: updates.work_completion_warranty_file_url ?? null,
+    }
+
+    return res.status(200).json({ success: true, data })
+  } catch (err) {
+    console.error("postAdminFinalConfirmationDocuments", err)
+    return res.status(500).json({
+      success: false,
+      error: { code: "SYS_001", message: "Failed to save final confirmation documents" },
+    })
+  }
+}
+
+/**
+ * Optional: extend POST /quotations/:id/documents/upload
+ * When req.body.field is one of FINAL_CONFIRMATION_UPLOAD_FIELDS, store under
+ * FINAL_CONFIRMATION_URL_COLUMNS[field] (same S3 prefix as batch route).
+ *
+ * Express route registration example:
+ *   router.post(
+ *     '/admin/quotations/:quotationId/final-confirmation-documents',
+ *     adminOrBaldevAuth,
+ *     upload.fields(FINAL_CONFIRMATION_UPLOAD_FIELDS.map((name) => ({ name, maxCount: 1 }))),
+ *     postAdminFinalConfirmationDocuments,
+ *   )
+ */

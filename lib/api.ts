@@ -1,5 +1,6 @@
 // API Configuration and Service Layer
 import { API_CONFIG } from "./api-config"
+import { buildFinalConfirmationDocumentsFormData } from "./final-confirmation-documents"
 import { parseQuotationDocumentUploadUrl } from "./quotation-documents-form"
 import { extractQuotationListFromApiResponse } from "./operational-install-queue"
 
@@ -1186,6 +1187,97 @@ export const api = {
           : raw.replace(/\s+/g, " ").trim().slice(0, 400) || response.statusText || `HTTP_${response.status}`)
 
       throw new ApiError(String(message), code, details)
+    },
+
+    /**
+     * Final confirmation uploads (admin / baldev). Do not use PATCH /quotations/…/documents —
+     * that route allowlists KYC fields only and returns "Invalid quotation document payload".
+     */
+    uploadFinalConfirmationDocuments: async (
+      quotationId: string,
+      files: Parameters<typeof buildFinalConfirmationDocumentsFormData>[0],
+    ) => {
+      const formData = buildFinalConfirmationDocumentsFormData(files)
+      if (!formData) {
+        throw new ApiError("Please upload at least one PDF/JPG document.", "VAL_001")
+      }
+
+      const isRetryableUploadError = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" ||
+          error.code === "HTTP_405" ||
+          error.code === "HTTP_501" ||
+          error.code === "HTTP_403" ||
+          error.code === "AUTH_004")
+
+      const isInvalidKycDocumentsPayload = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_400" || error.code === "VAL_001") &&
+        error.message.toLowerCase().includes("invalid quotation document payload")
+
+      const batchEndpoints = [
+        `/admin/quotations/${quotationId}/final-confirmation-documents`,
+        `/admin/quotations/${quotationId}/documents`,
+        `/quotations/${quotationId}/final-confirmation-documents`,
+        `/baldev/quotations/${quotationId}/final-confirmation-documents`,
+        `/quotations/${quotationId}/documents`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of batchEndpoints) {
+        try {
+          return await multipartRequest(endpoint, "POST", cloneFormData(formData))
+        } catch (error) {
+          lastError = error
+          if (!isRetryableUploadError(error) && !isInvalidKycDocumentsPayload(error)) throw error
+        }
+      }
+
+      const fileEntries: Array<[string, File]> = []
+      for (const [key, value] of formData.entries()) {
+        if (value instanceof File) fileEntries.push([key, value])
+      }
+
+      const perFileEndpoints = [
+        `/admin/quotations/${quotationId}/documents/upload`,
+        `/quotations/${quotationId}/documents/upload`,
+        `/baldev/quotations/${quotationId}/documents/upload`,
+      ]
+
+      const uploaded: Record<string, string> = {}
+      for (const [field, file] of fileEntries) {
+        let fieldUploaded = false
+        for (const endpoint of perFileEndpoints) {
+          try {
+            const single = new FormData()
+            single.append("field", field)
+            single.append("file", file)
+            const payload = await multipartRequest(endpoint, "POST", single)
+            const url =
+              parseQuotationDocumentUploadUrl(payload, field) ||
+              parseUploadUrlCandidate(payload, [field, `${field}Url`, `${field}_url`])
+            if (!url) {
+              throw new ApiError(
+                `Upload succeeded but no URL was returned for ${field}.`,
+                "MISSING_UPLOAD_URL",
+              )
+            }
+            uploaded[field] = url
+            fieldUploaded = true
+            break
+          } catch (error) {
+            lastError = error
+            if (!isRetryableUploadError(error) && !isInvalidKycDocumentsPayload(error)) throw error
+          }
+        }
+        if (!fieldUploaded) {
+          throw lastError instanceof ApiError
+            ? lastError
+            : new ApiError(`Could not upload ${field}.`, "UPLOAD_FAILED")
+        }
+      }
+
+      return uploaded
     },
 
     downloadPDF: async (quotationId: string) => {

@@ -1200,42 +1200,189 @@ RBAC for this section:
 - `metering` must be authorized on metering detail save + MCO docs upload routes.
 - `baldev` must be authorized to read/manage `pending_baldev` confirmation queue.
 
+##### L.1 Admin Quotations tab — Send to Metering (Jun 2026)
+
+**Feature:** Admin → **Quotations → All** exposes **Send to Metering** per row (same handoff as Installation tab, but available earlier — e.g. while `installation_status` is still `pending_installer`, or when quotation `status` is still `pending`).
+
+**Frontend:** `app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` (`getAdminQuotationsTabSendToMeteringState`, `shouldHideSentQuotationFromAdminInstallationTab`), `lib/api.ts` (`sendQuotationToMetering` → `patchOperationalWorkflowStatus`).
+
+**Backend contract (no new route required if §L already implemented):**
+
+1. **`PATCH /api/admin/quotations/{quotationId}/installation-status`** (preferred) with body:
+   ```json
+   {
+     "installationStatus": "pending_metering",
+     "installation_status": "pending_metering",
+     "meteringStatus": "pending_metering",
+     "metering_status": "pending_metering"
+   }
+   ```
+2. **Auth:** `admin` JWT required.
+3. **Do not** require `installer_approved` or `status = approved` before accepting `pending_metering` from admin (product allows early handoff from Quotations tab). If business forbids send while quotation is pending, return **`400` `VAL_001`** with a clear message — not **500**.
+4. **Idempotency:** Re-PATCH `pending_metering` when already in metering pipeline → **`200`** + current row.
+5. **GET list:** `GET /api/admin/quotations` must return updated `installationStatus` / `meteringStatus` so Ops column shows **pending metering** and Installation tab excludes the row.
+6. **Metering queue:** `GET /api/metering/quotations` (processing filter) must include the row after handoff.
+7. **Do not** auto-set `pending_metering` on installation photo upload — only this explicit PATCH (or installer/admin **Send to Metering** action).
+
+**Visibility after handoff:**
+
+| Surface | Expected |
+|---------|----------|
+| Admin → Metering → Processing | Row **visible** |
+| Admin → Installation (Pending or Approved) | Row **hidden** when `installation_status` or `metering_status` is `pending_metering`+ |
+| Admin → Quotations → All | Ops shows **pending metering**; **Send to Metering** hidden |
+
+**Fallback PATCH paths** (frontend tries silently until one succeeds): see `patchOperationalWorkflowStatus` in `lib/api.ts`.
+
+**Handoff summary:** `BACKEND_CHANGES_HANDOFF.md` **§11**.
+
 #### M) Final Confirmation document uploads (Admin + Baldev) — files only
 
-Final confirmation now includes a per-customer **Update Final Details** upload panel in both:
-- `Admin > Final confirmation`
+Final confirmation includes a per-customer **Update Final Details** upload panel in:
+- `Admin > Quotations > Final confirmation`
 - `Baldev Confirmation Dashboard`
 
-This panel is **document-only** (no warranty text inputs). Backend should accept PDF/JPG uploads for:
-- `customerFinalBillFile`
-- `panelWarrantyFile`
-- `inverterWarrantyFile`
-- `workCompletionWarrantyFile`
+This panel is **document-only** (no warranty text inputs).
 
-Recommended endpoint already used by frontend:
-- `PATCH /api/quotations/{quotationId}/documents` (`multipart/form-data`)
+##### M.1 Root cause of live error
 
-Auth/RBAC:
-- `admin` and `baldev` must be allowed to upload these final-confirmation documents.
-- Keep dealer/account-management permissions as per your existing KYC document policy, but do not block the two roles above.
+**Symptom:** Admin/Baldev clicks **Save Details** → **`400`** with message **`Invalid quotation document payload`**.
 
-Storage/persistence:
-- Upload all files to S3/object storage.
-- Persist stable URL/key/name for each uploaded file.
-- Keep existing KYC fields backward compatible; do not break old document keys while adding these new keys.
+**Cause:** The UI previously called **`PATCH /api/quotations/{quotationId}/documents`**, which is the **dealer KYC** route. That handler **allowlists only** KYC field names (`aadharFront`, `panImage`, `propertyDocumentPdf`, text fields like `phoneNumber`, `emailId`, etc.). Final-confirmation multipart keys are **not** on that allowlist, so the server rejects the body.
 
-Response/list payload should include these fields (camelCase or snake_case):
-- `customerFinalBillFileUrl` / `customer_final_bill_file_url`
-- `panelWarrantyFileUrl` / `panel_warranty_file_url`
-- `inverterWarrantyFileUrl` / `inverter_warranty_file_url`
-- `workCompletionWarrantyFileUrl` / `work_completion_warranty_file_url`
-- optional corresponding names:
-  - `customerFinalBillFileName`, `panelWarrantyFileName`, `inverterWarrantyFileName`, `workCompletionWarrantyFileName`
+**Do not** route final-confirmation uploads through the KYC PATCH handler.
 
-Validation:
-- Accept partial save (any one or more files) to support incremental uploads.
-- Reject unsupported mime/extension with clear validation error (`VAL_001` style).
-- Return role errors as `AUTH_004` with descriptive message.
+**Frontend (fixed):** `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts`. Admin/Baldev no longer use `updateDocuments` for this flow.
+
+##### M.2 Required multipart file keys (exact names)
+
+| Form field | Accept |
+|------------|--------|
+| `customerFinalBillFile` | PDF, JPG, PNG, HEIC |
+| `panelWarrantyFile` | PDF, JPG, PNG, HEIC |
+| `inverterWarrantyFile` | PDF, JPG, PNG, HEIC |
+| `workCompletionWarrantyFile` | PDF, JPG, PNG, HEIC |
+
+- **Partial save:** any one or more files per request; omit keys that were not re-selected.
+- **Max size:** align with KYC uploads (frontend allows PDF up to ~30 MB per file).
+
+##### M.3 Endpoints (implement at least one)
+
+**Preferred (batch upload — all files in one request):**
+
+```
+POST /api/admin/quotations/{quotationId}/final-confirmation-documents
+Content-Type: multipart/form-data
+Authorization: Bearer {admin|baldev}
+```
+
+**Alternate batch routes the frontend also tries (in order):**
+
+1. `POST /api/admin/quotations/{quotationId}/documents` — only if this POST handler accepts final-confirmation keys (do **not** reuse KYC PATCH logic on the same path).
+2. `POST /api/quotations/{quotationId}/final-confirmation-documents`
+3. `POST /api/baldev/quotations/{quotationId}/final-confirmation-documents`
+
+**Per-file fallback (if batch routes are not deployed yet):**
+
+```
+POST /api/quotations/{quotationId}/documents/upload
+multipart: field={logicalKey}&file={binary}
+```
+
+Also tried: `POST /api/admin/quotations/{id}/documents/upload`, `POST /api/baldev/quotations/{id}/documents/upload`.
+
+Allowed `field` values for this flow: the four keys in **§M.2**.
+
+**Explicitly not used for final confirmation:**
+
+- `PATCH /api/quotations/{quotationId}/documents` — KYC only.
+
+##### M.4 Auth / RBAC
+
+| Role | Batch upload | Per-file upload | Read URLs on GET |
+|------|--------------|-----------------|------------------|
+| `admin` | Yes | Yes | Yes |
+| `baldev` | Yes | Yes | Yes (own queue) |
+| `dealer` | No (unless you extend policy) | KYC keys only on existing dealer flow | Own quotations |
+
+Return **`403`** / **`AUTH_004`** with a clear message if role is denied — not **`500`**.
+
+##### M.5 Persistence & GET response
+
+Store on quotation (or `quotation_documents` table) and return on **`GET /api/admin/quotations`**, **`GET /api/quotations/{id}`**, and Baldev queue list:
+
+| Response field (camelCase) | snake_case |
+|----------------------------|------------|
+| `customerFinalBillFileUrl` | `customer_final_bill_file_url` |
+| `panelWarrantyFileUrl` | `panel_warranty_file_url` |
+| `inverterWarrantyFileUrl` | `inverter_warranty_file_url` |
+| `workCompletionWarrantyFileUrl` | `work_completion_warranty_file_url` |
+| `customerFinalBillFileName` | `customer_final_bill_file_name` |
+| `panelWarrantyFileName` | `panel_warranty_file_name` |
+| `inverterWarrantyFileName` | `inverter_warranty_file_name` |
+| `workCompletionWarrantyFileName` | `work_completion_warranty_file_name` |
+
+- URLs must be **browser-openable** (presigned GET or CDN) — same rule as installation/metering docs (**§U**).
+- Return these fields for quotations in `pending_baldev`, `baldev_approved`, and `completed` operational states.
+
+**S3 key prefix (recommended):** `quotations/{quotationId}/final-confirmation/{field}-{uuid}.{ext}`
+
+##### M.6 Success / error responses
+
+**Success `200`:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "quotationId": "QT-ABC123",
+    "customerFinalBillFileUrl": "https://…",
+    "panelWarrantyFileUrl": "https://…",
+    "inverterWarrantyFileUrl": null,
+    "workCompletionWarrantyFileUrl": "https://…"
+  }
+}
+```
+
+**Validation `400`:**
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VAL_001",
+    "message": "Unsupported file type for panelWarrantyFile",
+    "details": [{ "field": "panelWarrantyFile", "message": "PDF or image required" }]
+  }
+}
+```
+
+**Do not** return `Invalid quotation document payload` for valid final-confirmation keys on the **dedicated POST** route.
+
+##### M.7 Checklist
+
+- [ ] `POST /api/admin/quotations/{id}/final-confirmation-documents` (preferred)
+- [ ] Multer/busboy allowlist includes **only** §M.2 keys (+ `field`/`file` on per-file upload)
+- [ ] `admin` + `baldev` JWT allowed; dealers blocked on this route
+- [ ] Partial multipart updates (missing keys keep existing S3 objects)
+- [ ] GET list/detail returns `*FileUrl` / `*FileName` fields (**§M.5**)
+- [ ] KYC `PATCH …/documents` unchanged — still KYC allowlist only
+- [ ] Reference handler: `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `postAdminFinalConfirmationDocuments`
+
+##### M.8 QA (curl)
+
+```bash
+# Replace TOKEN, ID, and file paths
+curl -sS -X POST "https://api.example.com/api/admin/quotations/QT-ABC123/final-confirmation-documents" \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "panelWarrantyFile=@/path/DCR.pdf" \
+  -F "workCompletionWarrantyFile=@/path/WCC.pdf"
+```
+
+1. Upload one file → `200`, URL persisted.
+2. Upload second file only → first URL unchanged, second updated.
+3. Admin **Final confirmation** → **Save Details** in UI succeeds (no `Invalid quotation document payload`).
+4. `GET /admin/quotations` returns new URLs without full page cache stale data.
 
 ---
 
@@ -4127,6 +4274,8 @@ List endpoint **`GET /admin/visits`** does **not** need to embed images; complet
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 | Medium | **Admin Visitor Reports** — `GET /admin/visits` with status, visitor filter, pagination | **§Z**, HANDOFF §8 | `lib/visit-report.ts`, `app/dashboard/admin/page.tsx` |
 | Medium | **Visit completion on GET** — `GET /quotations/{id}/visits` returns dimensions + image URLs for admin Details modal | **§Z.11**, HANDOFF §8 | `lib/visit-details.ts`, `components/admin-visit-details-dialog.tsx` |
+| **High** | **Final confirmation uploads** — dedicated POST route; do not use KYC `PATCH …/documents` | **§M**, HANDOFF **§10** | `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts` |
+| **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
@@ -4150,5 +4299,7 @@ For questions or clarifications about these requirements, please refer to:
 - Dealer calling reschedule (Decision Pending): `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_REQUIRED.md` §E.2**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.2**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
+- Final confirmation document uploads (Admin + Baldev): `lib/final-confirmation-documents.ts`, `lib/api.ts` → `uploadFinalConfirmationDocuments`, **`BACKEND_CHANGES_REQUIRED.md` §M**, **`BACKEND_CHANGES_HANDOFF.md` §10**
+- Admin Quotations tab Send to Metering: `lib/api.ts` → `sendQuotationToMetering`, **`BACKEND_CHANGES_REQUIRED.md` §L.1**, **`BACKEND_CHANGES_HANDOFF.md` §11**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`
