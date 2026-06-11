@@ -35,6 +35,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
     quotationDate,
     validityDate,
     customer,
+    products,
     company,
     dealer,
     banks,
@@ -62,7 +63,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
     .filter(Boolean)
     .join(", ")
 
-  const consentText = getProposalConsentText(company.name)
+  const consentText = getProposalConsentText(company.name, products)
   const officeLocations = getProposalOfficeLocations(company)
 
   return (
@@ -81,7 +82,7 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
                 <strong>Quotation #:</strong> {quotationId}
               </div>
               <div>
-                <strong>Date:</strong> {formatProposalDate(quotationDate)}
+                <strong>Updated:</strong> {formatProposalDate(quotationDate)}
               </div>
               <div>
                 <strong>Valid Until:</strong> {formatProposalDate(validityDate)}

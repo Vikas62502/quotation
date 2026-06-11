@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { type Quotation } from "@/lib/quotation-context"
 import {
   Dialog,
@@ -19,7 +19,12 @@ import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, 
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
 import { formatPersonName } from "@/lib/name-display"
-import { buildQuotationProposalDocumentData } from "@/lib/quotation-proposal-document"
+import {
+  buildQuotationProposalDocumentData,
+  mergeQuotationTimestampsFromApi,
+  resolveProposalQuotationDates,
+  type QuotationProposalDocumentData,
+} from "@/lib/quotation-proposal-document"
 import { exportProposalPagesToPdf } from "@/lib/quotation-pdf-export"
 import {
   formatPanelBrandLineForPdf,
@@ -38,6 +43,7 @@ import { useToast } from "@/hooks/use-toast"
 import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
+import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
 import { productsWithPdfDisplayFlags } from "@/lib/quotation-api-payload"
 import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
@@ -162,6 +168,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const { toast } = useToast()
   const [quotationId, setQuotationId] = useState("")
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
+  const [pdfExportData, setPdfExportData] = useState<QuotationProposalDocumentData | null>(null)
   const [fullQuotation, setFullQuotation] = useState<Quotation | null>(null)
   const [isLoadingDetails, setIsLoadingDetails] = useState(false)
   const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
@@ -224,8 +231,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               const customerData = fullData.customer
               const address = customerData.address || {}
               
+              const mergedQuotation = applyQuotationDetailToRow(quotation, fullData)
               const updatedQuotation = {
-                ...quotation,
+                ...mergedQuotation,
                 customer: {
                   ...(customerData.id ? { id: customerData.id } : {}),
                   firstName: customerData.firstName || quotation.customer?.firstName || "",
@@ -240,11 +248,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   },
                 },
                 customerId: fullData.customerId || (customerData.id ? customerData.id : undefined),
-                products: fullData.products || quotation.products,
-                discount: fullData.discount ?? quotation.discount,
-                subtotal: fullData.subtotal ?? fullData.pricing?.subtotal ?? quotation.subtotal,
-                totalAmount: fullData.pricing?.totalAmount ?? quotation.totalAmount,
-                finalAmount: fullData.pricing?.finalAmount ?? fullData.finalAmount ?? quotation.finalAmount,
+                createdAt: mergedQuotation.createdAt,
+                updatedAt: mergedQuotation.updatedAt,
+                validUntil: mergedQuotation.validUntil,
                 remaining: fullData.remaining ?? (quotation as Quotation & { remaining?: number }).remaining,
                 remainingAmount:
                   fullData.remainingAmount ??
@@ -253,10 +259,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                 paymentStatus: fullData.paymentStatus ?? quotation.paymentStatus,
                 bankName: fullData.bankName ?? fullData.bank_name ?? quotation.bankName,
                 bankIfsc: fullData.bankIfsc ?? fullData.bank_ifsc ?? quotation.bankIfsc,
-                dealer: fullData.dealer || quotation.dealer || null, // NEW: Include dealer information
-                validUntil: fullData.validUntil || quotation.validUntil, // NEW: Include validity date
-                // Store backend pricing for use in calculations
-                pricing: fullData.pricing,
+                dealer: fullData.dealer || quotation.dealer || null,
+                pricing: fullData.pricing ?? mergedQuotation.pricing,
               } as Quotation & { pricing?: any }
               
               setFullQuotation(updatedQuotation)
@@ -280,6 +284,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     } else if (!open) {
       // Reset when dialog closes
       setFullQuotation(null)
+      setPdfExportData(null)
       setIsLoadingDetails(false)
     }
   }, [quotation, open, useApi])
@@ -357,66 +362,71 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     }
   }, [fullQuotation?.id, open, useApi, isDealer])
 
+  const buildProposalPdfData = useCallback(
+    (displayQuotation: Quotation): QuotationProposalDocumentData | null => {
+      if (!displayQuotation?.customer || !displayQuotation?.products) return null
+
+      const customer = displayQuotation.customer
+      const products = (mergeQuotationProductSources(displayQuotation) ||
+        displayQuotation.products) as ProductSelection
+      const backendPricing = (displayQuotation as Quotation & { pricing?: { subtotal?: number; totalAmount?: number } })
+        .pricing
+      const subtotal =
+        backendPricing?.subtotal ??
+        backendPricing?.totalAmount ??
+        displayQuotation.subtotal ??
+        displayQuotation.totalAmount ??
+        getSystemPrice(products) ??
+        0
+      const totalAmount = backendPricing?.totalAmount ?? displayQuotation.totalAmount ?? subtotal
+      const { quotationDate, validityDate } = resolveProposalQuotationDates(displayQuotation)
+
+      const dealerForPdf =
+        displayQuotation.dealer ||
+        (!isAdmin && dealer
+          ? {
+              firstName: dealer.firstName,
+              lastName: dealer.lastName,
+              email: dealer.email,
+              mobile: dealer.mobile,
+            }
+          : null)
+
+      return buildQuotationProposalDocumentData({
+        quotationId: displayQuotation.id,
+        customer,
+        products,
+        company: {
+          name: companyInfo.name,
+          address: companyInfo.address,
+          phone: companyInfo.phone,
+          email: companyInfo.email,
+          gst: companyInfo.gst,
+          logoUrl: companyInfo.logoUrl,
+          supportFormUrl: companyInfo.supportFormUrl,
+          offices: [
+            { label: "Jaipur (Head Office)", address: companyInfo.address },
+            ...companyInfo.branches.map((b) => ({ label: b.label, address: b.address })),
+          ],
+        },
+        dealer: dealerForPdf,
+        banks: bankDetails,
+        subtotal,
+        totalAmount,
+        quotationDate,
+        validityDate,
+      })
+    },
+    [dealer, isAdmin],
+  )
+
   const proposalPdfData = useMemo(() => {
     const displayQuotation = quotation ? fullQuotation || quotation : null
-    if (!displayQuotation?.customer || !displayQuotation?.products) return null
+    if (!displayQuotation) return null
+    return buildProposalPdfData(displayQuotation)
+  }, [quotation, fullQuotation, buildProposalPdfData])
 
-    const customer = displayQuotation.customer
-    const products = displayQuotation.products
-    const backendPricing = (displayQuotation as Quotation & { pricing?: { subtotal?: number; totalAmount?: number } })
-      .pricing
-    const subtotal =
-      backendPricing?.subtotal ??
-      backendPricing?.totalAmount ??
-      displayQuotation.subtotal ??
-      displayQuotation.totalAmount ??
-      getSystemPrice(products) ??
-      0
-    const totalAmount = backendPricing?.totalAmount ?? displayQuotation.totalAmount ?? subtotal
-    const quotationDate = displayQuotation.createdAt
-      ? new Date(displayQuotation.createdAt)
-      : new Date()
-    const validityDate = new Date(quotationDate)
-    if (!Number.isNaN(validityDate.getTime())) {
-      validityDate.setDate(validityDate.getDate() + 7)
-    }
-
-    const dealerForPdf =
-      displayQuotation.dealer ||
-      (!isAdmin && dealer
-        ? {
-            firstName: dealer.firstName,
-            lastName: dealer.lastName,
-            email: dealer.email,
-            mobile: dealer.mobile,
-          }
-        : null)
-
-    return buildQuotationProposalDocumentData({
-      quotationId: displayQuotation.id,
-      customer,
-      products,
-      company: {
-        name: companyInfo.name,
-        address: companyInfo.address,
-        phone: companyInfo.phone,
-        email: companyInfo.email,
-        gst: companyInfo.gst,
-        logoUrl: companyInfo.logoUrl,
-        supportFormUrl: companyInfo.supportFormUrl,
-        offices: [
-          { label: "Jaipur (Head Office)", address: companyInfo.address },
-          ...companyInfo.branches.map((b) => ({ label: b.label, address: b.address })),
-        ],
-      },
-      dealer: dealerForPdf,
-      banks: bankDetails,
-      subtotal,
-      totalAmount,
-      quotationDate,
-      validityDate,
-    })
-  }, [quotation, fullQuotation, dealer, isAdmin])
+  const activePdfData = pdfExportData ?? proposalPdfData
 
   if (!quotation) return null
 
@@ -602,10 +612,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     finalAmount = amountAfterSubsidy - discountAmount
   }
 
-  // Calculate quotation validity (7 days from creation)
-  const quotationDate = new Date(displayQuotation.createdAt)
-  const validityDate = new Date(quotationDate)
-  validityDate.setDate(validityDate.getDate() + 7)
+  const { quotationDate, validityDate } = resolveProposalQuotationDates(displayQuotation)
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-IN", {
@@ -616,13 +623,30 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   }
 
   const generatePDF = async () => {
-    if (!proposalPdfData) {
+    setIsGeneratingPDF(true)
+
+    let quotationForPdf = fullQuotation || quotation
+    if (useApi && quotationForPdf?.id) {
+      try {
+        const fresh = await api.quotations.getById(quotationForPdf.id)
+        if (fresh) {
+          quotationForPdf = applyQuotationDetailToRow(quotationForPdf, fresh)
+          setFullQuotation(quotationForPdf)
+        }
+      } catch (error) {
+        console.warn("[generatePDF] Could not refresh quotation from API; using cached row:", error)
+      }
+    }
+
+    const exportData = quotationForPdf ? buildProposalPdfData(quotationForPdf) : null
+    if (!exportData) {
+      setIsGeneratingPDF(false)
       alert("Customer details are missing. Cannot generate PDF.")
       return
     }
 
-    setIsGeneratingPDF(true)
-    await new Promise((resolve) => setTimeout(resolve, 150))
+    setPdfExportData(exportData)
+    await new Promise((resolve) => setTimeout(resolve, 200))
 
     const rootId = `quotation-content-${displayQuotation.id}`
       const sanitizeSegment = (value: string) =>
@@ -642,6 +666,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       console.error("Error generating PDF:", error)
       alert(`Error generating PDF: ${error instanceof Error ? error.message : "Unknown error"}. Please try again.`)
     } finally {
+      setPdfExportData(null)
       setIsGeneratingPDF(false)
     }
   }
@@ -803,9 +828,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   return (
     <>
       {/* Hidden PDF — 3-page Solar Installation Proposal */}
-      {open && proposalPdfData && (
+      {open && activePdfData && (
         <QuotationProposalPdf
-          data={proposalPdfData}
+          data={activePdfData}
           rootId={`quotation-content-${displayQuotation.id}`}
         />
       )}
@@ -1273,6 +1298,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                   totalAmount: response.totalAmount ?? response.pricing?.totalAmount ?? calculatedTotalAmount,
                                   finalAmount: response.finalAmount ?? response.pricing?.finalAmount ?? calculatedTotalAmount,
                                   pricing: response.pricing,
+                                  ...mergeQuotationTimestampsFromApi(displayQuotation, response),
                                 }
                                 
                                 setFullQuotation(updatedQuotation)
@@ -1305,6 +1331,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                                 discount: pricingEditForm.discountAmount,
                                 totalAmount: calculatedTotalAmount,
                                 finalAmount: calculatedTotalAmount,
+                                ...mergeQuotationTimestampsFromApi(displayQuotation),
                               }
                               
                               setFullQuotation(updatedQuotation)
@@ -1394,7 +1421,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <div className="flex items-start gap-3">
                     <Calendar className="w-4 h-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                     <div>
-                      <p className="text-xs text-muted-foreground mb-1">Created Date</p>
+                      <p className="text-xs text-muted-foreground mb-1">Last Updated</p>
                       <p className="text-sm font-semibold">{formatDate(quotationDate)}</p>
                     </div>
                   </div>
@@ -1634,6 +1661,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     setFullQuotation({
                       ...displayQuotation,
                       customer: normalizedCustomer,
+                      ...mergeQuotationTimestampsFromApi(displayQuotation),
                     })
                     
                     toast({
@@ -1645,6 +1673,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     setFullQuotation({
                       ...displayQuotation,
                       customer: normalizedCustomer,
+                      ...mergeQuotationTimestampsFromApi(displayQuotation),
                     })
                     
                     toast({
@@ -1760,6 +1789,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           totalAmount: pricingResponse.totalAmount ?? pricingResponse.pricing?.totalAmount ?? calculatedSubtotal,
                           finalAmount: pricingResponse.finalAmount ?? pricingResponse.pricing?.finalAmount ?? calculatedFinalAmount,
                           pricing: pricingResponse.pricing,
+                          ...mergeQuotationTimestampsFromApi(
+                            displayQuotation,
+                            pricingResponse ?? productsResponse,
+                          ),
                         }
                         setFullQuotation(updatedQuotation)
                         
@@ -1774,6 +1807,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           products: productsResponse.products || updatedProducts,
                           totalAmount: calculatedSubtotal,
                           finalAmount: calculatedFinalAmount,
+                          ...mergeQuotationTimestampsFromApi(displayQuotation, productsResponse),
                         }
                         setFullQuotation(updatedQuotation)
                         
@@ -1793,6 +1827,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       products: updatedProducts,
                       totalAmount: calculatedSubtotal,
                       finalAmount: calculatedFinalAmount,
+                      ...mergeQuotationTimestampsFromApi(displayQuotation),
                     }
                     setFullQuotation(updatedQuotation)
                     

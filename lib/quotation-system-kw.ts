@@ -104,46 +104,64 @@ export function getQuotationSystemKwFromProducts(
     if (totalKw > 0) return totalKw
   }
 
-  const panelCandidates = [
-    kwFromPanelPair(products.panelSize, products.panelQuantity),
-    kwFromPanelPair(products.dcrPanelSize, products.dcrPanelQuantity),
-    kwFromPanelPair(products.nonDcrPanelSize, products.nonDcrPanelQuantity),
-    kwFromSizeLabel(products.structureSize),
-    kwFromSizeLabel(products.inverterSize),
-  ].filter((n) => n > 0)
+  const raw = products as QuotationRow
 
-  if (panelCandidates.length === 0) {
-    const structureKw = kwFromSizeLabel(products.structureSize)
-    if (structureKw > 0) return structureKw
-    const inverterKw = kwFromSizeLabel(products.inverterSize)
-    if (inverterKw > 0 && systemType) return inverterKw
-    return 0
-  }
+  // Browse package nominal kW — structureSize matches pricing table systemSize (e.g. 3kW set with 5kW inverter).
+  const structureKw = kwFromSizeLabel(products.structureSize)
+  if (structureKw > 0) return structureKw
 
-  // Single-system rows: use largest plausible kW (avoid double-counting duplicate aliases).
-  if (systemType === "both" && panelCandidates.length >= 2) {
-    const dcrKw = kwFromPanelPair(products.dcrPanelSize, products.dcrPanelQuantity)
-    const nonDcrKw = kwFromPanelPair(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
-    if (dcrKw > 0 && nonDcrKw > 0) return dcrKw + nonDcrKw
-  }
+  const directKw = pickNumber(raw.systemKw, raw.system_kw)
+  if (directKw) return directKw
 
-  return Math.max(...panelCandidates)
+  const directSizeKw = kwFromSizeLabel(
+    pickNonEmpty(raw.systemSize as string, raw.system_size as string),
+  )
+  if (directSizeKw > 0) return directSizeKw
+
+  const panelKw = Math.max(
+    0,
+    ...[
+      kwFromPanelPair(products.panelSize, products.panelQuantity),
+      kwFromPanelPair(products.dcrPanelSize, products.dcrPanelQuantity),
+      kwFromPanelPair(products.nonDcrPanelSize, products.nonDcrPanelQuantity),
+    ].filter((n) => n > 0),
+  )
+  if (panelKw > 0) return panelKw
+
+  const inverterKw = kwFromSizeLabel(products.inverterSize)
+  if (inverterKw > 0 && systemType) return inverterKw
+
+  return 0
 }
 
-/** Rounded kW label for PDF header / previews — never “As per the set” (Tata package uses structureSize). */
+function formatKwLabelFromSizeField(size: string | null | undefined): string | null {
+  const trimmed = size?.trim()
+  if (!trimmed || isAsPerTheSetLabel(trimmed)) return null
+  if (kwFromSizeLabel(trimmed) <= 0) return null
+  return trimmed.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
+}
+
+/** kW label for PDF header — package/set size (structureSize), not inverter upsizing. */
 export function getQuotationSystemKwLabelForPdf(
   products: QuotationProductsPhaseInput | null | undefined,
 ): string {
+  const systemType = String(products?.systemType || "").toLowerCase()
+  if (systemType !== "both") {
+    const fromStructure = formatKwLabelFromSizeField(products?.structureSize)
+    if (fromStructure) return fromStructure
+  }
+
   const kw = getQuotationSystemKwFromProducts(products)
-  if (kw > 0) return `${Math.max(1, Math.round(kw))} kW`
+  if (kw > 0) {
+    const rounded = Math.round(kw * 10) / 10
+    const label = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+    return `${label} kW`
+  }
 
   const fromCalc = calculateSystemSize(products?.panelSize || "", products?.panelQuantity || 0)
   if (fromCalc && fromCalc !== "0kW") {
     return fromCalc.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
   }
-
-  const structureKw = kwFromSizeLabel(products?.structureSize)
-  if (structureKw > 0) return `${Math.max(1, Math.round(structureKw))} kW`
 
   const inv = products?.inverterSize?.trim()
   if (inv && !isAsPerTheSetLabel(inv)) {

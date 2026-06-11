@@ -220,9 +220,72 @@ function panelQtyOk(p: Products): boolean {
 
 Return `dealer: { id, firstName, lastName, email, mobile, username, role }` for proposal “Dealer Details”.
 
-### 2.5 `validUntil` (optional)
+### 2.5 Commercial PDF flag — hide subsidy on proposal (Jun 2026)
 
-Use **createdAt + 7 days** (frontend uses 7-day validity; reference controller may still use 5).
+**Frontend:** `components/product-selection-form.tsx` (“Commercial project” checkbox), `lib/quotation-pdf-display.ts` (`isPdfCommercialSet`), `lib/quotation-api-payload.ts` (`buildPdfDisplayFlagsPayload`).
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `pdfCommercialSet` | `boolean` | Commercial DCR/BOTH set — omit Central/State/Subsidy T&C on proposal PDF page 3 |
+| `pdf_commercial_set` | `boolean` | snake_case mirror |
+
+**Save flow:** Same as panel range keys — stripped on `POST /api/quotations` for catalog validation; persisted via **`PATCH /api/quotations/{id}/products`** immediately after create (and on edit).
+
+**Clear on uncheck:** Frontend sends `pdfCommercialSet: false` and `pdf_commercial_set: false`. PATCH must clear stored value — do not leave stale `true`.
+
+**Does not affect:** pricing, subsidies in DB, or catalog validation. PDF-only display flag.
+
+**Example `products` fragment:**
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Premier Energies",
+  "pdfPanelRangeKey": "premier_600_625_bifacial_topcon",
+  "pdfCommercialSet": true,
+  "pdf_commercial_set": true,
+  "centralSubsidy": 78000
+}
+```
+
+### 2.6 Proposal PDF dates — `updatedAt` + 7-day validity (Jun 2026)
+
+**Frontend:** `lib/quotation-proposal-document.ts` (`normalizeQuotationTimestamps`, `resolveProposalQuotationDates`), `components/quotation-details-dialog.tsx` (refetches `GET /quotations/{id}` before Download PDF), `components/quotation-proposal-pdf.tsx`.
+
+**Behaviour on PDF download:**
+
+| PDF field | Source |
+|-----------|--------|
+| **Updated** (header label) | `updatedAt` → else `createdAt` → else derive from `validUntil − 7 days` |
+| **Valid Until** | **Updated date + 7 days** (`PROPOSAL_VALIDITY_DAYS = 7`) |
+
+**Download flow:** Admin/dealer dialog calls **`GET /api/quotations/{id}`** immediately before generating the PDF so the file uses the latest server `updatedAt`.
+
+**Backend requirements:**
+
+1. **`updated_at` column** on quotations — auto-set to `NOW()` on every mutation that changes quotation data:
+   - `PATCH /api/quotations/{id}/products`
+   - `PATCH /api/quotations/{id}/pricing` (and legacy discount PATCH if still used)
+   - Any admin/dealer edit that changes products, pricing, or discount
+2. **Return `updatedAt`** (camelCase) on **`GET /api/quotations`** list and **`GET /api/quotations/{id}`** (optional snake_case `updated_at`).
+3. **PATCH responses** should include refreshed `updatedAt` so the dialog/PDF use the server timestamp after save.
+4. **`validUntil` (optional):** If stored server-side, set/recompute to **`updatedAt + 7 days`** whenever products or pricing are updated (not only on create). Frontend does not require `validUntil` if `updatedAt` is present.
+
+**Example GET quotation fragment:**
+
+```json
+{
+  "id": "QT-HTIV24",
+  "createdAt": "2026-04-20T10:00:00.000Z",
+  "updatedAt": "2026-04-27T09:30:00.000Z",
+  "validUntil": "2026-05-04T09:30:00.000Z",
+  "products": { "...": "..." }
+}
+```
+
+### 2.7 `validUntil` (optional legacy)
+
+Prefer **`updatedAt + 7 days`** (see §2.6). If only `createdAt` exists, frontend falls back to `createdAt` for PDF date. Align server default from **5 days → 7 days** if `validUntil` is set on create.
 
 ### Example `products` (non-Tata DCR + PDF range)
 
@@ -264,7 +327,9 @@ Use PDF keys in pricing/catalog validation. Do not strip PDF keys on PATCH.
 - [ ] Non-Tata DCR: persist dealer-selected catalog `inverterBrand` (default `Vsole/Xwatt` only when omitted)
 - [ ] Relax panel qty for Tata / as-per-set / `tata_530_570`
 - [ ] Return `dealer` on GET quotation
-- [ ] (Optional) `validUntil` +7 days
+- [ ] Persist **`pdfCommercialSet`** / **`pdf_commercial_set`**; clear on `false`
+- [ ] Return **`updatedAt`** on GET list + GET by id; bump on products/pricing PATCH
+- [ ] (Optional) `validUntil` = **`updatedAt + 7 days`** on create and on products/pricing update
 
 **Full spec:** `BACKEND_CHANGES_REQUIRED.md` §X.
 

@@ -22,6 +22,7 @@ import {
   toCatalogCompatibleProducts,
 } from "./quotation-api-payload"
 import { isInverterInfoComplete, isPanelRowComplete } from "./quotation-pdf-display"
+import { mergeQuotationTimestampsFromApi } from "@/lib/quotation-proposal-document"
 
 export interface Customer {
   firstName: string
@@ -83,6 +84,8 @@ export interface ProductSelection {
   pdfUsePanelSizeRange?: boolean
   /** @deprecated inverter brand is chosen in dropdown */
   pdfUseInverterBrandOptions?: boolean
+  /** Commercial DCR/BOTH set — hide subsidy clauses on proposal PDF. */
+  pdfCommercialSet?: boolean
 }
 
 export type QuotationStatus = "pending" | "approved" | "rejected" | "completed"
@@ -123,6 +126,7 @@ export interface Quotation {
   totalAmount: number
   finalAmount: number
   createdAt: string
+  updatedAt?: string
   dealerId: string
   dealer?: DealerInfo | null // NEW: Dealer/admin information from backend
   status?: QuotationStatus
@@ -806,6 +810,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
         let quotation = await api.quotations.create(quotationData)
         let savedProductsForUi: ProductSelection = currentProducts
+        let lastApiResponse: unknown = quotation
 
         if (quotation?.id) {
           try {
@@ -813,6 +818,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
               quotation.id,
               productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts }),
             )
+            lastApiResponse = patched ?? quotation
             const patchedProducts =
               (patched as { products?: ProductSelection } | undefined)?.products ||
               productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts })
@@ -821,6 +827,8 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }
         }
+
+        const withTimestamps = mergeQuotationTimestampsFromApi(quotation, lastApiResponse)
 
         // Reload quotations
         await loadQuotations()
@@ -847,7 +855,9 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           // Use backend pricing values (from database) as source of truth
           totalAmount: backendPricing?.totalAmount ?? calculatedTotalAmount,
           finalAmount: backendPricing?.finalAmount ?? calculatedFinalAmount,
-          createdAt: quotation.createdAt,
+          createdAt: withTimestamps.createdAt ?? quotation.createdAt,
+          updatedAt: withTimestamps.updatedAt,
+          validUntil: withTimestamps.validUntil,
           dealerId: quotation.dealerId || dealer.id,
           status: quotation.status || "pending",
         }
@@ -883,6 +893,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         // Final Amount = Amount after discount (matches totalAmount)
         const finalAmount = totalAmount
         
+        const now = new Date().toISOString()
         const quotation: Quotation = {
           id: `QT-${Date.now()}`,
           customer: currentCustomer,
@@ -890,7 +901,8 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           discount: discountAmount,
           totalAmount,
           finalAmount,
-          createdAt: new Date().toISOString(),
+          createdAt: now,
+          updatedAt: now,
           dealerId: dealer.id,
           status: "pending",
         }

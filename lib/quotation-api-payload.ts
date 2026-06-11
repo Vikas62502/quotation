@@ -13,6 +13,7 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
     pdfNonDcrPanelRangeKey: _n,
     pdfUsePanelSizeRange: _a,
     pdfUseInverterBrandOptions: _b,
+    pdfCommercialSet: _c,
     ...rest
   } = products as ProductSelection & {
     pdf_panel_range_key?: string
@@ -20,6 +21,7 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
     pdf_non_dcr_panel_range_key?: string
     pdf_use_panel_size_range?: boolean
     pdf_use_inverter_brand_options?: boolean
+    pdf_commercial_set?: boolean
   }
   const stripped = { ...rest } as ProductSelection & Record<string, unknown>
   delete stripped.pdf_panel_range_key
@@ -27,6 +29,7 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
   delete stripped.pdf_non_dcr_panel_range_key
   delete stripped.pdf_use_panel_size_range
   delete stripped.pdf_use_inverter_brand_options
+  delete stripped.pdf_commercial_set
   return stripped as ProductSelection
 }
 
@@ -48,6 +51,12 @@ export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlag
   const dcr = pdfRangeKeyValue(record, "pdfDcrPanelRangeKey", "pdf_dcr_panel_range_key")
   const nonDcr = pdfRangeKeyValue(record, "pdfNonDcrPanelRangeKey", "pdf_non_dcr_panel_range_key")
   const useLegacyRange = primary != null
+  const commercial =
+    record.pdfCommercialSet === true ||
+    record.pdf_commercial_set === true ||
+    String(record.pdfCommercialSet ?? record.pdf_commercial_set ?? "")
+      .trim()
+      .toLowerCase() === "true"
 
   return {
     pdfPanelRangeKey: primary ?? "",
@@ -60,6 +69,8 @@ export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlag
     pdf_use_panel_size_range: useLegacyRange,
     pdfUseInverterBrandOptions: false,
     pdf_use_inverter_brand_options: false,
+    pdfCommercialSet: commercial,
+    pdf_commercial_set: commercial,
   }
 }
 
@@ -244,7 +255,8 @@ export function hasPdfDisplayFlags(flags: Partial<ProductSelection>): boolean {
       flags.pdfDcrPanelRangeKey ||
       flags.pdfNonDcrPanelRangeKey ||
       flags.pdfUsePanelSizeRange ||
-      flags.pdfUseInverterBrandOptions,
+      flags.pdfUseInverterBrandOptions ||
+      flags.pdfCommercialSet,
   )
 }
 

@@ -25,6 +25,7 @@ const PRODUCT_FIELD_KEYS = [
   "pdfDcrPanelRangeKey",
   "pdfNonDcrPanelRangeKey",
   "pdfUsePanelSizeRange",
+  "pdfCommercialSet",
 ] as const
 
 const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string>> = {
@@ -49,6 +50,7 @@ const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string
   pdfDcrPanelRangeKey: "pdf_dcr_panel_range_key",
   pdfNonDcrPanelRangeKey: "pdf_non_dcr_panel_range_key",
   pdfUsePanelSizeRange: "pdf_use_panel_size_range",
+  pdfCommercialSet: "pdf_commercial_set",
 }
 
 function isNonEmptyPlainObject(value: unknown): value is RecordLike {
@@ -165,6 +167,14 @@ function normalizePdfDisplayFields(out: RecordLike): void {
   if (!primary) {
     out.pdfUsePanelSizeRange = false
     out.pdf_use_panel_size_range = false
+  }
+  const commercial = out.pdfCommercialSet ?? out.pdf_commercial_set
+  if (commercial === true || String(commercial).toLowerCase() === "true") {
+    out.pdfCommercialSet = true
+    out.pdf_commercial_set = true
+  } else if (commercial === false || commercial === null || commercial === "") {
+    out.pdfCommercialSet = false
+    out.pdf_commercial_set = false
   }
 }
 

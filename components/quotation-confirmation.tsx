@@ -12,7 +12,12 @@ import { ArrowLeft, Check, FileText, Download, Edit, AlertCircle } from "lucide-
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
 import { formatPersonName } from "@/lib/name-display"
-import { buildQuotationProposalDocumentData } from "@/lib/quotation-proposal-document"
+import {
+  buildQuotationProposalDocumentData,
+  mergeQuotationTimestampsFromApi,
+  resolveProposalQuotationDates,
+  type ProposalDateSource,
+} from "@/lib/quotation-proposal-document"
 import { exportProposalPagesToPdf } from "@/lib/quotation-pdf-export"
 import {
   formatPanelBrandLineForPdf,
@@ -144,6 +149,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   const [isGenerating, setIsGenerating] = useState(false)
   const [generated, setGenerated] = useState(false)
   const [quotationId, setQuotationId] = useState("")
+  const [savedDateSource, setSavedDateSource] = useState<ProposalDateSource | null>(null)
   
   // Editable subtotal state (for DCR, NON DCR, BOTH system types)
   const [editableSubtotal, setEditableSubtotal] = useState<number | null>(null)
@@ -226,10 +232,9 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
   // This is the final amount before discount
   const finalAmount = subtotal - totalSubsidy
 
-  // Calculate quotation validity (7 days from today)
-  const quotationDate = new Date()
-  const validityDate = new Date(quotationDate)
-  validityDate.setDate(validityDate.getDate() + 7)
+  const { quotationDate, validityDate } = resolveProposalQuotationDates(
+    savedDateSource ?? { createdAt: new Date().toISOString() },
+  )
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString("en-IN", {
@@ -466,6 +471,7 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
       })
       const quotation = await saveQuotation(sanitizedDiscountAmount, finalSubtotal)
       setQuotationId(quotation.id)
+      setSavedDateSource(mergeQuotationTimestampsFromApi(quotation, quotation))
 
       setIsGenerating(false)
       setGenerated(true)

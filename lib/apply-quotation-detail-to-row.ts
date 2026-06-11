@@ -2,6 +2,7 @@ import type { Quotation } from "@/lib/quotation-context"
 import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
 import { flattenWrappedQuotationRow } from "@/lib/operational-install-queue"
 import type { QuotationProductsPhaseInput } from "@/lib/pricing-tables"
+import { normalizeQuotationTimestamps } from "@/lib/quotation-proposal-document"
 
 type RecordLike = Record<string, unknown>
 
@@ -27,10 +28,15 @@ export function applyQuotationDetailToRow<T extends Quotation>(
     detail.quotation_product ??
     (row as RecordLike).quotationProduct
 
+  const timestamps = normalizeQuotationTimestamps({ ...row, ...detail })
+
   return {
     ...row,
     ...detail,
     id: String(row.id || detail.id || ""),
+    createdAt: timestamps.createdAt ?? row.createdAt,
+    updatedAt: timestamps.updatedAt ?? row.updatedAt,
+    validUntil: timestamps.validUntil ?? row.validUntil,
     customer: row.customer?.firstName
       ? row.customer
       : (detail.customer as T["customer"]) || row.customer,

@@ -3989,6 +3989,32 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 
 **Clear on uncheck:** `buildPdfDisplayFlagsPayload()` sends empty string `""` (camelCase) and `null` (snake_case) for cleared keys. PATCH must **unset** stored `pdf*PanelRangeKey` values — not leave previous keys in JSONB.
 
+### 2.1.1 Commercial PDF flag — `pdfCommercialSet` (Jun 2026)
+
+**Frontend:** `components/product-selection-form.tsx`, `lib/quotation-pdf-display.ts`, `lib/quotation-proposal-document.ts` (`shouldShowSubsidyTermsInPdf`).
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `pdfCommercialSet` | `boolean` | Commercial project — hide Central Subsidy, State Subsidy, and Subsidy T&C rows on proposal PDF page 3 |
+| `pdf_commercial_set` | `boolean` | snake_case mirror |
+
+**Persist** inside quotation `products` JSONB (same PATCH flow as `pdfPanelRangeKey`). **Does not** change stored `centralSubsidy` / `stateSubsidy` or pricing — PDF display only.
+
+**Clear on uncheck:** Accept `pdfCommercialSet: false` / `pdf_commercial_set: false` and remove or set false in JSONB.
+
+**Example:**
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Premier Energies",
+  "inverterSize": "50kW",
+  "pdfPanelRangeKey": "premier_600_625_bifacial_topcon",
+  "pdfCommercialSet": true,
+  "pdf_commercial_set": true
+}
+```
+
 ### 2.2 Combined brand strings
 
 Allow on `products` (if brand whitelist exists):
@@ -4071,9 +4097,70 @@ When **any** of the following is true, allow `panelQuantity` / `dcrPanelQuantity
 
 Return nested `dealer` `{ id, firstName, lastName, email, mobile, username, role }` for proposal “Dealer Details” (see `DealerInfo` in `lib/quotation-context.tsx`).
 
-### 2.5 `validUntil` (optional)
+### 2.5 Proposal PDF dates — `updatedAt` and `validUntil` (Jun 2026)
 
-Align server default from **5 days → 7 days** after `createdAt` if `validUntil` is set on create.
+**Frontend:** `lib/quotation-proposal-document.ts` → `resolveProposalQuotationDates()`.
+
+| PDF label | Frontend logic |
+|-----------|----------------|
+| **Updated** | `updatedAt` → else `createdAt` → else `validUntil − 7 days` |
+| **Valid Until** | updated date **+ 7 days** (`PROPOSAL_VALIDITY_DAYS`) |
+
+**Download:** `quotation-details-dialog.tsx` refetches **`GET /api/quotations/{id}`** before PDF export so dates match the backend row after the last save.
+
+**Database / model**
+
+- `quotations.updated_at` (TIMESTAMP) — set to `NOW()` on create and on every products/pricing/discount update.
+- Expose as **`updatedAt`** in JSON responses (and optionally `updated_at`).
+
+**Endpoints that must refresh `updated_at` and return `updatedAt`**
+
+| Method | Path |
+|--------|------|
+| `PATCH` | `/api/quotations/{id}/products` |
+| `PATCH` | `/api/quotations/{id}/pricing` |
+| `PATCH` | `/api/quotations/{id}/discount` (if still used) |
+
+**GET** `/api/quotations` and `/api/quotations/{id}` must include `createdAt` and **`updatedAt`** on every row.
+
+**`validUntil` (optional but recommended)**
+
+- On **create:** `validUntil = createdAt + 7 days` (not 5).
+- On **products or pricing PATCH:** recompute `validUntil = updatedAt + 7 days` so admin UI and PDF stay aligned after edits.
+
+**Example response:**
+
+```json
+{
+  "id": "QT-HTIV24",
+  "status": "pending",
+  "createdAt": "2026-04-20T10:00:00.000Z",
+  "updatedAt": "2026-04-27T09:30:00.000Z",
+  "validUntil": "2026-05-04T09:30:00.000Z",
+  "products": { "pdfCommercialSet": true }
+}
+```
+
+**Controller sketch:**
+
+```javascript
+async function patchQuotationProducts(req, res) {
+  const quotation = await findQuotation(req.params.id)
+  quotation.products = mergeProducts(quotation.products, req.body.products)
+  quotation.updated_at = new Date()
+  quotation.valid_until = addDays(quotation.updated_at, 7) // optional
+  await quotation.save()
+  return res.json({
+    success: true,
+    data: {
+      id: quotation.id,
+      products: quotation.products,
+      updatedAt: quotation.updated_at.toISOString(),
+      validUntil: quotation.valid_until?.toISOString(),
+    },
+  })
+}
+```
 
 ### Endpoints
 
@@ -4118,7 +4205,10 @@ Align server default from **5 days → 7 days** after `createdAt` if `validUntil
 - [ ] Accept **`As per the set`** on `inverterBrand`, `inverterSize`, `panelSize` for Tata DCR; persist on GET unchanged
 - [ ] Do **not** force non-Tata `inverterBrand` to `Vsole/Xwatt` when dealer selected another brand
 - [ ] Return `dealer` on GET quotation
-- [ ] (Optional) `validUntil` +7 days
+- [ ] Persist **`pdfCommercialSet`** / **`pdf_commercial_set`**; clear on `false`
+- [ ] Return **`updatedAt`** on GET list + GET by id
+- [ ] Bump **`updated_at`** + return **`updatedAt`** on products/pricing PATCH
+- [ ] (Optional) `validUntil` = **`updatedAt + 7 days`** on create and on products/pricing update
 
 ---
 

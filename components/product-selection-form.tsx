@@ -97,6 +97,34 @@ function PanelPdfRangeOptions({
   )
 }
 
+function CommercialPdfOptions({
+  checked,
+  onChange,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">Quotation PDF — commercial set</p>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <Checkbox
+          checked={checked}
+          onCheckedChange={(value) => onChange(value === true)}
+          className="mt-0.5"
+        />
+        <span>
+          <strong>Commercial project</strong> — do not show subsidy on the proposal PDF
+        </span>
+      </label>
+      <p className="text-xs text-muted-foreground">
+        Use for commercial installations. Central subsidy, state subsidy, and subsidy terms &amp; conditions are
+        omitted from page 3 of the PDF.
+      </p>
+    </div>
+  )
+}
+
 interface Props {
   onSubmit: (products: ProductSelection) => void
   onBack: () => void
@@ -160,6 +188,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       pdfPanelRangeKey: "",
       pdfDcrPanelRangeKey: "",
       pdfNonDcrPanelRangeKey: "",
+      pdfCommercialSet: false,
     }
 
   const [formData, setFormData] = useState<ProductSelection>(() =>
@@ -1040,6 +1069,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   selectedKey={formData.pdfDcrPanelRangeKey}
                   onChange={(key) => updatePdfPanelRangeKey("pdfDcrPanelRangeKey", key)}
                 />
+                <CommercialPdfOptions
+                  checked={Boolean(formData.pdfCommercialSet)}
+                  onChange={(checked) => updateFormData("pdfCommercialSet", checked)}
+                />
               </div>
 
               {/* Non-DCR Panel Selection */}
@@ -1617,6 +1650,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   panelBrand={formData.panelBrand || ""}
                   selectedKey={formData.pdfPanelRangeKey}
                   onChange={(key) => updatePdfPanelRangeKey("pdfPanelRangeKey", key)}
+                />
+                <CommercialPdfOptions
+                  checked={Boolean(formData.pdfCommercialSet)}
+                  onChange={(checked) => updateFormData("pdfCommercialSet", checked)}
                 />
               </div>
 

@@ -16,10 +16,93 @@ import {
   QUOTATION_AS_PER_THE_SET_LABEL,
   resolvePdfPanelRangeKey,
   type PdfPanelRangeKey,
+  isPdfCommercialSet,
 } from "@/lib/quotation-pdf-display"
 
 /** Quotation offer validity from date of issue. */
 export const PROPOSAL_VALIDITY_DAYS = 7
+
+export type ProposalDateSource = {
+  createdAt?: string | null
+  updatedAt?: string | null
+  validUntil?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+  valid_until?: string | null
+}
+
+function parseProposalDate(value: unknown): Date | null {
+  if (value === null || value === undefined || value === "") return null
+  const parsed = new Date(String(value))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function pickIsoTimestamp(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (value === null || value === undefined || value === "") continue
+    const parsed = new Date(String(value))
+    if (!Number.isNaN(parsed.getTime())) return String(value)
+  }
+  return undefined
+}
+
+/** Normalize quotation timestamps from API (camelCase or snake_case). */
+export function normalizeQuotationTimestamps(raw: unknown): {
+  createdAt?: string
+  updatedAt?: string
+  validUntil?: string
+} {
+  const record = (raw || {}) as Record<string, unknown>
+  return {
+    createdAt: pickIsoTimestamp(record.createdAt, record.created_at),
+    updatedAt: pickIsoTimestamp(record.updatedAt, record.updated_at),
+    validUntil: pickIsoTimestamp(record.validUntil, record.valid_until),
+  }
+}
+
+/** PDF + dialog: quotation date = last updated (fallback created). Valid until = +7 days. */
+export function resolveProposalQuotationDates(source?: ProposalDateSource | null): {
+  quotationDate: Date
+  validityDate: Date
+} {
+  const norm = normalizeQuotationTimestamps(source)
+  let quotationDate =
+    parseProposalDate(norm.updatedAt) ?? parseProposalDate(norm.createdAt) ?? null
+
+  // Backend may only expose validUntil (= updatedAt + 7 days)
+  if (!quotationDate && norm.validUntil) {
+    const fromValidUntil = parseProposalDate(norm.validUntil)
+    if (fromValidUntil) {
+      quotationDate = new Date(fromValidUntil)
+      quotationDate.setDate(quotationDate.getDate() - PROPOSAL_VALIDITY_DAYS)
+    }
+  }
+
+  const resolvedQuotationDate = quotationDate ?? new Date()
+  const validityDate = new Date(resolvedQuotationDate)
+  validityDate.setDate(validityDate.getDate() + PROPOSAL_VALIDITY_DAYS)
+  return { quotationDate: resolvedQuotationDate, validityDate }
+}
+
+/** Timestamp fields from API response (for UI + PDF after save/PATCH). */
+export function mergeQuotationTimestampsFromApi(
+  quotation?: ProposalDateSource | null,
+  apiResponse?: unknown,
+  options?: { fallbackToNow?: boolean },
+): { createdAt?: string; updatedAt?: string; validUntil?: string } {
+  const fromApi = normalizeQuotationTimestamps(apiResponse)
+  const existing = normalizeQuotationTimestamps(quotation)
+  const updatedAt =
+    fromApi.updatedAt ??
+    existing.updatedAt ??
+    (options?.fallbackToNow !== false ? new Date().toISOString() : undefined)
+
+  return {
+    createdAt: fromApi.createdAt ?? existing.createdAt,
+    updatedAt,
+    validUntil: fromApi.validUntil ?? existing.validUntil,
+  }
+}
 
 /** Payment terms shown in PDF Terms & Conditions (page 3). */
 export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
@@ -418,8 +501,9 @@ export function resolveProductsSystemType(products?: ProductsLike | null): strin
     .replace(/\s+/g, "-")
 }
 
-/** Subsidy T&C row — shown for DCR and BOTH only; hidden for Non-DCR. */
+/** Subsidy T&C row — shown for DCR and BOTH only; hidden for Non-DCR and commercial sets. */
 export function shouldShowSubsidyTermsInPdf(products: ProductsLike): boolean {
+  if (isPdfCommercialSet(products)) return false
   const systemType = resolveProductsSystemType(products)
   return systemType === "dcr" || systemType === "both"
 }
@@ -581,8 +665,10 @@ export function buildAfterSalesSupportLine(company: ProposalCompanyInfo): string
   ].join("  |  ")
 }
 
-export function getProposalConsentText(companyName: string): string {
-  return `I have read, understood, and agree to all Terms & Conditions stated in this proposal (including payment schedule, project timeline, validity, on-grid operation, net metering, subsidy, and other clauses). I authorize ${companyName} to proceed as per this quotation.`
+export function getProposalConsentText(companyName: string, products?: ProductsLike | null): string {
+  const subsidyClause =
+    products && isPdfCommercialSet(products) ? "and other clauses" : "subsidy, and other clauses"
+  return `I have read, understood, and agree to all Terms & Conditions stated in this proposal (including payment schedule, project timeline, validity, on-grid operation, net metering, ${subsidyClause}). I authorize ${companyName} to proceed as per this quotation.`
 }
 
 export const DEFAULT_TERMS_ROWS: TermsRow[] = [

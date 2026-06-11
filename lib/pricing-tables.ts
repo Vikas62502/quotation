@@ -902,7 +902,7 @@ const DCR_PRICING_MATRIX: DcrPricingMatrixRow[] = [
   { systemSize: "25kW", phase: "3-Phase", adani555: 1145000, adaniTopcon620: 1210000, waaree540: 1090000 },
   { systemSize: "30kW", phase: "3-Phase", adani555: 1350000, adaniTopcon620: 1420000, waaree540: 1350000 },
   { systemSize: "40kW", phase: "3-Phase", adani555: 1760000, adaniTopcon620: 1870000, waaree540: 1760000 },
-  { systemSize: "50kW", phase: "3-Phase", adani555: 2150000, adaniTopcon620: 2280000, waaree540: 2150000 },
+  { systemSize: "50kW", phase: "3-Phase", adani555: 2150000, adaniTopcon620: 2280000, waaree540: 2150000, premierTopcon: 2010000 },
   { systemSize: "60kW", phase: "3-Phase", adani555: 2600000, adaniTopcon620: 2760000, waaree540: 2600000 },
   { systemSize: "80kW", phase: "3-Phase", adani555: 3450000, adaniTopcon620: 3660000, waaree540: 3450000 },
   { systemSize: "100kW", phase: "3-Phase", adani555: 4200000, adaniTopcon620: 4465000, waaree540: 4200000 },
