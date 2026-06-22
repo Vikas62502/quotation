@@ -132,6 +132,36 @@ export function isApiAuthFailure(
   return false
 }
 
+/** Clear stored session only for expired/invalid auth — not role-forbidden (403) responses. */
+export function shouldClearSessionOnApiFailure(
+  status: number | undefined,
+  errorCode: string | undefined,
+  errorMessage: string | undefined,
+): boolean {
+  const code = String(errorCode || "").toUpperCase()
+  const msg = String(errorMessage || "").toLowerCase()
+
+  // Wrong role / insufficient permission — keep the dealer logged in.
+  if (status === 403 || code === "HTTP_403" || code === "AUTH_004") return false
+  if (msg.includes("insufficient permissions") || msg.includes("access denied")) return false
+
+  if (status === 401 || code === "HTTP_401" || code === "AUTH_001" || code === "AUTH_002" || code === "AUTH_003") {
+    return true
+  }
+
+  if (
+    msg.includes("session expired") ||
+    msg.includes("token expired") ||
+    msg.includes("invalid token") ||
+    msg.includes("jwt expired") ||
+    msg.includes("please login again")
+  ) {
+    return true
+  }
+
+  return false
+}
+
 /** Prefer `data`; if absent, return other top-level fields (e.g. `uploads`) for legacy backends. */
 function unwrapApiResponseBody<T>(payload: ApiResponse<T>): T {
   if (payload.data !== undefined && payload.data !== null) {
@@ -306,21 +336,45 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
         })
       }
 
-      // Special handling for "User not authenticated" errors
+      // Expired access token — refresh once, then retry the original request.
       if (
-        errorMessage?.toLowerCase().includes("not authenticated") ||
-        errorMessage?.toLowerCase().includes("user not authenticated") ||
-        errorCode === "AUTH_001" ||
-        errorCode === "AUTH_003"
+        response.status === 401 &&
+        requiresAuth &&
+        isUnauthorized &&
+        !endpoint.includes("/auth/refresh") &&
+        !endpoint.includes("/auth/login")
       ) {
-        if (!isUnauthorized) {
-          console.error("[API] Authentication error detected - clearing tokens and redirecting")
+        const refreshToken = getRefreshToken()
+        if (refreshToken) {
+          try {
+            const refreshResponse = await apiRequest<{ token: string; expiresIn: number }>(
+              "/auth/refresh",
+              {
+                method: "POST",
+                requiresAuth: false,
+                headers: {
+                  Authorization: `Bearer ${refreshToken}`,
+                },
+                suppressErrorLog: true,
+              },
+            )
+            saveAuthTokens(refreshResponse.token)
+            return apiRequest<T>(endpoint, options)
+          } catch (refreshError) {
+            if (!quietLog) {
+              console.error("[API] Token refresh failed:", refreshError)
+            }
+            clearAuthTokens()
+            if (typeof window !== "undefined") {
+              window.location.href = "/login"
+            }
+            throw new ApiError("Session expired. Please login again.", "AUTH_002")
+          }
         }
+      }
+
+      if (requiresAuth && shouldClearSessionOnApiFailure(response.status, errorCode, errorMessage)) {
         clearAuthTokens()
-        if (typeof window !== "undefined") {
-          // Don't redirect immediately - let the calling code handle it
-          // This allows for better error messages
-        }
       }
 
       // Special logging for quotation creation errors (skip noise for quiet failures)
@@ -351,49 +405,6 @@ async function apiRequest<T = any>(endpoint: string, options: RequestOptions = {
     }
     
     console.log('[API] Request successful, returning data')
-
-    // Handle token refresh if needed
-    if (response.status === 401 && requiresAuth) {
-      console.log('[API] 401 Unauthorized, attempting token refresh...')
-      const refreshToken = getRefreshToken()
-      if (refreshToken) {
-        console.log('[API] Refresh token found, attempting refresh...')
-        try {
-          const refreshResponse = await apiRequest<{ token: string; expiresIn: number }>(
-            "/auth/refresh",
-            {
-              method: "POST",
-              requiresAuth: false,
-              headers: {
-                Authorization: `Bearer ${refreshToken}`,
-              },
-            }
-          )
-          console.log('[API] Token refresh successful, saving new token')
-          saveAuthTokens(refreshResponse.token)
-          console.log('[API] Retrying original request...')
-          // Retry original request
-          return apiRequest<T>(endpoint, options)
-        } catch (refreshError) {
-          console.error('[API] Token refresh failed:', refreshError)
-          clearAuthTokens()
-          if (typeof window !== "undefined") {
-            console.log('[API] Redirecting to login...')
-            window.location.href = "/login"
-          }
-          throw new ApiError("Session expired. Please login again.", "AUTH_002")
-        }
-      } else {
-        console.warn('[API] No refresh token available')
-        clearAuthTokens()
-        if (typeof window !== "undefined") {
-          console.log('[API] Redirecting to login...')
-          window.location.href = "/login"
-        }
-        throw new ApiError("Unauthorized. Please login again.", "AUTH_003")
-      }
-    }
-
     console.log('[API] Request completed successfully')
     console.log('[API] ========================================')
     return unwrapApiResponseBody<T>(data)

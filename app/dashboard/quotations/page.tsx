@@ -13,7 +13,7 @@ import { Search, Eye, FileText, Calendar, Download } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
-import { api, apiErrorToUserMessage } from "@/lib/api"
+import { api, apiErrorToUserMessage, getAuthToken } from "@/lib/api"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { calculateSystemSize } from "@/lib/pricing-tables"
@@ -198,9 +198,10 @@ export default function QuotationsPage() {
 
   const loadQuotations = async () => {
     if (!dealer?.id) return
-    
+
     try {
       if (useApi) {
+        if (!getAuthToken()) return
         const response = await api.quotations.getAll()
         const dealerQuotations = (response.quotations || [])
           .map((q: any) => ({

@@ -341,23 +341,49 @@ Use PDF keys in pricing/catalog validation. Do not strip PDF keys on PATCH.
 
 ## 3. Dealer calling queue — fix `LEAD_004` (“Lead not assigned to dealer”)
 
-**Symptom:** Dealer sees a lead under **Current Lead**, taps **Start Call**, gets **403 / `LEAD_004`**.
+**Symptom:** Dealer sees a lead under **Current Lead**, taps **Start Call** or **Submit** (e.g. Not Connected → Call Unanswered), gets **403 / `LEAD_004` — Lead not assigned to dealer**.
 
 **Cause:** `GET /calling-queue/next` returns a lead the dealer may **view** (pool / batch), but `PATCH .../action` rejects because `assigned_dealer_id` is null or belongs to another dealer.
 
-**Frontend mitigations (already shipped):** dialer opens immediately; retries assign via `POST .../claim`, `POST .../assign`, `PATCH .../calling-queue/{id}`; on persistent `LEAD_004` the UI updates locally to `in_progress` **without** showing the error. **Backend must still implement Option A or C** so `called` / follow-up actions persist and data stays in sync across devices.
+**Frontend mitigations (already shipped):** dialer opens immediately; retries assign via `POST .../claim`, `POST .../assign`, `PATCH .../calling-queue/{id}`; on persistent `LEAD_004` the UI saves **locally** (`in_progress` on start, `completed`/`rescheduled` on submit) **without** showing the error. **Backend must still implement Option A or C** so actions persist in DB and sync across devices / Admin Calling Reports.
 
 ### Required backend behavior (pick one or combine)
 
-#### Option A — Auto-assign on `start` (recommended)
+#### Option A — Auto-assign on `start` **and** completion (recommended)
 
 `PATCH /api/dealers/me/calling-queue/{leadId}/action`
 
-When `action === "start"` and the authenticated dealer is allowed to work the lead:
+When the authenticated dealer is allowed to work the lead:
+
+**On `action === "start"`:**
 
 1. If `assigned_dealer_id` is empty and the lead is in the dealer’s eligible pool (upload `dealerIds`, `eligibleDealerIds`, or allocator rules), set `assigned_dealer_id = dealer.id` and `status = in_progress` (or `assigned` then `in_progress`).
 2. If already assigned to **this** dealer, proceed with transition to `in_progress`.
 3. If assigned to **another** dealer, return **`LEAD_004`** (do not return this lead from `/next` for other dealers).
+
+**On completion** (`called`, `follow_up`, `not_interested`, `rescheduled`):
+
+1. If `assigned_dealer_id` is empty but the lead is `in_progress` for this dealer (or in their eligible pool), **auto-assign** `assigned_dealer_id = dealer.id` in the same transaction, then apply the completion transition.
+2. If `assigned_dealer_id` already matches JWT dealer, persist remark fields and close the lead.
+3. If assigned to **another** dealer, return **`LEAD_004`**.
+
+**Example — Not Connected / Call Unanswered (frontend sends `not_interested`):**
+
+```json
+PATCH /api/dealers/me/calling-queue/{leadId}/action
+{
+  "action": "not_interested",
+  "actionAt": "2026-06-05T10:30:00.000Z",
+  "callRemark": "[part_1_call_and_lead] Call Unanswered",
+  "call_remark": "[part_1_call_and_lead] Call Unanswered",
+  "statusCategory": "part_1_call_and_lead",
+  "status_category": "part_1_call_and_lead",
+  "statusText": "Call Unanswered",
+  "status_text": "Call Unanswered"
+}
+```
+
+Response **200** must persist `call_remark`, set `status = completed` (or your terminal status), set `action` / `action_at`, then return `nextLead` for the same dealer.
 
 Optional body flags the frontend may send (treat as hints):
 
@@ -417,8 +443,10 @@ After `called` / `follow_up` / `not_interested` / `rescheduled`:
 
 1. HR uploads batch with dealer pool; dealer A opens Calling Data → sees one current lead.
 2. **Start Call** → **200**, lead moves to `in_progress` (no `LEAD_004`).
-3. Dealer B does not see A’s in-progress lead in `/next`.
-4. Pool lead with no assignee: first `start` assigns to current dealer; second dealer gets `LEAD_004` or a different lead.
+3. **Submit** (Not Connected → Call Unanswered) → **200**, remark saved, lead `completed`, `nextLead` returned (no `LEAD_004`).
+4. Dealer B does not see A’s in-progress lead in `/next`.
+5. Pool lead with no assignee: first `start` assigns to current dealer; second dealer gets `LEAD_004` or a different lead.
+6. Admin / HR calling reports show the submitted remark and dealer name after refresh.
 
 ### Reference
 

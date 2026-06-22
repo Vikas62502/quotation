@@ -13,6 +13,12 @@ import {
   normalizeCallingAssigneeToken,
   resolveCallingAssigneeId,
 } from "@/lib/calling-lead-assignee"
+import {
+  appendDealerCallingAction,
+  pickRicherCallRemark,
+  readDealerCallingActions,
+  resolveCallingActionRemark,
+} from "@/lib/dealer-calling-action-history"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -380,10 +386,167 @@ function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVis
   return true
 }
 
+const SCHEDULED_QUEUE_RESPONSE_KEYS = [
+  "scheduledLeads",
+  "upcomingFollowUps",
+  "followUps",
+  "scheduled",
+  "scheduledData",
+  "scheduledItems",
+  "rescheduledLeads",
+] as const
+
+function readCallingQueueArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value
+  if (value && typeof value === "object") {
+    const obj = value as Record<string, unknown>
+    if (Array.isArray(obj.items)) return obj.items
+    if (Array.isArray(obj.rows)) return obj.rows
+    if (Array.isArray(obj.data)) return obj.data
+  }
+  return []
+}
+
+function getScheduledLeadDedupeKey(lead: CallingLead): string {
+  const id = String(lead.id || "").trim()
+  if (id && !/^lead-\d+$/i.test(id)) return `id:${id.toLowerCase()}`
+  const mobile = normalizePhoneDigits(lead.mobile || "")
+  if (mobile.length >= 8) return `mobile:${mobile}`
+  return `row:${(lead.name || "").trim().toLowerCase()}|${mobile}`
+}
+
+function mergeScheduledLeadRows(existing: CallingLead, incoming: CallingLead): CallingLead {
+  const existingAt = existing.nextFollowUpAt ? new Date(existing.nextFollowUpAt).getTime() : 0
+  const incomingAt = incoming.nextFollowUpAt ? new Date(incoming.nextFollowUpAt).getTime() : 0
+  const preferIncoming = incomingAt >= existingAt
+  const base = preferIncoming ? { ...existing, ...incoming } : { ...incoming, ...existing }
+  return {
+    ...base,
+    id: existing.id || incoming.id,
+    callRemark: pickRicherCallRemark(existing.callRemark, incoming.callRemark),
+    nextFollowUpAt: preferIncoming
+      ? incoming.nextFollowUpAt || existing.nextFollowUpAt
+      : existing.nextFollowUpAt || incoming.nextFollowUpAt,
+    customerNote: incoming.customerNote || existing.customerNote,
+    status:
+      existing.status === "rescheduled" || incoming.status === "rescheduled"
+        ? "rescheduled"
+        : base.status,
+  }
+}
+
+function dedupeScheduledLeads(leads: CallingLead[]): CallingLead[] {
+  const map = new Map<string, CallingLead>()
+  for (const lead of leads) {
+    const key = getScheduledLeadDedupeKey(lead)
+    const existing = map.get(key)
+    map.set(key, existing ? mergeScheduledLeadRows(existing, lead) : lead)
+  }
+  return Array.from(map.values())
+}
+
+function findStatusGroupKeyForStatus(status: string): StatusGroupKey {
+  const clean = status.trim()
+  if (!clean) return STATUS_GROUPS[0].key
+  const group = STATUS_GROUPS.find((entry) => entry.options.some((option) => option === clean))
+  return group?.key ?? STATUS_GROUPS[0].key
+}
+
+function scheduledLeadFromActionLog(item: ActionLogItem): CallingLead | null {
+  if (!item.nextFollowUpAt) return null
+  const leadId = String(item.leadId || "").trim()
+  if (!leadId) return null
+  return {
+    id: leadId,
+    name: item.name || "Unknown",
+    mobile: item.mobile || "",
+    kNumber: item.kNumber,
+    address: item.address,
+    city: item.city,
+    state: item.state,
+    customerNote: item.customerNote,
+    assignedDealerId: "",
+    assignedDealerName: "",
+    createdAt: item.actionAt || new Date().toISOString(),
+    status: "rescheduled",
+    action: item.action === "follow_up" || item.action === "rescheduled" ? item.action : "follow_up",
+    actionAt: item.actionAt,
+    nextFollowUpAt: item.nextFollowUpAt,
+    callRemark: item.callRemark,
+  }
+}
+
+function enrichScheduledLeadFromLocalHistory(
+  lead: CallingLead,
+  localActions: ReturnType<typeof readDealerCallingActions>,
+): CallingLead {
+  const leadMobile = normalizePhoneDigits(lead.mobile || "")
+  const matches = localActions
+    .filter((entry) => {
+      if (entry.leadId && entry.leadId === lead.id) return true
+      if (leadMobile && normalizePhoneDigits(entry.mobile || "") === leadMobile) return true
+      return false
+    })
+    .sort((a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime())
+
+  const followUpMatch =
+    matches.find((entry) => entry.nextFollowUpAt && entry.nextFollowUpAt === lead.nextFollowUpAt) || matches[0]
+  if (!followUpMatch) return lead
+
+  return {
+    ...lead,
+    callRemark: pickRicherCallRemark(lead.callRemark, followUpMatch.callRemark),
+    nextFollowUpAt: lead.nextFollowUpAt || followUpMatch.nextFollowUpAt,
+    customerNote: lead.customerNote || followUpMatch.customerNote,
+    kNumber: lead.kNumber || followUpMatch.kNumber,
+    address: lead.address || followUpMatch.address,
+    city: lead.city || followUpMatch.city,
+    state: lead.state || followUpMatch.state,
+  }
+}
+
+function collectScheduledLeads(
+  response: unknown,
+  normalizeApiLead: (raw: unknown) => CallingLead,
+  actionLogs: ActionLogItem[],
+  mainLeads: CallingLead[] = [],
+): CallingLead[] {
+  const rows: CallingLead[] = []
+  const payload = (response || {}) as Record<string, unknown>
+
+  for (const key of SCHEDULED_QUEUE_RESPONSE_KEYS) {
+    for (const raw of readCallingQueueArray(payload[key])) {
+      const lead = normalizeApiLead(raw)
+      if (lead.nextFollowUpAt) rows.push(lead)
+    }
+  }
+
+  for (const lead of mainLeads) {
+    if (!lead.nextFollowUpAt) continue
+    rows.push({
+      ...lead,
+      status: lead.status === "rescheduled" ? lead.status : "rescheduled",
+    })
+  }
+
+  for (const item of actionLogs) {
+    const fromAction = scheduledLeadFromActionLog(item)
+    if (fromAction) rows.push(fromAction)
+  }
+
+  return dedupeScheduledLeads(rows).sort(
+    (a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime(),
+  )
+}
+
+function getScheduledLeadFreeRemark(lead: CallingLead): string {
+  return cleanFreeCallRemark(parseTaggedCallRemark(lead.callRemark || "").remark || "")
+}
+
 export default function CallingDataPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isAuthenticated, dealer, role } = useAuth()
+  const { isAuthenticated, authReady, dealer, role } = useAuth()
   const { toast } = useToast()
   const [leads, setLeads] = useState<CallingLead[]>([])
   const [scheduledLeads, setScheduledLeads] = useState<CallingLead[]>([])
@@ -559,6 +722,7 @@ export default function CallingDataPage() {
   }
 
   useEffect(() => {
+    if (!authReady) return
     if (!isAuthenticated) {
       router.push("/login")
       return
@@ -567,7 +731,7 @@ export default function CallingDataPage() {
       router.push("/dashboard")
       return
     }
-  }, [isAuthenticated, role, router])
+  }, [authReady, isAuthenticated, role, router])
 
   const normalizeApiLead = (lead: any): CallingLead => {
     const source = lead?.lead || lead?.customerLead || lead
@@ -599,7 +763,7 @@ export default function CallingDataPage() {
       action: source?.action,
       actionAt: source?.actionAt || source?.action_at,
       nextFollowUpAt: source?.nextFollowUpAt || source?.next_follow_up_at,
-      callRemark: source?.callRemark || source?.call_remark || "",
+      callRemark: resolveCallingActionRemark(source),
       uploadBatchId: (() => {
         const v = String(
           source?.uploadBatchId ||
@@ -633,9 +797,8 @@ export default function CallingDataPage() {
 
   const normalizeActionLog = (entry: any): ActionLogItem => {
     const lead = entry?.lead || entry
-    const tagged = parseTaggedCallRemark(
-      entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
-    )
+    const callRemark = resolveCallingActionRemark(entry) || resolveCallingActionRemark(lead)
+    const tagged = parseTaggedCallRemark(callRemark)
     return {
       id:
         entry?.id ||
@@ -646,7 +809,7 @@ export default function CallingDataPage() {
       mobile: entry?.mobile || lead?.mobile || lead?.phone || "",
       action: entry?.action || lead?.action,
       actionAt: entry?.actionAt || entry?.action_at || lead?.actionAt || lead?.action_at || entry?.updatedAt,
-      callRemark: entry?.callRemark || entry?.call_remark || lead?.callRemark || lead?.call_remark || "",
+      callRemark,
       nextFollowUpAt: entry?.nextFollowUpAt || entry?.next_follow_up_at || lead?.nextFollowUpAt || lead?.next_follow_up_at,
       status: entry?.status || lead?.status || lead?.lead_status,
       statusText:
@@ -675,6 +838,30 @@ export default function CallingDataPage() {
     }
   }
 
+  const getSavedActionRemarkText = (item: ActionLogItem) => {
+    const parsed = parseTaggedRemark(item.callRemark)
+    if (parsed.remark?.trim()) return parsed.remark
+    if (parsed.status?.trim()) return parsed.status
+    return item.statusText || item.callRemark || ""
+  }
+
+
+  const getStoredDealerActionBuckets = () => {
+    const stored = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const dialled = stored.filter((item) =>
+      ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase()),
+    )
+    const connected = stored.filter((item) => {
+      const parsed = parseTaggedCallRemark(item.callRemark)
+      return Boolean(parsed.status) && !NOT_CONNECTED_REASONS.includes(parsed.status)
+    })
+    const notConnected = stored.filter((item) => {
+      const parsed = parseTaggedCallRemark(item.callRemark)
+      return Boolean(parsed.status) && NOT_CONNECTED_REASONS.includes(parsed.status)
+    })
+    return { all: stored, dialled, connected, notConnected }
+  }
+
   const mergeActionLogEntries = (sources: any[]): ActionLogItem[] => {
     const map = new Map<string, ActionLogItem>()
     const fingerprintMap = new Map<string, string>()
@@ -685,12 +872,17 @@ export default function CallingDataPage() {
         normalized.leadId || "",
         normalized.actionAt || "",
         normalized.action || "",
-        normalized.statusText || normalized.status || "",
-        normalized.callRemark || "",
       ].join("|")
       const existingId = fingerprintMap.get(fingerprint)
       if (existingId) {
-        map.set(existingId, { ...map.get(existingId), ...normalized })
+        const existing = map.get(existingId)!
+        map.set(existingId, {
+          ...existing,
+          ...normalized,
+          callRemark: pickRicherCallRemark(existing.callRemark, normalized.callRemark),
+          statusText: normalized.statusText || existing.statusText,
+          statusCategory: normalized.statusCategory || existing.statusCategory,
+        })
         return
       }
       map.set(normalized.id, normalized)
@@ -957,31 +1149,22 @@ export default function CallingDataPage() {
       return [pinLead, ...Array.from(merged.values()).filter((lead) => lead.id !== pinned.id)]
     })
 
-    const scheduledSource = [
-      ...readArray(response?.scheduledLeads),
-      ...readArray(response?.upcomingFollowUps),
-      ...readArray(response?.followUps),
-      ...readArray(response?.scheduled),
-      ...readArray(response?.scheduledData),
-      ...readArray(response?.scheduledItems),
-      ...readArray(response?.rescheduledLeads),
-    ]
-    const normalizedScheduled = scheduledSource
-      .map(normalizeApiLead)
-      .filter((lead) => !!lead.nextFollowUpAt)
-      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
-    setScheduledLeads(normalizedScheduled)
+    const storedBuckets = getStoredDealerActionBuckets()
 
     const dialledOnly = mergeActionLogEntries([
+      ...storedBuckets.dialled,
       ...readArray(response?.dialledActions),
     ])
     const connectedOnly = mergeActionLogEntries([
+      ...storedBuckets.connected,
       ...readArray(response?.connectedActions),
     ])
     const notConnectedOnly = mergeActionLogEntries([
+      ...storedBuckets.notConnected,
       ...readArray(response?.notConnectedActions),
     ])
     const allActions = mergeActionLogEntries([
+      ...storedBuckets.all,
       ...readArray(response?.recentActions),
       ...readArray(response?.actionHistory),
       ...readArray(response?.completedActions),
@@ -991,6 +1174,16 @@ export default function CallingDataPage() {
       ...readArray(response?.actions),
       ...readArray(response?.callingActions),
     ])
+
+    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const normalizedScheduled = collectScheduledLeads(
+      response,
+      normalizeApiLead,
+      allActions,
+      Array.from(mergedLeadMap.values()),
+    ).map((lead) => enrichScheduledLeadFromLocalHistory(lead, localScheduledHistory))
+    setScheduledLeads(normalizedScheduled)
+
     setDialledActions(dialledOnly)
     setConnectedActionItems(connectedOnly)
     setNotConnectedActionItems(notConnectedOnly)
@@ -1014,25 +1207,22 @@ export default function CallingDataPage() {
       return []
     }
 
-    const scheduledSource = [
-      ...readArray(response?.scheduledLeads),
-      ...readArray(response?.upcomingFollowUps),
-      ...readArray(response?.followUps),
-      ...readArray(response?.scheduled),
-      ...readArray(response?.scheduledData),
-      ...readArray(response?.scheduledItems),
-      ...readArray(response?.rescheduledLeads),
-    ]
-    const normalizedScheduled = scheduledSource
-      .map(normalizeApiLead)
-      .filter((lead) => !!lead.nextFollowUpAt)
-      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
-    if (normalizedScheduled.length > 0) setScheduledLeads(normalizedScheduled)
+    const storedBuckets = getStoredDealerActionBuckets()
 
-    const dialledOnly = mergeActionLogEntries([...readArray(response?.dialledActions)])
-    const connectedOnly = mergeActionLogEntries([...readArray(response?.connectedActions)])
-    const notConnectedOnly = mergeActionLogEntries([...readArray(response?.notConnectedActions)])
+    const dialledOnly = mergeActionLogEntries([
+      ...storedBuckets.dialled,
+      ...readArray(response?.dialledActions),
+    ])
+    const connectedOnly = mergeActionLogEntries([
+      ...storedBuckets.connected,
+      ...readArray(response?.connectedActions),
+    ])
+    const notConnectedOnly = mergeActionLogEntries([
+      ...storedBuckets.notConnected,
+      ...readArray(response?.notConnectedActions),
+    ])
     const allActions = mergeActionLogEntries([
+      ...storedBuckets.all,
       ...readArray(response?.recentActions),
       ...readArray(response?.actionHistory),
       ...readArray(response?.completedActions),
@@ -1042,6 +1232,13 @@ export default function CallingDataPage() {
       ...readArray(response?.actions),
       ...readArray(response?.callingActions),
     ])
+
+    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const mergedScheduled = collectScheduledLeads(response, normalizeApiLead, allActions).map((lead) =>
+      enrichScheduledLeadFromLocalHistory(lead, localScheduledHistory),
+    )
+    if (mergedScheduled.length > 0) setScheduledLeads(mergedScheduled)
+
     if (dialledOnly.length > 0) setDialledActions(dialledOnly)
     if (connectedOnly.length > 0) setConnectedActionItems(connectedOnly)
     if (notConnectedOnly.length > 0) setNotConnectedActionItems(notConnectedOnly)
@@ -1070,6 +1267,7 @@ export default function CallingDataPage() {
   }
 
   const loadLeads = async (options?: { preservePinnedLead?: boolean }) => {
+    if (!authReady || !isAuthenticated) return
     if (!useApi) {
       setLeads([])
       toast({
@@ -1083,18 +1281,8 @@ export default function CallingDataPage() {
     const preservePinnedLead = options?.preservePinnedLead ?? !!pinnedCurrentLeadRef.current
 
     try {
-      const [nextResult, currentResult] = await Promise.allSettled([
-        api.dealers.getCallingQueueNext(),
-        api.dealers.getCallingQueueCurrent(),
-      ])
-
-      const nextResponse = nextResult.status === "fulfilled" ? nextResult.value : null
-      const currentResponse = currentResult.status === "fulfilled" ? currentResult.value : null
-      if (!nextResponse && !currentResponse) {
-        const nextError = nextResult.status === "rejected" ? nextResult.reason : null
-        const currentError = currentResult.status === "rejected" ? currentResult.reason : null
-        throw nextError || currentError || new Error("Queue unavailable")
-      }
+      const nextResponse = await api.dealers.getCallingQueueNext()
+      const currentResponse = null
 
       const toArray = (value: any): any[] => {
         if (Array.isArray(value)) return value
@@ -1157,7 +1345,15 @@ export default function CallingDataPage() {
         error instanceof ApiError ? error.details?.[0]?.message || error.message : "Could not load calling queue from backend."
       setLeads([])
       setScheduledLeads([])
-      setRecentActions([])
+      if (currentDealerId) {
+        const storedBuckets = getStoredDealerActionBuckets()
+        setRecentActions(mergeActionLogEntries(storedBuckets.all))
+        setDialledActions(mergeActionLogEntries(storedBuckets.dialled))
+        setConnectedActionItems(mergeActionLogEntries(storedBuckets.connected))
+        setNotConnectedActionItems(mergeActionLogEntries(storedBuckets.notConnected))
+      } else {
+        setRecentActions([])
+      }
       toast({
         title: "Backend queue unavailable",
         description: message,
@@ -1167,31 +1363,45 @@ export default function CallingDataPage() {
   }
 
   const loadDealerAnalyticsActions = async () => {
-    if (!useApi || !currentDealerId) return
+    if (!useApi || !currentDealerId || !authReady || !isAuthenticated) return
+
+    const localActions = mergeActionLogEntries(readDealerCallingActions(currentDealerId))
+
+    // HR analytics is admin/HR-only; dealers must not call it (403 used to clear the session).
+    if (role !== "admin" && role !== "hr") {
+      setAnalyticsActions(localActions)
+      return
+    }
+
     try {
       const response = await api.hr.callingActions.getAll({
         dealerId: currentDealerId,
         limit: 2000,
       })
-      const normalized = mergeActionLogEntries(extractCallingActionsFromResponse(response))
+      const normalized = mergeActionLogEntries([
+        ...localActions,
+        ...extractCallingActionsFromResponse(response),
+      ])
       setAnalyticsActions(normalized)
     } catch {
-      setAnalyticsActions([])
+      setAnalyticsActions(localActions)
     }
   }
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return
     loadLeads()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useApi])
+  }, [authReady, isAuthenticated, useApi])
 
   useEffect(() => {
+    if (!authReady || !isAuthenticated) return
     void loadDealerAnalyticsActions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useApi, currentDealerId])
+  }, [authReady, isAuthenticated, useApi, currentDealerId, role])
 
   useEffect(() => {
-    if (!useApi) return
+    if (!authReady || !isAuthenticated || !useApi) return
 
     const refresh = () => {
       refreshCallingQueue()
@@ -1214,10 +1424,10 @@ export default function CallingDataPage() {
       window.removeEventListener("focus", onWindowFocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useApi])
+  }, [authReady, isAuthenticated, useApi])
 
   useEffect(() => {
-    if (!useApi) return
+    if (!authReady || !isAuthenticated || !useApi) return
     const socket = getRealtime()
     if (!socket) return
 
@@ -1251,7 +1461,7 @@ export default function CallingDataPage() {
       socket.off("backend:mutation", onBackendMutation)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useApi])
+  }, [authReady, isAuthenticated, useApi])
 
   useEffect(() => {
     const checkScheduledReminders = () => {
@@ -1358,7 +1568,6 @@ export default function CallingDataPage() {
       const nextAt = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
       if (!nextAt || Number.isNaN(nextAt.getTime())) return false
       const nextAtMs = nextAt.getTime()
-      if (nextAtMs <= nowMs) return false
       const matchesTime =
         scheduledTimeFilter === "all" ||
         (scheduledTimeFilter === "today"
@@ -1368,7 +1577,8 @@ export default function CallingDataPage() {
             : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
       if (!matchesTime) return false
       if (!term) return true
-      const haystack = [lead.name, lead.mobile, lead.kNumber, lead.address, lead.city, lead.state, lead.callRemark]
+      const remarkText = getScheduledLeadFreeRemark(lead)
+      const haystack = [lead.name, lead.mobile, lead.kNumber, lead.address, lead.city, lead.state, lead.callRemark, remarkText]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -1640,6 +1850,43 @@ export default function CallingDataPage() {
     return `[${backendCategory}] ${status}${trimmed ? ` | ${trimmed}` : ""}`
   }
 
+  const resolveScheduledRemarkForLead = (lead: CallingLead) =>
+    scheduledRemarks[lead.id] ?? getScheduledLeadFreeRemark(lead)
+
+  useEffect(() => {
+    if (scheduledLeads.length === 0) return
+
+    setScheduledRemarks((prev) => {
+      const next = { ...prev }
+      for (const lead of scheduledLeads) {
+        if (next[lead.id] !== undefined) continue
+        const freeRemark = getScheduledLeadFreeRemark(lead)
+        if (freeRemark) next[lead.id] = freeRemark
+      }
+      return next
+    })
+
+    setScheduledStatuses((prev) => {
+      const next = { ...prev }
+      for (const lead of scheduledLeads) {
+        if (next[lead.id] !== undefined) continue
+        const parsed = parseTaggedCallRemark(lead.callRemark || "")
+        if (parsed.status) next[lead.id] = parsed.status
+      }
+      return next
+    })
+
+    setScheduledStatusGroups((prev) => {
+      const next = { ...prev }
+      for (const lead of scheduledLeads) {
+        if (next[lead.id] !== undefined) continue
+        const parsed = parseTaggedCallRemark(lead.callRemark || "")
+        if (parsed.status) next[lead.id] = findStatusGroupKeyForStatus(parsed.status)
+      }
+      return next
+    })
+  }, [scheduledLeads])
+
   useEffect(() => {
     if (!currentLead) {
       if (pinnedCurrentLeadRef.current || submittingLeadIdsRef.current.size > 0) return
@@ -1765,10 +2012,61 @@ export default function CallingDataPage() {
   const tryAssignLeadToCurrentDealer = async (leadId: string) => {
     if (!currentDealerId) return false
     try {
-      await api.dealers.assignCallingLeadToMe(leadId, currentDealerId)
-      return true
+      const result = await api.dealers.assignCallingLeadToMe(leadId, currentDealerId)
+      return result != null
     } catch {
       return false
+    }
+  }
+
+  const applyOptimisticAssigneeAndStatus = (leadId: string, action: string) => {
+    const dealerName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim()
+    const nextStatus: CallingLead["status"] =
+      action === "rescheduled" || action === "follow_up" ? "rescheduled" : "completed"
+    setLeads((prev) =>
+      prev.map((l) =>
+        l.id === leadId
+          ? {
+              ...l,
+              status: nextStatus,
+              assignedDealerId: currentDealerId || l.assignedDealerId,
+              assignedDealerName: dealerName || l.assignedDealerName,
+            }
+          : l,
+      ),
+    )
+  }
+
+  const finalizeSubmittedLeadAction = (
+    leadId: string,
+    apiPayload: {
+      action: string
+      callRemark?: string
+      actionAt?: string
+      nextFollowUpAt?: string
+    },
+    response?: any,
+  ) => {
+    persistSubmittedCallRemark(leadId, apiPayload)
+    saveCallingLeadSession(leadId, {
+      callRemark: apiPayload.callRemark,
+      customerNote: editableLeadDetails?.customerNote ?? currentLead?.customerNote,
+    })
+    setCallRemark("")
+    setRescheduleAt("")
+    setManualOtherReason("")
+    setIsRescheduleChecked(false)
+    setSelectedStatusGroup(STATUS_GROUPS[0].key)
+    setSelectedStatus(STATUS_GROUPS[0].options[0])
+    const wasCurrentQueueHead =
+      pinnedCurrentLeadRef.current?.id === leadId || dealerAssignedQueue[0]?.id === leadId
+    clearPinnedCurrentLead()
+    if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
+      applyQueueResponse(response)
+    }
+    void loadLeads()
+    if (wasCurrentQueueHead) {
+      setFlowTab("current_lead")
     }
   }
 
@@ -1802,6 +2100,7 @@ export default function CallingDataPage() {
   ) => {
     if (!payload.callRemark?.trim()) return
     const lead = leads.find((l) => l.id === leadId) || pinnedCurrentLeadRef.current
+    const parsed = parseTaggedRemark(payload.callRemark)
     setLeads((prev) =>
       prev.map((l) =>
         l.id === leadId
@@ -1825,11 +2124,16 @@ export default function CallingDataPage() {
       callRemark: payload.callRemark,
       actionAt: payload.actionAt || new Date().toISOString(),
       nextFollowUpAt: payload.nextFollowUpAt,
+      statusCategory: parsed.category,
+      statusText: parsed.status,
       kNumber: lead.kNumber,
       address: lead.address,
       city: lead.city,
       state: lead.state,
       customerNote: lead.customerNote,
+    }
+    if (currentDealerId) {
+      appendDealerCallingAction(currentDealerId, actionItem)
     }
     setRecentActions((prev) => {
       const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
@@ -1842,7 +2146,6 @@ export default function CallingDataPage() {
         return [actionItem, ...withoutDup]
       })
     }
-    const parsed = parseTaggedRemark(payload.callRemark)
     if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) {
       setNotConnectedActionItems((prev) => {
         const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
@@ -1872,9 +2175,9 @@ export default function CallingDataPage() {
     }
     submittingLeadIdsRef.current.add(leadId)
     setSubmittingLeadMap((prev) => ({ ...prev, [leadId]: true }))
+    const actionAt = payload.actionAt || new Date().toISOString()
+    const apiPayload = enrichCallingActionPayload({ ...payload, actionAt })
     try {
-      const actionAt = payload.actionAt || new Date().toISOString()
-      const apiPayload = enrichCallingActionPayload({ ...payload, actionAt })
       let response: any
       try {
         response = await api.dealers.updateCallingLeadAction(leadId, apiPayload)
@@ -1974,6 +2277,11 @@ export default function CallingDataPage() {
             applyOptimisticCallStart(leadId)
             return
           }
+          if (payload.action !== "start" && isLeadNotAssignedToDealerError(innerError)) {
+            applyOptimisticAssigneeAndStatus(leadId, payload.action)
+            finalizeSubmittedLeadAction(leadId, apiPayload)
+            return
+          }
           throw innerError
         }
       }
@@ -1990,28 +2298,7 @@ export default function CallingDataPage() {
         return
       }
 
-      persistSubmittedCallRemark(leadId, apiPayload)
-      saveCallingLeadSession(leadId, {
-        callRemark: apiPayload.callRemark,
-        customerNote: editableLeadDetails?.customerNote ?? currentLead?.customerNote,
-      })
-
-      setCallRemark("")
-      setRescheduleAt("")
-      setManualOtherReason("")
-      setIsRescheduleChecked(false)
-      setSelectedStatusGroup(STATUS_GROUPS[0].key)
-      setSelectedStatus(STATUS_GROUPS[0].options[0])
-      const wasCurrentQueueHead =
-        pinnedCurrentLeadRef.current?.id === leadId || dealerAssignedQueue[0]?.id === leadId
-      clearPinnedCurrentLead()
-      if (response?.nextLead || response?.lead || response?.currentLead || response?.counts) {
-        applyQueueResponse(response)
-      }
-      void loadLeads()
-      if (wasCurrentQueueHead) {
-        setFlowTab("current_lead")
-      }
+      finalizeSubmittedLeadAction(leadId, apiPayload, response)
     } catch (error) {
       if (
         options?.optimisticOnNotAssigned &&
@@ -2020,6 +2307,11 @@ export default function CallingDataPage() {
           (error instanceof ApiError && error.code === "HTTP_403"))
       ) {
         applyOptimisticCallStart(leadId)
+        return
+      }
+      if (payload.action !== "start" && isLeadNotAssignedToDealerError(error)) {
+        applyOptimisticAssigneeAndStatus(leadId, payload.action)
+        finalizeSubmittedLeadAction(leadId, apiPayload)
         return
       }
       if (payload.action === "start" && pinnedCurrentLeadRef.current?.id === leadId) {
@@ -2103,7 +2395,7 @@ export default function CallingDataPage() {
     }
   }
 
-  if (!isAuthenticated) return null
+  if (!authReady || !isAuthenticated) return null
 
   return (
     <div className="min-h-screen bg-background">
@@ -2243,10 +2535,21 @@ export default function CallingDataPage() {
               ) : (
                 <div className="space-y-2">
                   {pagedScheduled.items.map((lead) => (
-                    <div key={lead.id} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                    <div key={getScheduledLeadDedupeKey(lead)} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                       <div>
                         <p className="font-medium">{lead.name} • {lead.mobile}</p>
                         <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
+                        {(() => {
+                          const parsed = parseTaggedCallRemark(lead.callRemark || "")
+                          if (!parsed.status && !resolveScheduledRemarkForLead(lead)) return null
+                          return (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {parsed.status ? `Status: ${parsed.status}` : null}
+                              {parsed.status && resolveScheduledRemarkForLead(lead) ? " • " : null}
+                              {resolveScheduledRemarkForLead(lead) ? `Remark: ${resolveScheduledRemarkForLead(lead)}` : null}
+                            </p>
+                          )
+                        })()}
                       </div>
                       <div className="w-full space-y-2 md:max-w-3xl">
                         {(() => {
@@ -2304,7 +2607,7 @@ export default function CallingDataPage() {
                               <Input
                                 className="h-8"
                                 placeholder="Remark (optional)"
-                                value={scheduledRemarks[lead.id] ?? ""}
+                                value={resolveScheduledRemarkForLead(lead)}
                                 onChange={(e) => setScheduledRemarks((prev) => ({ ...prev, [lead.id]: e.target.value }))}
                               />
                               <div className="flex items-center gap-2">
@@ -2350,7 +2653,7 @@ export default function CallingDataPage() {
                                       })
                                       return
                                     }
-                                    const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
+                                    const remark = buildTaggedRemark(statusGroup, finalStatus, resolveScheduledRemarkForLead(lead))
                                     submitAction(lead.id, {
                                       action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                                       nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
@@ -2389,8 +2692,8 @@ export default function CallingDataPage() {
                                   variant="outline"
                                   onClick={() =>
                                     openNewQuotationWithPrefill(lead, {
-                                      customerNote: scheduledRemarks[lead.id],
-                                      callRemark: scheduledRemarks[lead.id],
+                                      customerNote: resolveScheduledRemarkForLead(lead),
+                                      callRemark: resolveScheduledRemarkForLead(lead),
                                     })
                                   }
                                 >
@@ -2471,7 +2774,7 @@ export default function CallingDataPage() {
                     const otherReason = recentOtherReasons[rowKey] ?? ""
                     const isReschedule = recentRescheduleChecks[rowKey] ?? false
                     const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
-                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     return (
                       <div key={`dialled-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
@@ -2625,7 +2928,7 @@ export default function CallingDataPage() {
                     const derivedOutcome = getConnectedOutcomeForStatus((parsed.status || "").trim())
                     const connectedOutcome = connectedCardOutcomes[rowKey] ?? derivedOutcome
                     const isReschedule = recentRescheduleChecks[rowKey] ?? false
-                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     return (
                       <div key={`connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
@@ -2780,7 +3083,7 @@ export default function CallingDataPage() {
                     const derivedReason = NOT_CONNECTED_REASONS.includes(parsed.status) ? parsed.status : NOT_CONNECTED_REASONS[0]
                     const selectedReasonRaw = recentStatuses[rowKey] ?? derivedReason
                     const selectedReason = NOT_CONNECTED_REASONS.includes(selectedReasonRaw) ? selectedReasonRaw : derivedReason
-                    const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                    const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                     const transferToConnected = notConnectedTransferChecks[rowKey] ?? false
                     const transferReason = notConnectedTransferReasons[rowKey] ?? ""
                     const transferOutcome = notConnectedTransferOutcomes[rowKey] ?? "interested"
@@ -3458,10 +3761,21 @@ export default function CallingDataPage() {
             ) : (
               <div className="space-y-2">
                 {filteredScheduledLeads.map((lead) => (
-                  <div key={lead.id} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                  <div key={getScheduledLeadDedupeKey(lead)} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
                     <div>
                       <p className="font-medium">{lead.name} • {lead.mobile}</p>
                       <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
+                      {(() => {
+                        const parsed = parseTaggedCallRemark(lead.callRemark || "")
+                        if (!parsed.status && !resolveScheduledRemarkForLead(lead)) return null
+                        return (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {parsed.status ? `Status: ${parsed.status}` : null}
+                            {parsed.status && resolveScheduledRemarkForLead(lead) ? " • " : null}
+                            {resolveScheduledRemarkForLead(lead) ? `Remark: ${resolveScheduledRemarkForLead(lead)}` : null}
+                          </p>
+                        )
+                      })()}
                     </div>
                     <div className="w-full space-y-2 md:max-w-3xl">
                       {(() => {
@@ -3519,7 +3833,7 @@ export default function CallingDataPage() {
                             <Input
                               className="h-8"
                               placeholder="Remark (optional)"
-                              value={scheduledRemarks[lead.id] ?? ""}
+                              value={resolveScheduledRemarkForLead(lead)}
                               onChange={(e) => setScheduledRemarks((prev) => ({ ...prev, [lead.id]: e.target.value }))}
                             />
                             <div className="flex items-center gap-2">
@@ -3565,7 +3879,7 @@ export default function CallingDataPage() {
                                     })
                                     return
                                   }
-                                  const remark = buildTaggedRemark(statusGroup, finalStatus, scheduledRemarks[lead.id] ?? "")
+                                  const remark = buildTaggedRemark(statusGroup, finalStatus, resolveScheduledRemarkForLead(lead))
                                   submitAction(lead.id, {
                                     action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
                                     nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
@@ -3604,8 +3918,8 @@ export default function CallingDataPage() {
                                 variant="outline"
                                 onClick={() =>
                                   openNewQuotationWithPrefill(lead, {
-                                    customerNote: scheduledRemarks[lead.id],
-                                    callRemark: scheduledRemarks[lead.id],
+                                    customerNote: resolveScheduledRemarkForLead(lead),
+                                    callRemark: resolveScheduledRemarkForLead(lead),
                                   })
                                 }
                               >
@@ -3697,14 +4011,16 @@ export default function CallingDataPage() {
                       <div className="mt-1 space-y-1 text-xs">
                         {parsed.category ? <p><span className="font-medium">Status Category:</span> {getDisplayCategoryLabel(parsed.category)}</p> : null}
                         {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
-                        {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
+                        {getSavedActionRemarkText(item) ? (
+                          <p><span className="font-medium">Remark:</span> {getSavedActionRemarkText(item)}</p>
+                        ) : null}
                       </div>
                     ) : null}
                     <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                       <Textarea
                         rows={2}
                         placeholder="Edit remark"
-                        value={recentEditRemarks[actionRowKey(item)] ?? parsed.remark ?? ""}
+                        value={recentEditRemarks[actionRowKey(item)] ?? getSavedActionRemarkText(item)}
                         onChange={(e) =>
                           setRecentEditRemarks((prev) => ({
                             ...prev,
@@ -3740,7 +4056,7 @@ export default function CallingDataPage() {
                       const otherReason = recentOtherReasons[rowKey] ?? ""
                       const isReschedule = recentRescheduleChecks[rowKey] ?? false
                       const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
-                      const remark = recentEditRemarks[rowKey] ?? parsed.remark ?? ""
+                      const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                       const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                       return (
                         <>
@@ -3844,7 +4160,7 @@ export default function CallingDataPage() {
                               variant="outline"
                               onClick={() => {
                                 const parsed = parseTaggedRemark(item.callRemark)
-                                const rowRemark = recentEditRemarks[actionRowKey(item)] ?? parsed.remark ?? ""
+                                const rowRemark = recentEditRemarks[actionRowKey(item)] ?? getSavedActionRemarkText(item)
                                 openNewQuotationWithPrefill(
                                   {
                                     id: item.leadId || item.id,
@@ -3933,7 +4249,9 @@ export default function CallingDataPage() {
                         <div className="mt-1 space-y-1 text-xs">
                           {parsed.category ? <p><span className="font-medium">Status Category:</span> {getDisplayCategoryLabel(parsed.category)}</p> : null}
                           {parsed.status ? <p><span className="font-medium">Status:</span> {parsed.status}</p> : null}
-                          {parsed.remark ? <p><span className="font-medium">Remark:</span> {parsed.remark}</p> : null}
+                          {getSavedActionRemarkText(item) ? (
+                            <p><span className="font-medium">Remark:</span> {getSavedActionRemarkText(item)}</p>
+                          ) : null}
                         </div>
                       ) : null}
                     </div>

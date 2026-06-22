@@ -121,6 +121,7 @@ import {
   setInstallationScheduledDateInLocalMap,
   extractQuotationListFromApiResponse,
   extractQuotationListTotalFromApiResponse,
+  type OperationalQuotationRecord,
   flattenWrappedQuotationRow,
   flattenQuotationListRow,
   stampInstallerReleaseFromMap,
@@ -595,6 +596,8 @@ export default function AdminPanelPage() {
   /** Server-side total when list fetch is paginated (e.g. limit 1000). */
   const [quotationsListTotal, setQuotationsListTotal] = useState<number | null>(null)
   const [thisMonthQuotationsFromStats, setThisMonthQuotationsFromStats] = useState<number | null>(null)
+  const [isAdminDataLoading, setIsAdminDataLoading] = useState(false)
+  const [adminLoadError, setAdminLoadError] = useState<string | null>(null)
   const [dealers, setDealers] = useState<Dealer[]>([])
   const [visitors, setVisitors] = useState<Visitor[]>([])
   const [accountManagers, setAccountManagers] = useState<AccountManager[]>([])
@@ -1309,6 +1312,9 @@ export default function AdminPanelPage() {
 
     if (isStale()) return
 
+    setIsAdminDataLoading(true)
+    setAdminLoadError(null)
+
     try {
       if (useApi) {
         try {
@@ -1320,11 +1326,24 @@ export default function AdminPanelPage() {
 
         if (isStale()) return
 
-        // Load all quotation pages (API defaults to 1000 per page)
-        const { rows: adminQuotationRows, total: paginatedQuotationsTotal } =
-          await fetchAllPaginatedQuotationListPages((page, limit) =>
+        let adminQuotationRows: unknown[] = []
+        let paginatedQuotationsTotal: number | null = null
+        try {
+          const listResult = await fetchAllPaginatedQuotationListPages((page, limit) =>
             api.admin.quotations.getAll({ page, limit }),
           )
+          adminQuotationRows = listResult.rows
+          paginatedQuotationsTotal = listResult.total
+        } catch (quotationsError) {
+          if (isStale()) return
+          if (
+            quotationsError instanceof ApiError &&
+            isApiAuthFailure(undefined, quotationsError.code, quotationsError.message)
+          ) {
+            return
+          }
+          throw quotationsError
+        }
         let resolvedQuotationsTotal = paginatedQuotationsTotal
         try {
           const statsResponse = await api.admin.statistics()
@@ -1632,74 +1651,78 @@ export default function AdminPanelPage() {
         )
         setQuotationsListTotal((prev) => Math.max(prev ?? 0, quotationsList.length))
 
-        // Load dealers (all pages + include inactive) so UI count matches database.
-        const dealerRows: any[] = []
-        const firstDealersResponse: any = await api.admin.dealers.getAll({
-          page: 1,
-          limit: 1000,
-          includeInactive: true,
-        })
-        dealerRows.push(...(firstDealersResponse?.dealers || []))
-        const totalPages = Number(firstDealersResponse?.pagination?.totalPages || 1)
-        if (totalPages > 1) {
-          for (let page = 2; page <= totalPages; page += 1) {
-            const pageResponse: any = await api.admin.dealers.getAll({
-              page,
-              limit: 1000,
-              includeInactive: true,
-            })
-            dealerRows.push(...(pageResponse?.dealers || []))
+        let dealersList: Dealer[] = []
+        try {
+          const dealerRows: any[] = []
+          const firstDealersResponse: any = await api.admin.dealers.getAll({
+            page: 1,
+            limit: 1000,
+            includeInactive: true,
+          })
+          dealerRows.push(...(firstDealersResponse?.dealers || []))
+          const totalPages = Number(firstDealersResponse?.pagination?.totalPages || 1)
+          if (totalPages > 1) {
+            for (let page = 2; page <= totalPages; page += 1) {
+              const pageResponse: any = await api.admin.dealers.getAll({
+                page,
+                limit: 1000,
+                includeInactive: true,
+              })
+              dealerRows.push(...(pageResponse?.dealers || []))
+            }
           }
+          const dedupedDealerRows = Array.from(
+            new Map(dealerRows.map((row) => [String(row?.id || row?._id || ""), row])).values(),
+          ).filter((row) => String(row?.id || row?._id || "").trim())
+          dealersList = dedupedDealerRows.map((d: any) => ({
+            id: d.id || d._id,
+            username: d.username,
+            firstName: d.firstName,
+            lastName: d.lastName,
+            email: d.email,
+            mobile: d.mobile,
+            gender: d.gender || "",
+            dateOfBirth: d.dateOfBirth || "",
+            fatherName: d.fatherName || "",
+            fatherContact: d.fatherContact || "",
+            governmentIdType: d.governmentIdType || "",
+            governmentIdNumber: d.governmentIdNumber || "",
+            address: d.address || {
+              street: "",
+              city: "",
+              state: "",
+              pincode: "",
+            },
+            isActive: d.isActive ?? false,
+            createdAt: d.createdAt,
+            emailVerified: d.emailVerified ?? false,
+          }))
+          setDealers(dealersList)
+        } catch (dealersError) {
+          console.error("Error loading dealers:", dealersError)
         }
-        const dedupedDealerRows = Array.from(
-          new Map(dealerRows.map((row) => [String(row?.id || row?._id || ""), row])).values(),
-        ).filter((row) => String(row?.id || row?._id || "").trim())
-        const dealersList = dedupedDealerRows.map((d: any) => ({
-          id: d.id || d._id,
-          username: d.username,
-          firstName: d.firstName,
-          lastName: d.lastName,
-          email: d.email,
-          mobile: d.mobile,
-          gender: d.gender || "",
-          dateOfBirth: d.dateOfBirth || "",
-          fatherName: d.fatherName || "",
-          fatherContact: d.fatherContact || "",
-          governmentIdType: d.governmentIdType || "",
-          governmentIdNumber: d.governmentIdNumber || "",
-          address: d.address || {
-            street: "",
-            city: "",
-            state: "",
-            pincode: "",
-          },
-          isActive: d.isActive ?? false, // Backend defaults to false for new registrations
-          createdAt: d.createdAt,
-          emailVerified: d.emailVerified ?? false,
-        }))
-        setDealers(dealersList)
 
-        // Load visitors
-        // apiRequest returns data.data, so response is already the data object
-        // API response structure: { success: true, data: { visitors: [...] } }
-        // After apiRequest unwrapping: response = { visitors: [...], pagination: {...} }
-        const visitorsResponse = await api.admin.visitors.getAll()
-        const visitorsList = visitorsResponse.visitors || []
-        setVisitors(visitorsList.map((v: any) => ({
-          id: v.id,
-          username: v.username || "",
-          password: "",
-          firstName: v.firstName || "",
-          lastName: v.lastName || "",
-          email: v.email || "",
-          mobile: v.mobile || "",
-          employeeId: v.employeeId,
-          isActive: v.isActive ?? true,
-          createdBy: v.createdBy,
-          createdAt: v.createdAt,
-          updatedAt: v.updatedAt,
-          visitCount: v.visitCount || 0, // Include visit count from API
-        })))
+        try {
+          const visitorsResponse = await api.admin.visitors.getAll()
+          const visitorsList = visitorsResponse.visitors || []
+          setVisitors(visitorsList.map((v: any) => ({
+            id: v.id,
+            username: v.username || "",
+            password: "",
+            firstName: v.firstName || "",
+            lastName: v.lastName || "",
+            email: v.email || "",
+            mobile: v.mobile || "",
+            employeeId: v.employeeId,
+            isActive: v.isActive ?? true,
+            createdBy: v.createdBy,
+            createdAt: v.createdAt,
+            updatedAt: v.updatedAt,
+            visitCount: v.visitCount || 0,
+          })))
+        } catch (visitorsError) {
+          console.error("Error loading visitors:", visitorsError)
+        }
 
         // Load account managers
         try {
@@ -1924,6 +1947,14 @@ export default function AdminPanelPage() {
         return
       }
       console.error("Error loading admin data:", error)
+      setAdminLoadError(apiErrorToUserMessage(error))
+      toast({
+        title: "Could not load admin data",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      if (!isStale()) setIsAdminDataLoading(false)
     }
   }
 
@@ -4143,6 +4174,25 @@ export default function AdminPanelPage() {
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
+            {adminLoadError ? (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="font-medium text-destructive">Could not load data from API</p>
+                  <p className="text-sm text-muted-foreground mt-1">{adminLoadError}</p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void loadData(++adminLoadRequestRef.current)}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Retry
+                </Button>
+              </div>
+            ) : null}
+            {isAdminDataLoading && quotations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Loading overview from API…</p>
+            ) : null}
             {/* Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>

@@ -44,9 +44,6 @@ import {
 } from "@/lib/pricing-tables"
 import { usePricingTables } from "@/lib/use-pricing-tables"
 import { useProductCatalog } from "@/lib/use-product-catalog"
-
-/** New quotations: DCR only — NON DCR and BOTH are not offered in the UI. */
-const NEW_QUOTATION_SYSTEM_TYPE = "dcr" as const
 import {
   buildInverterBrandDropdownOptions,
   QUOTATION_AS_PER_THE_SET_LABEL,
@@ -61,6 +58,33 @@ import {
   type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
 import { restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
+import { cn } from "@/lib/utils"
+
+const DEFAULT_QUOTATION_SYSTEM_TYPE = "dcr" as const
+
+type QuotationSystemTypeOption = "dcr" | "non-dcr" | "both"
+
+const SYSTEM_TYPE_OPTIONS: Array<{
+  value: QuotationSystemTypeOption
+  label: string
+  description: string
+}> = [
+  {
+    value: "dcr",
+    label: "DCR",
+    description: "Subsidy-eligible domestic content panels. Select a DCR package.",
+  },
+  {
+    value: "non-dcr",
+    label: "NON DCR",
+    description: "Commercial / non-subsidy on-grid systems. Select a NON DCR package.",
+  },
+  {
+    value: "both",
+    label: "BOTH",
+    description: "Split DCR + Non-DCR configuration with subsidy on the DCR portion.",
+  },
+]
 
 function PanelPdfRangeOptions({
   panelBrand,
@@ -157,7 +181,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const cableSizesList = catalog?.cables?.sizes || []
   const emptyProductDefaults: ProductSelection = {
       phase: "",
-      systemType: NEW_QUOTATION_SYSTEM_TYPE,
+      systemType: DEFAULT_QUOTATION_SYSTEM_TYPE,
       panelBrand: "",
       panelSize: "",
       panelQuantity: 0,
@@ -217,34 +241,30 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
   }, [initialData])
 
-  const isLegacyNonDcrOrBoth =
-    initialData?.systemType === "non-dcr" || initialData?.systemType === "both"
+  const effectiveSystemType = (formData.systemType || DEFAULT_QUOTATION_SYSTEM_TYPE) as QuotationSystemTypeOption
 
-  const effectiveSystemType = isLegacyNonDcrOrBoth
-    ? formData.systemType
-    : NEW_QUOTATION_SYSTEM_TYPE
-
-  // New quotations are DCR-only (no system-type picker for NON DCR / BOTH)
-  useEffect(() => {
-    if (isLegacyNonDcrOrBoth) return
-    setFormData((prev) => {
-      if (prev.systemType === NEW_QUOTATION_SYSTEM_TYPE) return prev
-      return {
-        ...prev,
-        systemType: NEW_QUOTATION_SYSTEM_TYPE,
-        centralSubsidy: (prev.centralSubsidy ?? 0) > 0 ? (prev.centralSubsidy ?? 0) : 78000,
-        stateSubsidy: prev.stateSubsidy || 0,
-      }
-    })
-  }, [isLegacyNonDcrOrBoth])
-
-  // Reset selection flags when system type changes (legacy edits only)
-  useEffect(() => {
-    if (!isLegacyNonDcrOrBoth) return
+  const handleSystemTypeChange = (nextType: QuotationSystemTypeOption) => {
+    if (nextType === effectiveSystemType) return
     setHasSelectedDcrConfig(false)
     setHasSelectedNonDcrConfig(false)
     setHasSelectedBothConfig(false)
-  }, [formData.systemType, isLegacyNonDcrOrBoth])
+    setError("")
+    setFormData({
+      ...emptyProductDefaults,
+      systemType: nextType,
+      centralSubsidy: nextType === "non-dcr" ? 0 : 78000,
+      stateSubsidy: 0,
+    })
+  }
+
+  // Reset browse flags when system type changes (user switched type mid-form)
+  useEffect(() => {
+    if (!initialData) return
+    if (initialData.systemType === formData.systemType) return
+    setHasSelectedDcrConfig(false)
+    setHasSelectedNonDcrConfig(false)
+    setHasSelectedBothConfig(false)
+  }, [formData.systemType, initialData?.systemType])
 
   // When loading initialData (editing), show fields if config is already populated
   useEffect(() => {
@@ -893,7 +913,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   }
 
   const showDcrFields = effectiveSystemType === "dcr"
-  const showBothFields = isLegacyNonDcrOrBoth && formData.systemType === "both"
+  const showBothFields = effectiveSystemType === "both"
   const showCustomizeFields = formData.systemType === "customize"
   const showStandardFields =
     effectiveSystemType && !showCustomizeFields && !showBothFields
@@ -946,22 +966,27 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             </div>
           )}
 
-          {isLegacyNonDcrOrBoth ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-              <span className="font-medium">System type: </span>
-              {formData.systemType === "both" ? "BOTH (DCR + NON DCR)" : "NON DCR"}
-              <span className="block text-xs text-amber-800/90 mt-1">
-                This quotation uses a legacy system type. New quotations are DCR only.
-              </span>
+          <div className="space-y-3">
+            <Label className="text-sm font-medium">System type *</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {SYSTEM_TYPE_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => handleSystemTypeChange(option.value)}
+                  className={cn(
+                    "rounded-lg border p-4 text-left transition-colors",
+                    effectiveSystemType === option.value
+                      ? "border-primary bg-primary/5 ring-2 ring-primary/30"
+                      : "border-border hover:border-primary/40",
+                  )}
+                >
+                  <p className="font-medium text-foreground">{option.label}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{option.description}</p>
+                </button>
+              ))}
             </div>
-          ) : (
-            <div className="rounded-lg border-2 border-primary bg-primary/5 px-4 py-3">
-              <span className="font-medium text-foreground">DCR</span>
-              <span className="block text-xs text-muted-foreground mt-1">
-                DCR panels — eligible for subsidy. Select a package below.
-              </span>
-            </div>
-          )}
+          </div>
 
           {showBothFields && (
             <>
@@ -1516,7 +1541,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* NON DCR Configuration Selector */}
-              {isLegacyNonDcrOrBoth && formData.systemType === "non-dcr" && (
+              {effectiveSystemType === "non-dcr" && (
                 <div className="border-t border-border pt-4 sm:pt-6">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4 mb-4">
                     <div className="flex items-center gap-2 flex-1 min-w-0">
@@ -2436,7 +2461,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       )}
 
       {/* NON DCR Configuration Dialog */}
-      {isLegacyNonDcrOrBoth && formData.systemType === "non-dcr" && (
+      {effectiveSystemType === "non-dcr" && (
         <NonDcrConfigDialog
           open={nonDcrConfigDialogOpen}
           onOpenChange={setNonDcrConfigDialogOpen}

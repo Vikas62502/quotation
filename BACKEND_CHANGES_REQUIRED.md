@@ -2734,7 +2734,7 @@ Parse tagged format with `parseTaggedCallRemark()` in `BACKEND_ADMIN_QUOTATION_S
 | `start` | Set assignee + `in_progress`. **Do not** return `nextLead` or advance queue head. Return updated **same** lead. |
 | `called` / `follow_up` / `not_interested` / `rescheduled` | Persist remark fields + timestamps; **then** return `nextLead` / updated queue snapshot. |
 
-On **`LEAD_004`** (lead not assigned): allow `start` to set `assigned_dealer_id` to JWT dealer (claim on start). Frontend retries assign + optimistic `in_progress`.
+On **`LEAD_004`** (lead not assigned): auto-assign to JWT dealer when the lead is in their pool — on **`start`** *and* on **completion** actions if the dealer is working that lead (`in_progress` or eligible pool row). Frontend retries `POST .../claim` / `POST .../assign` then saves optimistically if backend still returns `LEAD_004`; **backend must persist** for Admin/HR reports and multi-device sync.
 
 ### E.1 Current lead persistence — `in_progress` until Submit (Jun 2026)
 
