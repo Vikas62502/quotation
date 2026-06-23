@@ -1,4 +1,5 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
+import { isInaPanelPackage, restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 import {
   formatQuotationPhaseLabel,
@@ -11,6 +12,7 @@ import {
   getMountingStructurePdfBrandModel,
   getMountingStructurePdfSpecification,
   getPanelPdfRangeLabel,
+  INA_DCR_PANEL_RANGE_KEY,
   isAsPerTheSetLabel,
   normalizeInverterBrandForDisplay,
   QUOTATION_AS_PER_THE_SET_LABEL,
@@ -275,6 +277,18 @@ function pickNonEmpty(...values: unknown[]): string {
 
 /** Resolve panel brand for PDF from DCR / non-DCR / API field aliases. */
 export function resolvePanelBrandForPdf(products: ProductsLike): string {
+  if (isInaPanelPackage(products)) {
+    return "INA"
+  }
+  if (resolvePdfPanelRangeKey(products, "primary") === INA_DCR_PANEL_RANGE_KEY) {
+    return "INA"
+  }
+  if (resolvePdfPanelRangeKey(products, "dcr") === INA_DCR_PANEL_RANGE_KEY) {
+    return "INA"
+  }
+  if (String(products.panelType || (products as Record<string, unknown>).panel_type || "").trim().toLowerCase() === "ina") {
+    return "INA"
+  }
   const raw = products as Record<string, unknown>
   const systemType = pickNonEmpty(products.systemType, raw.system_type).toLowerCase()
   const panelType = pickNonEmpty(raw.panelType, raw.panel_type)
@@ -754,7 +768,9 @@ export function buildQuotationProposalDocumentData(params: {
   quotationDate?: Date
   validityDate?: Date
 }): QuotationProposalDocumentData {
-  const products = (params.products || { systemType: "dcr", phase: "1-Phase" }) as ProductsLike
+  const products = restoreDcrPackageDisplayForForm(
+    (params.products || { systemType: "dcr", phase: "1-Phase" }) as ProductSelection,
+  ) as ProductsLike
   const quotationDate = params.quotationDate ?? new Date()
   const validityDate =
     params.validityDate ??

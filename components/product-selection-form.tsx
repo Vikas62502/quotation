@@ -53,11 +53,13 @@ import {
   buildMeterBrandDropdownOptions,
   getPanelPdfRangeOptionsForBrand,
   defaultPdfPanelRangeKeyForDcrPricingType,
+  defaultPdfPanelRangeKeyForPanelBrand,
+  applyDefaultPdfPanelRanges,
   getPanelPdfRangeLabel,
   TATA_DCR_PANEL_RANGE_KEY,
   type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
-import { restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
+import { restoreDcrPackageDisplayForForm, backfillPanelQuantityForPdfRange } from "@/lib/quotation-api-payload"
 import { cn } from "@/lib/utils"
 
 const DEFAULT_QUOTATION_SYSTEM_TYPE = "dcr" as const
@@ -241,6 +243,45 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
   }, [initialData])
 
+  // Auto-select default PDF panel range when brand supports it (INA, Premier, Adani, etc.)
+  useEffect(() => {
+    setFormData((prev) => {
+      const next = applyDefaultPdfPanelRanges(prev)
+      if (
+        next.pdfPanelRangeKey === prev.pdfPanelRangeKey &&
+        next.pdfDcrPanelRangeKey === prev.pdfDcrPanelRangeKey &&
+        next.pdfNonDcrPanelRangeKey === prev.pdfNonDcrPanelRangeKey &&
+        next.pdfUsePanelSizeRange === prev.pdfUsePanelSizeRange
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [formData.panelBrand, formData.dcrPanelBrand, formData.nonDcrPanelBrand])
+
+  // Keep panel quantity in sync when PDF range hides the quantity field
+  useEffect(() => {
+    setFormData((prev) => {
+      const next = backfillPanelQuantityForPdfRange(prev)
+      if (
+        next.panelQuantity === prev.panelQuantity &&
+        next.dcrPanelQuantity === prev.dcrPanelQuantity &&
+        next.nonDcrPanelQuantity === prev.nonDcrPanelQuantity
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [
+    formData.pdfPanelRangeKey,
+    formData.pdfDcrPanelRangeKey,
+    formData.pdfNonDcrPanelRangeKey,
+    formData.structureSize,
+    formData.panelSize,
+    formData.dcrPanelSize,
+    formData.nonDcrPanelSize,
+  ])
+
   const effectiveSystemType = (formData.systemType || DEFAULT_QUOTATION_SYSTEM_TYPE) as QuotationSystemTypeOption
 
   const handleSystemTypeChange = (nextType: QuotationSystemTypeOption) => {
@@ -421,12 +462,30 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   }
 
   const updatePanelBrand = (field: "panelBrand" | "dcrPanelBrand" | "nonDcrPanelBrand", brand: string) => {
+    const defaultRange = defaultPdfPanelRangeKeyForPanelBrand(brand)
+    const isIna = brand.trim().toLowerCase() === "ina"
+    const inaMarkers = isIna
+      ? { panelType: "INA" as const, inaDcrPackage: true as const }
+      : { panelType: undefined, inaDcrPackage: undefined }
     setFormData((prev) => ({
       ...prev,
       [field]: brand,
-      ...(field === "panelBrand" ? { pdfPanelRangeKey: "", pdfUsePanelSizeRange: false } : {}),
-      ...(field === "dcrPanelBrand" ? { pdfDcrPanelRangeKey: "", panelBrand: brand } : {}),
-      ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: "" } : {}),
+      ...inaMarkers,
+      ...(field === "panelBrand"
+        ? {
+            pdfPanelRangeKey: defaultRange,
+            pdfUsePanelSizeRange: Boolean(defaultRange),
+          }
+        : {}),
+      ...(field === "dcrPanelBrand"
+        ? {
+            pdfDcrPanelRangeKey: defaultRange,
+            panelBrand: brand,
+            pdfPanelRangeKey: defaultRange,
+            pdfUsePanelSizeRange: Boolean(defaultRange),
+          }
+        : {}),
+      ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: defaultRange } : {}),
     }))
     setError("")
   }
@@ -685,6 +744,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     const { pricingPanelType, panelBrand: selectedPanelBrand, panelSize: panelSizeToSet, panelQuantity: panelQuantityToSet } =
       panelPackage
     const isTataPackage = pricingPanelType === "Tata"
+    const isInaPackage = pricingPanelType === "INA"
+    const inaMarkers = isInaPackage ? { panelType: "INA" as const, inaDcrPackage: true as const } : {}
 
     const systemConfig = getSystemConfiguration(
       "dcr",
@@ -714,11 +775,17 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         systemConfig.acdb || preFilledData.acdb,
         systemConfig.dcdb || preFilledData.dcdb,
       )
+      const pdfRangeKey = isTataPackage
+        ? TATA_DCR_PANEL_RANGE_KEY
+        : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
+          defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
+          "")
 
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
+          ...inaMarkers,
           phase: effPhase,
           inverterBrand: inverterBrandToSet,
           inverterSize: inverterSizeToSet,
@@ -737,9 +804,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
           // Store the system price from the selected configuration - CRITICAL: must be > 0
           systemPrice: config.price,
-          pdfPanelRangeKey: isTataPackage
-            ? TATA_DCR_PANEL_RANGE_KEY
-            : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
+          pdfPanelRangeKey: pdfRangeKey,
+          pdfUsePanelSizeRange: Boolean(pdfRangeKey),
         } satisfies ProductSelection
         console.log("[ProductSelectionForm] DCR config selected from dialog - filled all fields:", updated)
         console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
@@ -759,9 +825,15 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           ? config.phase
           : determinePhase(config.systemSize, config.inverterSize, pricingTables || undefined)
       const { acdb: defaultAcdb, dcdb: defaultDcdb } = acdbDcdbLabelsForPhase(fallbackPhase)
+      const pdfRangeKey = isTataPackage
+        ? TATA_DCR_PANEL_RANGE_KEY
+        : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
+          defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
+          "")
 
       setFormData((prev) => ({
         ...prev,
+        ...inaMarkers,
         phase: fallbackPhase,
         dcrPanelBrand: selectedPanelBrand,
         dcrPanelSize: panelSizeToSet,
@@ -779,9 +851,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         systemPrice: config.price,
         centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
         stateSubsidy: prev.stateSubsidy || 0,
-        pdfPanelRangeKey: isTataPackage
-          ? TATA_DCR_PANEL_RANGE_KEY
-          : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ?? ""),
+        pdfPanelRangeKey: pdfRangeKey,
+        pdfUsePanelSizeRange: Boolean(pdfRangeKey),
       }))
       setHasSelectedDcrConfig(true)
     }
@@ -902,11 +973,15 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       }
     }
 
-    const normalizedProducts = restoreDcrPackageDisplayForForm({
-      ...formData,
-      systemType: effectiveSystemType,
-      phase: formData.phase || currentPhase,
-    })
+    const normalizedProducts = backfillPanelQuantityForPdfRange(
+      restoreDcrPackageDisplayForForm({
+        ...formData,
+        systemType: effectiveSystemType,
+        phase: formData.phase || currentPhase,
+        stateSubsidy: Number(formData.stateSubsidy) || 0,
+        centralSubsidy: Number(formData.centralSubsidy) || 0,
+      }),
+    )
 
     setFormData(normalizedProducts)
     onSubmit(normalizedProducts)

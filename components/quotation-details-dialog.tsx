@@ -44,8 +44,7 @@ import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
-import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
-import { productsWithPdfDisplayFlags } from "@/lib/quotation-api-payload"
+import { restoreDcrPackageDisplayForForm, persistQuotationProducts, mergeQuotationProductsForDisplay } from "@/lib/quotation-api-payload"
 import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
 
 interface QuotationDetailsDialogProps {
@@ -231,7 +230,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
               const customerData = fullData.customer
               const address = customerData.address || {}
               
-              const mergedQuotation = applyQuotationDetailToRow(quotation, fullData)
+              const mergedQuotation = applyQuotationDetailToRow(
+                {
+                  ...quotation,
+                  products: mergeQuotationProductsForDisplay(quotation),
+                },
+                fullData,
+              )
               const updatedQuotation = {
                 ...mergedQuotation,
                 customer: {
@@ -367,8 +372,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
       if (!displayQuotation?.customer || !displayQuotation?.products) return null
 
       const customer = displayQuotation.customer
-      const products = (mergeQuotationProductSources(displayQuotation) ||
-        displayQuotation.products) as ProductSelection
+      const products = mergeQuotationProductsForDisplay(displayQuotation)
       const backendPricing = (displayQuotation as Quotation & { pricing?: { subtotal?: number; totalAmount?: number } })
         .pricing
       const subtotal =
@@ -436,7 +440,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const storedDiscountValue = displayQuotation.discount || 0
   const backendPricing = (displayQuotation as any).pricing
 
-  const products = (mergeQuotationProductSources(displayQuotation) || displayQuotation.products || {}) as ProductSelection
+  const products = mergeQuotationProductsForDisplay(displayQuotation)
   const resolveProductPhase = (): "1-Phase" | "3-Phase" => {
     const explicitPhase = products.phase
     if (explicitPhase === "1-Phase" || explicitPhase === "3-Phase") {
@@ -625,13 +629,23 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const generatePDF = async () => {
     setIsGeneratingPDF(true)
 
-    let quotationForPdf = fullQuotation || quotation
+    const displayPrior = fullQuotation || quotation
+    const priorRow = displayPrior
+      ? {
+          ...displayPrior,
+          products: mergeQuotationProductsForDisplay(displayPrior),
+        }
+      : null
+
+    let quotationForPdf = priorRow || quotation
     if (useApi && quotationForPdf?.id) {
       try {
         const fresh = await api.quotations.getById(quotationForPdf.id)
-        if (fresh) {
-          quotationForPdf = applyQuotationDetailToRow(quotationForPdf, fresh)
+        if (fresh && priorRow) {
+          quotationForPdf = applyQuotationDetailToRow(priorRow, fresh)
           setFullQuotation(quotationForPdf)
+        } else if (fresh) {
+          quotationForPdf = applyQuotationDetailToRow(quotationForPdf, fresh)
         }
       } catch (error) {
         console.warn("[generatePDF] Could not refresh quotation from API; using cached row:", error)
@@ -1763,13 +1777,14 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   })
                   
                   if (useApi) {
-                    // Update products via API
-                    const productsResponse = await api.quotations.updateProducts(
-                      displayQuotation.id,
-                      productsWithPdfDisplayFlags(updatedProducts),
+                    const displayProducts = restoreDcrPackageDisplayForForm(updatedProducts)
+                    const productsResponse = await persistQuotationProducts(
+                      (payload) => api.quotations.updateProducts(displayQuotation.id, payload),
+                      updatedProducts,
                     )
                     
                     if (productsResponse) {
+                      const savedProducts = displayProducts
                       // Update pricing with calculated subtotal and discount amount (not percentage)
                       const pricingResponse = await api.quotations.updatePricing(displayQuotation.id, {
                         subtotal: calculatedSubtotal,
@@ -1784,7 +1799,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         // Update local state with server response
                         const updatedQuotation = {
                           ...displayQuotation,
-                          products: productsResponse.products || updatedProducts,
+                          products: savedProducts,
                           discount: pricingResponse.discount ?? currentDiscountAmount, // Store discount amount
                           totalAmount: pricingResponse.totalAmount ?? pricingResponse.pricing?.totalAmount ?? calculatedSubtotal,
                           finalAmount: pricingResponse.finalAmount ?? pricingResponse.pricing?.finalAmount ?? calculatedFinalAmount,
@@ -1804,7 +1819,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         // Products updated but pricing failed - still update local state
                         const updatedQuotation = {
                           ...displayQuotation,
-                          products: productsResponse.products || updatedProducts,
+                          products: savedProducts,
                           totalAmount: calculatedSubtotal,
                           finalAmount: calculatedFinalAmount,
                           ...mergeQuotationTimestampsFromApi(displayQuotation, productsResponse),
@@ -1842,7 +1857,8 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   console.error("Error updating system configuration:", error)
                   toast({
                     title: "Error",
-                    description: error instanceof Error ? error.message : "Failed to update system configuration",
+                    description:
+                      error instanceof Error ? error.message : "Failed to update system configuration",
                     variant: "destructive",
                   })
                 } finally {

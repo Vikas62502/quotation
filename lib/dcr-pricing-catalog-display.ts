@@ -21,10 +21,17 @@ export function dcrCatalogInverterLabel(): string {
   return QUOTATION_AS_PER_THE_SET_LABEL
 }
 
-/** Catalog table: panel watt range per brand (Tata DCR uses 530W–570W). */
+/** Catalog table: panel watt range per brand (Tata DCR uses 530W–570W; INA uses 500W–600W). */
 export function dcrCatalogPanelRangeLabel(panelType?: string): string {
-  if (panelType?.trim().toLowerCase() === "tata") {
+  const normalized = panelType?.trim().toLowerCase() ?? ""
+  if (normalized === "tata") {
     return getPanelPdfRangeLabel(TATA_DCR_PANEL_RANGE_KEY) ?? "530W - 570W"
+  }
+  if (normalized === "ina") {
+    return getPanelPdfRangeLabel("ina_500_600_bifacial") ?? "500W - 600W"
+  }
+  if (normalized === "premier energies" || normalized === "premier") {
+    return getPanelPdfRangeLabel("premier_600_625_bifacial_topcon") ?? "600-625W Bifacial Topcon"
   }
   return QUOTATION_AS_PER_THE_SET_LABEL
 }

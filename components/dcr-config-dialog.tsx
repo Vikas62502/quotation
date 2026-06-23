@@ -75,6 +75,7 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
     if (panelType === "Adani Topcon") return "Adani Topcon (620W)"
     if (panelType === "Waaree") return "Waaree (540W)"
     if (panelType === "Premier Energies") return "Premier Energies (600-625W Topcon)"
+    if (panelType === "INA") return "INA (500W-600W)"
     if (panelType === "Tata") return "Tata (530W-570W)"
     return panelType
   }
@@ -183,7 +184,7 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
             </p>
             <p>
               Brands: <strong>Adani (555W)</strong>, <strong>Adani Topcon (620W)</strong>, <strong>Waaree (540W)</strong>,{" "}
-              <strong>Premier Energies (600–625W Topcon)</strong>, <strong>Tata (530W–570W)</strong>.
+              <strong>Premier Energies (600–625W Topcon)</strong>, <strong>INA (500W–600W)</strong>, <strong>Tata (530W–570W)</strong>.
             </p>
           </div>
 

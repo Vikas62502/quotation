@@ -97,10 +97,14 @@ export type PdfPanelRangeKey =
   | "adani_540_580_bifacial"
   | "adani_610_625_bifacial_topcon"
   | "premier_600_625_bifacial_topcon"
+  | "ina_500_600_bifacial"
   | "tata_530_570"
 
 /** Fixed panel watt range for Tata DCR package sets (Jun 2026 sheet). */
 export const TATA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "tata_530_570"
+
+/** INA DCR package — 500W–600W bifacial range on proposal PDF. */
+export const INA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "ina_500_600_bifacial"
 
 /** Default PDF panel range when a DCR browse package column is selected. */
 export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): PdfPanelRangeKey | null {
@@ -109,6 +113,7 @@ export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): Pdf
   if (normalized === "adani") return "adani_540_580_bifacial"
   if (normalized === "waaree") return "waaree_540_560_bifacial"
   if (normalized === "premier energies" || normalized === "premier") return "premier_600_625_bifacial_topcon"
+  if (normalized === "ina") return INA_DCR_PANEL_RANGE_KEY
   if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
   return null
 }
@@ -161,6 +166,11 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     pdfSpecification: "600-625W Bifacial Topcon",
   },
   {
+    key: "ina_500_600_bifacial",
+    label: "500-600W Bifacial",
+    pdfSpecification: "500W - 600W",
+  },
+  {
     key: "tata_530_570",
     label: "530W - 570W",
     pdfSpecification: "530W - 570W",
@@ -172,6 +182,7 @@ const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
   adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon"],
   premierenergies: ["premier_600_625_bifacial_topcon"],
   premier: ["premier_600_625_bifacial_topcon"],
+  ina: ["ina_500_600_bifacial"],
   tata: [TATA_DCR_PANEL_RANGE_KEY],
 }
 
@@ -185,6 +196,53 @@ function normalizePanelBrandKey(brand?: string): string {
 export function getPanelPdfRangeOptionsForBrand(panelBrand?: string): PanelPdfRangeOption[] {
   const keys = PANEL_RANGE_BY_BRAND[normalizePanelBrandKey(panelBrand)] || []
   return PANEL_RANGE_CATALOG.filter((option) => keys.includes(option.key))
+}
+
+/** Default PDF range checkbox when a panel brand is chosen (INA, Premier, Adani, etc.). */
+export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPanelRangeKey | "" {
+  const keys = PANEL_RANGE_BY_BRAND[normalizePanelBrandKey(panelBrand)] || []
+  return keys[0] ?? ""
+}
+
+/** Backfill empty PDF range keys from panel brand — e.g. INA → 500–600W Bifacial. */
+export function applyDefaultPdfPanelRanges(products: ProductSelection): ProductSelection {
+  const next = { ...products }
+  const record = products as ProductSelection & Record<string, unknown>
+  const panelType = String(products.panelType || record.panel_type || "").trim().toLowerCase()
+
+  const brandForPrimaryRange =
+    panelType === "ina"
+      ? "INA"
+      : products.panelBrand || products.dcrPanelBrand || ""
+  const primaryDefault = defaultPdfPanelRangeKeyForPanelBrand(brandForPrimaryRange)
+  const existingPrimary = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  if (primaryDefault && !existingPrimary) {
+    next.pdfPanelRangeKey = primaryDefault
+    next.pdfUsePanelSizeRange = true
+  } else if (panelType === "ina" && existingPrimary && !existingPrimary.startsWith("ina_")) {
+    next.pdfPanelRangeKey = INA_DCR_PANEL_RANGE_KEY
+    next.pdfUsePanelSizeRange = true
+  }
+
+  const dcrBrandForRange =
+    panelType === "ina" ? "INA" : products.dcrPanelBrand || products.panelBrand || ""
+  const dcrDefault = defaultPdfPanelRangeKeyForPanelBrand(dcrBrandForRange)
+  const existingDcr = String(products.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  if (dcrDefault && !existingDcr) {
+    next.pdfDcrPanelRangeKey = dcrDefault
+  } else if (panelType === "ina" && existingDcr && !existingDcr.startsWith("ina_")) {
+    next.pdfDcrPanelRangeKey = INA_DCR_PANEL_RANGE_KEY
+  }
+
+  const nonDcrDefault = defaultPdfPanelRangeKeyForPanelBrand(products.nonDcrPanelBrand)
+  const existingNonDcr = String(
+    products.pdfNonDcrPanelRangeKey || record.pdf_non_dcr_panel_range_key || "",
+  ).trim()
+  if (nonDcrDefault && !existingNonDcr) {
+    next.pdfNonDcrPanelRangeKey = nonDcrDefault
+  }
+
+  return next
 }
 
 export function getPanelPdfRangeOption(key?: string | null): PanelPdfRangeOption | null {
@@ -238,6 +296,7 @@ function pickPdfPanelRangeKey(
       return panelW >= 580 ? "waaree_580_700_bifacial_topcon" : "waaree_540_560_bifacial"
     }
     if (brand === "premierenergies" || brand === "premier") return "premier_600_625_bifacial_topcon"
+    if (brand === "ina") return "ina_500_600_bifacial"
     return "adani_610_625_bifacial_topcon"
   }
   return null

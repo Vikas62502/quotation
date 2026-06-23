@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
@@ -18,6 +18,8 @@ import {
   pickRicherCallRemark,
   readDealerCallingActions,
   resolveCallingActionRemark,
+  resolveLeadPriorCallReview,
+  type PriorCallReviewSource,
 } from "@/lib/dealer-calling-action-history"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -450,6 +452,58 @@ function findStatusGroupKeyForStatus(status: string): StatusGroupKey {
   if (!clean) return STATUS_GROUPS[0].key
   const group = STATUS_GROUPS.find((entry) => entry.options.some((option) => option === clean))
   return group?.key ?? STATUS_GROUPS[0].key
+}
+
+function isFollowUpCallingLead(lead: CallingLead): boolean {
+  return (
+    Boolean(lead.nextFollowUpAt) ||
+    lead.status === "rescheduled" ||
+    lead.action === "follow_up" ||
+    lead.action === "rescheduled"
+  )
+}
+
+function inferCallFormDefaultsFromStatus(status: string): {
+  callConnection: "connected" | "not_connected"
+  connectedOutcome: "interested" | "not_interested" | "decision_pending"
+  decisionReason?: string
+  notConnectedReason?: string
+  lostReason?: string
+} {
+  const clean = status.trim()
+  if (!clean) {
+    return { callConnection: "connected", connectedOutcome: "decision_pending" }
+  }
+
+  if (NOT_CONNECTED_REASONS.includes(clean) || CALL_CONNECTIVITY_STATUSES.has(clean)) {
+    return {
+      callConnection: "not_connected",
+      connectedOutcome: "not_interested",
+      notConnectedReason: NOT_CONNECTED_REASONS.includes(clean) ? clean : NOT_CONNECTED_REASONS[0],
+    }
+  }
+
+  if (LOST_REASONS.includes(clean) || clean === "Not Interested" || clean === "Not Interested Currently") {
+    return {
+      callConnection: "connected",
+      connectedOutcome: "not_interested",
+      lostReason: LOST_REASONS.includes(clean) ? clean : LOST_REASONS[0],
+    }
+  }
+
+  if (FOLLOW_UP_STATUSES.has(clean) || DECISION_PENDING_REASONS.includes(clean)) {
+    return {
+      callConnection: "connected",
+      connectedOutcome: "decision_pending",
+      decisionReason: DECISION_PENDING_REASONS.includes(clean) ? clean : DECISION_PENDING_REASONS[0],
+    }
+  }
+
+  if (INTEREST_TAB_MATCHES.includes(clean) || CUSTOMER_INTENT_STATUSES.has(clean)) {
+    return { callConnection: "connected", connectedOutcome: "interested" }
+  }
+
+  return { callConnection: "connected", connectedOutcome: "decision_pending", decisionReason: clean }
 }
 
 function scheduledLeadFromActionLog(item: ActionLogItem): CallingLead | null {
@@ -922,6 +976,76 @@ export default function CallingDataPage() {
     return localDate.toISOString().slice(0, 16)
   }
 
+  const buildPriorCallReviewSources = useCallback((): PriorCallReviewSource[] => {
+    return [
+      ...recentActions,
+      ...dialledActions,
+      ...connectedActionItems,
+      ...notConnectedActionItems,
+      ...(currentDealerId ? readDealerCallingActions(currentDealerId) : []),
+    ]
+  }, [recentActions, dialledActions, connectedActionItems, notConnectedActionItems, currentDealerId])
+
+  const applyPriorCallReviewToForm = useCallback(
+    (lead: CallingLead) => {
+      const session = loadCallingLeadSession(lead.id)
+      const prior = resolveLeadPriorCallReview(lead, buildPriorCallReviewSources())
+      const sessionRemark = cleanFreeCallRemark(session?.callRemark || "")
+
+      setCallRemark(sessionRemark || prior.freeRemark || getScheduledLeadFreeRemark(lead) || "")
+
+      const hasSessionConnection =
+        session?.callConnection === "connected" || session?.callConnection === "not_connected"
+      const hasSessionOutcome =
+        session?.connectedOutcome === "interested" ||
+        session?.connectedOutcome === "not_interested" ||
+        session?.connectedOutcome === "decision_pending"
+
+      if (hasSessionConnection) {
+        setCallConnection(session!.callConnection as "connected" | "not_connected")
+      } else if (isFollowUpCallingLead(lead) && prior.statusText) {
+        const inferred = inferCallFormDefaultsFromStatus(prior.statusText)
+        setCallConnection(inferred.callConnection)
+        setConnectedOutcome(inferred.connectedOutcome)
+        if (inferred.decisionReason) setDecisionReason(inferred.decisionReason)
+        if (inferred.notConnectedReason) setNotConnectedReason(inferred.notConnectedReason)
+        if (inferred.lostReason) setLostReason(inferred.lostReason)
+        if (inferred.connectedOutcome === "decision_pending") {
+          setIsRescheduleChecked(true)
+          setDecisionOverride("pending")
+        }
+      } else {
+        setCallConnection("")
+        setConnectedOutcome("")
+        setNotConnectedReason(NOT_CONNECTED_REASONS[0])
+        setLostReason(LOST_REASONS[0])
+        setDecisionReason(DECISION_PENDING_REASONS[0])
+        setDecisionOverride("pending")
+        setDealClosed(false)
+      }
+
+      if (hasSessionOutcome) {
+        setConnectedOutcome(session!.connectedOutcome as "interested" | "not_interested" | "decision_pending")
+      } else if (!hasSessionConnection && isFollowUpCallingLead(lead) && prior.statusText) {
+        const inferred = inferCallFormDefaultsFromStatus(prior.statusText)
+        setConnectedOutcome(inferred.connectedOutcome)
+      } else if (!hasSessionConnection) {
+        setConnectedOutcome("")
+      }
+
+      const followUpAt = lead.nextFollowUpAt || prior.nextFollowUpAt
+      if (followUpAt) {
+        setRescheduleAt(formatForDatetimeLocal(followUpAt))
+        if (isFollowUpCallingLead(lead)) setIsRescheduleChecked(true)
+      } else if (!hasSessionConnection) {
+        setRescheduleAt("")
+      }
+
+      setCallingActiveLeadId(lead.id)
+    },
+    [buildPriorCallReviewSources],
+  )
+
   const getTaggedCategory = (remark?: string) => {
     const match = (remark || "").match(/^\[([^\]]+)\]/)
     const rawCategory = match?.[1] || ""
@@ -994,16 +1118,15 @@ export default function CallingDataPage() {
   }, [analyticsRange, analyticsFromDate, analyticsToDate])
 
   const rangeFilteredActionsForAnalytics = useMemo(() => {
-    const baseActions = analyticsActions.length > 0 ? analyticsActions : recentActions
-    if (analyticsRange === "all") return baseActions
+    if (analyticsRange === "all") return analyticsActions
     if (!analyticsRangeBounds) return []
-    return baseActions.filter((item) => {
+    return analyticsActions.filter((item) => {
       if (!item.actionAt) return false
       const at = new Date(item.actionAt)
       if (Number.isNaN(at.getTime())) return false
       return at >= analyticsRangeBounds.start && at <= analyticsRangeBounds.end
     })
-  }, [analyticsActions, recentActions, analyticsRange, analyticsRangeBounds])
+  }, [analyticsActions, analyticsRange, analyticsRangeBounds])
 
   const analyticsConnectionSummary = useMemo(
     () => buildCallingConnectionSummary(rangeFilteredActionsForAnalytics),
@@ -1112,10 +1235,15 @@ export default function CallingDataPage() {
     if (pinned?.id) sanctionedIds.add(pinned.id)
     setQueueSanctionedLeadIds((prev) => new Set([...prev, ...sanctionedIds]))
 
+    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const enrichLeadFromHistory = (lead: CallingLead) =>
+      enrichScheduledLeadFromLocalHistory(lead, localScheduledHistory)
+
     const mergedLeadMap = new Map<string, CallingLead>()
     ;[rawLead, ...queueCandidates]
       .filter(Boolean)
       .map(normalizeApiLead)
+      .map(enrichLeadFromHistory)
       .forEach((lead) => {
         if (!lead?.id) return
         mergedLeadMap.set(lead.id, lead)
@@ -1175,7 +1303,6 @@ export default function CallingDataPage() {
       ...readArray(response?.callingActions),
     ])
 
-    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
     const normalizedScheduled = collectScheduledLeads(
       response,
       normalizeApiLead,
@@ -1363,29 +1490,43 @@ export default function CallingDataPage() {
   }
 
   const loadDealerAnalyticsActions = async () => {
-    if (!useApi || !currentDealerId || !authReady || !isAuthenticated) return
+    if (!authReady || !isAuthenticated) return
 
-    const localActions = mergeActionLogEntries(readDealerCallingActions(currentDealerId))
+    const localActions = currentDealerId
+      ? mergeActionLogEntries(readDealerCallingActions(currentDealerId))
+      : []
 
-    // HR analytics is admin/HR-only; dealers must not call it (403 used to clear the session).
-    if (role !== "admin" && role !== "hr") {
+    if (!useApi || !currentDealerId) {
       setAnalyticsActions(localActions)
       return
     }
 
-    try {
-      const response = await api.hr.callingActions.getAll({
-        dealerId: currentDealerId,
-        limit: 2000,
-      })
-      const normalized = mergeActionLogEntries([
-        ...localActions,
-        ...extractCallingActionsFromResponse(response),
-      ])
-      setAnalyticsActions(normalized)
-    } catch {
-      setAnalyticsActions(localActions)
+    const queryParams = {
+      limit: 2000,
+      dealerId: currentDealerId,
     }
+
+    let apiRows: any[] = []
+
+    try {
+      const response = await api.dealers.callingActions.getAll(queryParams)
+      apiRows = extractCallingActionsFromResponse(response)
+    } catch {
+      apiRows = []
+    }
+
+    if (apiRows.length === 0) {
+      try {
+        const response = await api.hr.callingActions.getAll(queryParams)
+        apiRows = extractCallingActionsFromResponse(response)
+      } catch {
+        // HR endpoint may return 403 for dealer logins — fall back to local history.
+      }
+    }
+
+    const fromApi = apiRows.map((entry) => normalizeActionLog(entry))
+    const merged = mergeActionLogEntries([...fromApi, ...localActions])
+    setAnalyticsActions(merged.length > 0 ? merged : localActions)
   }
 
   useEffect(() => {
@@ -1398,7 +1539,7 @@ export default function CallingDataPage() {
     if (!authReady || !isAuthenticated) return
     void loadDealerAnalyticsActions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authReady, isAuthenticated, useApi, currentDealerId, role])
+  }, [authReady, isAuthenticated, useApi, currentDealerId])
 
   useEffect(() => {
     if (!authReady || !isAuthenticated || !useApi) return
@@ -1901,7 +2042,6 @@ export default function CallingDataPage() {
 
     previousCurrentLeadIdRef.current = currentLead.id
     const session = loadCallingLeadSession(currentLead.id)
-    const parsedLeadRemark = cleanFreeCallRemark(currentLead.callRemark)
 
     setEditableLeadDetails({
       name: currentLead.name || "",
@@ -1913,29 +2053,8 @@ export default function CallingDataPage() {
       customerNote: session?.customerNote ?? currentLead.customerNote ?? "",
     })
     setIsEditingLead(false)
-    if (session?.callConnection === "connected" || session?.callConnection === "not_connected") {
-      setCallConnection(session.callConnection)
-    } else {
-      setCallConnection("")
-    }
-    if (
-      session?.connectedOutcome === "interested" ||
-      session?.connectedOutcome === "not_interested" ||
-      session?.connectedOutcome === "decision_pending"
-    ) {
-      setConnectedOutcome(session.connectedOutcome)
-    } else {
-      setConnectedOutcome("")
-    }
-    setNotConnectedReason(NOT_CONNECTED_REASONS[0])
-    setLostReason(LOST_REASONS[0])
-    setDecisionReason(DECISION_PENDING_REASONS[0])
-    setDecisionOverride("pending")
-    setDealClosed(false)
-    setCallRemark(cleanFreeCallRemark(session?.callRemark ?? parsedLeadRemark ?? ""))
-    setRescheduleAt("")
-    setCallingActiveLeadId(currentLead.id)
-  }, [currentLead])
+    applyPriorCallReviewToForm(currentLead)
+  }, [currentLead, applyPriorCallReviewToForm])
 
   useEffect(() => {
     const leadId = pinnedCurrentLead?.id || currentLead?.id
@@ -2091,6 +2210,7 @@ export default function CallingDataPage() {
 
     void copyLeadPhone(lead.mobile)
     pinCurrentLeadForActiveCall(lead)
+    applyPriorCallReviewToForm(lead)
     await submitAction(lead.id, { action: "start" }, { optimisticOnNotAssigned: true })
   }
 
@@ -2134,6 +2254,7 @@ export default function CallingDataPage() {
     }
     if (currentDealerId) {
       appendDealerCallingAction(currentDealerId, actionItem)
+      void loadDealerAnalyticsActions()
     }
     setRecentActions((prev) => {
       const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
@@ -2416,11 +2537,12 @@ export default function CallingDataPage() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Dealer Call Analytics</CardTitle>
             <p className="text-xs text-muted-foreground">
-              Counts use your completed call actions in the selected period (same dealer as this login).
+              Same counts as Admin → Calling Reports for your login. Filter by daily, weekly, monthly, last month,
+              custom range, or all time.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Select
                 value={analyticsRange}
                 onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
@@ -2446,30 +2568,32 @@ export default function CallingDataPage() {
                 </>
               ) : null}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Total Calls</p>
                 <p className="text-xl font-semibold">{rangeFilteredActionsForAnalytics.length}</p>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Connected</p>
-                <p className="text-xl font-semibold">{analyticsConnectionSummary.connected}</p>
-              </div>
-              <div className="rounded-md border p-3">
+              <div className="rounded-md border border-slate-300 bg-slate-50/80 p-3">
                 <p className="text-xs text-muted-foreground">Not Connected</p>
                 <p className="text-xl font-semibold">{analyticsConnectionSummary.notConnected}</p>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Interested</p>
-                <p className="text-xl font-semibold">{analyticsOutcomeSummary.interested}</p>
+              <div className="rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
+                <p className="text-xs text-muted-foreground">Connected</p>
+                <p className="text-xl font-semibold">{analyticsConnectionSummary.connected}</p>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Follow Up</p>
-                <p className="text-xl font-semibold">{analyticsOutcomeSummary.followUp}</p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-md border border-rose-100 bg-rose-50/20 p-3">
+                <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
+                <p className="text-lg font-semibold">{analyticsOutcomeSummary.notInterested}</p>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Not Interested</p>
-                <p className="text-xl font-semibold">{analyticsOutcomeSummary.notInterested}</p>
+              <div className="rounded-md border border-emerald-100 bg-emerald-50/20 p-3">
+                <p className="text-xs text-muted-foreground">Connected — Interested</p>
+                <p className="text-lg font-semibold">{analyticsOutcomeSummary.interested}</p>
+              </div>
+              <div className="rounded-md border border-blue-100 bg-blue-50/20 p-3">
+                <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
+                <p className="text-lg font-semibold">{analyticsOutcomeSummary.followUp}</p>
               </div>
             </div>
           </CardContent>
@@ -3472,7 +3596,7 @@ export default function CallingDataPage() {
                 ) : (
                   <>
                     <Textarea
-                      placeholder="Remarks (saved when you click Submit)"
+                      placeholder="Remarks — previous review is prefilled; edit before Submit"
                       value={callRemark}
                       onChange={(e) => setCallRemark(e.target.value)}
                       rows={3}

@@ -343,6 +343,19 @@ export const defaultPanelPricing: PanelPricing[] = [
   { brand: "RenewSys", size: "700W", price: 41500 },
   { brand: "RenewSys", size: "720W", price: 43500 },
   { brand: "RenewSys", size: "750W", price: 46500 },
+
+  // INA panels — DCR package range 500W–600W
+  { brand: "INA", size: "500W", price: 27800 },
+  { brand: "INA", size: "510W", price: 28200 },
+  { brand: "INA", size: "520W", price: 28600 },
+  { brand: "INA", size: "530W", price: 29000 },
+  { brand: "INA", size: "540W", price: 29400 },
+  { brand: "INA", size: "550W", price: 29800 },
+  { brand: "INA", size: "560W", price: 30200 },
+  { brand: "INA", size: "570W", price: 30600 },
+  { brand: "INA", size: "580W", price: 31000 },
+  { brand: "INA", size: "590W", price: 31400 },
+  { brand: "INA", size: "600W", price: 31800 },
 ]
 
 export const defaultInverterPricing: InverterPricing[] = [
@@ -852,7 +865,13 @@ export const DCR_PRICING_PANEL_TYPES = [
   "Adani Topcon",
   "Waaree",
   "Premier Energies",
+  "INA",
   "Tata",
+] as const
+
+/** INA DCR packages: auto-pick panel size within 500W–600W per nominal kW slab. */
+export const INA_DCR_PANEL_SIZES_WATTS = [
+  600, 590, 580, 570, 560, 550, 540, 530, 520, 510, 500,
 ] as const
 
 function dcrInverterSizeForPackage(systemSize: string, phase: "1-Phase" | "3-Phase"): string {
@@ -871,6 +890,7 @@ type DcrPricingMatrixRow = {
   adaniTopcon620?: number
   waaree540?: number
   premierTopcon?: number
+  ina?: number
 }
 
 /** Tata DCR — Jun 2026 sheet (inverter + panel type as per the set). */
@@ -917,6 +937,8 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
     if (row.adaniTopcon620 != null) out.push({ ...base, panelType: "Adani Topcon", price: row.adaniTopcon620 })
     if (row.waaree540 != null) out.push({ ...base, panelType: "Waaree", price: row.waaree540 })
     if (row.premierTopcon != null) out.push({ ...base, panelType: "Premier Energies", price: row.premierTopcon })
+    const inaPrice = row.ina ?? row.premierTopcon
+    if (inaPrice != null) out.push({ ...base, panelType: "INA", price: inaPrice })
   }
   for (const row of DCR_TATA_PRICING_ROWS) {
     out.push({
@@ -930,7 +952,7 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
   return out
 }
 
-// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, Tata (Jun 2026)
+// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, INA, Tata (Jun 2026)
 export const dcrPricing: SystemPricing[] = buildDcrPricingFromMatrix()
 
 /** Map form/catalog panel brand to DCR pricing table `panelType`. */
@@ -938,11 +960,13 @@ export function resolveDcrPricingPanelType(panelBrand: string): string {
   const brand = panelBrand.trim()
   if (!brand) return "Adani"
   if (brand === "Premier" || brand.startsWith("Premier")) return "Premier Energies"
+  if (brand === "INA" || brand.toUpperCase() === "INA") return "INA"
   if (brand === "Adani Topcon") return "Adani Topcon"
   if (brand === "Tata") return "Tata"
   if (DCR_PRICING_PANEL_TYPES.includes(brand as (typeof DCR_PRICING_PANEL_TYPES)[number])) return brand
   if (brand.toLowerCase().includes("topcon") && brand.toLowerCase().includes("adani")) return "Adani Topcon"
   if (brand.toLowerCase().includes("premier")) return "Premier Energies"
+  if (brand.toLowerCase() === "ina") return "INA"
   if (brand === "Waaree") return "Waaree"
   return "Adani"
 }
@@ -957,6 +981,8 @@ export function dcrPanelSizeForPricingType(panelType: string): string {
     case "Premier Energies":
     case "Premier":
       return "610W"
+    case "INA":
+      return "550W"
     case "Tata":
       return DCR_AS_PER_THE_SET
     default:
@@ -968,6 +994,7 @@ export function dcrPanelSizeForPricingType(panelType: string): string {
 export function dcrFormPanelBrandForPricingType(panelType: string): string {
   if (panelType === "Adani Topcon") return "Adani"
   if (panelType === "Premier Energies" || panelType === "Premier") return "Premier Energies"
+  if (panelType === "INA") return "INA"
   return panelType
 }
 
@@ -980,8 +1007,20 @@ export function dcrPanelPackageForPricingRow(config: SystemPricing): {
 } {
   const pricingPanelType = (config.panelType || "Adani").trim()
   const isTata = pricingPanelType === "Tata"
-  const panelSize = isTata ? DCR_AS_PER_THE_SET : dcrPanelSizeForPricingType(pricingPanelType)
+  const isIna = pricingPanelType === "INA"
   const systemKw = Number.parseFloat(config.systemSize.replace(/kW/i, ""))
+
+  if (isIna && Number.isFinite(systemKw) && systemKw > 0) {
+    const best = bestPanelConfigWithinSystemKw(systemKw, { panelSizesToTry: INA_DCR_PANEL_SIZES_WATTS })
+    return {
+      pricingPanelType,
+      panelBrand: "INA",
+      panelSize: `${best.panelSizeW}W`,
+      panelQuantity: best.quantity,
+    }
+  }
+
+  const panelSize = isTata ? DCR_AS_PER_THE_SET : dcrPanelSizeForPricingType(pricingPanelType)
   const panelQuantity =
     isTata || !Number.isFinite(systemKw) || systemKw <= 0
       ? 0

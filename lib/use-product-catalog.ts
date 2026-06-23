@@ -99,10 +99,21 @@ export function useProductCatalog() {
         
         // Use API data only - no fallback to dummy data
         if (catalogData) {
+          const inaPanelSizes = [
+            "500W", "510W", "520W", "530W", "540W", "550W", "555W", "560W", "570W", "580W", "590W", "600W",
+          ]
+          const panelBrands = Array.isArray(catalogData.panels?.brands) ? [...catalogData.panels.brands] : []
+          if (!panelBrands.some((b) => String(b).trim().toLowerCase() === "ina")) {
+            panelBrands.push("INA")
+          }
+          const panelSizes = Array.isArray(catalogData.panels?.sizes) ? [...catalogData.panels.sizes] : []
+          for (const size of inaPanelSizes) {
+            if (!panelSizes.includes(size)) panelSizes.push(size)
+          }
           setCatalog({
             panels: {
-              brands: Array.isArray(catalogData.panels?.brands) ? catalogData.panels.brands : [],
-              sizes: Array.isArray(catalogData.panels?.sizes) ? catalogData.panels.sizes : [],
+              brands: panelBrands,
+              sizes: panelSizes,
             },
             inverters: {
               types: Array.isArray(catalogData.inverters?.types) ? catalogData.inverters.types : [],

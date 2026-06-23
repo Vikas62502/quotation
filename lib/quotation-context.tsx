@@ -9,6 +9,7 @@ import {
   buildCustomerCreatePayloadWithNotes,
   productsWithPdfDisplayFlags,
   restoreDcrPackageDisplayForForm,
+  persistQuotationProducts,
   syncDcrPanelFieldsFromPrimary,
   findQuotationRowByMobile,
   formatDuplicateQuotationError,
@@ -86,6 +87,10 @@ export interface ProductSelection {
   pdfUseInverterBrandOptions?: boolean
   /** Commercial DCR/BOTH set — hide subsidy clauses on proposal PDF. */
   pdfCommercialSet?: boolean
+  /** DCR pricing column id — e.g. INA when API stores Adani/Waaree catalog brand. */
+  panelType?: string
+  /** True when dealer selected INA DCR package (survives catalog brand alias on API). */
+  inaDcrPackage?: boolean
 }
 
 export type QuotationStatus = "pending" | "approved" | "rejected" | "completed"
@@ -814,15 +819,12 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
 
         if (quotation?.id) {
           try {
-            const patched = await api.quotations.updateProducts(
-              quotation.id,
-              productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts }),
+            const patched = await persistQuotationProducts(
+              (payload) => api.quotations.updateProducts(quotation.id, payload),
+              { ...productsForApi, ...currentProducts },
             )
             lastApiResponse = patched ?? quotation
-            const patchedProducts =
-              (patched as { products?: ProductSelection } | undefined)?.products ||
-              productsWithPdfDisplayFlags({ ...productsForApi, ...currentProducts })
-            savedProductsForUi = restoreDcrPackageDisplayForForm(patchedProducts)
+            savedProductsForUi = restoreDcrPackageDisplayForForm(currentProducts)
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }

@@ -1,5 +1,10 @@
 import type { Quotation } from "@/lib/quotation-context"
 import { getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
+import {
+  getInstallationWorkflowStatus,
+  getMeteringWorkflowRaw,
+  isInstallationCompleteForMetering,
+} from "@/lib/operational-install-queue"
 
 export type JourneyStageStatus = "completed" | "pending" | "in_progress"
 
@@ -158,9 +163,13 @@ export function getJourneyHoldInfo(quotation: Quotation): JourneyHoldInfo {
 
 export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgress {
   const approvalStatus = String(quotation.status || "pending").toLowerCase()
-  const opsStatus = String(
-    (quotation as any).installationStatus || (quotation as any).installation_status || "",
-  ).toLowerCase()
+  const installStatus = getInstallationWorkflowStatus(quotation as Record<string, unknown>)
+  const meteringRaw = getMeteringWorkflowRaw(quotation as Record<string, unknown>)
+  const meteringStage =
+    meteringRaw ||
+    (["pending_metering", "metering_in_progress", "metering_approved", "mco"].includes(installStatus)
+      ? installStatus
+      : "")
 
   const adminApproval: JourneyStageStatus = approvalStatus === "approved" ? "completed" : "pending"
 
@@ -168,29 +177,33 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
   let metering: JourneyStageStatus = "pending"
   let finalConfirmation: JourneyStageStatus = "pending"
 
-  if (opsStatus === "installer_in_progress") installation = "in_progress"
-  if (
-    [
-      "installer_approved",
-      "pending_metering",
-      "metering_in_progress",
-      "metering_approved",
-      "mco",
-      "pending_baldev",
-      "baldev_approved",
-      "completed",
-    ].includes(opsStatus)
-  ) {
+  if (installStatus === "installer_in_progress" || installStatus === "pending_installer") {
+    installation = "in_progress"
+  }
+  if (isInstallationCompleteForMetering(quotation as Record<string, unknown>)) {
     installation = "completed"
   }
 
-  if (["pending_metering", "metering_in_progress", "mco"].includes(opsStatus)) metering = "in_progress"
-  if (["metering_approved", "pending_baldev", "baldev_approved", "completed"].includes(opsStatus)) {
+  if (["pending_metering", "metering_in_progress", "mco"].includes(meteringStage)) {
+    metering = "in_progress"
+  }
+  if (
+    ["metering_approved", "pending_baldev", "baldev_approved", "completed"].includes(meteringStage) ||
+    ["pending_baldev", "baldev_approved", "completed"].includes(installStatus)
+  ) {
     metering = "completed"
   }
 
-  if (opsStatus === "pending_baldev") finalConfirmation = "in_progress"
-  if (opsStatus === "baldev_approved" || opsStatus === "completed") finalConfirmation = "completed"
+  if (installStatus === "pending_baldev" || meteringStage === "pending_baldev") {
+    finalConfirmation = "in_progress"
+  }
+  if (
+    installStatus === "baldev_approved" ||
+    installStatus === "completed" ||
+    meteringStage === "baldev_approved"
+  ) {
+    finalConfirmation = "completed"
+  }
 
   return {
     adminApproval,

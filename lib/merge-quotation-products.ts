@@ -26,6 +26,8 @@ const PRODUCT_FIELD_KEYS = [
   "pdfNonDcrPanelRangeKey",
   "pdfUsePanelSizeRange",
   "pdfCommercialSet",
+  "panelType",
+  "inaDcrPackage",
 ] as const
 
 const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string>> = {
@@ -51,6 +53,8 @@ const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string
   pdfNonDcrPanelRangeKey: "pdf_non_dcr_panel_range_key",
   pdfUsePanelSizeRange: "pdf_use_panel_size_range",
   pdfCommercialSet: "pdf_commercial_set",
+  panelType: "panel_type",
+  inaDcrPackage: "ina_dcr_package",
 }
 
 function isNonEmptyPlainObject(value: unknown): value is RecordLike {

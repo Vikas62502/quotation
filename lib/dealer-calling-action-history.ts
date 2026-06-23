@@ -102,3 +102,87 @@ export function pickRicherCallRemark(a?: string, b?: string): string {
   if (!right) return left
   return left.length >= right.length ? left : right
 }
+
+export type PriorCallReviewSource = {
+  leadId?: string
+  mobile?: string
+  callRemark?: string
+  statusText?: string
+  statusCategory?: string
+  actionAt?: string
+  nextFollowUpAt?: string
+}
+
+function normalizeMobileDigits(mobile?: string): string {
+  return (mobile || "").replace(/\D/g, "")
+}
+
+/** Latest tagged remark + free-text review for a lead (reschedule / follow-up prefill). */
+export function resolveLeadPriorCallReview(
+  lead: { id: string; mobile?: string; callRemark?: string; nextFollowUpAt?: string },
+  sources: PriorCallReviewSource[],
+): {
+  taggedRemark: string
+  freeRemark: string
+  statusText: string
+  statusCategory: string
+  nextFollowUpAt?: string
+  actionAt?: string
+} {
+  const leadMobile = normalizeMobileDigits(lead.mobile)
+  const candidates: PriorCallReviewSource[] = []
+
+  const leadRemark = resolveCallingActionRemark(lead as Record<string, unknown>)
+  if (leadRemark || lead.nextFollowUpAt) {
+    candidates.push({
+      callRemark: leadRemark,
+      nextFollowUpAt: lead.nextFollowUpAt,
+    })
+  }
+
+  for (const source of sources) {
+    const id = String(source.leadId || "").trim()
+    const mobile = normalizeMobileDigits(source.mobile)
+    if (id && id === lead.id) {
+      candidates.push(source)
+      continue
+    }
+    if (leadMobile && mobile && mobile === leadMobile) {
+      candidates.push(source)
+    }
+  }
+
+  candidates.sort(
+    (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+  )
+
+  for (const candidate of candidates) {
+    const taggedRemark = resolveCallingActionRemark(candidate as Record<string, unknown>)
+    const parsed = parseTaggedCallRemark(taggedRemark)
+    const statusText = String(
+      candidate.statusText || parsed.status || "",
+    ).trim()
+    const statusCategory = String(
+      candidate.statusCategory || parsed.statusCategory || "",
+    ).trim()
+    const freeRemark = cleanFreeCallRemark(parsed.remark || taggedRemark)
+    if (!taggedRemark && !freeRemark && !statusText) continue
+
+    return {
+      taggedRemark,
+      freeRemark,
+      statusText,
+      statusCategory,
+      nextFollowUpAt: candidate.nextFollowUpAt,
+      actionAt: candidate.actionAt,
+    }
+  }
+
+  return {
+    taggedRemark: "",
+    freeRemark: "",
+    statusText: "",
+    statusCategory: "",
+    nextFollowUpAt: lead.nextFollowUpAt,
+  }
+}

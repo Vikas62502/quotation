@@ -848,6 +848,51 @@ export const api = {
       }
       return null
     },
+
+    /** Dealer-scoped calling action history (same data as Admin Calling Reports for this login). */
+    callingActions: {
+      getAll: async (params?: {
+        page?: number
+        limit?: number
+        dealerId?: string
+        startDate?: string
+        endDate?: string
+        range?: "daily" | "weekly" | "monthly" | "last_month" | "all" | "custom"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        const querySuffix = query ? `?${query}` : ""
+
+        const endpoints = [
+          `/dealers/me/calling-actions${querySuffix}`,
+          `/dealers/me/calling-queue/actions${querySuffix}`,
+          `/dealers/calling-actions${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint)
+          } catch (error) {
+            lastError = error
+            const isMissingOrForbidden =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                error.code === "HTTP_403")
+            if (!isMissingOrForbidden) throw error
+          }
+        }
+
+        throw lastError
+      },
+    },
   },
 
   // Customers

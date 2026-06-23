@@ -1,7 +1,10 @@
 import type { Quotation } from "@/lib/quotation-context"
+import {
+  mergeQuotationProductsForDisplay,
+  preserveInaDisplayFromPrior,
+} from "@/lib/quotation-api-payload"
 import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
 import { flattenWrappedQuotationRow } from "@/lib/operational-install-queue"
-import type { QuotationProductsPhaseInput } from "@/lib/pricing-tables"
 import { normalizeQuotationTimestamps } from "@/lib/quotation-proposal-document"
 
 type RecordLike = Record<string, unknown>
@@ -12,10 +15,12 @@ export function applyQuotationDetailToRow<T extends Quotation>(
   detailRaw: unknown,
 ): T {
   const detail = omitEmptyProductsField(flattenWrappedQuotationRow(detailRaw) as RecordLike)
-  const mergedProducts = mergeQuotationProductSources({
+  const priorProducts = mergeQuotationProductsForDisplay(row)
+  const apiMerged = mergeQuotationProductSources({
     ...row,
     ...detail,
-  }) as QuotationProductsPhaseInput
+  }) as Quotation["products"]
+  const mergedProducts = preserveInaDisplayFromPrior(priorProducts, apiMerged)
 
   const detailPricing =
     detail.pricing && typeof detail.pricing === "object" && !Array.isArray(detail.pricing)
