@@ -36,7 +36,7 @@ function getPanelTechnologyNoteBody(
   if (key === "waaree") {
     if (grade === "non-dcr") {
       return (
-        "Waaree 610W/620W panels use Mono PERC Bifacial technology — capturing sunlight from both front " +
+        "Waaree 580W-700W panels use Mono PERC Bifacial technology — capturing sunlight from both front " +
         "and rear surfaces for 10–20% higher energy yield. These are Non-DCR (Domestic Content Requirement) grade panels, optimized " +
         "for commercial applications with superior efficiency, durability, and 30-year linear power warranty."
       )
