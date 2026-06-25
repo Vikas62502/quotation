@@ -117,7 +117,7 @@ export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
 
 export const DEFAULT_PROPOSAL_SUPPORT_FORM_URL = "https://www.chairbord.com/support"
 export const DEFAULT_PROPOSAL_SUPPORT_PHONE = "+91 9785230023"
-export const DEFAULT_PROPOSAL_SUPPORT_EMAIL = "support@chairbord.com"
+export const DEFAULT_PROPOSAL_SUPPORT_EMAIL = "info@chairbord.com"
 
 export type ProposalOfficeLocation = {
   label: string

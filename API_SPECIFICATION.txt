@@ -1696,7 +1696,7 @@ All API responses include:
 ================================================================================
 
 For support or questions:
-Email: api-support@chairbord.com
+Email: api-info@chairbord.com
 Documentation: https://docs.chairbord.com/api
 
 

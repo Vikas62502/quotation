@@ -279,7 +279,7 @@ Jhotwara, Jaipur, Rajasthan
 India - 302012
 
 Website: www.chairbord.com
-Email: support@chairbord.com
+Email: info@chairbord.com
 
 
 ================================================================================

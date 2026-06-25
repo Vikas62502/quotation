@@ -42,7 +42,7 @@ const companyInfo = {
   tagline: "Base of Innovation",
   address: "Plot No. 10, Ground Floor, Shri Shyam Vihar, Kalwar Road, Jhotwara, Jaipur, Rajasthan, India - 302012",
   phone: "+91 9251666646",
-  email: "support@chairbord.com",
+  email: "info@chairbord.com",
   supportFormUrl: "https://www.chairbord.com/support",
   website: "www.chairbord.com",
   gst: "08AAJCC8097M1ZT",
