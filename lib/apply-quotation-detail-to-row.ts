@@ -2,6 +2,7 @@ import type { Quotation } from "@/lib/quotation-context"
 import {
   mergeQuotationProductsForDisplay,
   preserveInaDisplayFromPrior,
+  preservePdfDisplayFlagsFromPrior,
 } from "@/lib/quotation-api-payload"
 import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
 import { flattenWrappedQuotationRow } from "@/lib/operational-install-queue"
@@ -20,7 +21,10 @@ export function applyQuotationDetailToRow<T extends Quotation>(
     ...row,
     ...detail,
   }) as Quotation["products"]
-  const mergedProducts = preserveInaDisplayFromPrior(priorProducts, apiMerged)
+  const mergedProducts = preservePdfDisplayFlagsFromPrior(
+    priorProducts,
+    preserveInaDisplayFromPrior(priorProducts, apiMerged),
+  )
 
   const detailPricing =
     detail.pricing && typeof detail.pricing === "object" && !Array.isArray(detail.pricing)

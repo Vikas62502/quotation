@@ -44,7 +44,13 @@ import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
-import { restoreDcrPackageDisplayForForm, persistQuotationProducts, mergeQuotationProductsForDisplay } from "@/lib/quotation-api-payload"
+import {
+  restoreDcrPackageDisplayForForm,
+  persistQuotationProducts,
+  mergeQuotationProductsForDisplay,
+  buildPdfDisplayFlagsPayload,
+} from "@/lib/quotation-api-payload"
+import { writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
 import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
 
 interface QuotationDetailsDialogProps {
@@ -1775,12 +1781,17 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     discountAmount: currentDiscountAmount, // Store discount as amount in INR
                     finalAmount: Math.max(0, calculatedFinalAmount),
                   })
+
+                  const displayProducts = restoreDcrPackageDisplayForForm({
+                    ...updatedProducts,
+                    ...buildPdfDisplayFlagsPayload(updatedProducts),
+                  })
                   
                   if (useApi) {
-                    const displayProducts = restoreDcrPackageDisplayForForm(updatedProducts)
                     const productsResponse = await persistQuotationProducts(
                       (payload) => api.quotations.updateProducts(displayQuotation.id, payload),
                       updatedProducts,
+                      { quotationId: displayQuotation.id },
                     )
                     
                     if (productsResponse) {
@@ -1837,9 +1848,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     }
                   } else {
                     // Fallback to local state update
+                    writeLocalQuotationPdfFlags(displayQuotation.id, displayProducts)
                     const updatedQuotation = {
                       ...displayQuotation,
-                      products: updatedProducts,
+                      products: displayProducts,
                       totalAmount: calculatedSubtotal,
                       finalAmount: calculatedFinalAmount,
                       ...mergeQuotationTimestampsFromApi(displayQuotation),

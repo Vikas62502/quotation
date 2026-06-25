@@ -7,6 +7,7 @@ import { calculateSystemSize, determinePhase } from "./pricing-tables"
 import {
   buildCustomerCreatePayload,
   buildCustomerCreatePayloadWithNotes,
+  buildPdfDisplayFlagsPayload,
   productsWithPdfDisplayFlags,
   restoreDcrPackageDisplayForForm,
   persistQuotationProducts,
@@ -822,9 +823,13 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             const patched = await persistQuotationProducts(
               (payload) => api.quotations.updateProducts(quotation.id, payload),
               { ...productsForApi, ...currentProducts },
+              { quotationId: quotation.id },
             )
             lastApiResponse = patched ?? quotation
-            savedProductsForUi = restoreDcrPackageDisplayForForm(currentProducts)
+            savedProductsForUi = restoreDcrPackageDisplayForForm({
+              ...currentProducts,
+              ...buildPdfDisplayFlagsPayload(currentProducts),
+            })
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }

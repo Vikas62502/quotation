@@ -6,11 +6,13 @@ import {
 } from "@/lib/pricing-tables"
 import {
   isAsPerTheSetLabel,
+  isPdfCommercialSet,
   TATA_DCR_PANEL_RANGE_KEY,
   INA_DCR_PANEL_RANGE_KEY,
   applyDefaultPdfPanelRanges,
 } from "@/lib/quotation-pdf-display"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
+import { applyLocalQuotationPdfFlags, writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
 
 /** PDF-only flags — strip before catalog validation until backend ignores them (§X). */
 export function stripPdfDisplayFlags(products: ProductSelection): ProductSelection {
@@ -249,9 +251,29 @@ export function restoreInaPanelBrandForForm(products: ProductSelection): Product
   }
 }
 
-/** Merge API/list product sources and restore DCR package + INA display fields. */
+function hasExplicitPdfCommercialUnset(products: ProductSelection): boolean {
+  const raw = products as ProductSelection & Record<string, unknown>
+  return raw.pdfCommercialSet === false || raw.pdf_commercial_set === false
+}
+
+/** Keep commercial PDF flag when API/detail merge drops it (backend may not persist yet). */
+export function preservePdfDisplayFlagsFromPrior(
+  prior: ProductSelection | null | undefined,
+  next: ProductSelection,
+): ProductSelection {
+  if (!prior) return next
+  if (hasExplicitPdfCommercialUnset(next)) return next
+  if (!isPdfCommercialSet(prior) || isPdfCommercialSet(next)) return next
+  return {
+    ...next,
+    ...buildPdfDisplayFlagsPayload({ ...next, pdfCommercialSet: true }),
+  }
+}
+
+/** Merge API/list product sources and restore DCR package + INA + PDF display fields. */
 export function mergeQuotationProductsForDisplay(raw: unknown): ProductSelection {
   const record = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null
+  const quotationId = String(record?.id || "").trim()
   const priorHint =
     record?.products && typeof record.products === "object" && !Array.isArray(record.products)
       ? (record.products as ProductSelection)
@@ -259,7 +281,11 @@ export function mergeQuotationProductsForDisplay(raw: unknown): ProductSelection
   const merged = mergeQuotationProductSources(raw) as ProductSelection
   const fallback = priorHint ?? ({} as ProductSelection)
   const base = merged && Object.keys(merged).length > 0 ? merged : fallback
-  return preserveInaDisplayFromPrior(priorHint, base)
+  const priorDisplay = priorHint ? restoreDcrPackageDisplayForForm(priorHint) : undefined
+  const withIna = preserveInaDisplayFromPrior(priorHint, base)
+  const withPdfFlags = preservePdfDisplayFlagsFromPrior(priorDisplay, withIna)
+  const withLocal = applyLocalQuotationPdfFlags(quotationId || undefined, withPdfFlags)
+  return restoreDcrPackageDisplayForForm(withLocal)
 }
 
 /**
@@ -562,12 +588,17 @@ export function buildProductsApiPayloadCandidates(products: ProductSelection): P
 export async function persistQuotationProducts<T>(
   updateFn: (payload: ProductSelection) => Promise<T>,
   products: ProductSelection,
+  options?: { quotationId?: string },
 ): Promise<T> {
   const candidates = buildProductsApiPayloadCandidates(products)
   let lastError: unknown
   for (const payload of candidates) {
     try {
-      return await updateFn(payload)
+      const result = await updateFn(payload)
+      if (options?.quotationId) {
+        writeLocalQuotationPdfFlags(options.quotationId, products)
+      }
+      return result
     } catch (error) {
       lastError = error
       if (!isProductsValidationApiError(error)) throw error
