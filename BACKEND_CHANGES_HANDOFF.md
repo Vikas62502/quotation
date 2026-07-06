@@ -1048,6 +1048,27 @@ Each row **must** include:
 
 **Installment count filter:** Frontend matches `phases.length === N` (exact count). Persist the full installment array on PATCH; do not return stale partial arrays.
 
+**Installment remove + Submit (Jul 2026):** When Account Management removes rows and clicks Submit, frontend sends `replaceInstallments: true` and tries **`PUT /api/quotations/{id}/installments`** first. Backend must **DELETE all existing installment rows** and insert exactly the body array (`[]` clears all). **Do not merge/upsert** — deleted rows must not reappear on GET. See **`BACKEND_CHANGES_REQUIRED.md` §AB** and **`BACKEND_INSTALLMENT_REPLACE.ts`**.
+
+### Payment Excel — Customer Journey columns (Jul 2026)
+
+**Frontend:** `app/dashboard/account-management/page.tsx` → **Download Excel** (client-side CSV).
+
+**No new endpoint.** Append these columns after payment amounts:
+
+| CSV column | Backend dependency |
+|------------|-------------------|
+| Installment Count | `installments` / `payment_phases` array length |
+| Admin Approval Status | `status` |
+| Installation Status | `installationStatus` / `installation_status` |
+| Metering Status | `meteringStage`, `meteringStatus`, `mcoStatus` (+ install status fallback) |
+| Final Confirmation Status | `installation_status` / metering when `pending_baldev` |
+| **File Status** (last) | `installation_status` + `status` (see §AC label table) |
+
+**Critical:** `GET /api/quotations?status=approved` must return **`installationStatus`** and metering workflow fields on every row. If missing, Excel shows **Workflow Pending** for all rows after refresh.
+
+**Full spec:** **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** (reference helpers + QA).
+
 ### Optional — server-side dealer filter (performance)
 
 When the approved list is large:
@@ -1072,11 +1093,14 @@ Exact match on number of installment/phase rows (not “has installment 2”).
 ### Checklist
 
 - [ ] Approved list returns `dealerId` + nested `dealer` on every row used by account-management
-- [ ] `installments` / `payment_phases` array reflects true count after PATCH
+- [ ] `installments` / `payment_phases` array reflects true count after PATCH **replace** (not merge)
+- [ ] `PUT /quotations/{id}/installments` with `replace: true` deletes orphans
+- [ ] `phases: []` clears all installments
 - [ ] Approve / file-login timestamps exposed for date-range filters
+- [ ] `installationStatus` + metering fields on approved list (Payment Excel §AC)
 - [ ] (Optional) `dealerId` query param on approved list for account-management role
 
-**Reference:** `BACKEND_CHANGES_REQUIRED.md` §6.5, §7.9; `BACKEND_ADMIN_QUOTATION_STATUS.ts` (installments PATCH).
+**Reference:** `BACKEND_CHANGES_REQUIRED.md` §6.5, §7.9, **§AB**, **§AC**; `BACKEND_INSTALLMENT_REPLACE.ts`, `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`; `BACKEND_ADMIN_QUOTATION_STATUS.ts`.
 
 ---
 

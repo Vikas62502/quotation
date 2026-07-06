@@ -35,7 +35,10 @@
  *   GET /quotations/:id                          (Quotation details dialog)
  *
  *   PATCH /quotations/:quotationId/payment-details   (Account Management — primary)
+ *   PUT  /quotations/:quotationId/installments       (preferred replace — see BACKEND_INSTALLMENT_REPLACE.ts)
  *   PATCH /quotations/:quotationId/installments      (fallback; body may use `installments` not `phases`)
+ *   Body flags: replaceInstallments: true | replace: true → **full replace** of installment rows (not merge).
+ *   Empty phases/installments array [] clears all installments.
  *   Body (JSON):
  *     paymentType?, paymentMode?, paymentStatus?,
  *     phases: [{ phaseNumber, phaseName, amount, paidAmount, status, dueDate?, paymentDate?, paymentMode?, transactionId?, note? }]
@@ -566,6 +569,16 @@ export async function patchQuotationPaymentDetails(req, res) {
       return
     }
 
+    const replaceMode =
+      body.replaceInstallments === true ||
+      body.replace === true ||
+      body.syncInstallments === "replace" ||
+      req.method === "PUT"
+
+    // When replaceMode is true (default for Account Management Submit), persist exactly
+    // phasesInput.length rows — delete orphans. See BACKEND_INSTALLMENT_REPLACE.ts.
+    void replaceMode
+
     const subtotal = pickQuotationSubtotalForPayments(quotation)
     let sumPaid = 0
     const phases = phasesInput.map((p, index) => {
@@ -633,6 +646,8 @@ export async function patchQuotationPaymentDetails(req, res) {
  *   router.patch('/admin/quotations/:quotationId/status', adminAuth, patchAdminQuotationStatus)
  *   router.patch('/admin/quotations/:quotationId/file-login', adminAuth, patchAdminQuotationFileLogin)
  *   router.patch('/quotations/:quotationId/payment-details', accountMgmtOrAdminAuth, patchQuotationPaymentDetails)
+ *   router.put('/quotations/:quotationId/installments', accountMgmtOrAdminAuth, putQuotationInstallments)
+ *   See BACKEND_INSTALLMENT_REPLACE.ts for full replace semantics (remove installment + Submit).
  */
 
 /**

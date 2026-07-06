@@ -1396,6 +1396,7 @@ For all quotation list endpoints used by account-management/installer/baldev, in
 - `statusApprovedAt` / `approved_at` and `fileLoginAt` / `file_login_at` (account-management date-range filters)
 - `paymentType`, `paymentStatus`, `paymentMode`, `bankName`, `bankIfsc`, `remaining` / `remainingAmount`
 - `installationStatus`
+- `meteringStage` / `metering_status` / `meteringStatus` / `mcoStatus` (required for Payment Management **Download Excel** journey columns — **§AC**)
 - `approvedAt` (admin approval date)
 - `installerApprovedAt` (installer approval date, when available)
 - `meteringStage` / `meteringStatus` (or derive from `installationStatus`)
@@ -4345,6 +4346,372 @@ List endpoint **`GET /admin/visits`** does **not** need to embed images; complet
 
 ---
 
+## AA) Admin Product Needed — `GET /admin/product-needed` (Jun 2026)
+
+**Frontend reference:** `app/dashboard/admin/page.tsx` (Product Needed tab), `components/admin-product-needed-panel.tsx`, `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, `lib/api.ts` → `api.admin.productNeeded.getAll`.
+
+### AA.1 Problem
+
+Procurement needs a dedicated admin view of **panels and inverter only** for quotations that have **file login** recorded, split into:
+
+1. **File login** — any quotation with file login status/date  
+2. **Login + approved** — file login **and** `status = approved`
+
+Today the SPA can build rows from `GET /admin/quotations` (client-side fallback). A dedicated list endpoint avoids loading the full quotation catalog and applies filters server-side.
+
+### AA.2 Endpoint
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/admin/product-needed` | **admin** | Procurement rows (panels + inverter) |
+
+Return **404** only if not implemented; frontend then falls back to quotation list + `lib/admin-product-needed.ts` filters.
+
+### AA.3 Query parameters
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `tab` | string | `file_login` (default) or `login_approved` |
+| `page` | int | Default `1` |
+| `limit` | int | Default `500`, max `2000` |
+| `dealerId` | string | Filter `quotations.dealer_id` |
+| `search` | string | ILIKE quotation id, customer name, mobile |
+| `startDate` | `YYYY-MM-DD` | Inclusive (see `dateField`) |
+| `endDate` | `YYYY-MM-DD` | Inclusive |
+| `dateField` | string | `file_login` (default) or `approved` |
+
+**Tab SQL (must match frontend):**
+
+- `file_login`: `file_login_status IN ('already_login','login_now') OR file_login_at IS NOT NULL`
+- `login_approved`: above **and** `LOWER(status) = 'approved'`
+
+### AA.4 Response envelope
+
+```json
+{
+  "success": true,
+  "data": {
+    "rows": [
+      {
+        "quotationId": "Q-1001",
+        "customerName": "Rahul Sharma",
+        "customerMobile": "9876543210",
+        "dealerName": "Amit Dealer",
+        "systemKw": "5kW",
+        "systemType": "DCR",
+        "panels": "Tata 545W × 10",
+        "inverter": "Vsole · 5kW",
+        "fileLoginStatus": "Login now",
+        "fileLoginAt": "2026-06-15T10:30:00.000Z",
+        "statusApprovedAt": "2026-06-16T09:00:00.000Z",
+        "quotationStatus": "approved"
+      }
+    ],
+    "tabCounts": { "fileLogin": 42, "loginApproved": 18 },
+    "pagination": { "page": 1, "limit": 2000, "total": 42, "totalPages": 1 }
+  }
+}
+```
+
+Frontend unwraps via `extractProductNeededFromApiResponse` in `lib/admin-product-needed.ts`.
+
+### AA.5 Row fields
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `quotationId` | yes | |
+| `customerName`, `customerMobile` | yes | From customer join |
+| `dealerName` | yes | From dealer join |
+| `systemKw` | yes | e.g. `"5kW"` — same rules as admin kW display |
+| `systemType` | yes | Uppercase enum string |
+| `panels` | yes | **Panels only** — DCR/Non-DCR/customize formatting per `lib/admin-product-needed.ts` |
+| `inverter` | yes | **Inverter only** — `brand · size` |
+| `fileLoginStatus`, `fileLoginAt` | yes | |
+| `statusApprovedAt` | recommended | For login_approved tab |
+| `quotationStatus` | optional | |
+
+**Do not** return structure, meter, or other product lines in this endpoint.
+
+### AA.6 Products data source
+
+Merge `quotations.products` JSON with `quotation_products` table (same as `GET /admin/quotations`). See `mergeQuotationProductSources` in `lib/merge-quotation-products.ts`.
+
+### AA.7 Related existing APIs
+
+| Existing | Use |
+|----------|-----|
+| `PATCH /admin/quotations/:id/file-login` | Sets `fileLoginStatus`, `fileLoginAt` — rows appear after save |
+| `PATCH /admin/quotations/:id/status` | Approval sets `statusApprovedAt` — login_approved tab |
+| `GET /admin/quotations` | Frontend fallback when product-needed route missing |
+
+### AA.8 Checklist
+
+- [ ] `GET /api/admin/product-needed` with admin JWT
+- [ ] Query: `tab`, `dealerId`, `search`, `startDate`/`endDate`, `dateField`, pagination
+- [ ] `tabCounts.fileLogin` and `tabCounts.loginApproved` in response
+- [ ] Panel/inverter summaries match frontend formatting (BOTH / customize systems)
+- [ ] Document in `API_SPECIFICATION.txt`
+- [ ] (Optional) `backend:mutation` on file-login / status PATCH for live admin refresh
+
+### AA.9 QA
+
+1. Save file login on a pending quotation → appears in **File login** tab.
+2. Approve same quotation → appears in **Login + approved** tab.
+3. BOTH system quotation shows `DCR: … | Non-DCR: …` in `panels`.
+4. Without endpoint, admin still sees rows built from quotation list (fallback).
+
+**Backend implementation reference:** `BACKEND_ADMIN_PRODUCT_NEEDED.ts`
+
+---
+
+## AB) Account Management — installment replace on remove + Submit (Jul 2026)
+
+**Frontend reference:** `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `api.quotations.updatePaymentDetails`.
+
+### AB.1 Problem
+
+Account Management **Manage** → user removes installment(s) → **Submit** → after page refresh, deleted installments reappear.
+
+**Root cause:** Backend **merges** incoming `phases` / `installments` with existing DB rows (upsert by `phase_number`) instead of **replacing** the full set.
+
+### AB.2 Required behavior
+
+When body includes `phases` or `installments` and any of:
+
+- `replaceInstallments: true`
+- `replace: true`
+- HTTP **PUT** on `/installments`
+
+the server must:
+
+1. **Delete** all existing installment rows for that quotation (or overwrite JSON column).
+2. **Insert** exactly the rows from the request body (0 rows if `[]`).
+3. Recompute `remaining` / `remaining_amount` and `payment_status`.
+4. Return the persisted array on the response and on subsequent **GET**.
+
+**Do not** upsert-only — orphan rows survive deletes.
+
+### AB.3 Endpoints (client try order)
+
+| Order | Method | Path | Notes |
+|-------|--------|------|--------|
+| 1 | `PUT` | `/api/quotations/{id}/installments` | Preferred; body includes `replace: true` |
+| 2 | `PATCH` | `/api/quotations/{id}/payment-details` | Body includes `replaceInstallments: true`, `phases`, `installments` |
+| 3 | `PATCH` | `/api/quotations/{id}/installments` | Same replace flags |
+
+**Auth:** `account-management` or `admin`. Quotation `status` must be `approved`.
+
+**Exception:** `PATCH /payment-details` with **only** `installationReadyForInstaller` / release fields must **merge** release flags and **not** wipe installments (see installation release §A).
+
+### AB.4 Request body (example)
+
+```json
+{
+  "paymentType": "loan",
+  "paymentMode": "loan",
+  "paymentStatus": "partial",
+  "replaceInstallments": true,
+  "phases": [
+    {
+      "phaseNumber": 1,
+      "phaseName": "Installment 1",
+      "amount": 132000,
+      "paidAmount": 132000,
+      "status": "completed",
+      "dueDate": "2026-06-24",
+      "paymentDate": "2026-06-24T10:00:00.000Z",
+      "paymentMode": "loan",
+      "transactionId": "BY TRANSFER ...",
+      "note": ""
+    }
+  ],
+  "installments": []
+}
+```
+
+`installments` duplicates `phases` for backends that read either key. After remove-all, frontend sends `"phases": []`.
+
+### AB.5 Phase row fields
+
+| Field | Required | Notes |
+|-------|----------|--------|
+| `phaseNumber` | yes | Renumber 1…N server-side if gaps |
+| `phaseName` | yes | e.g. `Installment 1` |
+| `amount` | yes | ≥ `paidAmount` |
+| `paidAmount` | yes | Sum ≤ quotation subtotal |
+| `status` | yes | `pending` \| `partial` \| `completed` |
+| `dueDate` | optional | `YYYY-MM-DD` |
+| `paymentDate` | optional | ISO |
+| `paymentMode` | optional | `cash`, `upi`, `loan`, `cheque`, … |
+| `transactionId` | optional | |
+| `note` | optional | |
+
+### AB.6 Relational DB pattern (PostgreSQL)
+
+```sql
+BEGIN;
+  DELETE FROM quotation_installments WHERE quotation_id = $1;
+  INSERT INTO quotation_installments (quotation_id, phase_number, phase_name, amount, paid_amount, ...)
+  SELECT $1, ... FROM unnest($2::jsonb[]);  -- or ORM bulkCreate
+  UPDATE quotations
+    SET payment_status = $3,
+        remaining_amount = $4,
+        payment_phases = $5::jsonb   -- optional denormalized copy
+    WHERE id = $1;
+COMMIT;
+```
+
+### AB.7 GET must echo exact count
+
+`GET /api/quotations?status=approved` and `GET /api/quotations/{id}` must return:
+
+```json
+{
+  "installments": [ /* exact persisted rows */ ],
+  "paymentPhases": [ /* same array */ ],
+  "paymentStatus": "partial",
+  "remaining": 57000
+}
+```
+
+Payment Management **Installment count** filter uses `installments.length` exactly.
+
+### AB.8 Checklist
+
+- [ ] `PUT /api/quotations/{id}/installments` with `replace: true`
+- [ ] `PATCH /payment-details` honors `replaceInstallments: true`
+- [ ] `phases: []` clears all installment rows
+- [ ] No orphan rows after count decreases (3 → 2 → 1 → 0)
+- [ ] Response + GET list return same `installments` length after save
+- [ ] Release-only `PATCH /payment-details` does not wipe phases
+
+### AB.9 QA
+
+1. 3 installments → remove 1 → Submit → GET shows **2** rows.
+2. Remove last installment → Submit `phases: []` → GET shows **0** rows.
+3. Refresh browser — count unchanged.
+
+**Implementation reference:** `BACKEND_INSTALLMENT_REPLACE.ts`, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchQuotationPaymentDetails`).
+
+---
+
+## AC) Account Management — Payment Excel Customer Journey columns (Jul 2026)
+
+**Frontend reference:** `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel()`, `lib/customer-journey.ts`.
+
+### AC.1 Problem
+
+Payment Management **Download Excel** must include **Customer Journey** workflow columns (same logic as Admin → Overview → Customer Journey):
+
+1. **Admin Approval Status** — Pending / In Progress / Completed  
+2. **Installation Status**  
+3. **Metering Status**  
+4. **Final Confirmation Status**  
+5. **File Status** (last column) — overall hold label, e.g. `Pending Metering`, `Final Approved`  
+
+Also exports **Installment Count** (`installments.length`).
+
+Export is **client-side CSV** — **no new download endpoint**. Backend must return workflow fields on the approved quotation list so columns are correct after full page refresh.
+
+### AC.2 Endpoint (existing)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/quotations?status=approved` | **account-management**, **admin** | Approved rows for Payment Management + Excel |
+
+### AC.3 Required fields on each list row
+
+| Field | Aliases | Purpose |
+|-------|---------|---------|
+| `status` | — | Admin approval stage |
+| `installationStatus` | `installation_status` | Installation stage + **File Status** |
+| `meteringStage` | `metering_stage` | Metering when split from install status |
+| `meteringStatus` | `metering_status` | Alias |
+| `mcoStatus` | `mco_status` | MCO sub-stage |
+| `installments` | `payment_phases`, `paymentPhases` | Installment count column |
+| `statusApprovedAt` | `status_approved_at`, `approved_at` | Existing export |
+| `fileLoginAt` | `file_login_at` | Existing export |
+| `fileLoginStatus` | `file_login_status` | Existing export |
+
+**Critical:** If `installationStatus` is missing on `GET /quotations?status=approved`, Excel shows **Workflow Pending** for every row even when admin/installer UIs show progress.
+
+### AC.4 Journey computation (must match frontend)
+
+Logic is duplicated in `lib/customer-journey.ts` and `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`.
+
+**Four stage statuses** (`pending` | `in_progress` | `completed` → export as Pending / In Progress / Completed):
+
+| Stage | Completed when | In progress when |
+|-------|----------------|------------------|
+| Admin Approval | `status === approved` | — |
+| Installation | `installer_approved` or later install complete | `pending_installer`, `installer_in_progress` |
+| Metering | `metering_approved`, `pending_baldev`, `baldev_approved`, `completed` | `pending_metering`, `metering_in_progress`, `mco` |
+| Final Confirmation | `baldev_approved`, `completed` | `pending_baldev` |
+
+**File Status** (`stageLabel`):
+
+| Condition | File Status |
+|-----------|-------------|
+| `status !== approved` | Pending Admin Approval |
+| `installation_status = pending_installer` | Pending Installer |
+| `installer_in_progress` | Installer In Progress |
+| `installer_approved` | Pending Metering |
+| `pending_metering` / `metering_in_progress` | Metering Processing |
+| `metering_approved` | Metering Approved |
+| `mco` | MCO Docs Pending |
+| `pending_baldev` | Pending Final Confirmation |
+| `baldev_approved` / `completed` | Final Approved |
+| (else) | Workflow Pending |
+
+### AC.5 Optional — pre-computed block on list rows
+
+For reporting or a future server-side export:
+
+```json
+{
+  "journeyStageProgress": {
+    "adminApproval": "completed",
+    "installation": "in_progress",
+    "metering": "pending",
+    "finalConfirmation": "pending"
+  },
+  "fileStatus": "Installer In Progress",
+  "journeyHolder": "Installer"
+}
+```
+
+Frontend computes these client-side today; optional on API.
+
+### AC.6 Workflow PATCH → GET consistency
+
+Any PATCH that changes workflow must return updated fields on the next list GET:
+
+- `PATCH …/installation-release` → `installationReadyForInstaller`, `installationReleasedAt`, `installationStatus`
+- Installer completion / approval endpoints → `installationStatus`, image URLs
+- Admin **Send to Metering** → `pending_metering` (or `meteringStage`)
+- Metering / MCO / Baldev endpoints → `meteringStage`, `installationStatus` as documented in §6.4 / §L / §M
+
+See `BACKEND_INSTALLATION_RELEASE.md`, `BACKEND_CHANGES_REQUIRED.md` §6.5.
+
+### AC.7 Checklist
+
+- [ ] `GET /api/quotations?status=approved` includes `installationStatus` on every row
+- [ ] Metering fields returned when quotation is in metering pipeline
+- [ ] `installments` array length accurate (§AB replace semantics)
+- [ ] Workflow PATCHes reflected on next GET (no stale `installation_status`)
+- [ ] (Optional) `journeyStageProgress` + `fileStatus` on list serializer
+
+### AC.8 QA
+
+1. Approved + sent to installer → Excel Installation = In Progress or Pending; File Status matches UI journey card.  
+2. After installer approval → Installation = Completed; File Status = Pending Metering.  
+3. `pending_baldev` → Final Confirmation = In Progress; File Status = Pending Final Confirmation.  
+4. Hard refresh → Excel columns unchanged (not localStorage-only).
+
+**Implementation reference:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`.
+
+---
+
 ## Y) Quick handoff — HR lead counts, calling remarks & PDF flags (May 2026)
 
 **One-page summary for backend:** see **`BACKEND_CHANGES_HANDOFF.md`**.
@@ -4363,7 +4730,10 @@ List endpoint **`GET /admin/visits`** does **not** need to embed images; complet
 | Medium | Dealer dashboard **Total Value** = approved quotations only (`status`, amounts on list GET) | §7.9, HANDOFF §6 | `app/dashboard/page.tsx` |
 | Medium | `POST /customers` `notes` / `remarks` from calling prefill | HANDOFF §4.3 | `lib/quotation-context.tsx` |
 | Medium | **Admin Visitor Reports** — `GET /admin/visits` with status, visitor filter, pagination | **§Z**, HANDOFF §8 | `lib/visit-report.ts`, `app/dashboard/admin/page.tsx` |
+| Medium | **Admin Product Needed** — `GET /admin/product-needed` (panels + inverter, file login tabs) | **§AA** | `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts` |
 | Medium | **Visit completion on GET** — `GET /quotations/{id}/visits` returns dimensions + image URLs for admin Details modal | **§Z.11**, HANDOFF §8 | `lib/visit-details.ts`, `components/admin-visit-details-dialog.tsx` |
+| **High** | **Account Management installment replace** — `PUT/PATCH` must replace all rows (`replaceInstallments: true`), not merge | **§AB** | `BACKEND_INSTALLMENT_REPLACE.ts`, `app/dashboard/account-management/page.tsx` |
+| Medium | **Payment Excel journey columns** — approved list must return `installationStatus` + metering fields for CSV export | **§AC** | `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `lib/customer-journey.ts` |
 | **High** | **Final confirmation uploads** — dedicated POST route; do not use KYC `PATCH …/documents` | **§M**, HANDOFF **§10** | `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
 
@@ -4389,6 +4759,9 @@ For questions or clarifications about these requirements, please refer to:
 - Dealer calling reschedule (Decision Pending): `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_REQUIRED.md` §E.2**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.2**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
+- Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
+- Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
+- Payment Excel journey columns: `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel`, `lib/customer-journey.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**
 - Final confirmation document uploads (Admin + Baldev): `lib/final-confirmation-documents.ts`, `lib/api.ts` → `uploadFinalConfirmationDocuments`, **`BACKEND_CHANGES_REQUIRED.md` §M**, **`BACKEND_CHANGES_HANDOFF.md` §10**
 - Admin Quotations tab Send to Metering: `lib/api.ts` → `sendQuotationToMetering`, **`BACKEND_CHANGES_REQUIRED.md` §L.1**, **`BACKEND_CHANGES_HANDOFF.md` §11**
 - API specification: `API_SPECIFICATION.txt`

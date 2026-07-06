@@ -1014,28 +1014,41 @@ export const api = {
           status: "pending" | "cleared"
           clearedAt?: string
         }>
+        /** When true, backend must replace all installment rows with `phases` (not merge). */
+        replaceInstallments?: boolean
       },
     ) => {
+      const bodyWithReplace = {
+        ...paymentData,
+        replaceInstallments: paymentData.replaceInstallments ?? true,
+        installments: paymentData.phases,
+      }
       const attempts: Array<{ endpoint: string; method: "PATCH" | "PUT"; body: Record<string, any> }> = [
-        {
-          endpoint: `/quotations/${quotationId}/payment-details`,
-          method: "PATCH",
-          body: paymentData,
-        },
-        {
-          endpoint: `/quotations/${quotationId}/installments`,
-          method: "PATCH",
-          body: {
-            installments: paymentData.phases,
-            paymentStatus: paymentData.paymentStatus,
-            ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
-          },
-        },
         {
           endpoint: `/quotations/${quotationId}/installments`,
           method: "PUT",
           body: {
             installments: paymentData.phases,
+            replace: true,
+            replaceInstallments: true,
+            paymentStatus: paymentData.paymentStatus,
+            paymentType: paymentData.paymentType,
+            paymentMode: paymentData.paymentMode,
+            ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
+          },
+        },
+        {
+          endpoint: `/quotations/${quotationId}/payment-details`,
+          method: "PATCH",
+          body: bodyWithReplace,
+        },
+        {
+          endpoint: `/quotations/${quotationId}/installments`,
+          method: "PATCH",
+          body: {
+            installments: paymentData.phases,
+            replace: true,
+            replaceInstallments: true,
             paymentStatus: paymentData.paymentStatus,
             ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
           },
@@ -2581,6 +2594,28 @@ export const api = {
       if (endDate) params.append("endDate", endDate)
       const query = params.toString()
       return apiRequest(`/admin/statistics${query ? `?${query}` : ""}`)
+    },
+
+    productNeeded: {
+      getAll: async (params?: {
+        tab?: "file_login" | "login_approved"
+        page?: number
+        limit?: number
+        dealerId?: string
+        search?: string
+        startDate?: string
+        endDate?: string
+        dateField?: "file_login" | "approved"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params) {
+          Object.entries(params).forEach(([key, value]) => {
+            if (value !== undefined) queryParams.append(key, String(value))
+          })
+        }
+        const query = queryParams.toString()
+        return apiRequest(`/admin/product-needed${query ? `?${query}` : ""}`)
+      },
     },
 
     visits: {

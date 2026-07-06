@@ -161,6 +161,12 @@ export function getJourneyHoldInfo(quotation: Quotation): JourneyHoldInfo {
   return { holder: "Operations", stageLabel: "Workflow Pending" }
 }
 
+export function formatJourneyStageStatusLabel(status: JourneyStageStatus): string {
+  if (status === "completed") return "Completed"
+  if (status === "in_progress") return "In Progress"
+  return "Pending"
+}
+
 export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgress {
   const approvalStatus = String(quotation.status || "pending").toLowerCase()
   const installStatus = getInstallationWorkflowStatus(quotation as Record<string, unknown>)

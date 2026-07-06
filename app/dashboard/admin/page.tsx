@@ -51,6 +51,7 @@ import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
+import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
 import { getJourneyDateRangeBounds, type JourneyDateRangeFilter } from "@/lib/customer-journey"
@@ -724,6 +725,7 @@ export default function AdminPanelPage() {
   const [visitorReportRefreshing, setVisitorReportRefreshing] = useState(false)
   const [visitorReportDetailsRow, setVisitorReportDetailsRow] = useState<AdminVisitReportRow | null>(null)
   const [visitorReportDetailsOpen, setVisitorReportDetailsOpen] = useState(false)
+  const [productNeededRefreshToken, setProductNeededRefreshToken] = useState(0)
   const [accountManagerSearchTerm, setAccountManagerSearchTerm] = useState("")
   const [accountManagerDialogOpen, setAccountManagerDialogOpen] = useState(false)
   const [editingAccountManager, setEditingAccountManager] = useState<AccountManager | null>(null)
@@ -2061,6 +2063,17 @@ export default function AdminPanelPage() {
       }
       if (activeTab === "visitor-reports" && (path.includes("visit") || domain === "visitors")) {
         void loadVisitorReports()
+      }
+      if (
+        activeTab === "overview" &&
+        (path.includes("file-login") ||
+          path.includes("product-needed") ||
+          path.includes("quotations") ||
+          path.includes("installation") ||
+          path.includes("installer") ||
+          domain === "quotations")
+      ) {
+        setProductNeededRefreshToken((token) => token + 1)
       }
     }
 
@@ -4387,6 +4400,15 @@ export default function AdminPanelPage() {
                 name: getDealerName(quotation.dealerId, quotation),
                 mobile: getDealerMobile(quotation.dealerId, quotation),
               })}
+            />
+
+            <AdminProductNeededPanel
+              quotations={quotations}
+              dealers={activeDealers}
+              getDealerName={getDealerName}
+              useApi={useApi}
+              enabled={activeTab === "overview"}
+              refreshToken={productNeededRefreshToken}
             />
           </TabsContent>
 

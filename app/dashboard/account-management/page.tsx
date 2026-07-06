@@ -37,6 +37,11 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { api, ApiError } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { formatPersonName } from "@/lib/name-display"
+import {
+  formatJourneyStageStatusLabel,
+  getJourneyHoldInfo,
+  getJourneyStageProgress,
+} from "@/lib/customer-journey"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -419,6 +424,90 @@ function normalizePhaseAmountsForApi(phases: PaymentPhase[], subtotal: number): 
   })
 }
 
+function redistributeInstallmentAmounts(
+  total: number,
+  count: number,
+  existing?: PaymentPhase[],
+): PaymentPhase[] {
+  const safeCount = Math.max(1, count)
+  const baseAmount = Math.floor(total / safeCount)
+  const remainder = Math.round(total - baseAmount * safeCount)
+  return Array.from({ length: safeCount }, (_, index) => {
+    const existingPhase = existing?.[index]
+    const amount = baseAmount + (index === safeCount - 1 ? remainder : 0)
+    const paidAmount = existingPhase?.paidAmount ?? 0
+    const status: PaymentPhase["status"] =
+      paidAmount >= amount ? "completed" : paidAmount > 0 ? "partial" : "pending"
+    return {
+      phaseNumber: index + 1,
+      phaseName: `Installment ${index + 1}`,
+      amount,
+      status,
+      paidAmount,
+      dueDate: existingPhase?.dueDate,
+      paymentDate: existingPhase?.paymentDate,
+      paymentMode: normalizePaymentMode(
+        existingPhase?.paymentMode || (existingPhase as any)?.mode || (existingPhase as any)?.payment_method,
+      ),
+      transactionId: existingPhase?.transactionId,
+      note: (existingPhase as any)?.note || (existingPhase as any)?.remarks || "",
+    }
+  })
+}
+
+function removePaymentPhase(
+  phases: PaymentPhase[],
+  phaseNumberToRemove: number,
+  subtotal: number,
+): PaymentPhase[] {
+  const remaining = [...phases]
+    .filter((phase) => phase.phaseNumber !== phaseNumberToRemove)
+    .sort((a, b) => a.phaseNumber - b.phaseNumber)
+    .map((phase, index) => ({
+      ...phase,
+      phaseNumber: index + 1,
+      phaseName: `Installment ${index + 1}`,
+    }))
+
+  if (remaining.length === 0) return []
+
+  return redistributeInstallmentAmounts(subtotal, remaining.length, remaining)
+}
+
+function extractPhasesFromPaymentUpdateResponse(response: unknown): PaymentPhase[] | null {
+  if (!response || typeof response !== "object") return null
+  const body = response as Record<string, unknown>
+  const nested =
+    body.data && typeof body.data === "object" && !Array.isArray(body.data)
+      ? (body.data as Record<string, unknown>)
+      : body
+  const quotation =
+    nested.quotation && typeof nested.quotation === "object"
+      ? (nested.quotation as Record<string, unknown>)
+      : nested
+  const raw =
+    quotation.installments ||
+    quotation.paymentPhases ||
+    quotation.payment_phases ||
+    quotation.phases ||
+    null
+  if (!Array.isArray(raw)) return null
+  return coercePhasesPaymentModes(
+    raw.map((phase: any, index: number) => ({
+      phaseNumber: Number(phase.phaseNumber || index + 1),
+      phaseName: phase.phaseName || `Installment ${index + 1}`,
+      amount: Number(phase.amount || 0),
+      dueDate: phase.dueDate,
+      status: (phase.status || "pending") as PaymentPhase["status"],
+      paidAmount: Number(phase.paidAmount || 0),
+      paymentDate: phase.paymentDate,
+      paymentMode: normalizePaymentMode(phase.paymentMode || phase.mode || phase.payment_method),
+      transactionId: phase.transactionId,
+      note: phase.note || phase.remarks || "",
+    })),
+  )
+}
+
 function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
   let last: PaymentModeSelectValue | undefined
   return phases.map((phase) => {
@@ -554,32 +643,8 @@ export default function AccountManagementPage() {
     localStorage.setItem(PAYMENT_PLANS_KEY, JSON.stringify(current))
   }
 
-  const buildInstallments = (total: number, count: number, existing?: PaymentPhase[]) => {
-    const safeCount = Math.max(1, count)
-    const baseAmount = Math.floor(total / safeCount)
-    const remainder = Math.round(total - baseAmount * safeCount)
-    return Array.from({ length: safeCount }, (_, index) => {
-      const existingPhase = existing?.find((phase) => phase.phaseNumber === index + 1)
-      const amount = baseAmount + (index === safeCount - 1 ? remainder : 0)
-      const paidAmount = existingPhase?.paidAmount ?? 0
-      const status: PaymentPhase["status"] =
-        paidAmount >= amount ? "completed" : paidAmount > 0 ? "partial" : "pending"
-      return {
-        phaseNumber: index + 1,
-        phaseName: `Installment ${index + 1}`,
-        amount,
-        status,
-        paidAmount,
-        dueDate: existingPhase?.dueDate,
-        paymentDate: existingPhase?.paymentDate,
-        paymentMode: normalizePaymentMode(
-          existingPhase?.paymentMode || (existingPhase as any)?.mode || (existingPhase as any)?.payment_method,
-        ),
-        transactionId: existingPhase?.transactionId,
-        note: (existingPhase as any)?.note || (existingPhase as any)?.remarks || "",
-      }
-    })
-  }
+  const buildInstallments = (total: number, count: number, existing?: PaymentPhase[]) =>
+    redistributeInstallmentAmounts(total, count, existing)
 
   const activePayment = activePaymentId
     ? customerPayments.find((payment) => payment.quotationId === activePaymentId) || null
@@ -711,6 +776,10 @@ export default function AccountManagementPage() {
                 fileLoginStatusRaw === "already_login" || fileLoginStatusRaw === "login_now"
                   ? fileLoginStatusRaw
                   : undefined,
+              installationStatus: (flat.installationStatus ?? flat.installation_status) as string | undefined,
+              meteringStage: (flat.meteringStage ?? flat.metering_stage) as string | undefined,
+              meteringStatus: (flat.meteringStatus ?? flat.metering_status) as string | undefined,
+              mcoStatus: (flat.mcoStatus ?? flat.mco_status) as string | undefined,
             }
             return mergeInstallerReleaseOntoQuotation(mapped, readInstallerReleaseMap()) as typeof mapped
           })
@@ -1131,12 +1200,20 @@ export default function AccountManagementPage() {
       "Subtotal",
       "Paid Amount",
       "Remaining Amount",
+      "Installment Count",
+      "Admin Approval Status",
+      "Installation Status",
+      "Metering Status",
+      "Final Confirmation Status",
+      "File Status",
     ]
 
     const rows = filteredCustomerPayments.map((payment) => {
       const paidAmount = getTotalPaidPhases(payment.phases)
       const remainingAmount = getDisplayRemaining(payment)
       const bankCell = getFinancingBankDisplay(payment)
+      const journey = getJourneyStageProgress(payment.quotation)
+      const fileStatus = getJourneyHoldInfo(payment.quotation).stageLabel
       return [
         payment.quotationId,
         payment.customerName,
@@ -1150,6 +1227,12 @@ export default function AccountManagementPage() {
         payment.subtotal,
         paidAmount,
         remainingAmount,
+        payment.phases.length,
+        formatJourneyStageStatusLabel(journey.adminApproval),
+        formatJourneyStageStatusLabel(journey.installation),
+        formatJourneyStageStatusLabel(journey.metering),
+        formatJourneyStageStatusLabel(journey.finalConfirmation),
+        fileStatus,
       ]
     })
 
@@ -1359,6 +1442,7 @@ export default function AccountManagementPage() {
       paymentType: activePayment.paymentType,
       paymentMode: paymentModeFromPhases,
       paymentStatus: paymentStatus || "pending",
+      replaceInstallments: true,
       ...(activePayment.subsidyCheques?.length
         ? { subsidyCheques: activePayment.subsidyCheques }
         : {}),
@@ -1385,30 +1469,43 @@ export default function AccountManagementPage() {
 
     setIsSavingInstallments(true)
     try {
-      if (!useApi) {
-        // Local fallback only when backend API mode is disabled.
-        saveStoredPaymentPlan(activePayment.quotationId, payload)
-      } else {
-        await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
-        // Refresh from backend so paidAmount comes from DB response.
-        await loadApprovedQuotations()
-      }
+      let phasesToApply = payload.phases as PaymentPhase[]
 
       if (!useApi) {
-        setCustomerPayments((prev) =>
-          prev.map((payment) =>
-            payment.quotationId === activePayment.quotationId
-              ? {
-                  ...payment,
-                  paymentType: payload.paymentType,
-                  paymentMode: payload.paymentMode,
+        saveStoredPaymentPlan(activePayment.quotationId, payload)
+      } else {
+        const response = await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
+        const phasesFromResponse = extractPhasesFromPaymentUpdateResponse(response)
+        phasesToApply = phasesFromResponse ?? phasesToApply
+        await loadApprovedQuotations()
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === activePayment.quotationId
+              ? ({
+                  ...q,
+                  installments: phasesToApply,
+                  paymentPhases: phasesToApply,
                   paymentStatus: payload.paymentStatus,
-                  phases: payload.phases,
-                }
-              : payment,
+                  paymentMode: payload.paymentMode,
+                } as Quotation)
+              : q,
           ),
         )
       }
+
+      setCustomerPayments((prev) =>
+        prev.map((payment) =>
+          payment.quotationId === activePayment.quotationId
+            ? {
+                ...payment,
+                paymentType: payload.paymentType,
+                paymentMode: payload.paymentMode,
+                paymentStatus: payload.paymentStatus,
+                phases: phasesToApply,
+              }
+            : payment,
+        ),
+      )
 
       persistSubsidyChequesForQuotation(activePayment.quotationId, activePayment.subsidyCheques || [])
 
@@ -2298,7 +2395,14 @@ export default function AccountManagementPage() {
                         onClick={() => {
                           const updated = customerPayments.map((p) =>
                             p.quotationId === activePayment.quotationId
-                              ? { ...p, phases: buildInstallments(p.subtotal, p.phases.length + 1, p.phases) }
+                              ? {
+                                  ...p,
+                                  phases: buildInstallments(
+                                    p.subtotal,
+                                    p.phases.length + 1,
+                                    [...p.phases].sort((a, b) => a.phaseNumber - b.phaseNumber),
+                                  ),
+                                }
                               : p
                           )
                           setCustomerPayments(updated)
@@ -2535,17 +2639,16 @@ export default function AccountManagementPage() {
                                   p.quotationId === activePayment.quotationId
                                     ? {
                                         ...p,
-                                        phases: buildInstallments(
+                                        phases: removePaymentPhase(
+                                          p.phases,
+                                          phase.phaseNumber,
                                           p.subtotal,
-                                          p.phases.length - 1,
-                                          p.phases.filter((ph) => ph.phaseNumber !== phase.phaseNumber)
                                         ),
                                       }
-                                    : p
+                                    : p,
                                 )
                                 setCustomerPayments(updated)
                               }}
-                              disabled={activePayment.phases.length <= 1}
                               className="text-destructive"
                             >
                               Remove installment
