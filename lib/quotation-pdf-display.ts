@@ -99,6 +99,8 @@ export type PdfPanelRangeKey =
   | "premier_600_625_bifacial_topcon"
   | "ina_500_600_bifacial"
   | "tata_530_570"
+  | "renewsys_540_580"
+  | "renewsys_600_630_bifacial_topcon"
 
 /** Fixed panel watt range for Tata DCR package sets (Jun 2026 sheet). */
 export const TATA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "tata_530_570"
@@ -175,6 +177,16 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     label: "530W - 570W",
     pdfSpecification: "530W - 570W",
   },
+  {
+    key: "renewsys_540_580",
+    label: "540-580W",
+    pdfSpecification: "540-580W",
+  },
+  {
+    key: "renewsys_600_630_bifacial_topcon",
+    label: "600-630W Bifacial Topcon",
+    pdfSpecification: "600-630W Bifacial Topcon",
+  },
 ]
 
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
@@ -184,6 +196,8 @@ const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
   premier: ["premier_600_625_bifacial_topcon"],
   ina: ["ina_500_600_bifacial"],
   tata: [TATA_DCR_PANEL_RANGE_KEY],
+  // Optional on PDF — do not auto-select; exact entered size (e.g. 545W) until user checks a range.
+  renewsys: ["renewsys_540_580", "renewsys_600_630_bifacial_topcon"],
 }
 
 function normalizePanelBrandKey(brand?: string): string {
@@ -200,22 +214,100 @@ export function getPanelPdfRangeOptionsForBrand(panelBrand?: string): PanelPdfRa
 
 /** Default PDF range checkbox when a panel brand is chosen (INA, Premier, Adani, etc.). */
 export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPanelRangeKey | "" {
-  const keys = PANEL_RANGE_BY_BRAND[normalizePanelBrandKey(panelBrand)] || []
+  const brandKey = normalizePanelBrandKey(panelBrand)
+  // RenewSys: leave unchecked so PDF shows the entered size (e.g. 545W) until a range is chosen.
+  if (brandKey === "renewsys") return ""
+  const keys = PANEL_RANGE_BY_BRAND[brandKey] || []
   return keys[0] ?? ""
+}
+
+/** Pick RenewSys PDF range from entered panel watts when only the legacy boolean is set. */
+export function renewsysPdfRangeKeyForPanelWatts(panelW: number): PdfPanelRangeKey {
+  return panelW >= 600 ? "renewsys_600_630_bifacial_topcon" : "renewsys_540_580"
+}
+
+/** True when the PDF range key is one of the options for this panel brand. */
+export function isPdfPanelRangeKeyAllowedForBrand(
+  key: string | null | undefined,
+  panelBrand?: string,
+): boolean {
+  const trimmed = String(key || "").trim()
+  if (!trimmed) return false
+  // Accept briefly-lived key from first RenewSys ship if anything saved it
+  const normalizedKey =
+    trimmed === "renewsys_600_630" ? "renewsys_600_630_bifacial_topcon" : trimmed
+  const option = getPanelPdfRangeOption(normalizedKey)
+  if (!option) return false
+  const allowed = PANEL_RANGE_BY_BRAND[normalizePanelBrandKey(panelBrand)] || []
+  return allowed.includes(option.key)
+}
+
+type PdfDisplaySource = ProductSelection & Record<string, unknown>
+
+function brandForPdfRangeField(
+  products: PdfDisplaySource,
+  field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
+): string {
+  if (field === "pdfDcrPanelRangeKey") {
+    return String(products.dcrPanelBrand || products.panelBrand || products.panel_brand || "")
+  }
+  if (field === "pdfNonDcrPanelRangeKey") {
+    return String(products.nonDcrPanelBrand || products.non_dcr_panel_brand || "")
+  }
+  return String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || "")
+}
+
+/** Drop range keys that do not belong to the current brand (e.g. Adani Topcon left on RenewSys). */
+export function sanitizePdfPanelRangesForBrands(products: ProductSelection): ProductSelection {
+  const next = { ...products }
+  const record = next as ProductSelection & Record<string, unknown>
+
+  const primaryBrand = brandForPdfRangeField(next as PdfDisplaySource, "pdfPanelRangeKey")
+  const primaryRaw = String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  if (primaryRaw && !isPdfPanelRangeKeyAllowedForBrand(primaryRaw, primaryBrand)) {
+    next.pdfPanelRangeKey = ""
+    next.pdfUsePanelSizeRange = false
+    record.pdf_panel_range_key = null
+    record.pdf_use_panel_size_range = false
+  } else if (primaryRaw === "renewsys_600_630") {
+    next.pdfPanelRangeKey = "renewsys_600_630_bifacial_topcon"
+  }
+
+  const dcrBrand = brandForPdfRangeField(next as PdfDisplaySource, "pdfDcrPanelRangeKey")
+  const dcrRaw = String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  if (dcrRaw && !isPdfPanelRangeKeyAllowedForBrand(dcrRaw, dcrBrand)) {
+    next.pdfDcrPanelRangeKey = ""
+    record.pdf_dcr_panel_range_key = null
+  } else if (dcrRaw === "renewsys_600_630") {
+    next.pdfDcrPanelRangeKey = "renewsys_600_630_bifacial_topcon"
+  }
+
+  const nonDcrBrand = brandForPdfRangeField(next as PdfDisplaySource, "pdfNonDcrPanelRangeKey")
+  const nonDcrRaw = String(
+    next.pdfNonDcrPanelRangeKey || record.pdf_non_dcr_panel_range_key || "",
+  ).trim()
+  if (nonDcrRaw && !isPdfPanelRangeKeyAllowedForBrand(nonDcrRaw, nonDcrBrand)) {
+    next.pdfNonDcrPanelRangeKey = ""
+    record.pdf_non_dcr_panel_range_key = null
+  } else if (nonDcrRaw === "renewsys_600_630") {
+    next.pdfNonDcrPanelRangeKey = "renewsys_600_630_bifacial_topcon"
+  }
+
+  return next
 }
 
 /** Backfill empty PDF range keys from panel brand — e.g. INA → 500–600W Bifacial. */
 export function applyDefaultPdfPanelRanges(products: ProductSelection): ProductSelection {
-  const next = { ...products }
-  const record = products as ProductSelection & Record<string, unknown>
-  const panelType = String(products.panelType || record.panel_type || "").trim().toLowerCase()
+  const next = sanitizePdfPanelRangesForBrands({ ...products })
+  const record = next as ProductSelection & Record<string, unknown>
+  const panelType = String(next.panelType || record.panel_type || "").trim().toLowerCase()
 
   const brandForPrimaryRange =
     panelType === "ina"
       ? "INA"
-      : products.panelBrand || products.dcrPanelBrand || ""
+      : next.panelBrand || next.dcrPanelBrand || ""
   const primaryDefault = defaultPdfPanelRangeKeyForPanelBrand(brandForPrimaryRange)
-  const existingPrimary = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const existingPrimary = String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
   if (primaryDefault && !existingPrimary) {
     next.pdfPanelRangeKey = primaryDefault
     next.pdfUsePanelSizeRange = true
@@ -225,18 +317,18 @@ export function applyDefaultPdfPanelRanges(products: ProductSelection): ProductS
   }
 
   const dcrBrandForRange =
-    panelType === "ina" ? "INA" : products.dcrPanelBrand || products.panelBrand || ""
+    panelType === "ina" ? "INA" : next.dcrPanelBrand || next.panelBrand || ""
   const dcrDefault = defaultPdfPanelRangeKeyForPanelBrand(dcrBrandForRange)
-  const existingDcr = String(products.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  const existingDcr = String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
   if (dcrDefault && !existingDcr) {
     next.pdfDcrPanelRangeKey = dcrDefault
   } else if (panelType === "ina" && existingDcr && !existingDcr.startsWith("ina_")) {
     next.pdfDcrPanelRangeKey = INA_DCR_PANEL_RANGE_KEY
   }
 
-  const nonDcrDefault = defaultPdfPanelRangeKeyForPanelBrand(products.nonDcrPanelBrand)
+  const nonDcrDefault = defaultPdfPanelRangeKeyForPanelBrand(next.nonDcrPanelBrand)
   const existingNonDcr = String(
-    products.pdfNonDcrPanelRangeKey || record.pdf_non_dcr_panel_range_key || "",
+    next.pdfNonDcrPanelRangeKey || record.pdf_non_dcr_panel_range_key || "",
   ).trim()
   if (nonDcrDefault && !existingNonDcr) {
     next.pdfNonDcrPanelRangeKey = nonDcrDefault
@@ -254,8 +346,6 @@ export function getPanelPdfRangeLabel(key?: string | null): string | null {
   return getPanelPdfRangeOption(key)?.pdfSpecification ?? null
 }
 
-type PdfDisplaySource = ProductSelection & Record<string, unknown>
-
 function pickPdfPanelRangeKey(
   products: PdfDisplaySource,
   field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
@@ -263,7 +353,11 @@ function pickPdfPanelRangeKey(
 ): PdfPanelRangeKey | null {
   const hasCamel = Object.prototype.hasOwnProperty.call(products, field)
   const hasSnake = Object.prototype.hasOwnProperty.call(products, snakeField)
-  const raw = products[field] ?? products[snakeField]
+  let raw = products[field] ?? products[snakeField]
+  if (typeof raw === "string" && raw.trim() === "renewsys_600_630") {
+    raw = "renewsys_600_630_bifacial_topcon"
+  }
+  const brand = brandForPdfRangeField(products, field)
 
   if (hasCamel || hasSnake) {
     if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) {
@@ -271,15 +365,14 @@ function pickPdfPanelRangeKey(
     }
     if (typeof raw === "string" && raw.trim()) {
       const option = getPanelPdfRangeOption(raw.trim())
-      if (option) return option.key
-      return null
+      if (!option) return null
+      // Stale Adani/Waaree keys left on RenewSys (etc.) must not drive PDF/details.
+      if (!isPdfPanelRangeKeyAllowedForBrand(option.key, brand)) return null
+      return option.key
     }
   }
 
   if (field === "pdfPanelRangeKey" && Boolean(products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range)) {
-    const brand = normalizePanelBrandKey(
-      String(products.panelBrand || products.dcrPanelBrand || products.panel_brand || ""),
-    )
     const panelW = parsePanelSizeWatts(
       String(
         products.panelSize ||
@@ -289,15 +382,19 @@ function pickPdfPanelRangeKey(
           "",
       ),
     )
-    if (brand === "adani") {
+    const brandKey = normalizePanelBrandKey(brand)
+    if (brandKey === "adani") {
       return panelW >= 610 ? "adani_610_625_bifacial_topcon" : "adani_540_580_bifacial"
     }
-    if (brand === "waaree") {
+    if (brandKey === "waaree") {
       return panelW >= 580 ? "waaree_580_700_bifacial_topcon" : "waaree_540_560_bifacial"
     }
-    if (brand === "premierenergies" || brand === "premier") return "premier_600_625_bifacial_topcon"
-    if (brand === "ina") return "ina_500_600_bifacial"
-    return "adani_610_625_bifacial_topcon"
+    if (brandKey === "premierenergies" || brandKey === "premier") return "premier_600_625_bifacial_topcon"
+    if (brandKey === "ina") return "ina_500_600_bifacial"
+    // RenewSys: range only when an explicit checkbox key is set — never from legacy boolean alone.
+    if (brandKey === "renewsys") return null
+    // Unknown brand + legacy flag: do not invent Adani Topcon
+    return null
   }
   return null
 }

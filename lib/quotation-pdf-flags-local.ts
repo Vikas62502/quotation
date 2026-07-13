@@ -1,5 +1,5 @@
 import type { ProductSelection } from "@/lib/quotation-context"
-import { isPdfCommercialSet } from "@/lib/quotation-pdf-display"
+import { isPdfCommercialSet, sanitizePdfPanelRangesForBrands } from "@/lib/quotation-pdf-display"
 
 const STORAGE_PREFIX = "quotation_pdf_flags_"
 
@@ -32,20 +32,21 @@ export function readLocalQuotationPdfFlags(quotationId: string): StoredQuotation
 /** Cache PDF display flags after a successful products save. */
 export function writeLocalQuotationPdfFlags(quotationId: string, products: ProductSelection): void {
   if (typeof window === "undefined" || !quotationId.trim()) return
-  const raw = products as ProductSelection & Record<string, unknown>
+  const sanitized = sanitizePdfPanelRangesForBrands(products)
+  const raw = sanitized as ProductSelection & Record<string, unknown>
   const payload: StoredQuotationPdfFlags = {
     pdfPanelRangeKey:
-      String(products.pdfPanelRangeKey || raw.pdf_panel_range_key || "").trim() || undefined,
+      String(sanitized.pdfPanelRangeKey || raw.pdf_panel_range_key || "").trim() || undefined,
     pdfDcrPanelRangeKey:
-      String(products.pdfDcrPanelRangeKey || raw.pdf_dcr_panel_range_key || "").trim() || undefined,
+      String(sanitized.pdfDcrPanelRangeKey || raw.pdf_dcr_panel_range_key || "").trim() || undefined,
     pdfNonDcrPanelRangeKey:
-      String(products.pdfNonDcrPanelRangeKey || raw.pdf_non_dcr_panel_range_key || "").trim() ||
+      String(sanitized.pdfNonDcrPanelRangeKey || raw.pdf_non_dcr_panel_range_key || "").trim() ||
       undefined,
-    pdfCommercialSet: isPdfCommercialSet(products),
+    pdfCommercialSet: isPdfCommercialSet(sanitized),
     pdfUsePanelSizeRange: Boolean(
-      products.pdfUsePanelSizeRange ||
+      sanitized.pdfUsePanelSizeRange ||
         raw.pdf_use_panel_size_range ||
-        products.pdfPanelRangeKey ||
+        sanitized.pdfPanelRangeKey ||
         raw.pdf_panel_range_key,
     ),
   }
@@ -87,5 +88,6 @@ export function applyLocalQuotationPdfFlags(
     next = { ...next, pdfNonDcrPanelRangeKey: stored.pdfNonDcrPanelRangeKey }
   }
 
-  return next
+  // Drop cached Adani/Waaree keys that do not match the current panel brand (e.g. RenewSys).
+  return sanitizePdfPanelRangesForBrands(next)
 }
