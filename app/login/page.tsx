@@ -43,7 +43,7 @@ function LoginForm() {
         router.push("/dashboard/baldev")
       } else if (role === "visitor") {
         router.push("/visitor/dashboard")
-      } else if (role === "admin") {
+      } else if (role === "admin" || role === "super-admin") {
         router.push("/dashboard/admin")
       } else {
         router.push("/dashboard")
@@ -96,8 +96,8 @@ function LoginForm() {
             router.push("/dashboard/baldev")
           } else if (userRole === "visitor") {
             router.push("/visitor/dashboard")
-          } else if (userRole === "admin") {
-            // Admin can go to admin panel or account management based on preference
+          } else if (userRole === "admin" || userRole === "super-admin") {
+            // Admin / Super Admin → Admin Panel (includes Accounts → Inventory)
             router.push("/dashboard/admin")
           } else {
             router.push("/dashboard")

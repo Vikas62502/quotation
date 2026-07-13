@@ -1,9 +1,10 @@
 /**
  * HR Uploaded Lead Data — table labels, status badges, and batch counts.
  *
- * HR view uses two buckets only:
- * - Completed: dealer assigned AND call finished → dealer name + Completed
- * - Unassigned: everything else → Unassigned + Pending (includes in-queue / assigned-but-not-done)
+ * Three buckets (matches BACKEND_CHANGES_REQUIRED.md §7.8):
+ * - Unassigned: no valid dealer assignee and not completed
+ * - Assigned: dealer present, call not finished yet → dealer name + Pending
+ * - Completed: dealer assigned and call finished
  */
 
 export type HrUploadLeadRow = {
@@ -12,7 +13,7 @@ export type HrUploadLeadRow = {
   assignmentStatus?: string
 }
 
-export type HrLeadCountBucket = "unassigned" | "completed"
+export type HrLeadCountBucket = "unassigned" | "assigned" | "completed"
 
 export type HrLeadRowDisplay = {
   bucket: HrLeadCountBucket
@@ -22,7 +23,7 @@ export type HrLeadRowDisplay = {
 }
 
 export const HR_UPLOAD_COUNT_LEGEND =
-  "Completed = dealer assigned and call finished • Unassigned + Pending = not completed yet (waiting or in progress)"
+  "Unassigned = no dealer yet • Assigned = dealer has the lead, call pending • Completed = call finished"
 
 const UNASSIGNED_DEALER_TOKENS = new Set([
   "",
@@ -57,17 +58,17 @@ export const isCompletedAssignmentStatus = (value?: string) => {
 export const isHrUploadLeadCompleted = (row: HrUploadLeadRow) =>
   rowHasAssignedDealer(row) && isCompletedAssignmentStatus(row.assignmentStatus)
 
-export const classifyHrUploadLeadBucket = (row: HrUploadLeadRow): HrLeadCountBucket =>
-  isHrUploadLeadCompleted(row) ? "completed" : "unassigned"
+export const classifyHrUploadLeadBucket = (row: HrUploadLeadRow): HrLeadCountBucket => {
+  if (isHrUploadLeadCompleted(row)) return "completed"
+  if (rowHasAssignedDealer(row)) return "assigned"
+  return "unassigned"
+}
 
 export const computeHrUploadLeadCounts = (rows: HrUploadLeadRow[]) => {
   const counts = { assigned: 0, unassigned: 0, completed: 0 }
   for (const row of rows) {
-    if (isHrUploadLeadCompleted(row)) {
-      counts.completed += 1
-    } else {
-      counts.unassigned += 1
-    }
+    const bucket = classifyHrUploadLeadBucket(row)
+    counts[bucket] += 1
   }
   return counts
 }
@@ -85,6 +86,15 @@ export const getHrLeadRowDisplay = (row: HrUploadLeadRow): HrLeadRowDisplay => {
     }
   }
 
+  if (rowHasAssignedDealer(row)) {
+    return {
+      bucket: "assigned",
+      dealerLabel: dealerName || "—",
+      statusLabel: "Pending",
+      statusBadgeClassName: "border-sky-200 text-sky-900 bg-sky-50",
+    }
+  }
+
   return {
     bucket: "unassigned",
     dealerLabel: "Unassigned",
@@ -93,17 +103,22 @@ export const getHrLeadRowDisplay = (row: HrUploadLeadRow): HrLeadRowDisplay => {
   }
 }
 
-/** HR summary: only Unassigned + Completed (assigned middle bucket not used). */
+/** Normalize API counts — preserve three buckets; derive missing unassigned from invariant. */
 export const normalizeHrUploadCountsForHrView = (counts: {
   rowCount: number
   assigned?: number
   unassigned?: number
   completed?: number
 }) => {
-  const rowCount = counts.rowCount
+  const rowCount = Math.max(0, counts.rowCount)
   const completed = Math.min(rowCount, Math.max(0, counts.completed ?? 0))
-  const unassigned = Math.max(0, rowCount - completed)
-  return { rowCount, assigned: 0, unassigned, completed }
+  const assigned = Math.min(rowCount - completed, Math.max(0, counts.assigned ?? 0))
+  const unassignedExplicit = counts.unassigned
+  const unassigned =
+    unassignedExplicit !== undefined
+      ? Math.min(rowCount - completed - assigned, Math.max(0, unassignedExplicit))
+      : Math.max(0, rowCount - completed - assigned)
+  return { rowCount, assigned, unassigned, completed }
 }
 
 const isUploadSeedAssignedCountArtifact = (
@@ -120,7 +135,7 @@ const sanitizeHrUploadApiCounts = (counts: {
   completed: number
 }) => {
   if (isUploadSeedAssignedCountArtifact(counts.rowCount, counts.assigned, counts.unassigned, counts.completed)) {
-    return normalizeHrUploadCountsForHrView({ rowCount: counts.rowCount, completed: 0 })
+    return normalizeHrUploadCountsForHrView({ rowCount: counts.rowCount, assigned: 0, unassigned: counts.rowCount, completed: 0 })
   }
   return normalizeHrUploadCountsForHrView(counts)
 }
@@ -135,13 +150,18 @@ const reconcileCountsWithSampleRows = (
 
   const sample = computeHrUploadLeadCounts(rows)
   const sampleAllUnassignedPending =
-    sample.unassigned === rows.length && sample.completed === 0
+    sample.unassigned === rows.length && sample.assigned === 0 && sample.completed === 0
 
   if (
     sampleAllUnassignedPending &&
     isUploadSeedAssignedCountArtifact(counts.rowCount, counts.assigned, counts.unassigned, counts.completed)
   ) {
-    return normalizeHrUploadCountsForHrView({ rowCount: counts.rowCount, completed: 0 })
+    return normalizeHrUploadCountsForHrView({
+      rowCount: counts.rowCount,
+      assigned: 0,
+      unassigned: counts.rowCount,
+      completed: 0,
+    })
   }
 
   if (counts.rowCount > 0 && rows.length >= counts.rowCount) {
@@ -150,6 +170,8 @@ const reconcileCountsWithSampleRows = (
 
   return normalizeHrUploadCountsForHrView({
     rowCount: counts.rowCount,
+    assigned: counts.assigned,
+    unassigned: counts.unassigned,
     completed: counts.completed,
   })
 }
@@ -162,15 +184,24 @@ const parseOptionalCount = (value: unknown) => {
 export const extractHrUploadCountsFromApi = (apiItem?: Record<string, unknown> | null) => {
   if (!apiItem) return null
   const rowCount = parseOptionalCount(apiItem.rowCount ?? apiItem.totalRows ?? apiItem.count)
-  const completed = parseOptionalCount(apiItem.completedCount ?? (apiItem.counts as { completed?: number })?.completed)
-  if (rowCount === undefined && completed === undefined) return null
+  const assigned = parseOptionalCount(
+    apiItem.assignedCount ?? (apiItem.counts as { assigned?: number })?.assigned,
+  )
+  const unassigned = parseOptionalCount(
+    apiItem.unassignedCount ?? (apiItem.counts as { unassigned?: number })?.unassigned,
+  )
+  const completed = parseOptionalCount(
+    apiItem.completedCount ?? (apiItem.counts as { completed?: number })?.completed,
+  )
+  if (rowCount === undefined && assigned === undefined && unassigned === undefined && completed === undefined) {
+    return null
+  }
   const resolvedRowCount = rowCount ?? 0
-  const resolvedCompleted = completed ?? 0
   return sanitizeHrUploadApiCounts({
     rowCount: resolvedRowCount,
-    assigned: 0,
-    unassigned: 0,
-    completed: resolvedCompleted,
+    assigned: assigned ?? 0,
+    unassigned: unassigned ?? 0,
+    completed: completed ?? 0,
   })
 }
 
@@ -191,7 +222,7 @@ export const resolveHrUploadBatchCounts = (
   if (apiCounts && rowCount > 0) {
     return reconcileCountsWithSampleRows(
       {
-        assigned: 0,
+        assigned: apiCounts.assigned,
         unassigned: apiCounts.unassigned,
         completed: apiCounts.completed,
         rowCount,
@@ -205,5 +236,5 @@ export const resolveHrUploadBatchCounts = (
     return { ...computed, rowCount: rowCount || rows.length }
   }
 
-  return normalizeHrUploadCountsForHrView({ rowCount, completed: 0 })
+  return normalizeHrUploadCountsForHrView({ rowCount, assigned: 0, unassigned: rowCount, completed: 0 })
 }

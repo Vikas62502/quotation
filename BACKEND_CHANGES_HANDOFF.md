@@ -1775,6 +1775,42 @@ After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotation
 
 ---
 
+## 12. Super Admin — Quotation login + Inventory data (Jul 2026)
+
+**Frontend:** `/login` → Admin Panel → **Accounts** → **Open Inventory** (`/dashboard/inventory`).
+
+**No second login:** quotation Admin session reuses the same JWT (`authToken` / `auth_token`). SPA maps Admin → inventory effective `super-admin` via `buildInventoryAuthUserFromQuotationSession` — never redirects to `/inventory-auth/login`.
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` **§AD**, `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`.
+
+### Required backend (minimum)
+
+1. **`POST /api/auth/login`** for admin / super-admin → correct `user.role` + JWT.
+2. **Same Bearer** on inventory SA routes (no `/inventory-auth/login`).
+3. **Local evidence to fix** (quotation Admin JWT today):
+
+| Works | Broken (401) |
+|-------|----------------|
+| `GET /products` | `GET /users`, `/users?role=admin`, `/users/agents` |
+| | `GET /sales`, `/stock-requests`, `/stock-returns`, `/admin-inventory` |
+
+`GET /admin/users` → **404** — ignore; SPA uses `/users` only.
+
+4. Shared allow-list **`admin` | `super-admin`** on all broken routes (same as `/products`).
+5. `"Invalid token or user inactive"` only when JWT bad or `is_active = false`.
+
+### Checklist
+
+- [ ] Quotation Admin token: `GET /users?role=admin` → **200** (not 401)
+- [ ] Same token: `/users/agents`, `/sales`, `/stock-requests`, `/stock-returns`, `/admin-inventory` → **200**
+- [ ] Allow-list matches `/products`
+- [ ] No dependency on `/admin/users`
+- [ ] Open Inventory never asks for `/inventory-auth/login`
+
+**Full spec:** `BACKEND_CHANGES_REQUIRED.md` **§AD.5.1**, `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`.
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -1794,4 +1830,5 @@ After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotation
 | `lib/final-confirmation-documents.ts` | Final confirmation multipart field names + FormData builder |
 | `lib/api.ts` | `uploadFinalConfirmationDocuments`, `sendQuotationToMetering` |
 | `lib/operational-install-queue.ts` | `getAdminQuotationsTabSendToMeteringState`, installation vs metering visibility |
+| **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |

@@ -10,6 +10,8 @@ import {
 } from "./api"
 import { readInstallationTeams } from "./installation-teams"
 import { disconnectRealtime, initRealtime } from "./realtime"
+import { mapBackendRoleToAdminUserRole, buildInventoryAuthUserFromQuotationSession } from "./admin-access"
+import { authService as inventoryAuthService } from "@/inventory-sa/lib/auth"
 
 // asd
 
@@ -123,6 +125,7 @@ export type UserRole =
   | "dealer"
   | "visitor"
   | "admin"
+  | "super-admin"
   | "account-management"
   | "installer"
   | "installation-team"
@@ -284,14 +287,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setHrUser(null)
           setDealer(null)
         } else {
+          const adminMapped = mapBackendRoleToAdminUserRole(user.role) || mapBackendRoleToAdminUserRole(savedRole)
           setDealer(user)
-          setRole(user.role === "admin" ? "admin" : "dealer")
+          setRole(adminMapped || (savedRole === "admin" || user.role === "admin" ? "admin" : "dealer"))
           setAccountManager(null)
           setVisitor(null)
           setInstaller(null)
           setMeteringUser(null)
           setBaldev(null)
           setHrUser(null)
+          if (token && adminMapped) {
+            inventoryAuthService.setToken(token)
+            inventoryAuthService.setUser(
+              buildInventoryAuthUserFromQuotationSession({
+                id: user.id,
+                username: user.username,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                role: adminMapped,
+                isActive: (user as any).isActive ?? true,
+                loginUser: user as any,
+              })
+            )
+          }
         }
         setIsAuthenticated(true)
       } catch {
@@ -415,21 +433,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const response = await api.auth.login(username, password)
         const user = response.user
         const backendRole = String(user.role || "").toLowerCase()
+        const adminMapped = mapBackendRoleToAdminUserRole(backendRole)
         const userRole: UserRole =
-          backendRole === "admin"
-            ? "admin"
-            : backendRole === "visitor"
-              ? "visitor"
-              : backendRole === "hr" || backendRole === "human-resources"
-                ? "hr"
-                : "dealer"
+          adminMapped ||
+          (backendRole === "visitor"
+            ? "visitor"
+            : backendRole === "hr" || backendRole === "human-resources"
+              ? "hr"
+              : "dealer")
 
         // Store tokens
         if (response.token) {
           localStorage.setItem("authToken", response.token)
+          // Keep inventory SA client in sync so Super Admin Inventory can load all data
+          inventoryAuthService.setToken(response.token)
         }
         if (response.refreshToken) {
           localStorage.setItem("refreshToken", response.refreshToken)
+        }
+
+        if (adminMapped) {
+          inventoryAuthService.setUser(
+            buildInventoryAuthUserFromQuotationSession({
+              id: user.id,
+              username: user.username,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              role: adminMapped,
+              isActive: (user as any).isActive ?? true,
+              loginUser: user as any,
+            })
+          )
         }
 
         if (userRole === "visitor") {
@@ -612,6 +646,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     localStorage.removeItem("authToken")
     localStorage.removeItem("refreshToken")
+    inventoryAuthService.clearAuth()
     localStorage.removeItem("dealer")
     localStorage.removeItem("visitor")
     localStorage.removeItem("accountManager")

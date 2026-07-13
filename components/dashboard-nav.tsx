@@ -21,8 +21,7 @@ import {
 } from "@/components/ui/sheet"
 import { SolarLogo } from "@/components/solar-logo"
 import { Menu, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall } from "lucide-react"
-
-const ADMIN_USERNAME = "admin"
+import { isQuotationAdminAccess } from "@/lib/admin-access"
 
 const getNavItems = (isAdmin: boolean, role: string | null) => {
   // Account Management users should not see regular navigation (they have their own header)
@@ -58,7 +57,7 @@ export function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
   const { dealer, logout, role, accountManager } = useAuth()
-  const isAdmin = dealer?.username === ADMIN_USERNAME
+  const isAdmin = isQuotationAdminAccess({ role, username: dealer?.username })
   const navItems = getNavItems(isAdmin, role)
   
   // Don't render navigation for account-management users/routes (they have their own header)

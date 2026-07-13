@@ -4712,6 +4712,178 @@ See `BACKEND_INSTALLATION_RELEASE.md`, `BACKEND_CHANGES_REQUIRED.md` §6.5.
 
 ---
 
+## AD) Super Admin on Quotation Admin Login + Inventory data (Jul 2026)
+
+**Frontend reference:** `lib/admin-access.ts`, `lib/auth-context.tsx` → `login()`, `app/login/page.tsx`, `app/dashboard/admin/page.tsx` (Accounts → Inventory), `app/dashboard/inventory/page.tsx`, `components/inventory/super-admin-inventory-panel.tsx`.
+
+### AD.1 Problem
+
+Super Admin users must:
+
+1. Sign in via the **same quotation Admin login** (`POST /auth/login` at `/login`)
+2. Open **Admin Panel** (not redirected as dealer)
+3. Open **Accounts → Open Inventory** and load **full** inventory data (products, admins, agents, stock requests, sales, returns)
+
+Today, if login returns `role: "dealer"` (or omits `super-admin`), the SPA cannot enter Admin Panel. If the JWT is not accepted on inventory routes, Inventory shows empty/errors.
+
+### AD.2 Login response
+
+| Field | Requirement |
+|-------|-------------|
+| `user.role` | `"super-admin"` (preferred). Also accept `superadmin` / `super_admin` and normalize in response to `super-admin` |
+| `token` | JWT with matching role claim |
+| `user.isActive` | Must be true; reject inactive |
+
+Frontend mapping (`lib/admin-access.ts`):
+
+- `admin` → Admin Panel
+- `super-admin` / `superadmin` → Super Admin (Admin Panel + Inventory)
+
+**Do not** require `username === "admin"` for Admin Panel access.
+
+### AD.3 Quotation Admin API auth
+
+Every `/api/admin/*` route that allows `admin` must also allow **`super-admin`**.
+
+Examples: `GET /admin/quotations`, dealers, customers, visits, product-needed, status PATCHes.
+
+### AD.4 Shared Bearer token for Inventory — **no second login**
+
+SPA stores login token in `authToken` **and** `auth_token`, and calls inventory APIs with:
+
+```http
+Authorization: Bearer <same token from POST /auth/login>
+```
+
+Base URL: `NEXT_PUBLIC_API_URL` or `https://api.inventory.chairbordsolar.com/api`.
+
+**Product rule:** Quotation Admin opens Inventory with the **same session**. Never require `/inventory-auth/login` after Admin `/login`.
+
+**Frontend (create-quotation-flow) — already wired:**
+
+| File | Purpose |
+|------|---------|
+| `lib/admin-access.ts` | Maps Admin → inventory effective `super-admin`; `buildInventoryAuthUserFromQuotationSession`; `canUseInventoryWithoutRelogin` |
+| `lib/auth-context.tsx` | On login + restore, syncs token + `auth_user` for inventory |
+| `app/dashboard/inventory/page.tsx` | Re-syncs session on mount; quotation auth only |
+| `inventory-sa/lib/auth.ts` | Keeps `authToken` + `auth_token` in sync |
+| `components/inventory/super-admin-inventory-panel.tsx` | Reads either token key; §AD error copy (refresh after backend deploy — do not re-login) |
+| Admin → Accounts | Button **Open Inventory** → `/dashboard/inventory` |
+
+**Flow:** `/login` (Admin) → Accounts → Open Inventory → `/dashboard/inventory` with the same Bearer. Hard refresh keeps the session.
+
+**Required backend:** inventory middleware trusts this JWT for **`admin` and `super-admin`**. Optional login extras: `inventoryAccess: true`, `inventoryRole: "super-admin"`, `requiresInventoryLogin: false`.
+
+Until §AD is deployed on `GET /users`, SPA may still show the §AD banner (not a login prompt).
+
+### AD.5 Inventory endpoints (full data for admin + super-admin)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| `GET/POST/PUT/DELETE` | `/products` | Full catalog |
+| `GET` | `/users?role=admin`, `/users/agents` | All admins / agents |
+| `POST/PUT` | `/users`, `/users/:id` | Create / activate |
+| `GET/POST` | `/stock-requests`, `/stock-requests/:id/dispatch` | All SA-bound requests |
+| `GET` | `/admin-inventory/admin/:adminId` (+ serials) | Per-admin stock |
+| `GET/POST/PUT` | `/sales`, `/sales/:id` | All sales + approve |
+| `GET/POST` | `/stock-returns?status=pending`, `/stock-returns/:id/process` | Returns |
+
+**Scope:** quotation **Admin** and **super-admin** get **unscoped** lists (every admin’s stock requests, all products, all sales), not a single-tenant slice.
+
+### AD.5.1 Local evidence (Jul 2026) — quotation Admin JWT on inventory routes
+
+**Observed:** `localhost` SPA → `https://api.inventory.chairbordsolar.com/api` with quotation **Admin** session (Accounts → Open Inventory, **no** second login).
+
+| Endpoint | Status today | Required |
+|----------|--------------|----------|
+| `GET /products` | **200** (74 products load) | Keep |
+| `GET /users?role=admin` | **401** `Invalid token or user inactive` | **200** |
+| `GET /users` | **401** | **200** |
+| `GET /users/agents` | **401** | **200** |
+| `GET /sales` | **401** | **200** |
+| `GET /stock-requests` | **401** | **200** |
+| `GET /stock-returns` / `?status=pending` | **401** | **200** |
+| `GET /admin-inventory` | **401** | **200** |
+| `GET /admin-inventory/admin/:id` | **401** when used | **200** |
+| `GET /admin/users` | **404** `Route not found` | **Do not use** — SPA uses `/users` only |
+
+**Root cause:** `/products` accepts quotation Admin JWT; `/users`, `/sales`, `/stock-requests`, `/stock-returns`, `/admin-inventory` use a stricter guard (or mark user inactive).
+
+**Product rule:** Quotation **`admin`** and **`super-admin`** from `POST /auth/login` must share one allow-list on **all** rows above. No `/inventory-auth/login`.
+
+**Backend fix (required):**
+
+1. Shared guard on inventory SA routes — allow `admin` | `super-admin` | `superadmin`.
+2. Apply to `/users*`, `/sales*`, `/stock-requests*`, `/stock-returns*`, `/admin-inventory*` (same as `/products`).
+3. `"Invalid token or user inactive"` only when JWT invalid **or** `is_active === false` — never because role is quotation `admin`.
+4. Canonical admin list is `GET /users?role=admin` — **not** `/admin/users` (404).
+
+```js
+function requireInventoryAdminAccess(req, res, next) {
+  const role = String(req.user?.role || "").toLowerCase().replace(/_/g, "-")
+  if (!["admin", "super-admin", "superadmin"].includes(role)) {
+    return res.status(403).json({
+      success: false,
+      error: { code: "AUTH_003", message: "Admin or Super Admin role required" },
+    })
+  }
+  if (req.user?.is_active === false || req.user?.isActive === false) {
+    return res.status(401).json({
+      success: false,
+      error: { code: "AUTH_004", message: "Invalid token or user inactive" },
+    })
+  }
+  return next()
+}
+```
+
+```sql
+SELECT id, username, role, is_active FROM users
+WHERE username = '<login>' OR id = '<jwt sub>';
+-- role in ('admin','super-admin'); is_active = true
+```
+
+**SPA until deploy:** soft amber warning; no forced re-login; no `/admin/users` calls.
+
+### AD.6 Checklist
+
+- [ ] `POST /auth/login` for admin **and** super-admin returns correct `role` + JWT
+- [ ] `GET /users` + `GET /users?role=admin` accept quotation Admin JWT (fix local 401)
+- [ ] `GET /users/agents` accepts quotation Admin JWT
+- [ ] `GET /sales`, `/stock-requests`, `/stock-returns`, `/admin-inventory` accept same JWT
+- [ ] Allow-list matches `/products` (already 200 for Admin)
+- [ ] Do **not** require `/admin/users` (404 is OK; SPA does not use it)
+- [ ] Quotation `/admin/*` allows `admin` + `super-admin`
+- [ ] Dealer token → 403 on inventory SA routes
+- [ ] Inactive only when `is_active = false`
+- [ ] Optional login fields: `inventoryAccess: true`, `inventoryRole: "super-admin"`
+
+### AD.7 QA (curl — quotation Admin token)
+
+```bash
+curl -sS -X POST "$API/auth/login" -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"..."}'
+TOKEN=...
+
+curl -sS -o /dev/null -w "%{http_code}\n" "$API/products" -H "Authorization: Bearer $TOKEN"
+# Expect: 200
+
+curl -sS "$API/users?role=admin" -H "Authorization: Bearer $TOKEN"
+curl -sS "$API/users/agents" -H "Authorization: Bearer $TOKEN"
+# Expect: 200 + arrays (NOT 401 Invalid token or user inactive)
+
+curl -sS -o /dev/null -w "%{http_code}\n" "$API/sales" -H "Authorization: Bearer $TOKEN"
+curl -sS -o /dev/null -w "%{http_code}\n" "$API/stock-requests" -H "Authorization: Bearer $TOKEN"
+curl -sS -o /dev/null -w "%{http_code}\n" "$API/stock-returns?status=pending" -H "Authorization: Bearer $TOKEN"
+curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorization: Bearer $TOKEN"
+# Expect: 200 each
+```
+
+**Frontend QA after deploy:** `/login` Admin → Accounts → Open Inventory → admins + sales + requests load; hard refresh keeps session.
+
+**Implementation reference:** `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`.
+
+
 ## Y) Quick handoff — HR lead counts, calling remarks & PDF flags (May 2026)
 
 **One-page summary for backend:** see **`BACKEND_CHANGES_HANDOFF.md`**.
@@ -4734,6 +4906,7 @@ See `BACKEND_INSTALLATION_RELEASE.md`, `BACKEND_CHANGES_REQUIRED.md` §6.5.
 | Medium | **Visit completion on GET** — `GET /quotations/{id}/visits` returns dimensions + image URLs for admin Details modal | **§Z.11**, HANDOFF §8 | `lib/visit-details.ts`, `components/admin-visit-details-dialog.tsx` |
 | **High** | **Account Management installment replace** — `PUT/PATCH` must replace all rows (`replaceInstallments: true`), not merge | **§AB** | `BACKEND_INSTALLMENT_REPLACE.ts`, `app/dashboard/account-management/page.tsx` |
 | Medium | **Payment Excel journey columns** — approved list must return `installationStatus` + metering fields for CSV export | **§AC** | `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `lib/customer-journey.ts` |
+| **High** | **Super Admin / quotation Admin inventory JWT** — `/products` 200 but `/users`+`/sales`+… 401; align allow-list (`admin`\|`super-admin`) | **§AD.5.1** | `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`, `lib/admin-access.ts` |
 | **High** | **Final confirmation uploads** — dedicated POST route; do not use KYC `PATCH …/documents` | **§M**, HANDOFF **§10** | `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
 
@@ -4762,6 +4935,7 @@ For questions or clarifications about these requirements, please refer to:
 - Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
 - Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
 - Payment Excel journey columns: `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel`, `lib/customer-journey.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**
+- Super Admin quotation login + inventory: `lib/admin-access.ts`, `lib/auth-context.tsx`, `app/dashboard/inventory/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §AD**, **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`**
 - Final confirmation document uploads (Admin + Baldev): `lib/final-confirmation-documents.ts`, `lib/api.ts` → `uploadFinalConfirmationDocuments`, **`BACKEND_CHANGES_REQUIRED.md` §M**, **`BACKEND_CHANGES_HANDOFF.md` §10**
 - Admin Quotations tab Send to Metering: `lib/api.ts` → `sendQuotationToMetering`, **`BACKEND_CHANGES_REQUIRED.md` §L.1**, **`BACKEND_CHANGES_HANDOFF.md` §11**
 - API specification: `API_SPECIFICATION.txt`

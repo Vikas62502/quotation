@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
+import { isQuotationAdminAccess } from "@/lib/admin-access"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
@@ -22,8 +23,6 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { formatPersonName } from "@/lib/name-display"
-
-const ADMIN_USERNAME = "admin"
 
 /** Same amount as the Recent Quotations AMOUNT column (subtotal / package price first). */
 function getQuotationDisplayAmount(quotation: {
@@ -206,8 +205,8 @@ export default function DashboardPage() {
       return
     }
     
-    // Redirect admin to admin panel
-    if (dealer?.username === ADMIN_USERNAME) {
+    // Redirect admin / super-admin to admin panel
+    if (isQuotationAdminAccess({ role, username: dealer?.username })) {
       router.push("/dashboard/admin")
       return
     }

@@ -351,6 +351,8 @@ function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVis
     fullName: ctx.currentDealerFullName,
   }
   if (callingLeadAssignedToOtherDealer(lead, dealerIdentity)) return false
+  // FCFS / HR-assigned rows: always visible to the assignee (do not fail-closed on batch id).
+  if (callingLeadAssignedToDealer(lead, dealerIdentity)) return true
 
   const assignedId = String(lead.assignedDealerId || "").trim().toLowerCase()
   const assignedName = String(lead.assignedDealerName || "").trim().toLowerCase()
@@ -1408,8 +1410,17 @@ export default function CallingDataPage() {
     const preservePinnedLead = options?.preservePinnedLead ?? !!pinnedCurrentLeadRef.current
 
     try {
-      const nextResponse = await api.dealers.getCallingQueueNext()
-      const currentResponse = null
+      const [nextResult, currentResult] = await Promise.allSettled([
+        api.dealers.getCallingQueueNext(),
+        api.dealers.getCallingQueueCurrent(),
+      ])
+      const nextResponse = nextResult.status === "fulfilled" ? nextResult.value : null
+      const currentResponse = currentResult.status === "fulfilled" ? currentResult.value : null
+
+      if (!nextResponse && !currentResponse) {
+        const failed = nextResult.status === "rejected" ? nextResult.reason : currentResult.reason
+        throw failed
+      }
 
       const toArray = (value: any): any[] => {
         if (Array.isArray(value)) return value
@@ -1652,6 +1663,7 @@ export default function CallingDataPage() {
     const leadOrder = new Map(leads.map((lead, index) => [lead.id, index]))
 
     return leads
+      // Assigned leads from HR FCFS must not require API sanction id when assignee matches dealer.
       .filter((lead) => {
         if (callingLeadAssignedToOtherDealer(lead, currentDealerIdentity)) return false
         if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false

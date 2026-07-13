@@ -34,7 +34,7 @@ export default function HomePage() {
         router.push("/dashboard/baldev")
       } else if (role === "visitor") {
         router.push("/visitor/dashboard")
-      } else if (role === "admin") {
+      } else if (role === "admin" || role === "super-admin") {
         router.push("/dashboard/admin")
       } else {
         router.push("/dashboard")

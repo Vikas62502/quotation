@@ -106,6 +106,8 @@ const extractUploadedLeadBatchesList = (response: unknown): any[] => {
 }
 
 const DEFAULT_ACTIVE_LIMIT = 1
+/** FCFS: every lead in the CSV is assigned round-robin across selected dealers at upload. */
+const HR_UPLOAD_ASSIGNMENT_MODE = "round_robin_all" as const
 
 const ACTION_LABEL_MAP: Record<string, string> = {
   called: "Called",
@@ -741,7 +743,10 @@ export default function HrDashboardPage() {
         return
       }
 
-      const result = await api.hr.uploadLeadsCsv(csvFile, selectedDealerIds, DEFAULT_ACTIVE_LIMIT)
+      const result = await api.hr.uploadLeadsCsv(csvFile, selectedDealerIds, {
+        assignmentMode: HR_UPLOAD_ASSIGNMENT_MODE,
+        activeLimitPerDealer: DEFAULT_ACTIVE_LIMIT,
+      })
       const parsed = Number(result?.parsed || result?.total || csvRows.length)
       const created = Number(result?.created || result?.inserted || 0)
       const skippedDuplicate = Number(result?.skippedDuplicate || result?.skipped || 0)
@@ -1064,7 +1069,7 @@ export default function HrDashboardPage() {
                       })}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Work queue mode: no fixed dealer-wise split. Next available lead is assigned to the next free dealer.
+                      First-come-first-serve: all CSV rows are split evenly across selected dealers at upload (round-robin). Unassigned stays 0 unless a row has no dealer.
                     </p>
                   </div>
                 )}
@@ -1110,6 +1115,12 @@ export default function HrDashboardPage() {
                                 className="text-[10px] font-normal border-amber-200 text-amber-900 bg-amber-50"
                               >
                                 Unassigned: {batch.unassignedCount}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] font-normal border-sky-200 text-sky-900 bg-sky-50"
+                              >
+                                Assigned: {batch.assignedCount}
                               </Badge>
                               <Badge
                                 variant="outline"
@@ -1318,8 +1329,8 @@ export default function HrDashboardPage() {
             <DialogDescription className="space-y-1">
               <span className="block">
                 Uploaded {activeBatch?.uploadedAt ? new Date(activeBatch.uploadedAt).toLocaleString() : "N/A"} • Rows:{" "}
-                {activeBatch?.rowCount ?? 0} • Unassigned: {activeBatch?.unassignedCount ?? 0} • Completed:{" "}
-                {activeBatch?.completedCount ?? 0}
+                {activeBatch?.rowCount ?? 0} • Unassigned: {activeBatch?.unassignedCount ?? 0} • Assigned:{" "}
+                {activeBatch?.assignedCount ?? 0} • Completed: {activeBatch?.completedCount ?? 0}
               </span>
               <span className="block text-xs text-muted-foreground">{HR_UPLOAD_COUNT_LEGEND}</span>
             </DialogDescription>

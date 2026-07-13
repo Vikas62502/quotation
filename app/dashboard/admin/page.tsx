@@ -30,6 +30,7 @@ import {
   UserCheck,
   UserX,
   Wallet,
+  Package,
   History,
   SlidersHorizontal,
   Download,
@@ -46,6 +47,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { api, ApiError, apiErrorToUserMessage, fetchSentToInstallerQuotationRows, getAuthToken, isApiAuthFailure, sendQuotationToMetering } from "@/lib/api"
+import { isQuotationAdminAccess } from "@/lib/admin-access"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { getRealtime } from "@/lib/realtime"
@@ -590,7 +592,7 @@ function createEmptyDocumentsForm(): Record<string, any> {
 }
 
 export default function AdminPanelPage() {
-  const { isAuthenticated, dealer } = useAuth()
+  const { isAuthenticated, dealer, role } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
@@ -1063,8 +1065,8 @@ export default function AdminPanelPage() {
       return
     }
 
-    // Check if user is admin
-    if (dealer?.username !== ADMIN_USERNAME) {
+    // Admin or Super Admin may use the Admin Panel (not username===admin only)
+    if (!isQuotationAdminAccess({ role, username: dealer?.username })) {
       router.push("/dashboard")
       return
     }
@@ -1075,7 +1077,7 @@ export default function AdminPanelPage() {
     return () => {
       adminLoadRequestRef.current += 1
     }
-  }, [isAuthenticated, router, dealer])
+  }, [isAuthenticated, router, dealer, role])
 
   useEffect(() => {
     setOperationalProgressTab(operationalTab === "installation" ? "pending" : "all")
@@ -2770,7 +2772,7 @@ export default function AdminPanelPage() {
     enabled: activeTab === "visitor-reports",
   })
 
-  if (!isAuthenticated || dealer?.username !== ADMIN_USERNAME) return null
+  if (!isAuthenticated || !isQuotationAdminAccess({ role, username: dealer?.username })) return null
 
   // Update quotation status
   const updateQuotationStatus = async (
@@ -4122,7 +4124,7 @@ export default function AdminPanelPage() {
                 <SelectItem value="calling-reports">Calling Reports</SelectItem>
                 <SelectItem value="visitor-reports">Visitor Reports</SelectItem>
                 <SelectItem value="quotations__all">Quotations (all)</SelectItem>
-                <SelectItem value="payments">Payments</SelectItem>
+                <SelectItem value="payments">Accounts</SelectItem>
                 <SelectItem value="quotations__installation">Installation</SelectItem>
                 <SelectItem value="quotations__metering">Metering</SelectItem>
                 <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
@@ -4149,7 +4151,7 @@ export default function AdminPanelPage() {
             >
               Quotations
             </TabsTrigger>
-            <TabsTrigger value="payments">Payments</TabsTrigger>
+            <TabsTrigger value="payments">Accounts</TabsTrigger>
             <TabsTrigger
               value="quotations"
               className={quotationSubTabTriggerClass("installation")}
@@ -7003,7 +7005,7 @@ export default function AdminPanelPage() {
             </Card>
           </TabsContent>
 
-          {/* Payments Tab - Same as Account Management; links to account-management page */}
+          {/* Accounts Tab — Payment Management + Super Admin Inventory */}
           <TabsContent value="payments" className="space-y-6">
             <Card className="border-border/50">
               <CardHeader>
@@ -7018,6 +7020,23 @@ export default function AdminPanelPage() {
               <CardContent>
                 <Button onClick={() => router.push("/dashboard/account-management")}>
                   Open Account Management
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/50">
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Package className="w-5 h-5 text-primary" />
+                  Super Admin
+                </CardTitle>
+                <CardDescription>
+                  Same Super Admin Dashboard as inventory — all tabs, products, requests, approvals, agents, admins, returns, pricing, and users.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button onClick={() => router.push("/dashboard/inventory")}>
+                  Open Inventory
                 </Button>
               </CardContent>
             </Card>
