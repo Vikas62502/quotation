@@ -51,7 +51,7 @@ import {
   buildPdfDisplayFlagsPayload,
 } from "@/lib/quotation-api-payload"
 import { writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
-import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
+import { getQuotationSystemKwFromProducts, getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -784,9 +784,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const getTotalSystemKw = () => getQuotationSystemKwFromProducts(products)
 
   const getRoundedSystemSizeLabel = () => {
+    // Same rule as proposal PDF: panel W × qty when no range; else package kW.
+    const fromPdf = getQuotationSystemKwLabelForPdf(products)
+    if (fromPdf && fromPdf !== "—") return fromPdf.replace(/\s+/g, "")
     const totalKw = getTotalSystemKw()
     if (!totalKw || Number.isNaN(totalKw)) return null
-    const rounded = Math.max(1, Math.round(totalKw))
+    const rounded = Math.max(0.1, Math.round(totalKw * 100) / 100)
     return `${rounded}kW`
   }
 

@@ -2,6 +2,7 @@ import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { isInaPanelPackage, restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
 import {
+  calculateSystemSize,
   formatQuotationPhaseLabel,
   resolveQuotationPhase,
 } from "@/lib/pricing-tables"
@@ -316,6 +317,23 @@ export function resolvePanelBrandForPdf(products: ProductsLike): string {
 }
 
 export function getSystemKwLabel(products: ProductSelection): string {
+  const source = products as ProductSelection & Record<string, unknown>
+  const systemType = String(products.systemType || source.system_type || "").toLowerCase()
+
+  // Match the PDF panel table: when exact size × qty are shown (no primary range), system size is W×qty.
+  if (systemType !== "both") {
+    const primaryRange = resolvePdfPanelRangeKey(source, "primary")
+    if (!primaryRange) {
+      const primary = resolvePrimaryPanelFields(products as ProductsLike)
+      if (primary.size && primary.quantity > 0 && !isAsPerTheSetLabel(primary.size)) {
+        const fromPanels = calculateSystemSize(primary.size, primary.quantity)
+        if (fromPanels && fromPanels !== "0kW") {
+          return fromPanels.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
+        }
+      }
+    }
+  }
+
   return getQuotationSystemKwLabelForPdf(products)
 }
 

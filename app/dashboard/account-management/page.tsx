@@ -19,6 +19,7 @@ import {
   IndianRupee,
   Calendar as CalendarIcon,
   Send,
+  Users,
 } from "lucide-react"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
@@ -1115,6 +1116,20 @@ export default function AccountManagementPage() {
     ],
   )
 
+  const paymentDashboardStats = useMemo(() => {
+    let totalAmount = 0
+    let pendingAmount = 0
+    for (const payment of filteredCustomerPayments) {
+      totalAmount += Number(payment.subtotal) || 0
+      pendingAmount += getDisplayRemaining(payment)
+    }
+    return {
+      totalAmount,
+      pendingAmount,
+      customerCount: filteredCustomerPayments.length,
+    }
+  }, [filteredCustomerPayments])
+
   const paymentListResetKey = [
     paymentSearchTerm,
     paymentTypeFilter,
@@ -2098,7 +2113,53 @@ export default function AccountManagementPage() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="pt-0 px-2 sm:px-6">
+              <CardContent className="pt-0 px-2 sm:px-6 space-y-3">
+                {!isLoading && customerPayments.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Card className="border-border/60 bg-card shadow-sm">
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                          <IndianRupee className="w-5 h-5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground/70">Total Amount</p>
+                          <p className="text-xl font-bold text-foreground truncate">
+                            ₹{paymentDashboardStats.totalAmount.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">Sum of subtotals</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="border-border/60 bg-card shadow-sm">
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                          <Clock className="w-5 h-5 text-amber-700" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground/70">Pending Amount</p>
+                          <p className="text-xl font-bold text-primary truncate">
+                            ₹{paymentDashboardStats.pendingAmount.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">Sum of remaining</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="border-border/60 bg-card shadow-sm">
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
+                          <Users className="w-5 h-5 text-sky-700" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground/70">No. of Customers</p>
+                          <p className="text-xl font-bold text-foreground">
+                            {paymentDashboardStats.customerCount.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">Matching current filters</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
                 {isLoading ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">

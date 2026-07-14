@@ -1,6 +1,6 @@
 import type { Quotation } from "@/lib/quotation-context"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
-import { isAsPerTheSetLabel } from "@/lib/quotation-pdf-display"
+import { isAsPerTheSetLabel, resolvePdfPanelRangeKey } from "@/lib/quotation-pdf-display"
 import { calculateSystemSize, getPricingData, type QuotationProductsPhaseInput } from "@/lib/pricing-tables"
 
 type QuotationRow = Record<string, unknown>
@@ -41,6 +41,73 @@ function kwFromPanelPair(
   if (!panelSize || !panelQuantity || panelQuantity <= 0) return 0
   const systemSize = calculateSystemSize(panelSize, panelQuantity)
   return systemSize !== "0kW" ? kwFromSizeLabel(systemSize) : 0
+}
+
+/** Panel wattage × quantity (camel + snake + DCR/Non-DCR fallbacks), same source as PDF spec rows. */
+function panelKwFromEditableProducts(products: QuotationProductsPhaseInput | null | undefined): number {
+  if (!products) return 0
+  const raw = products as QuotationRow
+  const systemType = String(products.systemType || raw.system_type || "").toLowerCase()
+
+  if (systemType === "both") {
+    const dcrKw = kwFromPanelPair(
+      pickNonEmpty(products.dcrPanelSize, raw.dcr_panel_size),
+      pickNumber(products.dcrPanelQuantity, raw.dcr_panel_quantity),
+    )
+    const nonDcrKw = kwFromPanelPair(
+      pickNonEmpty(products.nonDcrPanelSize, raw.non_dcr_panel_size),
+      pickNumber(products.nonDcrPanelQuantity, raw.non_dcr_panel_quantity),
+    )
+    return dcrKw + nonDcrKw
+  }
+
+  if (systemType === "customize" && products.customPanels?.length) {
+    return products.customPanels.reduce(
+      (sum, panel) => sum + kwFromPanelPair(panel.size, panel.quantity),
+      0,
+    )
+  }
+
+  if (systemType === "dcr") {
+    return kwFromPanelPair(
+      pickNonEmpty(products.panelSize, raw.panel_size, products.dcrPanelSize, raw.dcr_panel_size),
+      pickNumber(
+        products.panelQuantity,
+        raw.panel_quantity,
+        products.dcrPanelQuantity,
+        raw.dcr_panel_quantity,
+      ),
+    )
+  }
+
+  return Math.max(
+    kwFromPanelPair(
+      pickNonEmpty(products.panelSize, raw.panel_size),
+      pickNumber(products.panelQuantity, raw.panel_quantity),
+    ),
+    kwFromPanelPair(
+      pickNonEmpty(products.dcrPanelSize, raw.dcr_panel_size),
+      pickNumber(products.dcrPanelQuantity, raw.dcr_panel_quantity),
+    ),
+    kwFromPanelPair(
+      pickNonEmpty(products.nonDcrPanelSize, raw.non_dcr_panel_size, products.panelSize, raw.panel_size),
+      pickNumber(
+        products.nonDcrPanelQuantity,
+        raw.non_dcr_panel_quantity,
+        products.panelQuantity,
+        raw.panel_quantity,
+      ),
+    ),
+  )
+}
+
+function formatPanelKwLabel(panelKw: number): string {
+  const rounded = Math.round(panelKw * 100) / 100
+  const nicely =
+    Math.abs(rounded - Math.round(rounded)) < 1e-9
+      ? String(Math.round(rounded))
+      : (Math.round(rounded * 100) / 100).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")
+  return `${nicely} kW`
 }
 
 /** Merge products from nested objects and flattened API row fields (camelCase + snake_case). */
@@ -106,6 +173,10 @@ export function getQuotationSystemKwFromProducts(
 
   const raw = products as QuotationRow
 
+  // Editable panel size × quantity (prefer over structure/inverter package nominal kW).
+  const panelKw = panelKwFromEditableProducts(products)
+  if (panelKw > 0) return panelKw
+
   // Browse package nominal kW — structureSize matches pricing table systemSize (e.g. 3kW set with 5kW inverter).
   const structureKw = kwFromSizeLabel(products.structureSize)
   if (structureKw > 0) return structureKw
@@ -117,16 +188,6 @@ export function getQuotationSystemKwFromProducts(
     pickNonEmpty(raw.systemSize as string, raw.system_size as string),
   )
   if (directSizeKw > 0) return directSizeKw
-
-  const panelKw = Math.max(
-    0,
-    ...[
-      kwFromPanelPair(products.panelSize, products.panelQuantity),
-      kwFromPanelPair(products.dcrPanelSize, products.dcrPanelQuantity),
-      kwFromPanelPair(products.nonDcrPanelSize, products.nonDcrPanelQuantity),
-    ].filter((n) => n > 0),
-  )
-  if (panelKw > 0) return panelKw
 
   const inverterKw = kwFromSizeLabel(products.inverterSize)
   if (inverterKw > 0 && systemType) return inverterKw
@@ -141,11 +202,26 @@ function formatKwLabelFromSizeField(size: string | null | undefined): string | n
   return trimmed.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
 }
 
-/** kW label for PDF header — package/set size (structureSize), not inverter upsizing. */
+/** kW label for PDF header — exact panel×qty when no PDF range; else package/set size. */
 export function getQuotationSystemKwLabelForPdf(
   products: QuotationProductsPhaseInput | null | undefined,
 ): string {
-  const systemType = String(products?.systemType || "").toLowerCase()
+  const source = products as QuotationProductsPhaseInput & Record<string, unknown>
+  const systemType = String(products?.systemType || source.system_type || "").toLowerCase()
+
+  // Only the range that drives the visible panel row(s) blocks exact W×qty.
+  // Stale pdfDcrPanelRangeKey must not force structure kW while primary shows 625W × 8.
+  const rangeBlocksPanelCalc =
+    systemType === "both"
+      ? resolvePdfPanelRangeKey(source, "dcr") != null ||
+        resolvePdfPanelRangeKey(source, "nonDcr") != null
+      : resolvePdfPanelRangeKey(source, "primary") != null
+
+  if (!rangeBlocksPanelCalc) {
+    const panelKw = panelKwFromEditableProducts(products)
+    if (panelKw > 0) return formatPanelKwLabel(panelKw)
+  }
+
   if (systemType !== "both") {
     const fromStructure = formatKwLabelFromSizeField(products?.structureSize)
     if (fromStructure) return fromStructure
@@ -153,9 +229,7 @@ export function getQuotationSystemKwLabelForPdf(
 
   const kw = getQuotationSystemKwFromProducts(products)
   if (kw > 0) {
-    const rounded = Math.round(kw * 10) / 10
-    const label = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
-    return `${label} kW`
+    return formatPanelKwLabel(kw)
   }
 
   const fromCalc = calculateSystemSize(products?.panelSize || "", products?.panelQuantity || 0)

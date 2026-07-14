@@ -130,7 +130,36 @@ function normalizeAsPerSetCableSize(size: string | undefined): string | undefine
 }
 
 /** Panel sizes the live product-catalog API accepts (see BACKEND_PRODUCT_CATALOG_API.md). */
-const API_CATALOG_PANEL_SIZES_WATTS = [440, 445, 540, 545, 550, 555, 600, 610, 620] as const
+const API_CATALOG_PANEL_SIZES_WATTS = [
+  440, 445, 530, 540, 545, 550, 555, 560, 570, 580, 590, 600, 610, 620, 625, 630, 640, 650, 660, 670, 680, 690, 700,
+] as const
+
+/**
+ * Keep exact dealer-entered wattage when possible. Only snap unknown sizes to the nearest
+ * catalog SKU when within 2W (typos); otherwise keep the entered value (e.g. 625W).
+ */
+function normalizePanelSizeForApiCatalog(size: string | undefined): string | undefined {
+  if (!size?.trim() || isAsPerTheSetLabel(size)) return size
+  const watts = parsePanelSizeWatts(size)
+  if (watts <= 0) return size
+
+  if ((API_CATALOG_PANEL_SIZES_WATTS as readonly number[]).includes(watts)) {
+    return `${watts}W`
+  }
+
+  let nearest: number = API_CATALOG_PANEL_SIZES_WATTS[0]
+  let nearestDiff = Math.abs(nearest - watts)
+  for (const candidate of API_CATALOG_PANEL_SIZES_WATTS) {
+    const diff = Math.abs(candidate - watts)
+    if (diff < nearestDiff) {
+      nearest = candidate
+      nearestDiff = diff
+    }
+  }
+  // Far from every catalog SKU — keep dealer entry for PDF / display round-trip.
+  if (nearestDiff > 2) return `${watts}W`
+  return `${nearest}W`
+}
 
 /** INA is not in the backend catalog yet — map to Adani for validateProductSelection. */
 const INA_API_PANEL_BRAND_ALIAS = "Adani"
@@ -194,23 +223,6 @@ function withInaApiCatalogMarkers(products: ProductSelection): ProductSelection 
   next.pdfUsePanelSizeRange = true
   next.pdf_use_panel_size_range = true
   return next as ProductSelection
-}
-
-function normalizePanelSizeForApiCatalog(size: string | undefined): string | undefined {
-  if (!size?.trim() || isAsPerTheSetLabel(size)) return size
-  const watts = parsePanelSizeWatts(size)
-  if (watts <= 0) return size
-
-  let nearest = API_CATALOG_PANEL_SIZES_WATTS[0]
-  let nearestDiff = Math.abs(nearest - watts)
-  for (const candidate of API_CATALOG_PANEL_SIZES_WATTS) {
-    const diff = Math.abs(candidate - watts)
-    if (diff < nearestDiff) {
-      nearest = candidate
-      nearestDiff = diff
-    }
-  }
-  return `${nearest}W`
 }
 
 function mapPanelBrandForApiCatalog(brand: string | undefined): string | undefined {

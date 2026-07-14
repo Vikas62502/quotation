@@ -10,7 +10,13 @@ export type StoredQuotationPdfFlags = Pick<
   | "pdfNonDcrPanelRangeKey"
   | "pdfCommercialSet"
   | "pdfUsePanelSizeRange"
->
+> & {
+  /** Exact panel size/qty for PDF when API catalog snaps wattage (e.g. 625W). */
+  panelSize?: string
+  panelQuantity?: number
+  dcrPanelSize?: string
+  dcrPanelQuantity?: number
+}
 
 function storageKey(quotationId: string): string {
   return `${STORAGE_PREFIX}${quotationId}`
@@ -34,6 +40,10 @@ export function writeLocalQuotationPdfFlags(quotationId: string, products: Produ
   if (typeof window === "undefined" || !quotationId.trim()) return
   const sanitized = sanitizePdfPanelRangesForBrands(products)
   const raw = sanitized as ProductSelection & Record<string, unknown>
+  const panelSize = String(sanitized.panelSize || raw.panel_size || "").trim() || undefined
+  const dcrPanelSize = String(sanitized.dcrPanelSize || raw.dcr_panel_size || "").trim() || undefined
+  const panelQuantity = Number(sanitized.panelQuantity ?? raw.panel_quantity)
+  const dcrPanelQuantity = Number(sanitized.dcrPanelQuantity ?? raw.dcr_panel_quantity)
   const payload: StoredQuotationPdfFlags = {
     pdfPanelRangeKey:
       String(sanitized.pdfPanelRangeKey || raw.pdf_panel_range_key || "").trim() || undefined,
@@ -49,6 +59,10 @@ export function writeLocalQuotationPdfFlags(quotationId: string, products: Produ
         sanitized.pdfPanelRangeKey ||
         raw.pdf_panel_range_key,
     ),
+    panelSize,
+    dcrPanelSize,
+    ...(Number.isFinite(panelQuantity) && panelQuantity > 0 ? { panelQuantity } : {}),
+    ...(Number.isFinite(dcrPanelQuantity) && dcrPanelQuantity > 0 ? { dcrPanelQuantity } : {}),
   }
   try {
     localStorage.setItem(storageKey(quotationId), JSON.stringify(payload))
@@ -70,9 +84,11 @@ export function applyLocalQuotationPdfFlags(
   const record = next as ProductSelection & Record<string, unknown>
 
   if (!isPdfCommercialSet(next) && stored.pdfCommercialSet === true) {
-    next = { ...next, pdfCommercialSet: true, pdf_commercial_set: true }
+    next = { ...next, pdfCommercialSet: true } as ProductSelection
+    ;(next as ProductSelection & Record<string, unknown>).pdf_commercial_set = true
   } else if (stored.pdfCommercialSet === false && !isPdfCommercialSet(next)) {
-    next = { ...next, pdfCommercialSet: false, pdf_commercial_set: false }
+    next = { ...next, pdfCommercialSet: false } as ProductSelection
+    ;(next as ProductSelection & Record<string, unknown>).pdf_commercial_set = false
   }
 
   if (!String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim() && stored.pdfPanelRangeKey) {
@@ -86,6 +102,27 @@ export function applyLocalQuotationPdfFlags(
     stored.pdfNonDcrPanelRangeKey
   ) {
     next = { ...next, pdfNonDcrPanelRangeKey: stored.pdfNonDcrPanelRangeKey }
+  }
+
+  // Prefer dealer-entered size/qty over catalog-snapped API values (e.g. 625W × 8).
+  if (stored.panelSize?.trim()) {
+    next = { ...next, panelSize: stored.panelSize.trim() }
+    if (String(next.systemType || "").toLowerCase() === "dcr") {
+      next = { ...next, dcrPanelSize: stored.dcrPanelSize?.trim() || stored.panelSize.trim() }
+    }
+  } else if (stored.dcrPanelSize?.trim()) {
+    next = { ...next, dcrPanelSize: stored.dcrPanelSize.trim() }
+  }
+  if (stored.panelQuantity != null && stored.panelQuantity > 0) {
+    next = { ...next, panelQuantity: stored.panelQuantity }
+    if (String(next.systemType || "").toLowerCase() === "dcr") {
+      next = {
+        ...next,
+        dcrPanelQuantity: stored.dcrPanelQuantity || stored.panelQuantity,
+      }
+    }
+  } else if (stored.dcrPanelQuantity != null && stored.dcrPanelQuantity > 0) {
+    next = { ...next, dcrPanelQuantity: stored.dcrPanelQuantity }
   }
 
   // Drop cached Adani/Waaree keys that do not match the current panel brand (e.g. RenewSys).

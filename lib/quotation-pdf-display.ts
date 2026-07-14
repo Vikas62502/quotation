@@ -1,5 +1,4 @@
 import type { ProductSelection } from "@/lib/quotation-context"
-import { parsePanelSizeWatts } from "@/lib/pricing-tables"
 
 /** Shown on proposal PDF and DCR pricing catalog when a PDF panel range is selected. */
 export const QUOTATION_AS_PER_THE_SET_LABEL = "As per the set"
@@ -111,10 +110,7 @@ export const INA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "ina_500_600_bifacial"
 /** Default PDF panel range when a DCR browse package column is selected. */
 export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): PdfPanelRangeKey | null {
   const normalized = panelType.trim().toLowerCase()
-  if (normalized === "adani topcon") return "adani_610_625_bifacial_topcon"
-  if (normalized === "adani") return "adani_540_580_bifacial"
-  if (normalized === "waaree") return "waaree_540_560_bifacial"
-  if (normalized === "premier energies" || normalized === "premier") return "premier_600_625_bifacial_topcon"
+  // Optional brands (Waaree / Adani / Premier): leave unchecked — PDF uses entered W × qty for size + system kW.
   if (normalized === "ina") return INA_DCR_PANEL_RANGE_KEY
   if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
   return null
@@ -212,11 +208,20 @@ export function getPanelPdfRangeOptionsForBrand(panelBrand?: string): PanelPdfRa
   return PANEL_RANGE_CATALOG.filter((option) => keys.includes(option.key))
 }
 
-/** Default PDF range checkbox when a panel brand is chosen (INA, Premier, Adani, etc.). */
+/** Default PDF range checkbox when a panel brand is chosen (INA, Tata package sets, etc.). */
 export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPanelRangeKey | "" {
   const brandKey = normalizePanelBrandKey(panelBrand)
-  // RenewSys: leave unchecked so PDF shows the entered size (e.g. 545W) until a range is chosen.
-  if (brandKey === "renewsys") return ""
+  // Optional ranges (Waaree / Adani / Premier / RenewSys): leave unchecked so the entered
+  // panel size (e.g. 625W) and quantity drive PDF text + system kW until a range is chosen.
+  if (
+    brandKey === "renewsys" ||
+    brandKey === "waaree" ||
+    brandKey === "adani" ||
+    brandKey === "premier" ||
+    brandKey === "premierenergies"
+  ) {
+    return ""
+  }
   const keys = PANEL_RANGE_BY_BRAND[brandKey] || []
   return keys[0] ?? ""
 }
@@ -373,27 +378,19 @@ function pickPdfPanelRangeKey(
   }
 
   if (field === "pdfPanelRangeKey" && Boolean(products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range)) {
-    const panelW = parsePanelSizeWatts(
-      String(
-        products.panelSize ||
-          products.dcrPanelSize ||
-          products.panel_size ||
-          products.dcr_panel_size ||
-          "",
-      ),
-    )
     const brandKey = normalizePanelBrandKey(brand)
-    if (brandKey === "adani") {
-      return panelW >= 610 ? "adani_610_625_bifacial_topcon" : "adani_540_580_bifacial"
+    // Optional-range brands: only an explicit checkbox key drives the PDF — never invent from
+    // the legacy boolean (that left Waaree/Adani showing a range while boxes looked unchecked).
+    if (
+      brandKey === "waaree" ||
+      brandKey === "adani" ||
+      brandKey === "premier" ||
+      brandKey === "premierenergies" ||
+      brandKey === "renewsys"
+    ) {
+      return null
     }
-    if (brandKey === "waaree") {
-      return panelW >= 580 ? "waaree_580_700_bifacial_topcon" : "waaree_540_560_bifacial"
-    }
-    if (brandKey === "premierenergies" || brandKey === "premier") return "premier_600_625_bifacial_topcon"
     if (brandKey === "ina") return "ina_500_600_bifacial"
-    // RenewSys: range only when an explicit checkbox key is set — never from legacy boolean alone.
-    if (brandKey === "renewsys") return null
-    // Unknown brand + legacy flag: do not invent Adani Topcon
     return null
   }
   return null

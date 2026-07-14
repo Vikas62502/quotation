@@ -104,8 +104,8 @@ function PanelPdfRangeOptions({
     <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
       <p className="text-xs font-medium text-muted-foreground">Quotation PDF — panel size range (optional)</p>
       <p className="text-xs text-muted-foreground">
-        Select one range to show on the proposal PDF instead of exact panel size. Panel quantity is not required and
-        will not appear on the PDF.
+        Leave unchecked to show the exact panel size you entered (e.g. 625W) and system kW from panel × quantity.
+        Check a range to show that range on the PDF instead (panel quantity is then omitted).
       </p>
       {options.map((option) => (
         <label key={option.key} className="flex items-start gap-2 text-sm cursor-pointer">
@@ -144,8 +144,8 @@ function CommercialPdfOptions({
         </span>
       </label>
       <p className="text-xs text-muted-foreground">
-        Use for commercial installations. Central subsidy, state subsidy, and subsidy terms &amp; conditions are
-        omitted from page 3 of the PDF.
+        Use for commercial installations. Central subsidy and state subsidy fields are hidden, and subsidy terms
+        are omitted from page 3 of the PDF.
       </p>
     </div>
   )
@@ -221,6 +221,25 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     initialData ? restoreDcrPackageDisplayForForm(initialData) : emptyProductDefaults,
   )
 
+  /** Stable key so parent re-creating `initialData` each render does not wipe in-progress edits. */
+  const initialDataSyncKey = useMemo(() => {
+    if (!initialData) return ""
+    return [
+      initialData.systemType,
+      initialData.panelBrand,
+      initialData.panelSize,
+      initialData.panelQuantity,
+      initialData.dcrPanelBrand,
+      initialData.dcrPanelSize,
+      initialData.dcrPanelQuantity,
+      initialData.structureSize,
+      initialData.inverterSize,
+      initialData.systemPrice,
+      initialData.pdfPanelRangeKey,
+      initialData.pdfCommercialSet,
+    ].join("|")
+  }, [initialData])
+
   useEffect(() => {
     if (!initialData) return
     let restored = restoreDcrPackageDisplayForForm(initialData)
@@ -241,7 +260,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     ) {
       setHasSelectedDcrConfig(true)
     }
-  }, [initialData])
+  }, [initialDataSyncKey])
 
   // Auto-select default PDF panel range when brand supports it (INA, Premier, Adani, etc.)
   useEffect(() => {
@@ -431,16 +450,31 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const parsedPanelW = parsePanelSizeWatts(rawSize)
       if (parsedPanelW <= 0) return next
 
-      const qty = panelQuantityForNominalSystemKw(nominalKw, rawSize)
-      if (qty <= 0) return next
+      const suggestedQty = panelQuantityForNominalSystemKw(nominalKw, rawSize)
+      if (suggestedQty <= 0) return next
 
+      // Keep dealer-entered quantity when already set; only auto-fill when empty.
       if (field === "panelSize") {
-        next.panelQuantity = qty
-        if (next.systemType === "dcr") next.dcrPanelQuantity = qty
+        const keepQty = Number(prev.panelQuantity) > 0 ? Number(prev.panelQuantity) : suggestedQty
+        const capped =
+          nominalKw > 0
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            : keepQty
+        next.panelQuantity = capped
+        if (next.systemType === "dcr") next.dcrPanelQuantity = capped
       } else if (field === "dcrPanelSize") {
-        next.dcrPanelQuantity = qty
+        const keepQty = Number(prev.dcrPanelQuantity) > 0 ? Number(prev.dcrPanelQuantity) : suggestedQty
+        next.dcrPanelQuantity =
+          nominalKw > 0
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            : keepQty
       } else {
-        next.nonDcrPanelQuantity = qty
+        const keepQty =
+          Number(prev.nonDcrPanelQuantity) > 0 ? Number(prev.nonDcrPanelQuantity) : suggestedQty
+        next.nonDcrPanelQuantity =
+          nominalKw > 0
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            : keepQty
       }
       return next
     })
@@ -965,8 +999,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       return
     }
 
-    // Validate subsidies: DCR and BOTH systems require central subsidy
-    if (effectiveSystemType === "dcr" || effectiveSystemType === "both") {
+    // Validate subsidies: DCR and BOTH require central subsidy (not for commercial PDF set)
+    if (
+      !formData.pdfCommercialSet &&
+      (effectiveSystemType === "dcr" || effectiveSystemType === "both")
+    ) {
       if (!formData.centralSubsidy || formData.centralSubsidy <= 0) {
         setError("Central subsidy is mandatory for DCR and BOTH systems. Please set a valid central subsidy amount.")
         return
@@ -978,8 +1015,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         ...formData,
         systemType: effectiveSystemType,
         phase: formData.phase || currentPhase,
-        stateSubsidy: Number(formData.stateSubsidy) || 0,
-        centralSubsidy: Number(formData.centralSubsidy) || 0,
+        stateSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.stateSubsidy) || 0,
+        centralSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.centralSubsidy) || 0,
       }),
     )
 
@@ -995,6 +1032,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const hasSelectedStandardConfig =
     (effectiveSystemType === "non-dcr" && hasSelectedNonDcrConfig) ||
     (effectiveSystemType === "dcr" && hasSelectedDcrConfig)
+  /** Commercial PDF set: hide subsidy inputs (also omit from proposal PDF). */
+  const showSubsidyFields = !Boolean(formData.pdfCommercialSet)
 
   // Auto-select Havells (1-Phase) / Havells (3-Phase) when package phase is known
   useEffect(() => {
@@ -1171,7 +1210,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 />
                 <CommercialPdfOptions
                   checked={Boolean(formData.pdfCommercialSet)}
-                  onChange={(checked) => updateFormData("pdfCommercialSet", checked)}
+                  onChange={(checked) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      pdfCommercialSet: checked,
+                      ...(checked ? { centralSubsidy: 0, stateSubsidy: 0 } : {}),
+                    }))
+                    setError("")
+                  }}
                 />
               </div>
 
@@ -1555,6 +1601,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* Subsidy Information for Both */}
+              {showSubsidyFields && (
               <div className="border-t border-border pt-4 sm:pt-6">
                 <h3 className="text-sm font-medium mb-4">Subsidy Information (for DCR panels)</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1580,6 +1627,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                 </div>
               </div>
+              )}
               </>)}
             </>
           )}
@@ -1713,15 +1761,32 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         min="1"
                         value={formData.panelQuantity || ""}
                         onChange={(e) => {
-                          const raw = Number.parseInt(e.target.value) || 0
+                          const text = e.target.value
+                          // Allow clearing the field so the dealer can type a new quantity (e.g. 8).
+                          if (text.trim() === "") {
+                            setFormData((prev) => ({
+                              ...prev,
+                              panelQuantity: 0,
+                              ...(prev.systemType === "dcr" ? { dcrPanelQuantity: 0 } : {}),
+                            }))
+                            setError("")
+                            return
+                          }
+                          const raw = Number.parseInt(text, 10)
+                          if (Number.isNaN(raw) || raw < 0) return
                           const nominalKw = Number.parseFloat(
                             String(formData.structureSize || formData.inverterSize || "").replace(/kW/i, ""),
                           )
                           const qty =
-                            nominalKw > 0 && formData.panelSize
+                            nominalKw > 0 && formData.panelSize && raw > 0
                               ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.panelSize, raw)
                               : raw
-                          updateFormData("panelQuantity", qty)
+                          setFormData((prev) => ({
+                            ...prev,
+                            panelQuantity: qty,
+                            ...(prev.systemType === "dcr" ? { dcrPanelQuantity: qty } : {}),
+                          }))
+                          setError("")
                         }}
                         placeholder="Enter quantity"
                       />
@@ -1753,7 +1818,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 />
                 <CommercialPdfOptions
                   checked={Boolean(formData.pdfCommercialSet)}
-                  onChange={(checked) => updateFormData("pdfCommercialSet", checked)}
+                  onChange={(checked) => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      pdfCommercialSet: checked,
+                      ...(checked ? { centralSubsidy: 0, stateSubsidy: 0 } : {}),
+                    }))
+                    setError("")
+                  }}
                 />
               </div>
 
@@ -2055,7 +2127,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               )}
 
               {/* DCR Specific Fields */}
-              {showDcrFields && (
+              {showDcrFields && showSubsidyFields && (
                 <div className="border-t border-border pt-4 sm:pt-6">
                   <h3 className="text-sm font-medium mb-4">Subsidy Information</h3>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -2446,6 +2518,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
 
                   {/* Subsidy Information for Customize */}
+                  {showSubsidyFields && (
                   <div className="border-t border-border pt-6">
                     <h3 className="text-sm font-medium mb-4">Subsidy Information (if applicable)</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2471,6 +2544,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       </div>
                     </div>
                   </div>
+                  )}
 
                   {/* Battery Configuration for Customize */}
                   <div className="border-t border-border pt-6">
