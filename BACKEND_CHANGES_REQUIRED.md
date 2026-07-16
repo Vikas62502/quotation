@@ -577,6 +577,7 @@ Implement a two-step post-approval workflow:
 - `installationStatus` ENUM/TEXT:
   - `pending_installer`
   - `installer_in_progress`
+  - `installer_partial_approved` — Admin **Partial Approved** tab (partial photo upload; not full approve; not metering)
   - `installer_approved`
   - `installer_rejected`
   - `pending_baldev`
@@ -587,6 +588,7 @@ Implement a two-step post-approval workflow:
   - `metering_approved`
   - `mco`
   - `completed`
+- Optional flags: `installationPartialApproved` / `installation_partial_approved` (boolean), cleared when moving to `installer_approved`
 - `installerId` (nullable FK to users table)
 - `installerActionAt` (nullable timestamp)
 - `installerInProgressAt` (nullable timestamp)
@@ -731,12 +733,14 @@ The installer dashboard may send **each completion image twice** (same file byte
 
 **Multer / strict multipart parsers:** Duplicate aggregate + per-field parts can exceed **`installerCompletionImages`** **`maxCount`**. Some APIs only allow **`installerCompletionImages`** and **`piUpload`** as **file** parts — extra file field names (e.g. `homeFrontPhoto`) trigger **“Unexpected or too many file fields”**. The **admin** installation completion UI sends **all images as repeated `installerCompletionImages` parts only**, plus optional text **`installerCompletionImageFieldOrderJson`**: a JSON array of logical keys in upload order (e.g. `["homeFrontPhoto","panelSerialNumberPhoto",…]`) so the server can map files to columns. Set **`maxCount`** on `installerCompletionImages` high enough (e.g. **20+**) for multi-panel uploads. The **installer** UI may still send aggregate + per-field; dedupe or widen limits as needed.
 
-- **Admin partial re-upload (optional text parts):** When the admin edits photos and keeps some existing S3 URLs without re-uploading bytes, the UI may send **`existingInstallationImageUrlsJson`** — JSON object mapping logical field key → string URL array (same keys as per-field list above). Optionally **`existingPiUploadUrl`** — single string when PI is unchanged. Merge these with new `installerCompletionImages` parts using **`installerCompletionImageFieldOrderJson`** for new files only.
+- **Admin partial re-upload (optional text parts):** When the admin edits photos and keeps some existing S3 URLs without re-uploading bytes, the UI may send **`existingInstallationImageUrlsJson`** — JSON object mapping logical field key → string URL array (same keys as per-field list above). Optionally **`existingPiUploadUrl`** — single string when exactly one PI URL is retained — and/or **`existingPiUploadUrlsJson`** — JSON string array of retained PI URLs (multi-PI). Merge these with new `installerCompletionImages` / `piUpload` parts using **`installerCompletionImageFieldOrderJson`** for new images only.
 
 - **`installerCompletionImages`** — repeatable when sent; each part is one site-completion image (required set is driven by UI when this key is used; treat all received files as completion images).
 - **Per-field keys** (repeatable; same files as above, optional to persist separately for labeling):
   - `homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`, `inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages` (multiple files allowed for `panelSerialNumberPhoto` and `otherImages`).
-- **`piUpload`** — optional single file (PDF or image): proforma / PI document.
+- **`piUpload`** — optional **repeatable** file (PDF or image): proforma / PI document(s). Multer `maxCount` should allow **10+**. Persist as `piUploadUrls[]` (and keep singular `piUploadUrl` = first URL for older clients).
+
+**See also:** `BACKEND_INSTALLATION_PARTIAL_AND_METERING.md` (Partial Approved status + multi-PI + metering remarks / authorized representative).
 
 **Admin vs installer validation (align with current frontend):**
 
@@ -791,7 +795,10 @@ When the installer adds one or more expense lines, the frontend sends:
 
 ##### C.4 Status and remarks
 
-- **`installationStatus`** — frontend sends `installer_approved` when the installer completes the form (align with §6.2 `installationStatus` enum).
+- **`installationStatus`** — frontend sends:
+  - `installer_partial_approved` — Admin **Partial Approved** (partial upload; must **not** go to Approved Installation / metering)
+  - `installer_approved` — full complete (align with §6.2 enum)
+- Also may send `installationPartialApproved` / `installation_partial_approved` (`"true"` / `"false"`).
 - **`installerRemarks`** — optional text (maps to UI “Notes”).
 
 ##### C.5 Optional backward-compatible fields
@@ -1112,13 +1119,16 @@ Fields expected from frontend modal:
 - `meterNo` (string, used when meterType is single/unknown)
 - `solarMeterNo` (string, required when `meterType=both`, optional for `solar`)
 - `netMeterNo` (string, required when `meterType=both`, optional for `net`)
+- `remarks` (string, optional) — Admin Meter Pending / Meter in Discom card field
+- `authorizedRepresentative` / `authorized_representative` (string, optional)
 - `meterDocumentImage` (file, optional/required as per business rule)
 
 Behavior:
 - Persist these values in quotation metering fields (or a `quotation_metering_details` table linked by quotation id).
 - Store uploaded `meterDocumentImage` in S3 and persist URL/metadata.
-- Return saved values in response so UI can rehydrate after refresh.
+- Return saved values in response so UI can rehydrate after refresh (include `remarks`, `authorizedRepresentative` on list/detail GET).
 - **Public / browsable meter document URL (required for Admin + Metering modals):** Do **not** return only a private virtual-hosted S3 URL (`https://{bucket}.s3.{region}.amazonaws.com/...`) — browsers get **Access Denied**. Return **`meterDocumentPublicUrl`** (presigned GET or CDN URL) and duplicate as **`meterDocumentUrl`** when needed. Same rules as **§6.4.C.8** (installation photos). On **`GET /api/admin/quotations`** and **`GET /api/metering/quotations`**, include `meterDocumentUrl` / `meterDocumentPublicUrl` / `meterDocumentName` on each row so **Metering Details** shows thumbnail + **Open link** after refresh.
+- Full Jul 2026 handoff: **`BACKEND_INSTALLATION_PARTIAL_AND_METERING.md`**.
 
 **RBAC (fixes `AUTH_004` / “Insufficient permissions” on Save Details):**  
 Metering dashboard users authenticate with role `metering`. This `POST` must **not** be admin-only. Use the same role list as `GET /api/metering/quotations` (at minimum `metering`, plus `admin` if desired). If only `admin` is allowed here, metering logins will get **403** with `AUTH_004` while the queue still loads.
@@ -1395,6 +1405,7 @@ For all quotation list endpoints used by account-management/installer/baldev, in
 - `installments` / `paymentPhases` / `payment_phases` (array length used for exact installment-count filter on Payment Management)
 - `statusApprovedAt` / `approved_at` and `fileLoginAt` / `file_login_at` (account-management date-range filters)
 - `paymentType`, `paymentStatus`, `paymentMode`, `bankName`, `bankIfsc`, `remaining` / `remainingAmount`
+- `loanAmount` / `loan_amount` and `cashAmount` / `cash_amount` (admin approval: loan portion for `loan` or `mix`; cash portion for `mix` only — echoed on GET for Payment Management)
 - `installationStatus`
 - `meteringStage` / `metering_status` / `meteringStatus` / `mcoStatus` (required for Payment Management **Download Excel** journey columns — **§AC**)
 - `approvedAt` (admin approval date)
@@ -2365,6 +2376,8 @@ CREATE TABLE IF NOT EXISTS quotation_metering_details (
   meter_no TEXT,
   solar_meter_no TEXT,
   net_meter_no TEXT,
+  remarks TEXT,
+  authorized_representative TEXT,
   meter_document_url TEXT,
   meter_document_key TEXT,
   meter_document_name TEXT,

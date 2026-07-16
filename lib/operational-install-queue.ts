@@ -92,6 +92,13 @@ export function isInstallationCompleteForMetering(q: OperationalQuotationRecord)
   )
 }
 
+/** Partial photo upload saved — not full Approved Installation. */
+export function isInstallationPartialApproved(q: OperationalQuotationRecord): boolean {
+  const install = getInstallationWorkflowStatus(q)
+  if (install === "installer_partial_approved" || install === "partial_approved") return true
+  return Boolean(q.installationPartialApproved || q.installation_partial_approved)
+}
+
 /** Quotation is already in (or past) the metering queue. */
 export function isAlreadyInMeteringPipeline(q: OperationalQuotationRecord): boolean {
   const metering = getMeteringWorkflowRaw(q)
@@ -199,7 +206,7 @@ export function getAdminQuotationsTabSendToMeteringState(
   }
 }
 
-export type MeteringWorkflowTab = "processing" | "approved" | "mco"
+export type MeteringWorkflowTab = "processing" | "approved" | "meter_install" | "mco"
 
 /** Installation done; metering not approved yet — must not show Move to MCO. */
 export function isInstallOnlyApprovedForMetering(q: OperationalQuotationRecord): boolean {
@@ -254,6 +261,16 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
     return "mco"
   }
 
+  if (
+    meteringRaw === "meter_installation_pending" ||
+    meteringRaw === "meter_install_pending" ||
+    meteringRaw.includes("meter_install") ||
+    installRaw === "meter_installation_pending" ||
+    installRaw === "meter_install_pending"
+  ) {
+    return "meter_install"
+  }
+
   if (isMeteringApprovedForTransition(q)) {
     return "approved"
   }
@@ -277,6 +294,8 @@ export const INSTALLATION_UPLOAD_COMPLETE_STATUSES = new Set([
   "pending_metering",
   "metering_in_progress",
   "metering_approved",
+  "meter_installation_pending",
+  "meter_install_pending",
   "mco",
   "pending_baldev",
   "baldev_approved",
@@ -292,6 +311,8 @@ export function isInstallationApprovedForAdminTab(
   q: OperationalQuotationRecord,
   opts?: { imageUrlCount?: number; inInstallerApprovedQueue?: boolean },
 ): boolean {
+  // Partial uploads stay in Partial Approved — never the Approved Installation tab.
+  if (isInstallationPartialApproved(q)) return false
   if (isInstallationUploadCompleteByStatus(q)) return true
   if (Boolean(q.installerApprovedAt || q.installer_approved_at)) return true
   if ((opts?.imageUrlCount ?? 0) > 0) return true
@@ -299,11 +320,12 @@ export function isInstallationApprovedForAdminTab(
   return false
 }
 
-/** Pending vs Approved Installation tab bucket (requires caller to confirm sent-to-installer). */
+/** Pending / Partial / Approved Installation tab bucket. */
 export function getInstallationAdminTabProgress(
   q: OperationalQuotationRecord,
   uploadComplete: boolean,
-): "pending" | "done" {
+): "pending" | "partial" | "done" {
+  if (isInstallationPartialApproved(q)) return "partial"
   return uploadComplete ? "done" : "pending"
 }
 

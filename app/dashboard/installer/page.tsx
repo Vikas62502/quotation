@@ -226,7 +226,7 @@ export default function InstallerDashboardPage() {
   const [uploadFilesByQuotation, setUploadFilesByQuotation] = useState<
     Record<string, Partial<Record<InstallationImageFieldKey, InstallationUploadedFile[]>>>
   >({})
-  const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, InstallationUploadedFile | null>>({})
+  const [piUploadByQuotation, setPiUploadByQuotation] = useState<Record<string, InstallationUploadedFile[]>>({})
   const [extraExpenseLinesByQuotation, setExtraExpenseLinesByQuotation] = useState<Record<string, ExtraExpenseLine[]>>({})
   const [dimensionsByQuotation, setDimensionsByQuotation] = useState<
     Record<string, { length: string; width: string; height: string }>
@@ -815,19 +815,23 @@ export default function InstallerDashboardPage() {
     }
   }
 
-  const uploadInstallerPiFile = async (quotationId: string, file: File | null) => {
-    if (!file) {
-      setPiUploadByQuotation((prev) => ({ ...prev, [quotationId]: null }))
-      return
-    }
+  const uploadInstallerPiFiles = async (quotationId: string, files: File[]) => {
+    if (!files.length) return
 
     const targetKey = `${quotationId}:piUpload`
     setUploadingAssetKey(targetKey)
     try {
-      const url = useApi
-        ? await api.installer.uploadCompletionAsset(quotationId, "piUpload", file)
-        : toLocalUploadedFile(file).url
-      setPiUploadByQuotation((prev) => ({ ...prev, [quotationId]: { name: file.name, url } }))
+      const uploaded: InstallationUploadedFile[] = []
+      for (const file of files) {
+        const url = useApi
+          ? await api.installer.uploadCompletionAsset(quotationId, "piUpload", file)
+          : toLocalUploadedFile(file).url
+        uploaded.push({ name: file.name, url })
+      }
+      setPiUploadByQuotation((prev) => ({
+        ...prev,
+        [quotationId]: [...(prev[quotationId] || []), ...uploaded],
+      }))
     } catch (error) {
       toast({
         title: "PI upload failed",
@@ -845,7 +849,7 @@ export default function InstallerDashboardPage() {
     const uploadedFiles = INSTALLATION_IMAGE_FIELDS.flatMap((field) => filesByField[field.key] || [])
     const notes = uploadNotes[quotation.id] || ""
     const dimensions = dimensionsByQuotation[quotation.id] || { length: "", width: "", height: "" }
-    const piUpload = piUploadByQuotation[quotation.id]
+    const piUploads = piUploadByQuotation[quotation.id] || []
     const rawExpenseLines = extraExpenseLinesByQuotation[quotation.id] || []
     const expenseLines = rawExpenseLines.filter((l) => l.description.trim() !== "" || l.amount.trim() !== "")
 
@@ -931,8 +935,14 @@ export default function InstallerDashboardPage() {
             formData.append(field.key, file.url)
           })
         })
-        if (piUpload?.url) {
-          formData.append("piUpload", piUpload.url)
+        for (const pi of piUploads) {
+          if (pi?.url) formData.append("piUpload", pi.url)
+        }
+        if (piUploads.length > 0) {
+          formData.append(
+            "existingPiUploadUrlsJson",
+            JSON.stringify(piUploads.map((p) => p.url).filter(Boolean)),
+          )
         }
         if (expenseLines.length > 0) {
           const payload = expenseLines.map(({ description, amount }) => ({
@@ -1040,7 +1050,7 @@ export default function InstallerDashboardPage() {
             notes,
             imageNames: [
               ...uploadedFiles.map((f) => f.name),
-              ...(piUpload ? [piUpload.name] : []),
+              ...piUploads.map((f) => f.name),
             ],
             updatedAt: new Date().toISOString(),
           },
@@ -1432,8 +1442,14 @@ export default function InstallerDashboardPage() {
                           onFilesChange={(fieldKey, files) =>
                             uploadInstallerFieldFiles(q.id, fieldKey as InstallationImageFieldKey, files)
                           }
-                          piFile={piUploadByQuotation[q.id] || null}
-                          onPiFileChange={(file) => uploadInstallerPiFile(q.id, file)}
+                          piFiles={piUploadByQuotation[q.id] || []}
+                          onPiFilesChange={(files) => void uploadInstallerPiFiles(q.id, files)}
+                          onRemovePiFile={(index) =>
+                            setPiUploadByQuotation((prev) => ({
+                              ...prev,
+                              [q.id]: (prev[q.id] || []).filter((_, i) => i !== index),
+                            }))
+                          }
                           uploadingKey={
                             uploadingAssetKey?.startsWith(`${q.id}:`)
                               ? uploadingAssetKey.slice(`${q.id}:`.length)

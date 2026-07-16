@@ -1886,6 +1886,13 @@ export const api = {
         meterNo?: string
         solarMeterNo?: string
         netMeterNo?: string
+        remarks?: string
+        authorizedRepresentative?: string
+        /** Optional DISCOM office / site location for WCC Pending. */
+        discomLocation?: string
+        /** Meter Installation Pending photos. */
+        meterInstallationPhoto?: File | null
+        plantLivePhoto?: File | null
       },
       meterDocumentFile?: File | null,
     ) => {
@@ -1895,7 +1902,26 @@ export const api = {
       if (payload.meterNo) formData.append("meterNo", payload.meterNo)
       if (payload.solarMeterNo) formData.append("solarMeterNo", payload.solarMeterNo)
       if (payload.netMeterNo) formData.append("netMeterNo", payload.netMeterNo)
+      if (payload.remarks) {
+        formData.append("remarks", payload.remarks)
+      }
+      if (payload.authorizedRepresentative) {
+        formData.append("authorizedRepresentative", payload.authorizedRepresentative)
+        formData.append("authorized_representative", payload.authorizedRepresentative)
+      }
+      if (payload.discomLocation) {
+        formData.append("discomLocation", payload.discomLocation)
+        formData.append("discom_location", payload.discomLocation)
+      }
       if (meterDocumentFile) formData.append("meterDocumentImage", meterDocumentFile)
+      if (payload.meterInstallationPhoto) {
+        formData.append("meterInstallationPhoto", payload.meterInstallationPhoto)
+        formData.append("meter_installation_photo", payload.meterInstallationPhoto)
+      }
+      if (payload.plantLivePhoto) {
+        formData.append("plantLivePhoto", payload.plantLivePhoto)
+        formData.append("plant_live_photo", payload.plantLivePhoto)
+      }
 
       const isMissingRoute = (error: unknown) =>
         error instanceof ApiError &&
@@ -2296,6 +2322,9 @@ export const api = {
           bankIfsc?: string
           /** Subsidy cheque (cash or cash + loan) */
           subsidyChequeDetails?: string
+          statusApprovedAt?: string
+          loanAmount?: number
+          cashAmount?: number
         },
       ) => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
@@ -2310,6 +2339,18 @@ export const api = {
                   ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc } : {}),
                   ...(approval.subsidyChequeDetails?.trim()
                     ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
+                    : {}),
+                  ...(approval.statusApprovedAt
+                    ? {
+                        statusApprovedAt: approval.statusApprovedAt,
+                        status_approved_at: approval.statusApprovedAt,
+                      }
+                    : {}),
+                  ...(approval.loanAmount != null && approval.loanAmount > 0
+                    ? { loanAmount: approval.loanAmount, loan_amount: approval.loanAmount }
+                    : {}),
+                  ...(approval.cashAmount != null && approval.cashAmount > 0
+                    ? { cashAmount: approval.cashAmount, cash_amount: approval.cashAmount }
                     : {}),
                 }
               : {}),

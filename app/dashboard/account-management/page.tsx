@@ -95,6 +95,8 @@ interface CustomerPayment {
   paymentMode?: string
   bankName?: string
   bankIfsc?: string
+  loanAmount?: number
+  cashAmount?: number
   paymentStatus?: "pending" | "completed" | "partial"
   phases: PaymentPhase[]
   quotation: Quotation
@@ -764,6 +766,8 @@ export default function AccountManagementPage() {
               paymentStatus: flat.paymentStatus as Quotation["paymentStatus"],
               bankName: (flat.bankName ?? flat.bank_name) as string | undefined,
               bankIfsc: (flat.bankIfsc ?? flat.bank_ifsc) as string | undefined,
+              loanAmount: pickFirstFiniteNumber(flat.loanAmount, flat.loan_amount) || undefined,
+              cashAmount: pickFirstFiniteNumber(flat.cashAmount, flat.cash_amount) || undefined,
               ...(rem !== undefined ? { remaining: rem } : {}),
               ...(remAmt !== undefined ? { remainingAmount: remAmt } : {}),
               installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
@@ -979,6 +983,8 @@ export default function AccountManagementPage() {
           paymentMode: normalizePaymentMode(q.paymentMode) || (!useApi ? normalizePaymentMode(storedPlan?.paymentMode) : undefined) || undefined,
           bankName: String((qx as any).bankName ?? (qx as any).bank_name ?? "").trim() || undefined,
           bankIfsc: String((qx as any).bankIfsc ?? (qx as any).bank_ifsc ?? "").trim() || undefined,
+          loanAmount: pickFirstFiniteNumber((qx as any).loanAmount, (qx as any).loan_amount) || undefined,
+          cashAmount: pickFirstFiniteNumber((qx as any).cashAmount, (qx as any).cash_amount) || undefined,
           paymentStatus:
             q.paymentStatus ??
             (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
@@ -2421,9 +2427,31 @@ export default function AccountManagementPage() {
                 </div>
               </div>
               {["loan", "mix"].includes(getPaymentTypeValue(activePayment)) && (
-                <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm">
-                  <span className="text-muted-foreground">Bank · IFSC </span>
-                  <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
+                <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm space-y-2">
+                  <div>
+                    <span className="text-muted-foreground">Bank · IFSC </span>
+                    <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-x-6 gap-y-1">
+                    <span>
+                      <span className="text-muted-foreground">Loan amount: </span>
+                      <span className="font-medium">
+                        {activePayment.loanAmount != null && activePayment.loanAmount > 0
+                          ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
+                          : "—"}
+                      </span>
+                    </span>
+                    {getPaymentTypeValue(activePayment) === "mix" && (
+                      <span>
+                        <span className="text-muted-foreground">Cash amount: </span>
+                        <span className="font-medium">
+                          {activePayment.cashAmount != null && activePayment.cashAmount > 0
+                            ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
+                            : "—"}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
 

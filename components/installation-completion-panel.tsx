@@ -42,8 +42,9 @@ type Props = {
   imageFields: readonly InstallationImageField[]
   filesByField: Record<string, InstallationUploadedFile[] | undefined>
   onFilesChange: (fieldKey: string, files: File[]) => void | Promise<void>
-  piFile: InstallationUploadedFile | null
-  onPiFileChange: (file: File | null) => void | Promise<void>
+  piFiles: InstallationUploadedFile[]
+  onPiFilesChange: (files: File[]) => void | Promise<void>
+  onRemovePiFile?: (index: number) => void
   uploadingKey?: string | null
   extraExpenses: InstallationExpenseLine[]
   onAddExpense: () => void
@@ -58,6 +59,16 @@ type Props = {
   saving: boolean
   onCancel: () => void
   onSave: () => void
+  secondarySaveLabel?: string
+  onSecondarySave?: () => void
+  /** Hide Cancel / Save footer (parent modal supplies actions). */
+  hideFooter?: boolean
+  /** Only photo / PI upload slots — same UX as the installation upload part. */
+  uploadsOnly?: boolean
+  /** Denser cards (for WCC / nested modals). */
+  compact?: boolean
+  /** Hide PI upload slot (e.g. WCC review modal). */
+  hidePi?: boolean
 }
 
 export function InstallationCompletionPanel({
@@ -65,8 +76,9 @@ export function InstallationCompletionPanel({
   imageFields,
   filesByField,
   onFilesChange,
-  piFile,
-  onPiFileChange,
+  piFiles,
+  onPiFilesChange,
+  onRemovePiFile,
   uploadingKey,
   extraExpenses,
   onAddExpense,
@@ -81,6 +93,12 @@ export function InstallationCompletionPanel({
   saving,
   onCancel,
   onSave,
+  secondarySaveLabel,
+  onSecondarySave,
+  hideFooter = false,
+  uploadsOnly = false,
+  compact = false,
+  hidePi = false,
 }: Props) {
   const [previewLoadErrorByField, setPreviewLoadErrorByField] = useState<Record<string, boolean>>({})
   const sampleBackgroundImageUrl =
@@ -138,10 +156,11 @@ export function InstallationCompletionPanel({
   }, [filesByField])
 
   const piPreviewUrl = useMemo(() => {
-    if (!piFile) return ""
-    if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(piFile.url)) return piFile.url
+    const first = piFiles[0]
+    if (!first) return ""
+    if (/\.(png|jpe?g|webp|gif)(\?|$)/i.test(first.url)) return first.url
     return ""
-  }, [piFile])
+  }, [piFiles])
 
   const renderImageFieldCard = (field: InstallationImageField) => {
     const inputId = `install-image-${field.key}`
@@ -163,13 +182,13 @@ export function InstallationCompletionPanel({
     const hasUploadedPreview = Boolean(uploadedCardPreviewUrl) && !previewLoadErrorByField[field.key]
 
     return (
-      <div key={field.key} className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">
+      <div key={field.key} className={compact ? "space-y-1" : "space-y-1.5"}>
+        <p className={compact ? "text-[11px] text-muted-foreground leading-tight" : "text-xs text-muted-foreground"}>
           {field.label}
           {field.required !== false ? " *" : ""}
         </p>
         <div
-          className="relative overflow-hidden rounded-md border border-dashed border-border/70 aspect-square"
+          className={`relative overflow-hidden rounded-md border border-dashed border-border/70 ${compact ? "aspect-[4/3]" : "aspect-square"}`}
           style={{
             backgroundImage: hasUploadedPreview ? undefined : `url(${backgroundImageUrl})`,
             backgroundSize: "cover",
@@ -195,7 +214,7 @@ export function InstallationCompletionPanel({
             <button
               type="button"
               aria-label={`Remove ${field.label} image`}
-              className="absolute right-2 top-2 z-20 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm hover:bg-background"
+              className="absolute right-1.5 top-1.5 z-20 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm hover:bg-background"
               onClick={() => {
                 setPreviewLoadErrorByField((prev) => ({ ...prev, [field.key]: false }))
                 onFilesChange(field.key, [])
@@ -205,20 +224,22 @@ export function InstallationCompletionPanel({
             </button>
           ) : null}
           <div className={`absolute inset-0 ${hasUploadedPreview ? "bg-background/20" : "bg-background/65"}`} />
-          <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
-            <div className="mt-0.5 rounded bg-background/80 p-1">
-              <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+          {!compact ? (
+            <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
+              <div className="mt-0.5 rounded bg-background/80 p-1">
+                <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              <p className={`text-[11px] leading-snug line-clamp-3 ${hasUploadedPreview ? "text-foreground" : "text-muted-foreground"}`}>
+                {getImageGuide(field.key)}
+              </p>
             </div>
-            <p className={`text-[11px] leading-snug line-clamp-3 ${hasUploadedPreview ? "text-foreground" : "text-muted-foreground"}`}>
-              {getImageGuide(field.key)}
-            </p>
-          </div>
-          <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
+          ) : null}
+          <div className={`absolute inset-x-0 flex justify-center px-2 ${compact ? "bottom-1.5" : "bottom-2"}`}>
             <Label
               htmlFor={inputId}
-              className={`h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground hover:bg-background ${
-                uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-              }`}
+              className={`inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 text-xs font-medium text-foreground hover:bg-background ${
+                compact ? "h-7 px-2.5" : "h-8 px-3"
+              } ${uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
             >
               <Upload className="w-3.5 h-3.5" />
               {uploadingKey === field.key ? "Uploading..." : "Upload"}
@@ -239,9 +260,13 @@ export function InstallationCompletionPanel({
             e.currentTarget.value = ""
           }}
         />
-        <p className="text-[11px] text-muted-foreground truncate">
-          {(filesByField[field.key] || []).length > 0 ? `${(filesByField[field.key] || []).length} file(s) selected` : "No file selected"}
-        </p>
+        {!compact ? (
+          <p className="text-[11px] text-muted-foreground truncate">
+            {(filesByField[field.key] || []).length > 0
+              ? `${(filesByField[field.key] || []).length} file(s) selected`
+              : "No file selected"}
+          </p>
+        ) : null}
         {previewLoadErrorByField[field.key] ? (
           <p className="text-[11px] text-amber-700">
             Preview unavailable for this image format in browser. Upload is still selected.
@@ -253,10 +278,12 @@ export function InstallationCompletionPanel({
 
   const renderPiUploadCard = () => {
     return (
-      <div key="pi-upload-card" className="space-y-1.5">
-        <p className="text-xs text-muted-foreground">PI Upload</p>
+      <div key="pi-upload-card" className={compact ? "space-y-1" : "space-y-1.5"}>
+        <p className={compact ? "text-[11px] text-muted-foreground leading-tight" : "text-xs text-muted-foreground"}>
+          PI Upload (multiple)
+        </p>
         <div
-          className="relative overflow-hidden rounded-md border border-dashed border-border/70 aspect-square"
+          className={`relative overflow-hidden rounded-md border border-dashed border-border/70 ${compact ? "aspect-[4/3]" : "aspect-square"}`}
           style={{
             backgroundImage: `url(${piPreviewUrl || piTemplateBackgroundImageUrl})`,
             backgroundSize: "cover",
@@ -264,20 +291,34 @@ export function InstallationCompletionPanel({
           }}
         >
           <div className={`absolute inset-0 ${piPreviewUrl ? "bg-background/25" : "bg-background/55"}`} />
-          <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
-            <div className="mt-0.5 rounded bg-background/80 p-1">
-              <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+          {piFiles.length > 0 && onRemovePiFile ? (
+            <button
+              type="button"
+              aria-label="Remove all PI files"
+              className="absolute right-1.5 top-1.5 z-20 inline-flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-sm hover:bg-background"
+              onClick={() => {
+                for (let i = piFiles.length - 1; i >= 0; i -= 1) onRemovePiFile(i)
+              }}
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {!compact ? (
+            <div className="absolute top-2 left-2 right-2 flex items-start gap-2">
+              <div className="mt-0.5 rounded bg-background/80 p-1">
+                <ImageIcon className="w-3.5 h-3.5 text-muted-foreground" />
+              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground line-clamp-3">
+                Upload one or more PI documents or images. Template shown as guide background.
+              </p>
             </div>
-            <p className="text-[11px] leading-snug text-muted-foreground line-clamp-3">
-              Upload PI document or image. Template shown as guide background.
-            </p>
-          </div>
-          <div className="absolute inset-x-0 bottom-2 flex justify-center px-2">
+          ) : null}
+          <div className={`absolute inset-x-0 flex justify-center px-2 ${compact ? "bottom-1.5" : "bottom-2"}`}>
             <Label
               htmlFor="install-pi-upload"
-              className={`h-8 inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 px-3 text-xs font-medium text-foreground hover:bg-background ${
-                uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"
-              }`}
+              className={`inline-flex items-center gap-1.5 rounded-md border border-border bg-background/90 text-xs font-medium text-foreground hover:bg-background ${
+                compact ? "h-7 px-2.5" : "h-8 px-3"
+              } ${uploadingKey ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
             >
               <Upload className="w-3.5 h-3.5" />
               {uploadingKey === "piUpload" ? "Uploading..." : "Upload PI"}
@@ -288,25 +329,57 @@ export function InstallationCompletionPanel({
           id="install-pi-upload"
           type="file"
           accept="application/pdf,image/*"
+          multiple
           className="hidden"
           disabled={Boolean(uploadingKey)}
           onChange={(e) => {
-            void onPiFileChange(e.target.files?.[0] || null)
+            void onPiFilesChange(Array.from(e.target.files || []))
             e.currentTarget.value = ""
           }}
         />
-        <p className="text-[11px] text-muted-foreground truncate">{piFile?.name || "No file selected"}</p>
+        {compact ? (
+          piFiles.length > 0 ? (
+            <p className="text-[10px] text-muted-foreground truncate">{piFiles.length} file(s)</p>
+          ) : null
+        ) : piFiles.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground truncate">No file selected</p>
+        ) : (
+          <ul className="space-y-1">
+            {piFiles.map((file, index) => (
+              <li
+                key={`${file.name}-${index}`}
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              >
+                <span className="min-w-0 flex-1 truncate" title={file.name}>
+                  {file.name}
+                </span>
+                {onRemovePiFile ? (
+                  <button
+                    type="button"
+                    className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => onRemovePiFile(index)}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     )
   }
 
-  const piSpacerCount = (3 - ((imageFields.length + 1) % 3)) % 3
+  const cols = compact ? 4 : 3
+  const slotCount = imageFields.length + (hidePi ? 0 : 1)
+  const piSpacerCount = (cols - (slotCount % cols)) % cols
   const anyImageFieldRequired = imageFields.some((f) => f.required !== false)
 
   return (
-    <div className="rounded-md border border-border/70 p-3 space-y-3">
+    <div className={`rounded-md border border-border/70 space-y-3 ${compact ? "p-2.5" : "p-3"}`}>
       {loadingText ? <p className="text-xs text-muted-foreground">{loadingText}</p> : null}
-      <div className="grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4">
+      <div className={uploadsOnly ? "space-y-3" : "grid grid-cols-1 xl:grid-cols-[2fr_1fr] gap-4"}>
         <div className="space-y-3">
           <div className="space-y-1.5">
             <p className="text-xs font-medium">
@@ -314,15 +387,27 @@ export function InstallationCompletionPanel({
                 ? "Installation Completion Images (required as marked *)"
                 : "Installation Completion Images"}
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div
+              className={
+                compact
+                  ? "grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2"
+                  : "grid grid-cols-1 md:grid-cols-3 gap-3"
+              }
+            >
               {imageFields.map((field) => renderImageFieldCard(field))}
               {Array.from({ length: piSpacerCount }).map((_, idx) => (
-                <div key={`pi-spacer-${idx}`} className="hidden md:block" aria-hidden="true" />
+                <div
+                  key={`pi-spacer-${idx}`}
+                  className={compact ? "hidden lg:block" : "hidden md:block"}
+                  aria-hidden="true"
+                />
               ))}
-              {renderPiUploadCard()}
+              {!hidePi ? renderPiUploadCard() : null}
             </div>
           </div>
 
+          {!uploadsOnly ? (
+          <>
           <div className="space-y-2 rounded-md border border-border/60 p-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <Label className="text-xs font-medium">Extra expenses (optional)</Label>
@@ -389,8 +474,11 @@ export function InstallationCompletionPanel({
             <p className="text-xs font-medium">Notes (optional)</p>
             <Textarea rows={2} placeholder="Installation notes, material used, issues, etc." value={notes} onChange={(e) => onNotesChange(e.target.value)} />
           </div>
+          </>
+          ) : null}
         </div>
 
+        {!uploadsOnly ? (
         <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
           {infoSections.map((section, idx) => (
             <div key={section.title} className={idx === 0 ? "space-y-2" : "space-y-2 border-t border-border/60 pt-2"}>
@@ -428,16 +516,29 @@ export function InstallationCompletionPanel({
             )}
           </div>
         </div>
+        ) : null}
       </div>
 
-      <div className="flex justify-end gap-2">
+      {!hideFooter ? (
+      <div className="flex flex-wrap justify-end gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} disabled={saving || Boolean(uploadingKey)}>
           Cancel
         </Button>
+        {secondarySaveLabel && onSecondarySave ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onSecondarySave}
+            disabled={saving || Boolean(uploadingKey)}
+          >
+            {saving ? "Saving..." : uploadingKey ? "Uploading..." : secondarySaveLabel}
+          </Button>
+        ) : null}
         <Button size="sm" onClick={onSave} disabled={saving || Boolean(uploadingKey)}>
           {saving ? "Saving..." : uploadingKey ? "Uploading..." : saveLabel}
         </Button>
       </div>
+      ) : null}
     </div>
   )
 }

@@ -52,14 +52,34 @@ function collectUrlsForInstallField(fieldKey: string, ...containers: unknown[]):
   return urls
 }
 
-function extractPiMediaUrl(q: Record<string, unknown>): string | undefined {
+function extractPiMediaUrls(q: Record<string, unknown>): string[] {
   const doc = (q.documents || q.document || {}) as Record<string, unknown>
-  const u =
-    pickNonEmptyString(doc.piUploadUrl) ||
-    pickNonEmptyString(doc.pi_upload_url) ||
-    pickNonEmptyString(q.piUploadUrl) ||
-    pickNonEmptyString(q.pi_upload_url)
-  return u ? toPublicOpenHref(u) || u : undefined
+  const urls: string[] = []
+  const add = (s?: string) => {
+    const normalized = s ? toPublicOpenHref(s) || s.trim() : ""
+    if (normalized && !urls.includes(normalized)) urls.push(normalized)
+  }
+  for (const arr of [
+    doc.piUploadUrls,
+    doc.pi_upload_urls,
+    doc.piUploads,
+    doc.pi_uploads,
+    q.piUploadUrls,
+    q.pi_upload_urls,
+    q.piUploads,
+    q.pi_uploads,
+  ]) {
+    if (!Array.isArray(arr)) continue
+    for (const item of arr) {
+      if (typeof item === "string") add(item)
+      else if (item && typeof item === "object") add(pickMediaUrlFromValue(item))
+    }
+  }
+  add(pickNonEmptyString(doc.piUploadUrl))
+  add(pickNonEmptyString(doc.pi_upload_url))
+  add(pickNonEmptyString(q.piUploadUrl))
+  add(pickNonEmptyString(q.pi_upload_url))
+  return urls
 }
 
 function addDedupedUrl(sink: string[], max: number, s?: string) {
@@ -90,7 +110,7 @@ export function gatherInstallationPublicImageUrls(q: Record<string, unknown>, ma
       addDedupedUrl(out, max, url)
     }
   }
-  addDedupedUrl(out, max, extractPiMediaUrl(q))
+  for (const url of extractPiMediaUrls(q)) addDedupedUrl(out, max, url)
 
   const nested = [
     q,

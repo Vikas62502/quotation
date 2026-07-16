@@ -9,11 +9,13 @@ import { SolarLogo } from "@/components/solar-logo"
 import { LogOut, Gauge, Search, CalendarDays, CheckCircle2, ClipboardList, FileCheck } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { api, ApiError } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { formatPersonName } from "@/lib/name-display"
+import { cn } from "@/lib/utils"
 import {
   extractQuotationListFromApiResponse,
   getInstallationWorkflowStatus,
@@ -30,6 +32,8 @@ type MeteringWorkflowItem = {
   meterNo?: string
   solarMeterNo?: string
   netMeterNo?: string
+  remarks?: string
+  authorizedRepresentative?: string
   meterDocumentName?: string
   meterDocumentUrl?: string
   workCompleteReportImageName?: string
@@ -68,6 +72,9 @@ type MeteringQuotation = {
   meterNo?: string
   solarMeterNo?: string
   netMeterNo?: string
+  remarks?: string
+  authorizedRepresentative?: string
+  authorized_representative?: string
   meterDocumentUrl?: string
   meter_document_url?: string
   workCompleteReportImageUrl?: string
@@ -92,6 +99,8 @@ type MeteringModalDraft = {
   meterNo: string
   solarMeterNo: string
   netMeterNo: string
+  remarks: string
+  authorizedRepresentative: string
 }
 
 const quotationFromApiRecord = (raw: unknown): MeteringQuotation => {
@@ -115,7 +124,10 @@ const dedupeByQuotationId = (rows: MeteringQuotation[]) => {
 }
 
 function stageFromBackend(q: MeteringQuotation): MeteringStage | null {
-  return getMeteringWorkflowStage(q as Record<string, unknown>)
+  const stage = getMeteringWorkflowStage(q as Record<string, unknown>)
+  // Admin Meter Installation Pending still appears under Meter in Discom for metering role.
+  if (stage === "meter_install") return "approved"
+  return stage
 }
 
 export default function MeteringDashboardPage() {
@@ -141,6 +153,8 @@ export default function MeteringDashboardPage() {
     meterNo: "",
     solarMeterNo: "",
     netMeterNo: "",
+    remarks: "",
+    authorizedRepresentative: "",
   })
   const [savingDetails, setSavingDetails] = useState(false)
   const [mcoDocsModalOpen, setMcoDocsModalOpen] = useState(false)
@@ -387,6 +401,12 @@ export default function MeteringDashboardPage() {
       meterNo: row?.meterNo || row?.meter_no || saved?.meterNo || "",
       solarMeterNo: row?.solarMeterNo || row?.solar_meter_no || saved?.solarMeterNo || "",
       netMeterNo: row?.netMeterNo || row?.net_meter_no || saved?.netMeterNo || "",
+      remarks: row?.remarks || saved?.remarks || "",
+      authorizedRepresentative:
+        row?.authorizedRepresentative ||
+        row?.authorized_representative ||
+        saved?.authorizedRepresentative ||
+        "",
     })
     if (!saved?.meterDocumentName || !saved?.meterDocumentUrl) {
       updateWorkflowMeta(quotationId, {
@@ -414,6 +434,8 @@ export default function MeteringDashboardPage() {
       meterNo: detailsDraft.meterNo.trim(),
       solarMeterNo: detailsDraft.solarMeterNo.trim(),
       netMeterNo: detailsDraft.netMeterNo.trim(),
+      remarks: detailsDraft.remarks.trim(),
+      authorizedRepresentative: detailsDraft.authorizedRepresentative.trim(),
     }
 
     updateWorkflowMeta(detailsQuotationId, patch)
@@ -428,6 +450,8 @@ export default function MeteringDashboardPage() {
         meterNo: patch.meterNo,
         solarMeterNo: patch.solarMeterNo,
         netMeterNo: patch.netMeterNo,
+        remarks: patch.remarks,
+        authorizedRepresentative: patch.authorizedRepresentative,
       }, meterDocumentByQuotation[detailsQuotationId] || null)
       const saved = response?.data || response || {}
       const meterDocumentUrl =
@@ -466,6 +490,9 @@ export default function MeteringDashboardPage() {
                 meterNo: patch.meterNo || q.meterNo,
                 solarMeterNo: patch.solarMeterNo || q.solarMeterNo,
                 netMeterNo: patch.netMeterNo || q.netMeterNo,
+                remarks: patch.remarks ?? q.remarks,
+                authorizedRepresentative: patch.authorizedRepresentative || q.authorizedRepresentative,
+                authorized_representative: patch.authorizedRepresentative || q.authorized_representative,
                 meterDocumentUrl: meterDocumentUrl || q.meterDocumentUrl,
                 meter_document_url: meterDocumentUrl || q.meter_document_url,
               }
@@ -759,96 +786,175 @@ export default function MeteringDashboardPage() {
     [quotations, searchByTab.mco],
   )
 
-  const renderRow = (q: MeteringQuotation, tab: MeteringStage) => (
-    <Card key={q.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
-      <CardContent className="p-4 space-y-3">
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-8 gap-1">
-          <div className="xl:col-span-2 min-w-0">
-            <p className="text-sm font-semibold leading-tight">
+  const stageBadgeClass = (tab: MeteringStage) => {
+    if (tab === "processing") return "border-amber-300/80 bg-amber-50 text-amber-800"
+    if (tab === "approved") return "border-sky-300/80 bg-sky-50 text-sky-800"
+    return "border-emerald-300/80 bg-emerald-50 text-emerald-800"
+  }
+
+  const renderRow = (q: MeteringQuotation, tab: MeteringStage) => {
+    const saved = workflowMap[q.id]
+    const discomName = String(q.discomName || (q as any).discom_name || saved?.discomName || "").trim() || "N/A"
+    const remarks = String(q.remarks || saved?.remarks || "").trim() || "N/A"
+    const authorizedRepresentative =
+      String(
+        q.authorizedRepresentative ||
+          q.authorized_representative ||
+          saved?.authorizedRepresentative ||
+          "",
+      ).trim() || "N/A"
+    const address = q.visitLocation || q.location || q.customer?.address || q.customer?.location || "N/A"
+    const dealerName = formatPersonName(q.dealer?.firstName, q.dealer?.lastName, "N/A")
+    const statusLabel = getInstallationWorkflowStatus(q as any) || "—"
+    return (
+      <tr
+        key={q.id}
+        className="border-b border-border/50 transition-colors hover:bg-muted/35 last:border-b-0"
+      >
+        <td className="px-3 py-2.5 align-middle">
+          <div className="min-w-[11rem] max-w-[14rem]">
+            <p className="text-sm font-semibold leading-tight truncate">
               {formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown")}
             </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {q.customer?.mobile || "No mobile"} • {q.id}
+            <p className="text-[11px] text-muted-foreground truncate">{q.customer?.mobile || "No mobile"}</p>
+            <p className="text-[10px] font-medium text-muted-foreground/90 truncate">{q.id}</p>
+          </div>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <div className="min-w-[8.5rem] max-w-[11rem]">
+            <p className="text-xs font-medium leading-tight truncate" title={dealerName}>
+              {dealerName}
+            </p>
+            <p className="text-[11px] text-muted-foreground truncate">
+              {q.dealer?.mobile || q.dealer?.phone || "No contact"}
             </p>
           </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              {tab === "mco" ? "MCO Date" : "Approved date"}
-            </p>
-            <p className="text-xs font-medium flex items-center gap-1">
-              <CalendarDays className="w-3 h-3 text-muted-foreground" />
-              {getDisplayedApprovedDate(q, tab)
-                ? new Date(getDisplayedApprovedDate(q, tab) as string).toLocaleDateString("en-IN")
-                : "N/A"}
-            </p>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Phase</p>
-            <p className="text-xs font-medium">{getPhaseLabel(q)}</p>
-          </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Dealer</p>
-            <p className="text-xs font-medium">
-              {formatPersonName(q.dealer?.firstName, q.dealer?.lastName, "N/A")}
-            </p>
-            <p className="text-[11px] text-muted-foreground">{q.dealer?.mobile || q.dealer?.phone || "No contact"}</p>
-          </div>
-          <div className="xl:col-span-2 min-w-0">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Customer Address / Visitor Location</p>
-            <p className="text-xs font-medium truncate">
-              {q.visitLocation || q.location || q.customer?.address || q.customer?.location || "N/A"}
-            </p>
-          </div>
-          <div>
-            <Badge variant="outline" className="text-xs capitalize">
-              {getInstallationWorkflowStatus(q as any) || "—"}
-            </Badge>
-          </div>
-          <div className="md:col-span-2 xl:col-span-8 w-full flex flex-wrap gap-2 justify-end">
-            <Button variant="outline" size="sm" onClick={() => openDetailsModal(q.id)}>
-              Metering Details
+        </td>
+        <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+          <p className="text-xs font-medium inline-flex items-center gap-1">
+            <CalendarDays className="w-3 h-3 text-muted-foreground shrink-0" />
+            {getDisplayedApprovedDate(q, tab)
+              ? new Date(getDisplayedApprovedDate(q, tab) as string).toLocaleDateString("en-IN")
+              : "N/A"}
+          </p>
+          <p className="text-[10px] text-muted-foreground">{tab === "mco" ? "MCO" : "Approved"}</p>
+        </td>
+        <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+          <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 text-xs font-medium">
+            {getPhaseLabel(q)}
+          </span>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <p className="text-xs font-medium max-w-[10rem] truncate" title={address}>
+            {address}
+          </p>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <p className="text-xs font-medium max-w-[10rem] truncate" title={discomName}>
+            {discomName}
+          </p>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <p className="text-xs font-medium max-w-[9rem] truncate" title={remarks}>
+            {remarks}
+          </p>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <p className="text-xs font-medium max-w-[9rem] truncate" title={authorizedRepresentative}>
+            {authorizedRepresentative}
+          </p>
+        </td>
+        <td className="px-3 py-2.5 align-middle">
+          <Badge
+            variant="outline"
+            className={cn("text-[10px] capitalize font-medium", stageBadgeClass(tab))}
+          >
+            {String(statusLabel).replace(/_/g, " ")}
+          </Badge>
+        </td>
+        <td className="px-3 py-2.5 align-middle text-right sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+          <div className="flex flex-nowrap items-center justify-end gap-1.5">
+            <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => openDetailsModal(q.id)}>
+              Details
             </Button>
             {tab === "processing" && hasRequiredMeteringDetails(q.id) && (
-              <Button
-                size="sm"
-                onClick={() => void setStage(q.id, "approved")}
-              >
+              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "approved")}>
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                Move to Approved
+                To Discom
               </Button>
             )}
             {tab === "approved" && (
               <>
-                <Button variant="outline" size="sm" onClick={() => void setStage(q.id, "processing")}>
-                  Back to Processing
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  onClick={() => void setStage(q.id, "processing")}
+                >
+                  To Pending
                 </Button>
-                <Button size="sm" onClick={() => void setStage(q.id, "mco")}>
+                <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "mco")}>
                   <FileCheck className="w-3.5 h-3.5 mr-1" />
-                  Move to MCO
+                  To MCO
                 </Button>
               </>
             )}
             {tab === "mco" && (
               <>
-                <Button variant="outline" size="sm" onClick={() => openMcoDocsModal(q.id)}>
-                  Upload MCO Docs
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  onClick={() => openMcoDocsModal(q.id)}
+                >
+                  MCO Docs
                 </Button>
                 <Button
                   size="sm"
+                  className="h-8 shrink-0"
                   onClick={() => void moveToBaldevConfirmation(q.id)}
                   disabled={!hasRequiredMeteringDetails(q.id) || !hasRequiredMcoDocuments(q.id)}
                 >
-                  Move to Confirmation (Baldev)
+                  To Confirmation
                 </Button>
-                <Button variant="outline" size="sm" onClick={() => void setStage(q.id, "approved")}>
-                  Back to Approved
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  onClick={() => void setStage(q.id, "approved")}
+                >
+                  To Discom
                 </Button>
               </>
             )}
           </div>
-        </div>
-      </CardContent>
-    </Card>
+        </td>
+      </tr>
+    )
+  }
+
+  const renderMeteringTable = (list: MeteringQuotation[], tab: MeteringStage) => (
+    <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
+      <table className="w-full min-w-[96rem] border-collapse text-left">
+        <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
+          <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Dealer</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Date</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Phase</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Address</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Discom Name</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Auth. Rep.</th>
+            <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
+            <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+              Actions
+            </th>
+          </tr>
+        </thead>
+        <tbody>{list.map((q) => renderRow(q, tab))}</tbody>
+      </table>
+    </div>
   )
 
   return (
@@ -881,8 +987,8 @@ export default function MeteringDashboardPage() {
           <h1 className="text-xl font-semibold">Metering Dashboard</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Welcome, {meteringUser?.firstName || "Metering"}. Track jobs across Processing, Approved, and MCO. Metering details and stage
-          transitions are persisted via backend metering workflow APIs.
+          Welcome, {meteringUser?.firstName || "Metering"}. Track jobs across Meter Pending, Meter in Discom, and MCO.
+          Metering details and stage transitions are persisted via backend metering workflow APIs.
         </p>
 
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -890,11 +996,11 @@ export default function MeteringDashboardPage() {
             <TabsList className="h-auto flex-wrap justify-start">
               <TabsTrigger value="processing" className="h-10 px-4 text-sm gap-2">
                 <ClipboardList className="w-3.5 h-3.5" />
-                Processing ({processingList.length})
+                Meter Pending ({processingList.length})
               </TabsTrigger>
               <TabsTrigger value="approved" className="h-10 px-4 text-sm gap-2">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                Approved ({approvedList.length})
+                Meter in Discom ({approvedList.length})
               </TabsTrigger>
               <TabsTrigger value="mco" className="h-10 px-4 text-sm gap-2">
                 <FileCheck className="w-3.5 h-3.5" />
@@ -931,10 +1037,10 @@ export default function MeteringDashboardPage() {
               </Card>
             ) : processingList.length === 0 ? (
               <Card>
-                <CardContent className="py-8 text-sm text-muted-foreground">No items in Processing.</CardContent>
+                <CardContent className="py-8 text-sm text-muted-foreground">No items in Meter Pending.</CardContent>
               </Card>
             ) : (
-              processingList.map((q) => renderRow(q, "processing"))
+              renderMeteringTable(processingList, "processing")
             )}
           </TabsContent>
           <TabsContent value="approved" className="space-y-3 pt-2">
@@ -944,10 +1050,10 @@ export default function MeteringDashboardPage() {
               </Card>
             ) : approvedList.length === 0 ? (
               <Card>
-                <CardContent className="py-8 text-sm text-muted-foreground">No items in Approved.</CardContent>
+                <CardContent className="py-8 text-sm text-muted-foreground">No items in Meter in Discom.</CardContent>
               </Card>
             ) : (
-              approvedList.map((q) => renderRow(q, "approved"))
+              renderMeteringTable(approvedList, "approved")
             )}
           </TabsContent>
           <TabsContent value="mco" className="space-y-3 pt-2">
@@ -960,7 +1066,7 @@ export default function MeteringDashboardPage() {
                 <CardContent className="py-8 text-sm text-muted-foreground">No items in MCO.</CardContent>
               </Card>
             ) : (
-              mcoList.map((q) => renderRow(q, "mco"))
+              renderMeteringTable(mcoList, "mco")
             )}
           </TabsContent>
         </Tabs>
@@ -1039,6 +1145,27 @@ export default function MeteringDashboardPage() {
                   />
                 </div>
               )}
+              <div className="space-y-1">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Authorized Representative</p>
+                <Input
+                  value={detailsDraft.authorizedRepresentative}
+                  onChange={(e) =>
+                    setDetailsDraft((prev) => ({ ...prev, authorizedRepresentative: e.target.value }))
+                  }
+                  placeholder="Enter authorized representative"
+                  className="h-9 text-sm"
+                />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remarks</p>
+                <Textarea
+                  value={detailsDraft.remarks}
+                  onChange={(e) => setDetailsDraft((prev) => ({ ...prev, remarks: e.target.value }))}
+                  placeholder="Enter remarks"
+                  rows={3}
+                  className="resize-y min-h-[72px] text-sm"
+                />
+              </div>
               <div className="space-y-1 md:col-span-2">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Meter Document Image</p>
                 <Input

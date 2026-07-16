@@ -140,6 +140,10 @@ export interface Quotation {
   /** Set when admin approves with loan / mix */
   bankName?: string
   bankIfsc?: string
+  /** Loan portion when payment type is loan or cash + loan */
+  loanAmount?: number
+  /** Cash portion when payment type is cash + loan */
+  cashAmount?: number
   /** Subsidy cheque details when approval payment is cash or cash + loan */
   subsidyChequeDetails?: string
   /** File login: already filed vs mark as login now */
