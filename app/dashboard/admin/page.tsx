@@ -6624,9 +6624,11 @@ export default function AdminPanelPage() {
                                 <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-                                <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
-                                  Actions
-                                </th>
+                                {operationalProgressTab !== "mco" && (
+                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                    Actions
+                                  </th>
+                                )}
                               </tr>
                             </thead>
                             <tbody>
@@ -6672,10 +6674,17 @@ export default function AdminPanelPage() {
                                 const amountDisplay = getMeteringAmountDisplay(quotation)
                                 const address = getQuotationAddressText(quotation)
                                 const statusLabel =
-                                  getMeteringWorkflowRaw(qAny) ||
-                                  getInstallationWorkflowStatus(qAny) ||
-                                  meteringStage ||
-                                  "—"
+                                  meteringStage === "mco"
+                                    ? "Final Step"
+                                    : meteringStage === "approved"
+                                      ? "Meter in Discom"
+                                      : meteringStage === "processing"
+                                        ? "Meter Pending"
+                                        : meteringStage === "meter_install"
+                                          ? "Meter Installation Pending"
+                                          : getMeteringWorkflowRaw(qAny) ||
+                                            getInstallationWorkflowStatus(qAny) ||
+                                            "—"
                                 return (
                                   <tr
                                     key={quotation.id}
@@ -6777,6 +6786,7 @@ export default function AdminPanelPage() {
                                         {String(statusLabel).replace(/_/g, " ")}
                                       </Badge>
                                     </td>
+                                    {operationalProgressTab !== "mco" && (
                                     <td
                                       className={cn(
                                         "px-3 py-2.5 align-middle text-right sticky right-0 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
@@ -6854,6 +6864,7 @@ export default function AdminPanelPage() {
                                         )}
                                       </div>
                                     </td>
+                                    )}
                                   </tr>
                                 )
                               })}
