@@ -592,8 +592,30 @@ export function buildProductsApiPayloadCandidates(products: ProductSelection): P
     : null
   const stripped = stripPdfDisplayFlags(catalogSafe)
 
-  return dedupeProductPayloads(
+  const candidates = dedupeProductPayloads(
     inaWithoutPdfRange ? [withFlags, inaWithoutPdfRange, stripped] : [withFlags, stripped],
+  )
+
+  // Commercial DCR/BOTH: every candidate must keep the commercial flag + subsidy 0.
+  // Otherwise a catalog-retry stripped payload loses the flag and the API rejects with
+  // "centralSubsidy is required for dcr and both system types".
+  if (!isPdfCommercialSet(products)) return candidates
+
+  const commercialFlags = {
+    ...buildPdfDisplayFlagsPayload(products),
+    centralSubsidy: 0,
+    stateSubsidy: 0,
+    isCommercial: true,
+  }
+
+  return dedupeProductPayloads(
+    candidates.map(
+      (payload) =>
+        ({
+          ...payload,
+          ...commercialFlags,
+        }) as ProductSelection,
+    ),
   )
 }
 

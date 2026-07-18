@@ -110,10 +110,10 @@ export function mergeQuotationTimestampsFromApi(
 /** Payment terms shown in PDF Terms & Conditions (page 3). */
 export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
   "Token Money (Cash/UPI/Netbanking): 10–20% of total system cost to secure the contract and cover initial costs (design, permits, equipment ordering).",
-  "For Cash: 70–80% of the system cost must be cleared in cash when material reaches the customer's home/site (on delivery), before installation work starts.",
+  "For Cash: 75–85% of the system cost must be cleared in cash when material reaches the customer's home/site (on delivery), before installation work starts.",
   "For Loan: 70% of the system cost must be cleared before installation work starts, with the remaining 30% payable after installation.",
-  "Material Delivery: Once 70% is paid (loan) or 70–80% is paid (cash on delivery), equipment is dispatched to the site and installation must start within 7–10 days.",
-  "Metering & Closure: After successful installation, only 10% remains and the rest of the amount must be cleared before metering work and commissioning finalize.",
+  "Material Delivery: Once 70% is paid (loan) or 75–85% is paid (cash on delivery), equipment is dispatched to the site and installation must start within 7–10 days.",
+  "Metering & Closure: After successful installation, only 5% remains and the rest of the amount must be cleared before metering work and commissioning finalize.",
 ].join("\n")
 
 export const DEFAULT_PROPOSAL_SUPPORT_FORM_URL = "https://www.chairbord.com/support"
@@ -250,6 +250,10 @@ export type QuotationProposalDocumentData = {
   /** Rate column in pricing table — Non-DCR only. */
   showPricingRateColumn: boolean
   pricingRows: PricingRow[]
+  /** Pricing breakdown footer label (after subsidy when applicable). */
+  pricingTotalLabel: string
+  /** Pricing breakdown footer amount (after subsidy when applicable). */
+  pricingTotalAmount: number
   paymentRows: PaymentRow[]
   warrantyRows: WarrantyRow[]
   supportLine: string
@@ -549,11 +553,47 @@ export function shouldShowPricingRateColumn(
   return type === "non-dcr"
 }
 
-export function buildPricingRows(subtotal: number, systemKwLabel: string): PricingRow[] {
+/** Actual subsidy amounts for pricing table (no T&C defaults). */
+export function resolveActualSubsidyForPricing(products?: ProductsLike | null): {
+  central: number
+  state: number
+} {
+  if (!products || !shouldShowSubsidyTermsInPdf(products)) {
+    return { central: 0, state: 0 }
+  }
+  const raw = products as Record<string, unknown>
+  const central = Math.max(0, Number(products.centralSubsidy ?? raw.central_subsidy ?? 0) || 0)
+  const state = Math.max(0, Number(products.stateSubsidy ?? raw.state_subsidy ?? 0) || 0)
+  return { central, state }
+}
+
+export function getPricingTotalForPdf(
+  subtotal: number,
+  products?: ProductsLike | null,
+): { label: string; amount: number } {
+  const { central } = resolveActualSubsidyForPricing(products)
+  if (central > 0) {
+    return {
+      label: "Total price After subsidy",
+      amount: Math.max(0, Math.round(subtotal - central)),
+    }
+  }
+  return {
+    label: "TOTAL PROJECT COST (Including GST & All Charges)",
+    amount: Math.round(subtotal),
+  }
+}
+
+export function buildPricingRows(
+  subtotal: number,
+  systemKwLabel: string,
+  products?: ProductsLike | null,
+): PricingRow[] {
   const kwNum = Number.parseFloat(systemKwLabel.replace(/[^0-9.]/g, "")) || 0
   const watts = Math.round(kwNum * 1000)
   const ratePerWatt = watts > 0 ? Math.round(subtotal / watts) : 0
-  return [
+  const { central } = resolveActualSubsidyForPricing(products)
+  const rows: PricingRow[] = [
     {
       description: `${systemKwLabel.replace(/\s*kW/i, " KW")} Solar System`,
       rate: ratePerWatt > 0 ? `${ratePerWatt} per Watt` : "As quoted",
@@ -575,6 +615,15 @@ export function buildPricingRows(subtotal: number, systemKwLabel: string): Prici
       amount: "Included",
     },
   ]
+  if (central > 0) {
+    rows.push({
+      description: "Central Subsidy",
+      rate: "—",
+      capacity: "—",
+      amount: `−${formatInr(central)}`,
+    })
+  }
+  return rows
 }
 
 /** Page-2 payment schedule summary (full policy text is in Terms & Conditions). */
@@ -590,7 +639,7 @@ export function buildPaymentRows(subtotal: number): PaymentRow[] {
     {
       stage: "Material Delivery (Cash)",
       when: "When Material Reaches Customer Home",
-      percentage: "70–80%",
+      percentage: "75–85%",
       amount: "As per T&C",
     },
     {
@@ -608,7 +657,7 @@ export function buildPaymentRows(subtotal: number): PaymentRow[] {
     {
       stage: "Metering & Closure",
       when: "Before Metering & Commissioning",
-      percentage: "Balance (~10%)",
+      percentage: "Balance (~5%)",
       amount: "As per T&C",
     },
     {
@@ -796,6 +845,7 @@ export function buildQuotationProposalDocumentData(params: {
   const phaseLabel = formatQuotationPhaseLabel(resolveQuotationPhase(products))
   const systemKwLabel = getSystemKwLabel(products)
   const panelBrand = resolvePanelBrandForPdf(products)
+  const pricingTotal = getPricingTotalForPdf(params.subtotal, products)
 
   return {
     quotationId: params.quotationId,
@@ -820,7 +870,9 @@ export function buildQuotationProposalDocumentData(params: {
     specRows: buildSpecRows(products),
     panelNote: buildPanelTechnologyNote(products),
     showPricingRateColumn: shouldShowPricingRateColumn(undefined, products),
-    pricingRows: buildPricingRows(params.subtotal, systemKwLabel),
+    pricingRows: buildPricingRows(params.subtotal, systemKwLabel, products),
+    pricingTotalLabel: pricingTotal.label,
+    pricingTotalAmount: pricingTotal.amount,
     paymentRows: buildPaymentRows(params.subtotal),
     warrantyRows: buildWarrantyRows(panelBrand),
     supportLine: buildAfterSalesSupportLine(params.company),

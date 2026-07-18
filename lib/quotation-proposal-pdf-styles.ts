@@ -229,13 +229,16 @@ export const PROPOSAL_PDF_STYLES = `
   line-height: 1.45;
 }
 .prop-total-row td {
-  background: #ed8936 !important;
-  color: #ffffff !important;
-  font-weight: 700;
-  border-color: #ed8936 !important;
+  background: #edf2f7 !important;
+  color: #1a365d !important;
+  font-weight: 500;
+  font-size: 11px;
+  border-color: #cbd5e0 !important;
 }
 .prop-highlight-row td {
-  background: #fef3c7 !important;
+  background: #fde68a !important;
+  color: #1a202c !important;
+  font-weight: 800;
 }
 .prop-payment-token td {
   background: #f0fff4 !important;
@@ -338,6 +341,10 @@ export const PROPOSAL_PDF_STYLES = `
   font-size: 11.5px;
   line-height: 1.45;
 }
+.proposal-pdf-page-2 .prop-total-row td {
+  font-size: 11px;
+  font-weight: 500;
+}
 .proposal-pdf-page-2 .prop-support-line {
   margin: 10px 0 0;
   padding: 10px 12px;
@@ -391,6 +398,10 @@ export const PROPOSAL_PDF_STYLES = `
 }
 .proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-table td {
   font-size: 10.5px;
+}
+.proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-total-row td {
+  font-size: 10px;
+  font-weight: 500;
 }
 .proposal-pdf-page-2.proposal-pdf-page-2-compact .prop-support-line {
   font-size: 10px;

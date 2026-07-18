@@ -1406,6 +1406,7 @@ For all quotation list endpoints used by account-management/installer/baldev, in
 - `statusApprovedAt` / `approved_at` and `fileLoginAt` / `file_login_at` (account-management date-range filters)
 - `paymentType`, `paymentStatus`, `paymentMode`, `bankName`, `bankIfsc`, `remaining` / `remainingAmount`
 - `loanAmount` / `loan_amount` and `cashAmount` / `cash_amount` (admin approval: loan portion for `loan` or `mix`; cash portion for `mix` only — echoed on GET for Payment Management)
+- **Admin Metering (Jul 2026):** `GET /api/admin/quotations` must return `loanAmount` / `loan_amount` and `installments` / `paymentPhases` / `payment_phases` (with at least phase 2 `amount`) so Metering tabs can show **loan amount as primary** + **I2 (2nd installment) amount** + bank · IFSC for loan / cash+loan files. If installments are omitted from the list, I2 shows as `—`.
 - `installationStatus`
 - `meteringStage` / `metering_status` / `meteringStatus` / `mcoStatus` (required for Payment Management **Download Excel** journey columns — **§AC**)
 - `approvedAt` (admin approval date)
@@ -4028,6 +4029,43 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
   "pdf_commercial_set": true
 }
 ```
+
+#### 2.1.1.a Commercial DCR/BOTH must NOT require `centralSubsidy` (Jul 2026) — REQUIRED
+
+**Problem:** On `POST /api/quotations` (create), the backend currently rejects commercial DCR/BOTH quotations with:
+
+```
+centralSubsidy is required for dcr and both system types
+```
+
+Commercial projects have **no subsidy** — `centralSubsidy` and `stateSubsidy` are legitimately **0**.
+
+**Frontend now sends** (create payload root **and** nested `products`) when the quotation is a commercial set:
+
+```json
+{
+  "centralSubsidy": 0,
+  "stateSubsidy": 0,
+  "pdfCommercialSet": true,
+  "pdf_commercial_set": true,
+  "isCommercial": true,
+  "products": {
+    "systemType": "dcr",
+    "pdfCommercialSet": true,
+    "pdf_commercial_set": true,
+    "isCommercial": true,
+    "centralSubsidy": 0,
+    "stateSubsidy": 0
+  }
+}
+```
+
+**Backend must:**
+
+1. When `pdfCommercialSet` / `pdf_commercial_set` / `isCommercial` is **true** (root or `products`), **skip** the "centralSubsidy is required for dcr/both" validation.
+2. Treat `centralSubsidy` and `stateSubsidy` as **0** for commercial (do not backfill 78000).
+3. Do **not** deduct subsidy for commercial: `amountAfterSubsidy = subtotal`, `finalAmount = subtotal - discount`.
+4. Round-trip the commercial flag on `GET` (root and/or `products`).
 
 ### 2.2 Combined brand strings
 

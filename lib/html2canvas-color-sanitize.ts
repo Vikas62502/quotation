@@ -12,10 +12,10 @@ function classColorFallback(el: HTMLElement, prop: string): string {
     return isBg || isBorder ? "#1a365d" : "#ffffff"
   }
   if (el.closest(".prop-total-row")) {
-    return isBg ? "#ed8936" : "#ffffff"
+    return isBg ? "#edf2f7" : "#1a365d"
   }
   if (el.closest(".prop-highlight-row")) {
-    return isBg ? "#fef3c7" : "#1a202c"
+    return isBg ? "#fde68a" : "#1a202c"
   }
   if (el.classList.contains("prop-note-green")) {
     if (isBg) return "#f0fff4"

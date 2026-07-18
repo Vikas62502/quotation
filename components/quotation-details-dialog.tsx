@@ -32,6 +32,7 @@ import {
   formatPanelSizeWithQuantityForPdf,
   getPdfInverterLine,
   getPdfPanelSpecLine,
+  isPdfCommercialSet,
   resolvePdfPanelRangeKey,
   shouldHidePanelQuantityOnPdf,
 } from "@/lib/quotation-pdf-display"
@@ -1750,9 +1751,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     calculatedSubtotal = pricingEditForm.subtotal || displayQuotation.totalAmount || 0
                   }
                   
+                  // Commercial set (DCR/BOTH without subsidy): subsidies are always 0.
+                  const isCommercialSet = isPdfCommercialSet(updatedProducts)
                   // Get subsidies from updated products
-                  const updatedStateSubsidy = updatedProducts.stateSubsidy || 0
-                  const updatedCentralSubsidy = updatedProducts.centralSubsidy || 0
+                  const updatedStateSubsidy = isCommercialSet ? 0 : (updatedProducts.stateSubsidy || 0)
+                  const updatedCentralSubsidy = isCommercialSet ? 0 : (updatedProducts.centralSubsidy || 0)
                   const totalSubsidy = updatedStateSubsidy + updatedCentralSubsidy
                   
                   // Calculate final amount: Subtotal - Subsidies - Discount
@@ -1807,6 +1810,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         discountAmount: currentDiscountAmount, // Now passes discount amount in INR
                         totalAmount: calculatedFinalAmount,
                         finalAmount: calculatedFinalAmount,
+                        // Commercial DCR/BOTH: tell backend to skip the centralSubsidy requirement.
+                        ...(isCommercialSet
+                          ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
+                          : {}),
                       })
                       
                       if (pricingResponse) {

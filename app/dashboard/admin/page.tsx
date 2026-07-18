@@ -217,33 +217,135 @@ function getMeteringAssignedPersonName(q: Quotation | Record<string, unknown>): 
   ).trim()
 }
 
+/** Prefer file-login payment type, then approval-time type / payment mode. */
 function getQuotationPaymentTypeRaw(q: Quotation | Record<string, unknown>): string {
   const r = q as Record<string, unknown>
-  return String(r.paymentType || r.payment_type || r.paymentMode || r.payment_mode || "")
+  return String(
+    r.filePaymentType ||
+      r.file_payment_type ||
+      r.paymentType ||
+      r.payment_type ||
+      r.paymentMode ||
+      r.payment_mode ||
+      "",
+  )
     .trim()
     .toLowerCase()
 }
 
-/** Amount cell for metering tables: total + loan/cash split when approved as loan or cash + loan. */
+function readQuotationPaymentPhases(
+  q: Quotation | Record<string, unknown>,
+): Array<{ phaseNumber: number; amount: number }> {
+  const r = q as Record<string, unknown>
+  const raw =
+    r.paymentPhases ||
+    r.payment_phases ||
+    r.installments ||
+    r.phases ||
+    null
+  if (!Array.isArray(raw)) return []
+  return raw.map((phase: any, index: number) => ({
+    phaseNumber: Number(phase?.phaseNumber ?? phase?.phase_number ?? index + 1),
+    amount: Math.round(Number(phase?.amount ?? 0)) || 0,
+  }))
+}
+
+function getSecondInstallmentAmount(q: Quotation | Record<string, unknown>): number | undefined {
+  const phases = readQuotationPaymentPhases(q)
+  if (phases.length === 0) return undefined
+  const byNumber = phases.find((p) => p.phaseNumber === 2)
+  if (byNumber && byNumber.amount > 0) return byNumber.amount
+  const sorted = [...phases].sort((a, b) => a.phaseNumber - b.phaseNumber)
+  const second = sorted[1]
+  return second && second.amount > 0 ? second.amount : undefined
+}
+
+function getMeteringBankDetailsLabel(q: Quotation | Record<string, unknown>): string {
+  const r = q as Record<string, unknown>
+  const bank = String(r.fileBankName || r.file_bank_name || r.bankName || r.bank_name || "").trim()
+  const ifsc = String(r.fileBankIfsc || r.file_bank_ifsc || r.bankIfsc || r.bank_ifsc || "")
+    .trim()
+    .toUpperCase()
+  if (!bank && !ifsc) return ""
+  if (bank && ifsc) return `${bank} · ${ifsc}`
+  return bank || ifsc
+}
+
+/** Pure loan files (payment type loan). */
+function isMeteringLoanOnlyQuotation(q: Quotation | Record<string, unknown>): boolean {
+  return getQuotationPaymentTypeRaw(q) === "loan"
+}
+
+/** Cash + loan files (payment type mix). */
+function isMeteringLoanMixQuotation(q: Quotation | Record<string, unknown>): boolean {
+  return getQuotationPaymentTypeRaw(q) === "mix"
+}
+
+/** Loan or Cash + loan — Bank process / Pending payment tabs. */
+function isMeteringBankProcessEligible(q: Quotation | Record<string, unknown>): boolean {
+  return isMeteringLoanOnlyQuotation(q) || isMeteringLoanMixQuotation(q)
+}
+
+/**
+ * Metering amount cell:
+ * - Loan / Cash+loan: primary = loan amount only; I2 amount + bank under it (no cash line).
+ * - Other types: quotation subtotal only.
+ */
 function getMeteringAmountDisplay(quotation: Quotation | Record<string, unknown>): {
+  primaryLabel: string
+  secondInstallmentLabel?: string
+  bankLabel?: string
+  /** @deprecated use primaryLabel */
   totalLabel: string
   loanLabel?: string
   cashLabel?: string
 } {
-  const totalLabel = formatQuotationAmountInr(quotation as Quotation)
   const paymentType = getQuotationPaymentTypeRaw(quotation)
-  const { loan, cash } = readQuotationLoanCashAmounts(quotation)
-  if (paymentType === "loan" && loan != null) {
-    return { totalLabel, loanLabel: `Loan ₹${loan.toLocaleString("en-IN")}` }
-  }
-  if (paymentType === "mix") {
+  const { loan } = readQuotationLoanCashAmounts(quotation)
+  const subtotalLabel = formatQuotationAmountInr(quotation as Quotation)
+  const isLoanOrMix = paymentType === "loan" || paymentType === "mix"
+
+  if (isLoanOrMix) {
+    const primaryLabel =
+      loan != null ? `₹${loan.toLocaleString("en-IN")}` : subtotalLabel
+    const i2 = getSecondInstallmentAmount(quotation)
+    const bankLabel = getMeteringBankDetailsLabel(quotation) || undefined
     return {
-      totalLabel,
+      primaryLabel,
+      totalLabel: primaryLabel,
+      secondInstallmentLabel:
+        i2 != null ? `I2 ₹${i2.toLocaleString("en-IN")}` : "I2 —",
+      bankLabel,
       loanLabel: loan != null ? `Loan ₹${loan.toLocaleString("en-IN")}` : undefined,
-      cashLabel: cash != null ? `Cash ₹${cash.toLocaleString("en-IN")}` : undefined,
     }
   }
-  return { totalLabel }
+
+  return { primaryLabel: subtotalLabel, totalLabel: subtotalLabel }
+}
+
+function MeteringAmountCell({
+  quotation,
+  primaryClassName = "text-xs font-semibold",
+  secondaryClassName = "text-[10px] text-muted-foreground",
+}: {
+  quotation: Quotation | Record<string, unknown>
+  primaryClassName?: string
+  secondaryClassName?: string
+}) {
+  const amt = getMeteringAmountDisplay(quotation)
+  return (
+    <div>
+      <p className={primaryClassName}>{amt.primaryLabel}</p>
+      {amt.secondInstallmentLabel ? (
+        <p className={secondaryClassName}>{amt.secondInstallmentLabel}</p>
+      ) : null}
+      {amt.bankLabel ? (
+        <p className={cn(secondaryClassName, "max-w-[11rem] truncate")} title={amt.bankLabel}>
+          {amt.bankLabel}
+        </p>
+      ) : null}
+    </div>
+  )
 }
 
 function formatOverviewRevenueLakh(amount: number): string {
@@ -311,7 +413,17 @@ const ADMIN_OPERATIONAL_STAGES = [
 ] as const
 type AdminOperationalStage = (typeof ADMIN_OPERATIONAL_STAGES)[number]
 type AdminOperationalTab = "all" | "installation" | "metering" | "confirmation"
-type AdminOperationalProgressTab = "all" | "pending" | "partial" | "done" | "mco" | "wcc" | "meter_install"
+type AdminOperationalProgressTab =
+  | "all"
+  | "pending"
+  | "partial"
+  | "done"
+  | "mco"
+  | "wcc"
+  | "meter_install"
+  | "dcr"
+  | "bank_process"
+  | "pending_payment"
 type AdminMeteringModalDraft = {
   discomName: string
   meterType: "" | "solar" | "net" | "both"
@@ -1042,6 +1154,25 @@ export default function AdminPanelPage() {
   const [adminInverterWarrantyFileByQuotation, setAdminInverterWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
   const [adminWorkCompletionWarrantyFileByQuotation, setAdminWorkCompletionWarrantyFileByQuotation] = useState<Record<string, File | null>>({})
   const [adminFinalSavingId, setAdminFinalSavingId] = useState<string | null>(null)
+  /** Local DCR-generated flag (persisted) — splits Final confirmation into DCR Generation vs Final process. */
+  const [adminDcrGeneratedIds, setAdminDcrGeneratedIds] = useState<Record<string, boolean>>({})
+  /** Bank process done → moves Loan / Cash+loan rows into Pending payment (persisted). */
+  const [adminBankProcessDoneIds, setAdminBankProcessDoneIds] = useState<Record<string, boolean>>({})
+  const [adminBankProcessModalQuotationId, setAdminBankProcessModalQuotationId] = useState<string | null>(null)
+  const [adminBankProcessSavingId, setAdminBankProcessSavingId] = useState<string | null>(null)
+  const [adminBankProcessDraftByQuotation, setAdminBankProcessDraftByQuotation] = useState<
+    Record<
+      string,
+      {
+        assignedPersonName: string
+        remarks: string
+        bankLocation: string
+      }
+    >
+  >({})
+  const [adminBankDocumentsByQuotation, setAdminBankDocumentsByQuotation] = useState<
+    Record<string, Array<{ file?: File; url: string; name: string }>>
+  >({})
   /** Keeps row in Final Step (MCO) tab when API list still returns installer_approved / WF_003. */
   const [adminMeteringStageOverride, setAdminMeteringStageOverride] = useState<
     Record<string, "processing" | "approved" | "meter_install" | "mco">
@@ -1250,6 +1381,38 @@ export default function AdminPanelPage() {
     void loadInstallationTeams()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [useApi])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("adminDcrGenerated")
+      if (!raw) return
+      const ids = JSON.parse(raw) as string[]
+      if (!Array.isArray(ids)) return
+      const map: Record<string, boolean> = {}
+      ids.forEach((id) => {
+        if (typeof id === "string" && id) map[id] = true
+      })
+      setAdminDcrGeneratedIds(map)
+    } catch {
+      // ignore malformed local storage
+    }
+  }, [])
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("adminBankProcessDone")
+      if (!raw) return
+      const ids = JSON.parse(raw) as string[]
+      if (!Array.isArray(ids)) return
+      const map: Record<string, boolean> = {}
+      ids.forEach((id) => {
+        if (typeof id === "string" && id) map[id] = true
+      })
+      setAdminBankProcessDoneIds(map)
+    } catch {
+      // ignore malformed local storage
+    }
+  }, [])
 
   useEffect(() => {
     if (!installationTeamsDialogOpen) return
@@ -1977,6 +2140,15 @@ export default function AdminPanelPage() {
             paymentMode: q.paymentMode ?? q.payment_mode,
             bankName: q.bankName ?? q.bank_name,
             bankIfsc: q.bankIfsc ?? q.bank_ifsc,
+            loanAmount: (() => {
+              const n = Number(q.loanAmount ?? q.loan_amount)
+              return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+            })(),
+            cashAmount: (() => {
+              const n = Number(q.cashAmount ?? q.cash_amount)
+              return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+            })(),
+            paymentPhases: readQuotationPaymentPhases(q),
             subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details,
             fileLoginStatus: fileLoginStatusNorm as FileLoginStatus | undefined,
             filePaymentType: (q.filePaymentType ?? q.file_payment_type) as ApprovalPaymentType | undefined,
@@ -2740,6 +2912,8 @@ export default function AdminPanelPage() {
         if (
           operationalProgressTab === "wcc" ||
           operationalProgressTab === "meter_install" ||
+          operationalProgressTab === "bank_process" ||
+          operationalProgressTab === "pending_payment" ||
           isAdminMeteringWccPending(q)
         )
           return true
@@ -2773,7 +2947,9 @@ export default function AdminPanelPage() {
       if (!isConfirmationVisible(q)) return false
       const progress = getOperationalProgressState(q, operationalTab)
       if (operationalProgressTab === "all") return progress !== null
-      if (operationalProgressTab === "pending") return progress === "pending"
+      // DCR Generation + Final process are both subsets of the confirmation queue ("pending").
+      if (operationalProgressTab === "pending" || operationalProgressTab === "dcr")
+        return progress === "pending"
       return progress === "done"
     })()
 
@@ -2885,8 +3061,25 @@ export default function AdminPanelPage() {
   const meteringApprovedQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "approved")
   const meteringMeterInstallQuotations = sortedQuotations.filter((q) => isAdminMeterInstallationPending(q))
   const meteringMcoQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "mco")
+  /** Metering → Bank process: loan + cash+loan not yet moved to pending payment. */
+  const meteringBankProcessQuotations = sortedQuotations.filter(
+    (q) =>
+      isMeteringVisible(q) &&
+      isMeteringBankProcessEligible(q) &&
+      !isAdminBankProcessDone(q),
+  )
+  /** Metering → Pending payment: loan + cash+loan after bank process is done. */
+  const meteringPendingPaymentQuotations = sortedQuotations.filter(
+    (q) =>
+      isMeteringVisible(q) &&
+      isMeteringBankProcessEligible(q) &&
+      isAdminBankProcessDone(q),
+  )
   const confirmationQueueQuotations = sortedQuotations.filter((q) => getAdminConfirmationStage(q) === "queue")
   const confirmationFinalQuotations = sortedQuotations.filter((q) => getAdminConfirmationStage(q) === "final")
+  // Final confirmation queue splits into DCR Generation (not yet generated) → Final process (DCR done).
+  const confirmationDcrQuotations = confirmationQueueQuotations.filter((q) => !isAdminDcrGenerated(q))
+  const confirmationFinalProcessQuotations = confirmationQueueQuotations.filter((q) => isAdminDcrGenerated(q))
   const adminMeteringSelectedQuotation = adminMeteringQuotationId
     ? sortedQuotations.find((quotation) => quotation.id === adminMeteringQuotationId) || null
     : null
@@ -2903,9 +3096,12 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "meter_install") list = meteringMeterInstallQuotations
       else if (operationalProgressTab === "done") list = meteringApprovedQuotations
       else if (operationalProgressTab === "mco") list = meteringMcoQuotations
+      else if (operationalProgressTab === "bank_process") list = meteringBankProcessQuotations
+      else if (operationalProgressTab === "pending_payment") list = meteringPendingPaymentQuotations
       else list = meteringProcessingQuotations // Meter Pending (default; no All tab)
     } else if (operationalTab === "confirmation") {
-      if (operationalProgressTab === "pending") list = confirmationQueueQuotations
+      if (operationalProgressTab === "dcr") list = confirmationDcrQuotations
+      else if (operationalProgressTab === "pending") list = confirmationFinalProcessQuotations
       else if (operationalProgressTab === "done") list = confirmationFinalQuotations
       else list = sortedQuotations
     } else {
@@ -2918,7 +3114,9 @@ export default function AdminPanelPage() {
       filterInstallOverdue !== "all" &&
       operationalTab === "metering" &&
       operationalProgressTab !== "wcc" &&
-      operationalProgressTab !== "meter_install"
+      operationalProgressTab !== "meter_install" &&
+      operationalProgressTab !== "bank_process" &&
+      operationalProgressTab !== "pending_payment"
     ) {
       list = list.filter((q) => {
         if (isAdminMeteringWccPending(q)) return true
@@ -2959,8 +3157,12 @@ export default function AdminPanelPage() {
     meteringProcessingQuotations,
     meteringApprovedQuotations,
     meteringMcoQuotations,
+    meteringBankProcessQuotations,
+    meteringPendingPaymentQuotations,
     confirmationQueueQuotations,
     confirmationFinalQuotations,
+    confirmationDcrQuotations,
+    confirmationFinalProcessQuotations,
   ])
 
   const quotationListUsesServerTotal =
@@ -3444,6 +3646,166 @@ export default function AdminPanelPage() {
       return "final"
     }
     return null
+  }
+
+  /** DCR generated (from backend flag or local persisted flag). */
+  function isAdminDcrGenerated(quotation: Quotation): boolean {
+    const r = quotation as unknown as Record<string, unknown>
+    return Boolean(r.dcrGenerated || r.dcr_generated || adminDcrGeneratedIds[quotation.id])
+  }
+
+  function markAdminDcrGenerated(quotationId: string) {
+    setAdminDcrGeneratedIds((prev) => {
+      const next = { ...prev, [quotationId]: true }
+      try {
+        localStorage.setItem(
+          "adminDcrGenerated",
+          JSON.stringify(Object.keys(next).filter((id) => next[id])),
+        )
+      } catch {
+        // ignore persistence failure
+      }
+      return next
+    })
+  }
+
+  /** Bank process completed (backend flag or local persisted). */
+  function isAdminBankProcessDone(quotation: Quotation): boolean {
+    const r = quotation as unknown as Record<string, unknown>
+    return Boolean(
+      r.bankProcessDone ||
+        r.bank_process_done ||
+        r.pendingPayment ||
+        r.pending_payment ||
+        adminBankProcessDoneIds[quotation.id],
+    )
+  }
+
+  function markAdminBankProcessDone(quotationId: string) {
+    setAdminBankProcessDoneIds((prev) => {
+      const next = { ...prev, [quotationId]: true }
+      try {
+        localStorage.setItem(
+          "adminBankProcessDone",
+          JSON.stringify(Object.keys(next).filter((id) => next[id])),
+        )
+      } catch {
+        // ignore persistence failure
+      }
+      return next
+    })
+  }
+
+  const seedAdminBankProcessDraft = (quotation: Quotation) => {
+    const q = quotation as unknown as Record<string, unknown>
+    return {
+      assignedPersonName: String(
+        q.bankAssignedPersonName ||
+          q.bank_assigned_person_name ||
+          q.authorizedRepresentative ||
+          q.authorized_representative ||
+          q.assignedPersonName ||
+          q.assigned_person_name ||
+          "",
+      ),
+      remarks: String(q.bankRemarks || q.bank_remarks || q.remarks || ""),
+      bankLocation: String(q.bankLocation || q.bank_location || ""),
+    }
+  }
+
+  const getAdminBankProcessDraft = (quotation: Quotation) =>
+    adminBankProcessDraftByQuotation[quotation.id] || seedAdminBankProcessDraft(quotation)
+
+  const patchAdminBankProcessDraft = (
+    quotationId: string,
+    patch: Partial<{ assignedPersonName: string; remarks: string; bankLocation: string }>,
+  ) => {
+    setAdminBankProcessDraftByQuotation((prev) => {
+      const quotation = quotations.find((q) => q.id === quotationId)
+      const base =
+        prev[quotationId] ||
+        (quotation
+          ? seedAdminBankProcessDraft(quotation)
+          : { assignedPersonName: "", remarks: "", bankLocation: "" })
+      return { ...prev, [quotationId]: { ...base, ...patch } }
+    })
+  }
+
+  const getAdminBankDocuments = (quotationId: string) =>
+    adminBankDocumentsByQuotation[quotationId] || []
+
+  const addAdminBankDocuments = (quotationId: string, files: FileList | File[]) => {
+    const list = Array.from(files || []).filter(Boolean)
+    if (list.length === 0) return
+    setAdminBankDocumentsByQuotation((prev) => {
+      const existing = prev[quotationId] || []
+      const nextItems = list.map((file) => ({
+        file,
+        url: URL.createObjectURL(file),
+        name: file.name,
+      }))
+      return { ...prev, [quotationId]: [...existing, ...nextItems] }
+    })
+  }
+
+  const removeAdminBankDocument = (quotationId: string, index: number) => {
+    setAdminBankDocumentsByQuotation((prev) => {
+      const existing = [...(prev[quotationId] || [])]
+      const [removed] = existing.splice(index, 1)
+      if (removed?.url?.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(removed.url)
+        } catch {
+          // ignore
+        }
+      }
+      return { ...prev, [quotationId]: existing }
+    })
+  }
+
+  const adminBankProcessSelectedQuotation = adminBankProcessModalQuotationId
+    ? sortedQuotations.find((q) => q.id === adminBankProcessModalQuotationId) || null
+    : null
+
+  const openAdminBankProcessModal = (quotation: Quotation) => {
+    setAdminBankProcessModalQuotationId(quotation.id)
+    setAdminBankProcessDraftByQuotation((prev) => ({
+      ...prev,
+      [quotation.id]: prev[quotation.id] || seedAdminBankProcessDraft(quotation),
+    }))
+  }
+
+  const saveAdminBankProcessDetails = async (quotation: Quotation, moveToPendingPayment: boolean) => {
+    const draft = getAdminBankProcessDraft(quotation)
+    setAdminBankProcessSavingId(quotation.id)
+    try {
+      const docs = getAdminBankDocuments(quotation.id)
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === quotation.id
+            ? ({
+                ...q,
+                bankAssignedPersonName: draft.assignedPersonName.trim(),
+                bankRemarks: draft.remarks.trim(),
+                bankLocation: draft.bankLocation.trim(),
+                bankDocumentNames: docs.map((d) => d.name),
+                assignedPersonName: draft.assignedPersonName.trim() || (q as any).assignedPersonName,
+                remarks: draft.remarks.trim() || q.remarks,
+              } as Quotation)
+            : q,
+        ),
+      )
+      if (moveToPendingPayment) {
+        markAdminBankProcessDone(quotation.id)
+      }
+      toast({
+        title: moveToPendingPayment ? "Saved & moved to Pending payment" : "Bank details saved",
+        description: `${quotation.id} updated for bank process.`,
+      })
+      setAdminBankProcessModalQuotationId(null)
+    } finally {
+      setAdminBankProcessSavingId(null)
+    }
   }
 
   function patchQuotationMeteringStageLocal(
@@ -5304,7 +5666,7 @@ export default function AdminPanelPage() {
               <p className="text-sm text-muted-foreground">Loading overview from API…</p>
             ) : null}
             {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Total Quotations</CardTitle>
@@ -6074,6 +6436,14 @@ export default function AdminPanelPage() {
                             key: "meter_install" as const,
                             label: `Meter Installation Pending (${meteringMeterInstallQuotations.length})`,
                           },
+                          {
+                            key: "bank_process" as const,
+                            label: `Bank process (${meteringBankProcessQuotations.length})`,
+                          },
+                          {
+                            key: "pending_payment" as const,
+                            label: `Pending payment (${meteringPendingPaymentQuotations.length})`,
+                          },
                           { key: "mco" as const, label: "Final Step" },
                         ] as const)
                       : operationalTab === "installation"
@@ -6085,7 +6455,11 @@ export default function AdminPanelPage() {
                           ] as const)
                         : ([
                             { key: "all" as const, label: "All" },
-                            { key: "pending" as const, label: "Pending" },
+                            {
+                              key: "dcr" as const,
+                              label: `DCR Generation (${confirmationDcrQuotations.length})`,
+                            },
+                            { key: "pending" as const, label: "Final process" },
                             { key: "done" as const, label: "Done" },
                           ] as const)
                     ).map((item) => (
@@ -6149,7 +6523,9 @@ export default function AdminPanelPage() {
                 </div>
                 {(operationalTab === "metering" &&
                   operationalProgressTab !== "wcc" &&
-                  operationalProgressTab !== "meter_install") ||
+                  operationalProgressTab !== "meter_install" &&
+                  operationalProgressTab !== "bank_process" &&
+                  operationalProgressTab !== "pending_payment") ||
                 (operationalTab === "installation" && operationalProgressTab !== "done") ? (
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mr-1">
@@ -6388,20 +6764,7 @@ export default function AdminPanelPage() {
                                         </p>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                                        {(() => {
-                                          const amt = getMeteringAmountDisplay(quotation)
-                                          return (
-                                            <div>
-                                              <p className="text-xs font-semibold">{amt.totalLabel}</p>
-                                              {amt.loanLabel ? (
-                                                <p className="text-[10px] text-muted-foreground">{amt.loanLabel}</p>
-                                              ) : null}
-                                              {amt.cashLabel ? (
-                                                <p className="text-[10px] text-muted-foreground">{amt.cashLabel}</p>
-                                              ) : null}
-                                            </div>
-                                          )
-                                        })()}
+                                        <MeteringAmountCell quotation={quotation} />
                                       </td>
                                       <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                                         <p className="text-xs font-medium inline-flex items-center gap-1">
@@ -6509,20 +6872,7 @@ export default function AdminPanelPage() {
                                         </div>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                                        {(() => {
-                                          const amt = getMeteringAmountDisplay(quotation)
-                                          return (
-                                            <div>
-                                              <p className="text-xs font-semibold">{amt.totalLabel}</p>
-                                              {amt.loanLabel ? (
-                                                <p className="text-[10px] text-muted-foreground">{amt.loanLabel}</p>
-                                              ) : null}
-                                              {amt.cashLabel ? (
-                                                <p className="text-[10px] text-muted-foreground">{amt.cashLabel}</p>
-                                              ) : null}
-                                            </div>
-                                          )
-                                        })()}
+                                        <MeteringAmountCell quotation={quotation} />
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
                                         <p className="text-xs max-w-[12rem] truncate" title={location}>
@@ -6580,6 +6930,207 @@ export default function AdminPanelPage() {
                       )
                     }
 
+                    if (
+                      operationalProgressTab === "bank_process" ||
+                      operationalProgressTab === "pending_payment"
+                    ) {
+                      const isPendingPaymentTab = operationalProgressTab === "pending_payment"
+                      return activeQuotationList.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                          <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                          <p>
+                            {isPendingPaymentTab
+                              ? "No pending payment records"
+                              : "No bank process records"}
+                          </p>
+                          <p className="text-xs mt-1">
+                            {isPendingPaymentTab
+                              ? "After Bank process is done for Loan / Cash + loan files, they appear here."
+                              : "Loan and Cash + loan metering files appear here with loan amount, 2nd installment, and bank. Mark done to move to Pending payment."}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                          <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
+                            <table className="w-full min-w-[72rem] border-collapse text-left">
+                              <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
+                                <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Dealer</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Payment</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Loan amount</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">2nd installment</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Bank</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Stage</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
+                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                    Actions
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {visibleQuotationList.map((quotation) => {
+                                  const qAny = quotation as unknown as Record<string, unknown>
+                                  const nestedDealer = qAny.dealer as Record<string, unknown> | null | undefined
+                                  const fromList = dealers.find((d) => d.id === quotation.dealerId)
+                                  const dealerName =
+                                    (nestedDealer && typeof nestedDealer === "object"
+                                      ? formatPersonName(
+                                          String(nestedDealer.firstName || ""),
+                                          String(nestedDealer.lastName || ""),
+                                          String(nestedDealer.username || "").trim() || "Dealer",
+                                        )
+                                      : "") ||
+                                    (fromList
+                                      ? formatPersonName(fromList.firstName, fromList.lastName, "Dealer")
+                                      : "Unknown Dealer")
+                                  const paymentType = getQuotationPaymentTypeRaw(quotation)
+                                  const paymentLabel =
+                                    paymentType === "mix"
+                                      ? "Cash + loan"
+                                      : paymentType === "loan"
+                                        ? "Loan"
+                                        : getQuotationPaymentTypeLabel(quotation)
+                                  const { loan } = readQuotationLoanCashAmounts(quotation)
+                                  const loanDisplay =
+                                    loan ??
+                                    (paymentType === "loan"
+                                      ? getQuotationSubtotalValue(quotation) || undefined
+                                      : undefined)
+                                  const i2 = getSecondInstallmentAmount(quotation)
+                                  const bankLabel = getMeteringBankDetailsLabel(quotation) || "—"
+                                  const meteringStage = getAdminMeteringStage(quotation)
+                                  const stageLabel =
+                                    meteringStage === "mco"
+                                      ? "Final Step"
+                                      : meteringStage === "approved"
+                                        ? "Meter in Discom"
+                                        : meteringStage === "processing"
+                                          ? isAdminMeteringWccPending(quotation)
+                                            ? "WCC Pending"
+                                            : "Meter Pending"
+                                          : meteringStage === "meter_install"
+                                            ? "Meter Installation Pending"
+                                            : "—"
+                                  const assignedPerson =
+                                    getAdminBankProcessDraft(quotation).assignedPersonName.trim() ||
+                                    getMeteringAssignedPersonName(quotation) ||
+                                    "—"
+                                  const bankLocationDraft =
+                                    getAdminBankProcessDraft(quotation).bankLocation.trim() || "—"
+                                  const bankRemarksDraft =
+                                    getAdminBankProcessDraft(quotation).remarks.trim() || "—"
+                                  return (
+                                    <tr
+                                      key={quotation.id}
+                                      className="border-b border-border/50 transition-colors hover:bg-muted/35 last:border-b-0"
+                                    >
+                                      <td className="px-3 py-2.5 align-middle">
+                                        <div className="min-w-[11rem] max-w-[14rem]">
+                                          <p className="text-sm font-semibold leading-tight truncate">
+                                            {formatPersonName(
+                                              quotation.customer.firstName,
+                                              quotation.customer.lastName,
+                                              "Unknown",
+                                            )}
+                                          </p>
+                                          <p className="text-[11px] text-muted-foreground truncate">
+                                            {quotation.customer.mobile || "No mobile"}
+                                          </p>
+                                          <p className="text-[10px] font-medium text-muted-foreground/90 truncate">
+                                            {quotation.id}
+                                          </p>
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle">
+                                        <p className="text-xs font-medium max-w-[11rem] truncate" title={dealerName}>
+                                          {dealerName}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                        <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 text-xs font-medium">
+                                          {paymentLabel}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                        <p className="text-xs font-semibold">
+                                          {loanDisplay != null && loanDisplay > 0
+                                            ? `₹${loanDisplay.toLocaleString("en-IN")}`
+                                            : "—"}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                        <p className="text-xs font-medium">
+                                          {i2 != null ? `₹${i2.toLocaleString("en-IN")}` : "—"}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle">
+                                        <p
+                                          className="text-xs font-medium max-w-[14rem] truncate"
+                                          title={bankLabel !== "—" ? bankLabel : undefined}
+                                        >
+                                          {bankLabel}
+                                        </p>
+                                        <p
+                                          className="text-[10px] text-muted-foreground max-w-[14rem] truncate"
+                                          title={bankLocationDraft !== "—" ? bankLocationDraft : undefined}
+                                        >
+                                          Loc: {bankLocationDraft}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle whitespace-nowrap">
+                                        <span className="inline-flex rounded-md border border-border/70 bg-muted/40 px-2 py-0.5 text-[11px] font-medium">
+                                          {stageLabel}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle">
+                                        <p className="text-xs font-medium max-w-[10rem] truncate">{assignedPerson}</p>
+                                        <p
+                                          className="text-[10px] text-muted-foreground max-w-[10rem] truncate"
+                                          title={bankRemarksDraft !== "—" ? bankRemarksDraft : undefined}
+                                        >
+                                          {bankRemarksDraft}
+                                        </p>
+                                      </td>
+                                      <td className="px-3 py-2.5 align-middle text-right sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                        <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-8"
+                                            onClick={() => openAdminBankProcessModal(quotation)}
+                                          >
+                                            Details
+                                          </Button>
+                                          {!isPendingPaymentTab ? (
+                                            <Button
+                                              size="sm"
+                                              className="h-8"
+                                              onClick={() => {
+                                                void saveAdminBankProcessDetails(quotation, true)
+                                              }}
+                                            >
+                                              To Pending payment
+                                            </Button>
+                                          ) : null}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                          <IncrementalListSentinel
+                            sentinelRef={quotationListSentinelRef}
+                            visibleCount={visibleQuotationCount}
+                            totalCount={activeQuotationListTotal}
+                            hasMore={hasMoreQuotationList}
+                            onLoadMore={loadMoreQuotationList}
+                          />
+                        </div>
+                      )
+                    }
 
                     return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
@@ -6671,7 +7222,6 @@ export default function AdminPanelPage() {
                                   getMeteringAssignedPersonName(qAny) ||
                                   getAdminMeterInstallDraft(quotation).assignedPersonName.trim() ||
                                   "N/A"
-                                const amountDisplay = getMeteringAmountDisplay(quotation)
                                 const address = getQuotationAddressText(quotation)
                                 const statusLabel =
                                   meteringStage === "mco"
@@ -6720,19 +7270,7 @@ export default function AdminPanelPage() {
                                       </div>
                                     </td>
                                     <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                                      <div>
-                                        <p className="text-xs font-semibold">{amountDisplay.totalLabel}</p>
-                                        {amountDisplay.loanLabel ? (
-                                          <p className="text-[10px] text-muted-foreground">
-                                            {amountDisplay.loanLabel}
-                                          </p>
-                                        ) : null}
-                                        {amountDisplay.cashLabel ? (
-                                          <p className="text-[10px] text-muted-foreground">
-                                            {amountDisplay.cashLabel}
-                                          </p>
-                                        ) : null}
-                                      </div>
+                                      <MeteringAmountCell quotation={quotation} />
                                     </td>
                                     <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                                       <p className="text-xs font-medium inline-flex items-center gap-1">
@@ -6883,6 +7421,108 @@ export default function AdminPanelPage() {
                   })()
                 ) : operationalTab === "confirmation" ? (
                   (() => {
+                    if (operationalProgressTab === "dcr") {
+                      return activeQuotationList.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                          <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                          <p>No DCR generation pending</p>
+                          <p className="text-xs mt-1">
+                            Records arrive here from Installation approved. Generate DCR to send them to Final process.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                          {visibleQuotationList.map((quotation) => {
+                            const installerApprovedDate =
+                              (quotation as any).installerApprovedAt ||
+                              (quotation as any).installer_approved_at ||
+                              (quotation as any).approvedAt ||
+                              (quotation as any).approvedDate ||
+                              quotation.createdAt
+                            const systemKw = getQuotationSystemKw(quotation as any)
+                            return (
+                              <Card
+                                key={quotation.id}
+                                className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm"
+                              >
+                                <CardContent className="p-4">
+                                  <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
+                                    <div className="min-w-[180px] flex-1">
+                                      <p className="text-sm font-semibold leading-tight">
+                                        {formatPersonName(
+                                          quotation.customer.firstName,
+                                          quotation.customer.lastName,
+                                          "Unknown",
+                                        )}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground mt-0.5">
+                                        {quotation.customer.mobile || "No mobile"} • {quotation.id}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-[120px]">
+                                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                        Installer Approved
+                                      </p>
+                                      <p className="text-xs font-medium flex items-center gap-1">
+                                        <Calendar className="w-3 h-3 text-muted-foreground" />
+                                        {installerApprovedDate
+                                          ? new Date(installerApprovedDate as string).toLocaleDateString("en-IN")
+                                          : "N/A"}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-[90px]">
+                                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                        System
+                                      </p>
+                                      <p className="text-sm font-semibold">
+                                        {systemKw > 0 ? `${systemKw} kW` : "N/A"}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-[120px]">
+                                      <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                        Subtotal
+                                      </p>
+                                      <p className="text-sm font-semibold">
+                                        ₹
+                                        {Math.abs(
+                                          (quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0,
+                                        ).toLocaleString()}
+                                      </p>
+                                    </div>
+                                    <div className="min-w-[130px]">
+                                      <Badge variant="outline" className="text-xs">
+                                        DCR pending
+                                      </Badge>
+                                    </div>
+                                    <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
+                                      <Button
+                                        size="sm"
+                                        onClick={() => {
+                                          markAdminDcrGenerated(quotation.id)
+                                          toast({
+                                            title: "DCR generated",
+                                            description: "Moved to Final process.",
+                                          })
+                                        }}
+                                      >
+                                        Generate DCR
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            )
+                          })}
+                          <IncrementalListSentinel
+                            sentinelRef={quotationListSentinelRef}
+                            visibleCount={visibleQuotationCount}
+                            totalCount={activeQuotationListTotal}
+                            hasMore={hasMoreQuotationList}
+                            onLoadMore={loadMoreQuotationList}
+                          />
+                        </div>
+                      )
+                    }
                     return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -11706,7 +12346,7 @@ export default function AdminPanelPage() {
                       <DialogDescription className="text-xs">
                         {quotation.customer.mobile || "No mobile"} • {quotation.id} • {dealerName}
                         <span className="mx-1.5 text-border">|</span>
-                        Amount {formatQuotationAmountInr(quotation)}
+                        Amount {getMeteringAmountDisplay(quotation).primaryLabel}
                         <span className="mx-1.5 text-border">|</span>
                         <span className="inline-flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
@@ -11889,7 +12529,7 @@ export default function AdminPanelPage() {
                       <DialogDescription className="text-xs">
                         {quotation.customer.mobile || "No mobile"} • {quotation.id}
                         <span className="mx-1.5 text-border">|</span>
-                        Amount {formatQuotationAmountInr(quotation)}
+                        Amount {getMeteringAmountDisplay(quotation).primaryLabel}
                       </DialogDescription>
                     </DialogHeader>
                   </div>
@@ -12029,6 +12669,208 @@ export default function AdminPanelPage() {
           </DialogContent>
         </Dialog>
 
+        <Dialog
+          open={Boolean(adminBankProcessModalQuotationId)}
+          onOpenChange={(open) => {
+            if (!open) setAdminBankProcessModalQuotationId(null)
+          }}
+        >
+          <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Bank process details</DialogTitle>
+              <DialogDescription>
+                Customer, dealer, assigned person, remarks, bank location, and bank documents (multiple upload).
+                This is separate from metering Discom details.
+              </DialogDescription>
+            </DialogHeader>
+            {adminBankProcessSelectedQuotation ? (
+              (() => {
+                const quotation = adminBankProcessSelectedQuotation
+                const draft = getAdminBankProcessDraft(quotation)
+                const docs = getAdminBankDocuments(quotation.id)
+                const qAny = quotation as unknown as Record<string, unknown>
+                const nestedDealer = qAny.dealer as Record<string, unknown> | null | undefined
+                const fromList = dealers.find((d) => d.id === quotation.dealerId)
+                const dealerName =
+                  (nestedDealer && typeof nestedDealer === "object"
+                    ? formatPersonName(
+                        String(nestedDealer.firstName || ""),
+                        String(nestedDealer.lastName || ""),
+                        String(nestedDealer.username || "").trim() || "Dealer",
+                      )
+                    : "") ||
+                  (fromList
+                    ? formatPersonName(fromList.firstName, fromList.lastName, "Dealer")
+                    : "Unknown Dealer")
+                const dealerMobile =
+                  (nestedDealer && typeof nestedDealer === "object"
+                    ? String(nestedDealer.mobile || nestedDealer.phone || "").trim()
+                    : "") ||
+                  fromList?.mobile ||
+                  "—"
+                const paymentType = getQuotationPaymentTypeRaw(quotation)
+                const paymentLabel =
+                  paymentType === "mix" ? "Cash + loan" : paymentType === "loan" ? "Loan" : "—"
+                const { loan } = readQuotationLoanCashAmounts(quotation)
+                const bankLabel = getMeteringBankDetailsLabel(quotation) || "—"
+                const customerLocation = formatQuotationCustomerLocation(quotation) || "—"
+                const isPendingAlready = isAdminBankProcessDone(quotation)
+                return (
+                  <div className="space-y-4">
+                    <div className="rounded-md border border-border/70 bg-muted/20 p-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          Customer details
+                        </p>
+                        <p className="font-semibold">
+                          {formatPersonName(
+                            quotation.customer.firstName,
+                            quotation.customer.lastName,
+                            "Unknown",
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {quotation.customer.mobile || "No mobile"}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground">{quotation.id}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">{customerLocation}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          Dealer details
+                        </p>
+                        <p className="font-semibold">{dealerName}</p>
+                        <p className="text-xs text-muted-foreground">{dealerMobile}</p>
+                        <p className="text-[11px] text-muted-foreground mt-1">
+                          {paymentLabel}
+                          {loan != null ? ` · Loan ₹${loan.toLocaleString("en-IN")}` : ""}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground truncate" title={bankLabel}>
+                          {bankLabel}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="bank-assigned-person">Assigned person</Label>
+                        <Input
+                          id="bank-assigned-person"
+                          value={draft.assignedPersonName}
+                          onChange={(e) =>
+                            patchAdminBankProcessDraft(quotation.id, {
+                              assignedPersonName: e.target.value,
+                            })
+                          }
+                          placeholder="Assigned person name"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="bank-location">Bank location</Label>
+                        <Input
+                          id="bank-location"
+                          value={draft.bankLocation}
+                          onChange={(e) =>
+                            patchAdminBankProcessDraft(quotation.id, {
+                              bankLocation: e.target.value,
+                            })
+                          }
+                          placeholder="Branch / bank office location"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="bank-remarks">Remarks</Label>
+                        <Textarea
+                          id="bank-remarks"
+                          value={draft.remarks}
+                          onChange={(e) =>
+                            patchAdminBankProcessDraft(quotation.id, { remarks: e.target.value })
+                          }
+                          placeholder="Enter remarks"
+                          rows={3}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="bank-documents">Bank document (multiple upload)</Label>
+                        <Input
+                          id="bank-documents"
+                          type="file"
+                          multiple
+                          accept="image/*,.pdf,application/pdf"
+                          onChange={(e) => {
+                            if (e.target.files?.length) {
+                              addAdminBankDocuments(quotation.id, e.target.files)
+                              e.target.value = ""
+                            }
+                          }}
+                        />
+                        {docs.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No bank documents uploaded yet.</p>
+                        ) : (
+                          <ul className="space-y-1.5 rounded-md border border-border/60 p-2">
+                            {docs.map((doc, index) => (
+                              <li
+                                key={`${doc.name}-${index}`}
+                                className="flex items-center justify-between gap-2 text-xs"
+                              >
+                                <a
+                                  href={doc.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="truncate text-primary underline-offset-2 hover:underline"
+                                  title={doc.name}
+                                >
+                                  {doc.name}
+                                </a>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 shrink-0"
+                                  onClick={() => removeAdminBankDocument(quotation.id, index)}
+                                >
+                                  Remove
+                                </Button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap justify-end gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setAdminBankProcessModalQuotationId(null)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={adminBankProcessSavingId === quotation.id}
+                        onClick={() => void saveAdminBankProcessDetails(quotation, false)}
+                      >
+                        {adminBankProcessSavingId === quotation.id ? "Saving..." : "Save"}
+                      </Button>
+                      {!isPendingAlready ? (
+                        <Button
+                          type="button"
+                          disabled={adminBankProcessSavingId === quotation.id}
+                          onClick={() => void saveAdminBankProcessDetails(quotation, true)}
+                        >
+                          Save &amp; to Pending payment
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                )
+              })()
+            ) : null}
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={adminMeteringModalOpen} onOpenChange={setAdminMeteringModalOpen}>
           <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
@@ -12041,7 +12883,6 @@ export default function AdminPanelPage() {
               <div className="space-y-4">
                 {(() => {
                   const q = adminMeteringSelectedQuotation
-                  const amt = getMeteringAmountDisplay(q)
                   const meterSlot = resolveMeterInstallPhotoSlot(q)
                   const plantSlot = resolvePlantLivePhotoSlot(q)
                   const location = formatQuotationCustomerLocation(q) || "—"
@@ -12050,13 +12891,11 @@ export default function AdminPanelPage() {
                       <div className="rounded-md border border-border/70 bg-muted/20 p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                         <div>
                           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Amount</p>
-                          <p className="font-semibold">{amt.totalLabel}</p>
-                          {amt.loanLabel ? (
-                            <p className="text-[11px] text-muted-foreground">{amt.loanLabel}</p>
-                          ) : null}
-                          {amt.cashLabel ? (
-                            <p className="text-[11px] text-muted-foreground">{amt.cashLabel}</p>
-                          ) : null}
+                          <MeteringAmountCell
+                            quotation={q}
+                            primaryClassName="font-semibold"
+                            secondaryClassName="text-[11px] text-muted-foreground"
+                          />
                         </div>
                         <div>
                           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">

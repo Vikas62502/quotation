@@ -309,11 +309,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setHasSelectedNonDcrConfig(false)
     setHasSelectedBothConfig(false)
     setError("")
-    setFormData({
-      ...emptyProductDefaults,
-      systemType: nextType,
-      centralSubsidy: nextType === "non-dcr" ? 0 : 78000,
-      stateSubsidy: 0,
+    setFormData((prev) => {
+      const commercial = Boolean(prev.pdfCommercialSet)
+      return {
+        ...emptyProductDefaults,
+        systemType: nextType,
+        // Commercial DCR/BOTH: subsidy stays 0 (hidden on form + PDF).
+        pdfCommercialSet: commercial,
+        centralSubsidy: nextType === "non-dcr" || commercial ? 0 : 78000,
+        stateSubsidy: 0,
+      }
     })
   }
 
@@ -394,6 +399,17 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       }))
     }
   }, [formData.systemType, formData.centralSubsidy, formData.stateSubsidy])
+
+  // Commercial set (DCR/BOTH): subsidy always 0 — not shown on form or proposal PDF
+  useEffect(() => {
+    if (!formData.pdfCommercialSet) return
+    if (formData.centralSubsidy === 0 && formData.stateSubsidy === 0) return
+    setFormData((prev) => ({
+      ...prev,
+      centralSubsidy: 0,
+      stateSubsidy: 0,
+    }))
+  }, [formData.pdfCommercialSet, formData.centralSubsidy, formData.stateSubsidy])
 
   const normalizeSizeValue = (value: string) => value.trim().toLowerCase()
   const isValueInList = (value: string, list: string[]) => {
@@ -623,10 +639,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           nonDcrPanelQuantity: nonDcrQuantity,
           acdb: acdbForPhase,
           dcdb: dcdbForPhase,
-          // BOTH systems require central subsidy (default: 78000) - mandatory
-          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000),
+          // BOTH systems require central subsidy (default: 78000) — except commercial (always 0)
+          centralSubsidy: prev.pdfCommercialSet
+            ? 0
+            : (systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000)),
           // State subsidy can be set or preserved if it exists
-          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
+          stateSubsidy: prev.pdfCommercialSet
+            ? 0
+            : (systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0)),
           // Store the system price from the selected configuration
           systemPrice: config.price,
         }
@@ -673,9 +693,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
-        // DCR systems require central subsidy (mandatory: 78000)
-        centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
-        stateSubsidy: prev.stateSubsidy || 0,
+        // DCR systems require central subsidy (mandatory: 78000) — except commercial (always 0)
+        centralSubsidy: prev.pdfCommercialSet
+          ? 0
+          : (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000),
+        stateSubsidy: prev.pdfCommercialSet ? 0 : (prev.stateSubsidy || 0),
       }))
       setHasSelectedBothConfig(true)
     }
@@ -833,9 +855,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           panelQuantity: panelQuantityToSet,
           acdb: acdbForPhase,
           dcdb: dcdbForPhase,
-          // Set subsidies from config (DCR systems have fixed central subsidy of 78000)
-          centralSubsidy: systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0)),
-          stateSubsidy: systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0),
+          // Set subsidies from config (DCR default 78000) — commercial set always 0
+          centralSubsidy: prev.pdfCommercialSet
+            ? 0
+            : (systemConfig.centralSubsidy ?? preFilledData.centralSubsidy ?? (systemConfig.systemType === "dcr" ? 78000 : (prev.centralSubsidy || 0))),
+          stateSubsidy: prev.pdfCommercialSet
+            ? 0
+            : (systemConfig.stateSubsidy ?? preFilledData.stateSubsidy ?? (prev.stateSubsidy || 0)),
           // Store the system price from the selected configuration - CRITICAL: must be > 0
           systemPrice: config.price,
           pdfPanelRangeKey: pdfRangeKey,
@@ -883,8 +909,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
         systemPrice: config.price,
-        centralSubsidy: prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000,
-        stateSubsidy: prev.stateSubsidy || 0,
+        centralSubsidy: prev.pdfCommercialSet
+          ? 0
+          : (prev.centralSubsidy && prev.centralSubsidy > 0 ? prev.centralSubsidy : 78000),
+        stateSubsidy: prev.pdfCommercialSet ? 0 : (prev.stateSubsidy || 0),
         pdfPanelRangeKey: pdfRangeKey,
         pdfUsePanelSizeRange: Boolean(pdfRangeKey),
       }))

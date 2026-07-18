@@ -1138,6 +1138,11 @@ export const api = {
       discountAmount?: number
       totalAmount?: number
       finalAmount?: number
+      // Commercial set (DCR/BOTH without subsidy): backend must skip the centralSubsidy
+      // requirement and not deduct subsidy.
+      pdfCommercialSet?: boolean
+      pdf_commercial_set?: boolean
+      isCommercial?: boolean
     }) => {
       return apiRequest(`/quotations/${quotationId}/pricing`, {
         method: "PATCH",
@@ -2408,6 +2413,7 @@ export const api = {
               bankName?: string
               bankIfsc?: string
               fileSubsidyChequeDetails?: string
+              fileLoginAt?: string
             },
       ) => {
         let body: Record<string, unknown>
@@ -2420,6 +2426,7 @@ export const api = {
             bankName?: string
             bankIfsc?: string
             fileSubsidyChequeDetails?: string
+            fileLoginAt?: string
           }
           body = {
             fileLoginStatus: p.fileLoginStatus,
@@ -2430,6 +2437,7 @@ export const api = {
             ...(p.fileSubsidyChequeDetails?.trim()
               ? { fileSubsidyChequeDetails: p.fileSubsidyChequeDetails.trim() }
               : {}),
+            ...(p.fileLoginAt ? { fileLoginAt: p.fileLoginAt, file_login_at: p.fileLoginAt } : {}),
           }
         }
         return apiRequest(`/admin/quotations/${quotationId}/file-login`, {

@@ -419,8 +419,14 @@ export function shouldHidePanelQuantityOnPdf(
 export function isPdfCommercialSet(products: PdfDisplaySource | null | undefined): boolean {
   if (!products) return false
   const raw = products as Record<string, unknown>
-  if (products.pdfCommercialSet === true || raw.pdf_commercial_set === true) return true
-  const text = String(products.pdfCommercialSet ?? raw.pdf_commercial_set ?? "")
+  if (
+    products.pdfCommercialSet === true ||
+    raw.pdf_commercial_set === true ||
+    raw.isCommercial === true
+  ) {
+    return true
+  }
+  const text = String(products.pdfCommercialSet ?? raw.pdf_commercial_set ?? raw.isCommercial ?? "")
     .trim()
     .toLowerCase()
   return text === "true" || text === "1"

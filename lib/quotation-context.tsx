@@ -23,7 +23,7 @@ import {
   stripPdfDisplayFlags,
   toCatalogCompatibleProducts,
 } from "./quotation-api-payload"
-import { isInverterInfoComplete, isPanelRowComplete } from "./quotation-pdf-display"
+import { isInverterInfoComplete, isPanelRowComplete, isPdfCommercialSet } from "./quotation-pdf-display"
 import { mergeQuotationTimestampsFromApi } from "@/lib/quotation-proposal-document"
 
 export interface Customer {
@@ -144,6 +144,8 @@ export interface Quotation {
   loanAmount?: number
   /** Cash portion when payment type is cash + loan */
   cashAmount?: number
+  /** Payment installments (Account Management); used in metering for I2 amount. */
+  paymentPhases?: Array<{ phaseNumber: number; amount: number }>
   /** Subsidy cheque details when approval payment is cash or cash + loan */
   subsidyChequeDetails?: string
   /** File login: already filed vs mark as login now */
@@ -527,9 +529,11 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           throw new Error(`Subtotal validation failed: ${subtotal}. Cannot proceed with quotation creation.`)
         }
         
+        // Commercial set: no subsidy applies (DCR/BOTH commercial → central & state subsidy are 0).
+        const isCommercialSet = isPdfCommercialSet(currentProducts)
         // Calculate subsidy amounts (matching backend variable names)
-        const centralSubsidy = Number(currentProducts.centralSubsidy || 0)
-        const stateSubsidy = Number(currentProducts.stateSubsidy || 0)
+        const centralSubsidy = isCommercialSet ? 0 : Number(currentProducts.centralSubsidy || 0)
+        const stateSubsidy = isCommercialSet ? 0 : Number(currentProducts.stateSubsidy || 0)
         const totalSubsidy = centralSubsidy + stateSubsidy
         
         // Calculate derived amounts (matching backend calculations)
@@ -614,6 +618,16 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           ...cleanedProducts,
         })
         const productsForApi = stripPdfDisplayFlags(toCatalogCompatibleProducts(syncedProducts))
+        // Commercial flag must survive to the create payload so the backend can skip the
+        // "centralSubsidy is required for dcr/both" rule for commercial DCR/BOTH quotations.
+        if (isCommercialSet) {
+          const productsForApiRecord = productsForApi as unknown as Record<string, unknown>
+          productsForApiRecord.pdfCommercialSet = true
+          productsForApiRecord.pdf_commercial_set = true
+          productsForApiRecord.isCommercial = true
+          productsForApiRecord.centralSubsidy = 0
+          productsForApiRecord.stateSubsidy = 0
+        }
 
         // Validate required fields (use syncedProducts — PDF range keys stripped from productsForApi)
         if (productsForApi.systemType === "both") {
@@ -760,6 +774,11 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           totalSubsidy: validatedTotalSubsidy, // Total subsidy (central + state)
           amountAfterSubsidy: validatedAmountAfterSubsidy, // Amount after subsidy
           discountAmount: validatedDiscountAmount, // Discount amount
+          // Commercial set (DCR/BOTH without subsidy): backend must skip the centralSubsidy
+          // requirement and not deduct subsidy (finalAmount = subtotal - discount).
+          ...(isCommercialSet
+            ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
+            : {}),
         }
         
         // Final validation - ensure all required fields are present and valid

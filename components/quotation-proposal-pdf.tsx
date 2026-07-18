@@ -47,6 +47,8 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
     panelNote,
     showPricingRateColumn = false,
     pricingRows,
+    pricingTotalLabel,
+    pricingTotalAmount,
     paymentRows,
     warrantyRows,
     supportLine,
@@ -185,9 +187,11 @@ export function QuotationProposalPdf({ data, rootId = "quotation-content" }: Pro
               ))}
               <tr className="prop-total-row">
                 <td colSpan={showPricingRateColumn ? 3 : 2}>
-                  TOTAL PROJECT COST (Including GST &amp; All Charges)
+                  {pricingTotalLabel || "TOTAL PROJECT COST (Including GST & All Charges)"}
                 </td>
-                <td className="col-amount">₹{subtotal.toLocaleString("en-IN")}</td>
+                <td className="col-amount">
+                  ₹{(pricingTotalAmount ?? subtotal).toLocaleString("en-IN")}
+                </td>
               </tr>
             </tbody>
           </table>
