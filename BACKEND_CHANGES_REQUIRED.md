@@ -163,7 +163,7 @@ Dealer/admin **Document Submission** dialog uploads KYC, bank, and property file
 | `bankPassbookImage` | image |
 | `geotagRoofPhoto` | image (optional in UI) |
 | `customerWithHousePhoto` | image (optional in UI) |
-| `propertyDocumentPdf` | **PDF** |
+| `propertyDocumentPdf` | PDF (**optional in UI** — Jul 2026; admin Document Submission may submit without it) |
 
 ## Required backend behavior
 
@@ -174,6 +174,7 @@ Dealer/admin **Document Submission** dialog uploads KYC, bank, and property file
 2. **Partial updates**
    - If a file key is **missing** on this request, **keep** the existing stored object URL / key for that document on the quotation.
    - If a file key is present, upload the new object and replace the stored reference.
+   - **`propertyDocumentPdf` is optional** — do not return **400** when omitted on admin/dealer document submit (Jul 2026). Leave field null/empty if never uploaded.
 
 3. **Storage**
    - Upload files to **S3** (or equivalent). Recommended key prefix: `quotations/{quotationId}/documents/{logicalField}-{uuid}.{ext}`.
@@ -1174,10 +1175,12 @@ Implement at least one admin update endpoint:
 Accepted stage values:
 - `pending_installer`
 - `installer_in_progress`
+- `installer_partial_approved`
 - `installer_approved`
 - `pending_metering`
 - `metering_in_progress`
 - `metering_approved`
+- `meter_installation_pending`  ← Meter Installation Pending (Admin Metering)
 - `mco`
 - `pending_baldev`
 - `baldev_approved`
@@ -1245,6 +1248,65 @@ RBAC for this section:
 **Fallback PATCH paths** (frontend tries silently until one succeeds): see `patchOperationalWorkflowStatus` in `lib/api.ts`.
 
 **Handoff summary:** `BACKEND_CHANGES_HANDOFF.md` **§11**.
+
+##### L.2 Meter in Discom → WCC Pending → Meter Installation Pending (Jul 2026) — REQUIRED
+
+**Frontend:** `app/dashboard/admin/page.tsx` (`moveAdminMeteringFromDiscomToWcc`, `saveAdminWccMeteringDetails`, `setAdminMeteringStage`).  
+**Full handoff:** `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`.
+
+**Product path:**
+
+```
+Meter Pending → Meter in Discom → WCC Pending (only if Installation approved)
+  → Save WCC → Meter Installation Pending → Final Step (mco)
+```
+
+**Backend must:**
+
+1. **Accept and persist** operational status **`meter_installation_pending`** on the same PATCH routes as §L (`installation-status` / `workflow-status` / quotation status). Echo on `GET /api/admin/quotations`.
+2. **Allow transition** `metering_approved` → `meter_installation_pending` (after post-Discom WCC save). Idempotent re-PATCH → **200**.
+3. **Allow** `meter_installation_pending` → **`mco`** (Admin To Final Step / force MCO). Do not return `WF_003` solely because the row is past `metering_approved`.
+4. **Persist `meteringWccAfterDiscom` / `metering_wcc_after_discom` (boolean)** and return it on GET — frontend has **no localStorage** for this path. Set only when current stage is `metering_approved` **and** installation is fully approved (not `installer_partial_approved`). Clear when status becomes `meter_installation_pending`.
+5. **WCC details save** (existing metering details API) then status PATCH:
+   - Entry WCC (Installation Approved → WCC): still → `pending_metering`
+   - Post-Discom WCC: → `meter_installation_pending`
+
+**Request body example (Meter Installation Pending):**
+
+```json
+{
+  "installationStatus": "meter_installation_pending",
+  "installation_status": "meter_installation_pending",
+  "meteringStatus": "meter_installation_pending",
+  "metering_status": "meter_installation_pending",
+  "status": "meter_installation_pending"
+}
+```
+
+**QA:** See checklist in `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md` §7.
+
+##### L.3 Admin Metering table — complete list row data (Jul 2026) — REQUIRED
+
+**Problem:** Meter Pending / Meter in Discom rows show **N/A** for Address, Remarks, Assigned person when list API omits fields.
+
+**Frontend:** Admin Metering table in `app/dashboard/admin/page.tsx` reads **one list payload** per row (`GET /api/admin/quotations`) — no detail fetch for the grid.
+
+**Backend must return on every admin list row** (see full column map in `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md` §8):
+
+| Column | Fields |
+|--------|--------|
+| Customer | `customer.*` |
+| Dealer | nested `dealer` or `dealerId` |
+| Amount | `pricing.subtotal`, `loanAmount`, `paymentPhases`, `filePaymentType`, bank name/IFSC |
+| Date | `statusUpdatedAt`, `meteringApprovedAt`, `installationScheduledAt`, `createdAt` |
+| Phase | `products.phase` |
+| Address | `visitLocation` / `visit_location` or `customer.address` |
+| Discom | `discomName` / `discom_name` |
+| Remarks | `remarks` / `metering_remarks` |
+| Assigned person | `authorizedRepresentative` / `assigned_person_name` |
+| Status / tabs | `installationStatus`, `meteringStatus`, `meteringWccAfterDiscom` |
+
+**Critical:** Persist metering details on save and **echo on list GET** — not detail-only.
 
 #### M) Final Confirmation document uploads (Admin + Baldev) — files only
 
@@ -3391,7 +3453,8 @@ When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps ar
 ### Status
 
 - The recent **blank middle page when State Subsidy is present** was a frontend PDF pagination issue and is now handled in `components/quotation-details-dialog.tsx`.
-- No mandatory backend endpoint change is required for that page-break bug alone.
+- **Pricing breakdown (Jul 2026):** Proposal PDF page 2 shows **Central Subsidy only** in the pricing table (not State Subsidy). Total label becomes **Total price After subsidy** = `subtotal − centralSubsidy`. State subsidy may still appear in T&C; it is **not** deducted in that pricing footer.
+- **No mandatory backend endpoint change** is required for the pricing-breakdown display. Frontend reads existing numeric fields.
 
 ### Backend data contract (recommended to keep stable)
 
@@ -3403,12 +3466,14 @@ When **`NEXT_PUBLIC_USE_API=false`**, teams and `quotationId → teamId` maps ar
   - `finalAmount` / `final_amount`
 - Avoid sending long formatted strings (currency symbols, multiline text) for numeric pricing fields.
 - Return consistent keys on GET after updates so PDF values do not fluctuate between fallback calculations.
+- Continue storing **both** central and state subsidies. Pricing PDF uses **central only**; do not drop `stateSubsidy` from the API.
 
 ### QA checks
 
-1. Create quotation with `stateSubsidy = 0` -> PDF has expected pages.
-2. Update same quotation with non-zero `stateSubsidy` -> PDF still has expected pages (no blank intermediate page).
-3. Verify subsidy values in PDF match API response values exactly.
+1. Create quotation with `stateSubsidy = 0` -> PDF has expected pages; pricing shows Central Subsidy only when `centralSubsidy > 0`.
+2. Update same quotation with non-zero `stateSubsidy` -> PDF still has expected pages (no blank intermediate page); pricing table still omits State Subsidy row.
+3. Verify Central Subsidy amount in PDF matches API `centralSubsidy` exactly.
+4. Verify **Total price After subsidy** = `subtotal − centralSubsidy` (not minus state).
 
 ---
 
@@ -4960,6 +5025,8 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Super Admin / quotation Admin inventory JWT** — `/products` 200 but `/users`+`/sales`+… 401; align allow-list (`admin`\|`super-admin`) | **§AD.5.1** | `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`, `lib/admin-access.ts` |
 | **High** | **Final confirmation uploads** — dedicated POST route; do not use KYC `PATCH …/documents` | **§M**, HANDOFF **§10** | `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
+| **High** | **Meter in Discom → WCC → Meter Installation Pending** — persist `meter_installation_pending` + **required** `meteringWccAfterDiscom` on GET (no localStorage) | **§L.2** | `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`, `setMeteringWccAfterDiscom` |
+| **High** | **Admin Metering list complete row** — Discom, remarks, assigned person, address, amount fields on `GET /admin/quotations` | **§L.3** | `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md` §8 |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
@@ -4985,6 +5052,7 @@ For questions or clarifications about these requirements, please refer to:
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
 - Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
+- Account Management Final Settlement (write off remaining as discount `d`): `app/dashboard/account-management/page.tsx` → `submitFinalSettlement`, **`BACKEND_FINAL_SETTLEMENT.md`**
 - Payment Excel journey columns: `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel`, `lib/customer-journey.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**
 - Super Admin quotation login + inventory: `lib/admin-access.ts`, `lib/auth-context.tsx`, `app/dashboard/inventory/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §AD**, **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`**
 - Final confirmation document uploads (Admin + Baldev): `lib/final-confirmation-documents.ts`, `lib/api.ts` → `uploadFinalConfirmationDocuments`, **`BACKEND_CHANGES_REQUIRED.md` §M**, **`BACKEND_CHANGES_HANDOFF.md` §10**

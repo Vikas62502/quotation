@@ -167,6 +167,50 @@ export function formatJourneyStageStatusLabel(status: JourneyStageStatus): strin
   return "Pending"
 }
 
+export function journeyStageStatusBadgeClass(status: JourneyStageStatus): string {
+  if (status === "completed") return "bg-green-600 text-white border-green-600"
+  if (status === "in_progress") return "bg-amber-500 text-white border-amber-500"
+  return "bg-muted text-muted-foreground border-border"
+}
+
+/** Installation + Metering + Final confirmation for Payment Management file status column. */
+export function getJourneyFileStatusStages(quotation: Quotation) {
+  const progress = getJourneyStageProgress(quotation)
+  return [
+    { label: "Installation", status: progress.installation },
+    { label: "Metering", status: progress.metering },
+    { label: "Final confirmation", status: progress.finalConfirmation },
+  ] as const
+}
+
+export type FileStatusFilter =
+  | "all"
+  | "installation:pending"
+  | "installation:in_progress"
+  | "installation:completed"
+  | "metering:pending"
+  | "metering:in_progress"
+  | "metering:completed"
+  | "final_confirmation:pending"
+  | "final_confirmation:in_progress"
+  | "final_confirmation:completed"
+
+export function paymentMatchesFileStatusFilter(
+  quotation: Quotation,
+  filter: FileStatusFilter,
+): boolean {
+  if (filter === "all") return true
+  const [stage, status] = filter.split(":") as [
+    "installation" | "metering" | "final_confirmation",
+    JourneyStageStatus,
+  ]
+  const progress = getJourneyStageProgress(quotation)
+  if (stage === "installation") return progress.installation === status
+  if (stage === "metering") return progress.metering === status
+  if (stage === "final_confirmation") return progress.finalConfirmation === status
+  return true
+}
+
 export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgress {
   const approvalStatus = String(quotation.status || "pending").toLowerCase()
   const installStatus = getInstallationWorkflowStatus(quotation as Record<string, unknown>)

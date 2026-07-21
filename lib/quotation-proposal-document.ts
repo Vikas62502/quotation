@@ -474,6 +474,14 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
           },
         ]
 
+  const showTataDcrAsPerSetForAcdbDcdb =
+    systemType === "dcr" &&
+    String(p.panelBrand || (p as Record<string, unknown>).dcr_panel_brand || "").trim().toLowerCase() === "tata" &&
+    (isAsPerTheSetLabel(String(p.panelSize || "")) ||
+      isAsPerTheSetLabel(String(p.dcrPanelSize || "")) ||
+      isAsPerTheSetLabel(String(p.inverterSize || "")) ||
+      isAsPerTheSetLabel(String(p.inverterBrand || "")))
+
   const rows: SpecRow[] = [
     ...panelRows,
     {
@@ -503,7 +511,11 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     {
       component: "ACDB / DCDB",
       specification: "AC & DC Distribution Box",
-      brandModel: p.acdb || p.dcdb ? `${p.acdb || ""} ${p.dcdb || ""}`.trim() : "Havells MCB",
+      brandModel: showTataDcrAsPerSetForAcdbDcdb
+        ? `${QUOTATION_AS_PER_THE_SET_LABEL} / ${QUOTATION_AS_PER_THE_SET_LABEL}`
+        : p.acdb || p.dcdb
+          ? `${p.acdb || ""} ${p.dcdb || ""}`.trim()
+          : "Havells MCB",
       qty: "1 Set",
     },
     {

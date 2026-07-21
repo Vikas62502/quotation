@@ -1016,11 +1016,89 @@ export const api = {
         }>
         /** When true, backend must replace all installment rows with `phases` (not merge). */
         replaceInstallments?: boolean
+        /** Final settlement write-off (INR). Backend should add to discountAmount and set remaining=0. */
+        finalSettlementAmount?: number
+        finalSettlementApplied?: boolean
+        remaining?: number
+        remainingAmount?: number
       },
     ) => {
+      const hasPhases = Array.isArray(paymentData.phases)
+      const replaceInstallments = hasPhases
+        ? (paymentData.replaceInstallments ?? true)
+        : false
+
+      // Status / settlement-only update — do not touch installment rows (avoids
+      // "paid cannot exceed payable after discount" when AM cap ≠ pricing payable).
+      if (!hasPhases) {
+        const statusBody: Record<string, unknown> = {
+          paymentStatus: paymentData.paymentStatus,
+          paymentType: paymentData.paymentType,
+          paymentMode: paymentData.paymentMode,
+          replaceInstallments: false,
+          ...(paymentData.finalSettlementAmount != null
+            ? { finalSettlementAmount: paymentData.finalSettlementAmount }
+            : {}),
+          ...(paymentData.finalSettlementApplied != null
+            ? { finalSettlementApplied: paymentData.finalSettlementApplied }
+            : {}),
+          ...(paymentData.remaining != null ? { remaining: paymentData.remaining } : {}),
+          ...(paymentData.remainingAmount != null
+            ? { remainingAmount: paymentData.remainingAmount }
+            : {}),
+          ...(paymentData.subsidyCheques?.length
+            ? { subsidyCheques: paymentData.subsidyCheques }
+            : {}),
+        }
+        const statusAttempts: Array<{
+          endpoint: string
+          method: "PATCH" | "PUT" | "POST"
+          body: Record<string, unknown>
+        }> = [
+          {
+            endpoint: `/quotations/${quotationId}/payment-details`,
+            method: "PATCH",
+            body: statusBody,
+          },
+          {
+            endpoint: `/quotations/${quotationId}/final-settlement`,
+            method: "POST",
+            body: {
+              amount: paymentData.finalSettlementAmount,
+              paymentStatus: paymentData.paymentStatus ?? "completed",
+            },
+          },
+          {
+            endpoint: `/quotations/${quotationId}/payment-mode`,
+            method: "PATCH",
+            body: {
+              paymentMode: paymentData.paymentMode,
+              paymentStatus: paymentData.paymentStatus,
+            },
+          },
+        ]
+
+        let lastStatusError: unknown = null
+        for (const attempt of statusAttempts) {
+          try {
+            return await apiRequest(attempt.endpoint, {
+              method: attempt.method,
+              body: attempt.body,
+            })
+          } catch (error) {
+            lastStatusError = error
+            const retryableMissingEndpoint =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retryableMissingEndpoint) throw error
+          }
+        }
+        throw lastStatusError
+      }
+
       const bodyWithReplace = {
         ...paymentData,
-        replaceInstallments: paymentData.replaceInstallments ?? true,
+        replaceInstallments,
         installments: paymentData.phases,
       }
       const attempts: Array<{ endpoint: string; method: "PATCH" | "PUT"; body: Record<string, any> }> = [
@@ -1077,6 +1155,106 @@ export const api = {
       }
 
       throw lastError
+    },
+
+    /**
+     * Final Settlement — persist to DB. Settlement amount (Remaining) becomes discount `d`,
+     * paymentStatus=completed, remaining=0. Tries an atomic endpoint first, then
+     * pricing + status-only payment-details. Throws if nothing persisted server-side.
+     *
+     * Returns the server payload (updated quotation slice) on success.
+     */
+    finalizeSettlement: async (
+      quotationId: string,
+      payload: {
+        /** Remaining written off (the discount `d`), in INR. */
+        settlementAmount: number
+        /** Total discount to persist on the quotation (existing + settlementAmount), in INR. */
+        discountAmount: number
+        /** amountAfterSubsidy - discountAmount (payable after discount). */
+        finalAmount: number
+        paymentType?: string
+        paymentMode?: string
+      },
+    ) => {
+      const atomicBody = {
+        amount: payload.settlementAmount,
+        settlementAmount: payload.settlementAmount,
+        discountAmount: payload.discountAmount,
+        finalAmount: payload.finalAmount,
+        paymentStatus: "completed" as const,
+        remaining: 0,
+        remainingAmount: 0,
+        finalSettlementApplied: true,
+      }
+
+      // 1) Preferred: single atomic endpoint that persists discount + status + remaining.
+      try {
+        return await apiRequest(`/quotations/${quotationId}/final-settlement`, {
+          method: "POST",
+          body: atomicBody,
+        })
+      } catch (error) {
+        const missing =
+          error instanceof ApiError &&
+          (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+        if (!missing) throw error
+      }
+
+      // 2) Fallback: persist discount via pricing, then complete payment (no installment rewrite).
+      let persisted = false
+      let lastError: unknown = null
+      try {
+        const res = await apiRequest(`/quotations/${quotationId}/pricing`, {
+          method: "PATCH",
+          body: {
+            discountAmount: payload.discountAmount,
+            totalAmount: payload.finalAmount,
+            finalAmount: payload.finalAmount,
+          },
+        })
+        persisted = true
+        // Best-effort: also mark payment completed / remaining 0.
+        try {
+          await apiRequest(`/quotations/${quotationId}/payment-details`, {
+            method: "PATCH",
+            body: {
+              paymentType: payload.paymentType,
+              paymentMode: payload.paymentMode,
+              paymentStatus: "completed",
+              replaceInstallments: false,
+              finalSettlementApplied: true,
+              finalSettlementAmount: payload.settlementAmount,
+              remaining: 0,
+              remainingAmount: 0,
+            },
+          })
+        } catch {
+          // Discount persisted; status can be recomputed by backend from discount + paid.
+        }
+        return res
+      } catch (error) {
+        lastError = error
+      }
+
+      // 3) Last fallback: discount endpoint (absolute INR).
+      try {
+        const res = await apiRequest(`/quotations/${quotationId}/discount`, {
+          method: "PATCH",
+          body: { discount: payload.discountAmount },
+        })
+        persisted = true
+        return res
+      } catch (error) {
+        lastError = error
+      }
+
+      if (!persisted) {
+        throw (
+          lastError ??
+          new ApiError("Final settlement could not be saved to the server.", "SETTLEMENT_FAILED")
+        )
+      }
     },
 
     /**
@@ -2384,6 +2562,64 @@ export const api = {
         for (const attempt of endpoints) {
           try {
             return await apiRequest(attempt.endpoint, { method: attempt.method, body })
+          } catch (error) {
+            lastError = error
+            const isRetryable =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isRetryable) throw error
+          }
+        }
+        throw lastError
+      },
+
+      /**
+       * Meter in Discom → WCC Pending flag (server-backed; no localStorage).
+       * Prefer dedicated route; fall back to installation-status PATCH with flag fields.
+       */
+      setMeteringWccAfterDiscom: async (quotationId: string, value: boolean) => {
+        const flagBody = {
+          meteringWccAfterDiscom: value,
+          metering_wcc_after_discom: value,
+        }
+        const statusBody = {
+          installationStatus: "metering_approved",
+          installation_status: "metering_approved",
+          meteringStatus: "metering_approved",
+          metering_status: "metering_approved",
+          ...flagBody,
+        }
+
+        const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST"; body: Record<string, unknown> }> = [
+          {
+            endpoint: `/admin/quotations/${quotationId}/metering-wcc-after-discom`,
+            method: "PATCH",
+            body: flagBody,
+          },
+          {
+            endpoint: `/admin/quotations/${quotationId}/installation-status`,
+            method: "PATCH",
+            body: statusBody,
+          },
+          {
+            endpoint: `/admin/quotations/${quotationId}/workflow-status`,
+            method: "PATCH",
+            body: statusBody,
+          },
+          {
+            endpoint: `/quotations/${quotationId}/metering-status`,
+            method: "PATCH",
+            body: statusBody,
+          },
+        ]
+
+        let lastError: unknown = null
+        for (const attempt of endpoints) {
+          try {
+            return await apiRequest(attempt.endpoint, {
+              method: attempt.method,
+              body: attempt.body,
+            })
           } catch (error) {
             lastError = error
             const isRetryable =

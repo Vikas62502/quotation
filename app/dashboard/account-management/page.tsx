@@ -40,12 +40,16 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { formatPersonName } from "@/lib/name-display"
 import {
   formatJourneyStageStatusLabel,
+  getJourneyFileStatusStages,
   getJourneyHoldInfo,
   getJourneyStageProgress,
+  journeyStageStatusBadgeClass,
+  paymentMatchesFileStatusFilter,
+  type FileStatusFilter,
 } from "@/lib/customer-journey"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
@@ -87,6 +91,14 @@ interface CustomerPayment {
   dealerId?: string
   /** Payment cap: quotation subtotal / set price (not installment sum). */
   subtotal: number
+  /** Original subtotal before settlement discount (for list display). */
+  originalSubtotal: number
+  /** Discount amount in INR (includes final settlement). */
+  discountAmount: number
+  /** Set when remaining balance was written off via final settlement. */
+  finalSettlementApplied?: boolean
+  /** INR written off by final settlement (shown as `d` on Paid hover). */
+  finalSettlementDiscount?: number
   totalAmount: number
   finalAmount: number
   /** When API sends remaining or remainingAmount, prefer for list/export display. */
@@ -109,6 +121,14 @@ interface CustomerPayment {
 
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
+/** Cache of applied final settlements so the settled state survives refresh even if the backend GET hasn't echoed the flag yet. */
+const FINAL_SETTLEMENT_KEY = "quotationFinalSettlements"
+
+type StoredFinalSettlement = {
+  discountAmount: number
+  settlementAmount: number
+  appliedAt: string
+}
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -175,20 +195,114 @@ function getTotalPaidPhases(phases: PaymentPhase[]): number {
 }
 
 function getComputedRemaining(payment: CustomerPayment): number {
-  return Math.max(payment.subtotal - getTotalPaidPhases(payment.phases), 0)
+  return Math.max(getPaymentEffectiveCap(payment) - getTotalPaidPhases(payment.phases), 0)
 }
 
-/** Prefer server remaining; else subtotal − sum(paidAmount). */
+function getQuotationDiscountAmount(q: Quotation): number {
+  const qx = q as Quotation & Record<string, unknown>
+  const pricing = qx.pricing as Record<string, unknown> | undefined
+  const fromPricing = optionalFiniteNumber(
+    pricing?.discountAmount ?? qx.discountAmount ?? qx.discount_amount,
+  )
+  if (fromPricing != null && fromPricing > 0) return fromPricing
+  const discount = Number(q.discount) || 0
+  if (discount > 100) return discount
+  if (discount > 0 && discount <= 100) {
+    const subtotal = pickFirstFiniteNumber(q.subtotal, q.totalAmount, q.finalAmount)
+    return Math.round(subtotal * (discount / 100))
+  }
+  return 0
+}
+
+/** Amount after subsidy — used for pricing PATCH validation (finalAmount ≤ this). */
+function getQuotationAmountAfterSubsidy(q: Quotation): number {
+  const qx = q as Quotation & Record<string, unknown>
+  const pricing = (qx.pricing || {}) as Record<string, unknown>
+  const products = (qx.products || {}) as unknown as Record<string, unknown>
+  const fromPricing = optionalFiniteNumber(
+    pricing.amountAfterSubsidy ?? qx.amountAfterSubsidy ?? qx.amount_after_subsidy,
+  )
+  if (fromPricing != null) return fromPricing
+
+  const subtotal = pickFirstFiniteNumber(pricing.subtotal, qx.subtotal, qx.totalAmount, qx.finalAmount)
+  const central = pickFirstFiniteNumber(
+    pricing.centralSubsidy,
+    products.centralSubsidy,
+    qx.centralSubsidy,
+    0,
+  )
+  const state = pickFirstFiniteNumber(pricing.stateSubsidy, products.stateSubsidy, qx.stateSubsidy, 0)
+  return Math.max(0, subtotal - central - state)
+}
+
+function getPaymentOriginalSubtotal(payment: CustomerPayment): number {
+  return payment.originalSubtotal ?? payment.subtotal
+}
+
+function getPaymentDiscountAmount(payment: CustomerPayment): number {
+  return Math.max(0, Number(payment.discountAmount) || 0)
+}
+
+function getPaymentEffectiveCap(payment: CustomerPayment): number {
+  return Math.max(0, getPaymentOriginalSubtotal(payment) - getPaymentDiscountAmount(payment))
+}
+
+/** Persisted settlement flag from the backend (survives refresh; keeps button hidden). */
+function getQuotationFinalSettlementApplied(q: Quotation): boolean {
+  const qx = q as Quotation & Record<string, unknown>
+  const pricing = (qx.pricing || {}) as Record<string, unknown>
+  return (
+    qx.finalSettlementApplied === true ||
+    qx.final_settlement_applied === true ||
+    pricing.finalSettlementApplied === true ||
+    (Number(qx.finalSettlementAmount ?? qx.final_settlement_amount ?? 0) || 0) > 0
+  )
+}
+
+function isFinalSettlementApplied(payment: CustomerPayment): boolean {
+  // Persisted flag (from DB) or local optimistic flag is authoritative.
+  if (payment.finalSettlementApplied) return true
+  const original = getPaymentOriginalSubtotal(payment)
+  const discount = getPaymentDiscountAmount(payment)
+  const paid = getTotalPaidPhases(payment.phases)
+  const unpaidGap = Math.max(0, original - paid)
+  // Settlement also counts when discount actually covers the unpaid gap.
+  if (discount > 0 && unpaidGap <= discount + 0.5) return true
+  return false
+}
+
+/**
+ * Remaining = effective cap − paid (installment math is source of truth).
+ * Do not force ₹0 from paymentStatus/API remaining when installments still leave a gap —
+ * that hid Final Settlement and showed Remaining ₹0 while "after installment" still had ₹35,000.
+ */
 function getDisplayRemaining(payment: CustomerPayment): number {
   const phasePaid = getTotalPaidPhases(payment.phases)
-  const computed = Math.max(0, payment.subtotal - phasePaid)
-  if ((payment.subsidyCheques?.length ?? 0) > 0) {
+  const computed = Math.max(0, getPaymentEffectiveCap(payment) - phasePaid)
+  if (isFinalSettlementApplied(payment) || computed <= 0) {
+    return 0
+  }
+  // Prefer installment math whenever phases exist.
+  if (payment.phases.length > 0) {
     return computed
   }
   if (payment.remainingFromApi != null && Number.isFinite(payment.remainingFromApi)) {
     return Math.max(0, payment.remainingFromApi)
   }
   return computed
+}
+
+/** Derive payment status from amounts so UI matches Remaining (not stale API "completed"). */
+function getEffectivePaymentStatus(
+  payment: CustomerPayment,
+): NonNullable<CustomerPayment["paymentStatus"]> {
+  const paid = getTotalPaidPhases(payment.phases)
+  const remaining = getDisplayRemaining(payment)
+  if (remaining <= 0 && (paid > 0 || getPaymentDiscountAmount(payment) > 0 || isFinalSettlementApplied(payment))) {
+    return "completed"
+  }
+  if (paid > 0) return "partial"
+  return "pending"
 }
 
 function formatInstallmentShortLabel(phase: PaymentPhase): string {
@@ -229,6 +343,27 @@ function persistSubsidyChequesForQuotation(quotationId: string, cheques: Subsidy
   const map = getStoredSubsidyChequesMap()
   map[quotationId] = cheques
   saveSubsidyChequesMap(map)
+}
+
+function getStoredFinalSettlements(): Record<string, StoredFinalSettlement> {
+  try {
+    const raw = localStorage.getItem(FINAL_SETTLEMENT_KEY)
+    if (!raw) return {}
+    const p = JSON.parse(raw)
+    return p && typeof p === "object" ? p : {}
+  } catch {
+    return {}
+  }
+}
+
+function persistFinalSettlement(quotationId: string, record: StoredFinalSettlement) {
+  try {
+    const map = getStoredFinalSettlements()
+    map[quotationId] = record
+    localStorage.setItem(FINAL_SETTLEMENT_KEY, JSON.stringify(map))
+  } catch {
+    // Non-fatal: cache only.
+  }
 }
 
 /** Apply cleared subsidy amount across installments in order (does not exceed phase caps). */
@@ -606,6 +741,7 @@ export default function AccountManagementPage() {
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
   const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
+  const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>("all")
   const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
   /** Approve / file-login filters as calendar ranges (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
@@ -618,6 +754,7 @@ export default function AccountManagementPage() {
   const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
   const [isSavingInstallments, setIsSavingInstallments] = useState(false)
+  const [isSavingFinalSettlement, setIsSavingFinalSettlement] = useState(false)
   const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
   const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
   const [subsidyDraftAmount, setSubsidyDraftAmount] = useState("")
@@ -963,6 +1100,24 @@ export default function AccountManagementPage() {
         const mergedSubsidy: SubsidyChequeRecord[] =
           fromApiCheques.length > 0 ? fromApiCheques : subsidyMap[q.id || ""] || []
 
+        const apiDiscountAmount = getQuotationDiscountAmount(q)
+        // Merge a locally cached settlement so the settled state survives refresh even
+        // if the backend GET hasn't echoed discount/flag yet.
+        const cachedSettlement = getStoredFinalSettlements()[q.id || ""]
+        const apiSettled = getQuotationFinalSettlementApplied(q)
+        const discountAmount =
+          !apiSettled && cachedSettlement && cachedSettlement.discountAmount > apiDiscountAmount
+            ? cachedSettlement.discountAmount
+            : apiDiscountAmount
+        const originalSubtotal = subtotal
+        const effectiveSubtotal = Math.max(0, originalSubtotal - discountAmount)
+        const remFromApi = pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>)
+        const settlementApplied =
+          apiSettled ||
+          !!cachedSettlement ||
+          (discountAmount > 0 &&
+            Math.max(0, originalSubtotal - getTotalPaidPhases(phases)) <= discountAmount + 0.5)
+
         return {
           quotationId: q.id || "",
           customerName: formatPersonName(q.customer?.firstName, q.customer?.lastName, "Unknown"),
@@ -972,10 +1127,23 @@ export default function AccountManagementPage() {
             : "Unassigned",
           dealerMobile: q.dealer?.mobile || "",
           dealerId: String(q.dealerId || q.dealer?.id || "").trim() || undefined,
-          subtotal,
+          subtotal: effectiveSubtotal,
+          originalSubtotal,
+          discountAmount,
+          finalSettlementApplied: settlementApplied,
+          finalSettlementDiscount: settlementApplied
+            ? discountAmount ||
+              Number(
+                (q as Quotation & Record<string, unknown>).finalSettlementAmount ??
+                  (q as Quotation & Record<string, unknown>).final_settlement_amount ??
+                  0,
+              ) ||
+              cachedSettlement?.settlementAmount ||
+              undefined
+            : undefined,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
-          remainingFromApi: pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>),
+          remainingFromApi: remFromApi,
           paymentType:
             (q as any).paymentType ||
             (useApi ? q.paymentMode : q.paymentMode || storedPlan?.paymentMode) ||
@@ -1086,7 +1254,7 @@ export default function AccountManagementPage() {
         const matchesPaymentType =
           paymentTypeFilter === "all" ||
           (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
-        const paymentStatusValue = payment.paymentStatus || "pending"
+        const paymentStatusValue = getEffectivePaymentStatus(payment)
         const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
         const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
         const fileLoginYmd = toLocalCalendarDateString(payment.fileLoginAt)
@@ -1095,6 +1263,7 @@ export default function AccountManagementPage() {
         const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
         const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
         const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
+        const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatusFilter)
         const matchesDealer =
           paymentDealerFilter === "all" ||
           (paymentDealerFilter === "__unassigned__"
@@ -1105,6 +1274,7 @@ export default function AccountManagementPage() {
           matchesPaymentType &&
           matchesPaymentStatus &&
           matchesInstallment &&
+          matchesFileStatus &&
           matchesDealer &&
           matchesApproveDateRange &&
           matchesFileLoginDateRange
@@ -1116,6 +1286,7 @@ export default function AccountManagementPage() {
       paymentTypeFilter,
       paymentStatusFilter,
       paymentInstallmentFilter,
+      fileStatusFilter,
       paymentDealerFilter,
       approveDateRange,
       fileLoginDateRange,
@@ -1126,7 +1297,9 @@ export default function AccountManagementPage() {
     let totalAmount = 0
     let pendingAmount = 0
     for (const payment of filteredCustomerPayments) {
-      totalAmount += Number(payment.subtotal) || 0
+      // Net payable after discount/settlement (so Total drops by the settlement `d`).
+      // Invariant: Total = Paid + Pending.
+      totalAmount += getPaymentEffectiveCap(payment)
       pendingAmount += getDisplayRemaining(payment)
     }
     return {
@@ -1141,6 +1314,7 @@ export default function AccountManagementPage() {
     paymentTypeFilter,
     paymentStatusFilter,
     paymentInstallmentFilter,
+    fileStatusFilter,
     paymentDealerFilter,
     approveDateRange?.from?.toISOString() ?? "",
     approveDateRange?.to?.toISOString() ?? "",
@@ -1219,6 +1393,7 @@ export default function AccountManagementPage() {
       "File login date",
       "File login status",
       "Subtotal",
+      "Discount",
       "Paid Amount",
       "Remaining Amount",
       "Installment Count",
@@ -1241,11 +1416,12 @@ export default function AccountManagementPage() {
         payment.customerMobile,
         getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
         bankCell === "—" ? "" : bankCell,
-        (payment.paymentStatus || "pending").toUpperCase(),
+        (getEffectivePaymentStatus(payment) || "pending").toUpperCase(),
         payment.statusApprovedAt ? formatAdminDate(payment.statusApprovedAt) : "",
         payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
         fileLoginStatusLabel(payment.fileLoginStatus) || "",
-        payment.subtotal,
+        getPaymentOriginalSubtotal(payment),
+        getPaymentDiscountAmount(payment),
         paidAmount,
         remainingAmount,
         payment.phases.length,
@@ -1370,8 +1546,9 @@ export default function AccountManagementPage() {
     if (amt <= 0) return
 
     let phases = activePayment.phases
+    const paymentCap = getPaymentEffectiveCap(activePayment)
     if (phases.length === 0) {
-      phases = buildInstallments(activePayment.subtotal, 1)
+      phases = buildInstallments(paymentCap, 1)
     }
     const paidBefore = getTotalPaidPhases(phases)
     const nextPhases = applySubsidyAmountToPhases(phases, amt)
@@ -1385,7 +1562,7 @@ export default function AccountManagementPage() {
       })
       return
     }
-    if (paidAfter > activePayment.subtotal + 0.5) {
+    if (paidAfter > paymentCap + 0.5) {
       toast({
         title: "Would exceed subtotal",
         description: "Reduce the cheque amount or adjust installments.",
@@ -1412,10 +1589,11 @@ export default function AccountManagementPage() {
       const p = updated.find((x) => x.quotationId === activePayment.quotationId)
       if (p) {
         const coerced = coercePhasesPaymentModes(p.phases)
-        const phasesForStore = normalizePhaseAmountsForApi(coerced, p.subtotal)
+        const phasesForStore = normalizePhaseAmountsForApi(coerced, getPaymentEffectiveCap(p))
         const totalPaid = getTotalPaidPhases(phasesForStore)
+        const cap = getPaymentEffectiveCap(p)
         const paymentStatus: CustomerPayment["paymentStatus"] =
-          totalPaid <= 0 ? "pending" : totalPaid >= p.subtotal ? "completed" : "partial"
+          totalPaid <= 0 ? "pending" : totalPaid >= cap ? "completed" : "partial"
         saveStoredPaymentPlan(activePayment.quotationId, {
           paymentType: p.paymentType,
           paymentMode: p.paymentMode || "cash",
@@ -1433,11 +1611,206 @@ export default function AccountManagementPage() {
     })
   }
 
+  const submitFinalSettlement = async () => {
+    if (!activePayment) return
+
+    // Settlement amount = Remaining only (e.g. ₹2,000) — that becomes discount `d`.
+    const settlementDiscount = Math.round(getDisplayRemaining(activePayment))
+    if (settlementDiscount <= 0) {
+      toast({
+        title: "Nothing to settle",
+        description: "There is no remaining balance to write off.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (isFinalSettlementApplied(activePayment)) {
+      toast({
+        title: "Already settled",
+        description: "Final settlement has already been applied for this customer.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const originalSubtotal = getPaymentOriginalSubtotal(activePayment)
+    const currentDiscount = getPaymentDiscountAmount(activePayment)
+    const newDiscount = currentDiscount + settlementDiscount
+    const newEffectiveCap = Math.max(0, originalSubtotal - newDiscount)
+    const totalPaid = getTotalPaidPhases(activePayment.phases)
+
+    // Pricing: add only the settlement write-off to existing quotation discount.
+    // Do not rewrite subtotal (that caused amount-after-subsidy errors).
+    const existingPricingDiscount = getQuotationDiscountAmount(activePayment.quotation)
+    const amountAfterSubsidy = getQuotationAmountAfterSubsidy(activePayment.quotation)
+    const pricingDiscount = existingPricingDiscount + settlementDiscount
+    const pricingFinalAmount = Math.max(0, amountAfterSubsidy - pricingDiscount)
+
+    setIsSavingFinalSettlement(true)
+    try {
+      if (!useApi) {
+        const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const updatedQuotations = allQuotations.map((q: Quotation) =>
+          q.id === activePayment.quotationId
+            ? ({
+                ...q,
+                discount: newDiscount,
+                discountAmount: newDiscount,
+                paymentStatus: "completed",
+                remaining: 0,
+                remainingAmount: 0,
+                pricing: {
+                  ...(q as Quotation & { pricing?: Record<string, unknown> }).pricing,
+                  discountAmount: newDiscount,
+                  amountAfterSubsidy,
+                  totalAmount: Math.max(0, originalSubtotal - newDiscount),
+                  finalAmount: Math.max(0, originalSubtotal - newDiscount),
+                },
+              } as Quotation)
+            : q,
+        )
+        localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
+        setQuotations(
+          updatedQuotations.filter((q: Quotation) => String(q.status || "").toLowerCase() === "approved"),
+        )
+        const coercedPhases = coercePhasesPaymentModes(activePayment.phases)
+        saveStoredPaymentPlan(activePayment.quotationId, {
+          paymentType: activePayment.paymentType,
+          paymentMode: activePayment.paymentMode || "cash",
+          paymentStatus: "completed",
+          phases: normalizePhaseAmountsForApi(coercedPhases, newEffectiveCap),
+        })
+      } else {
+        // Persist to DB. Throws if nothing saved server-side — we must NOT silently
+        // fall back to localStorage when the API is on (button would reappear on refresh).
+        try {
+          await api.quotations.finalizeSettlement(activePayment.quotationId, {
+            settlementAmount: settlementDiscount,
+            discountAmount: pricingDiscount,
+            finalAmount: pricingFinalAmount,
+            paymentType: activePayment.paymentType,
+            paymentMode: activePayment.paymentMode,
+          })
+        } catch (settleError) {
+          // The server may already consider the balance cleared — its amountAfterSubsidy
+          // (e.g. 189,000) can be lower than the AM subtotal (190,000), so it reports
+          // remaining 0 and rejects the write-off. That IS effectively settled: reconcile
+          // the AM-side gap locally instead of failing.
+          const msg = settleError instanceof ApiError ? String(settleError.message || "").toLowerCase() : ""
+          const serverAlreadyCleared =
+            msg.includes("cannot exceed remaining") ||
+            msg.includes("remaining (0)") ||
+            msg.includes("remaining 0") ||
+            msg.includes("already settled") ||
+            msg.includes("already completed") ||
+            msg.includes("nothing to settle")
+          if (!serverAlreadyCleared) throw settleError
+        }
+
+        // Cache before re-fetch so a reload keeps the settled view (net subtotal, d,
+        // remaining 0, hidden button) even if the backend GET hasn't echoed the flag.
+        persistFinalSettlement(activePayment.quotationId, {
+          discountAmount: newDiscount,
+          settlementAmount: settlementDiscount,
+          appliedAt: new Date().toISOString(),
+        })
+
+        // Re-fetch from server so the settled state (and hidden button) reflects the DB.
+        try {
+          await loadApprovedQuotations()
+        } catch {
+          // Non-fatal: settlement already persisted; local state below keeps UI correct.
+        }
+      }
+
+      // Cache the settlement so the settled state (net subtotal, d, remaining 0, hidden
+      // button) survives a refresh even before the backend GET echoes the flag.
+      persistFinalSettlement(activePayment.quotationId, {
+        discountAmount: newDiscount,
+        settlementAmount: settlementDiscount,
+        appliedAt: new Date().toISOString(),
+      })
+
+      setCustomerPayments((prev) =>
+        prev.map((payment) =>
+          payment.quotationId === activePayment.quotationId
+            ? {
+                ...payment,
+                subtotal: newEffectiveCap,
+                originalSubtotal,
+                discountAmount: newDiscount,
+                paymentStatus: "completed",
+                remainingFromApi: 0,
+                finalSettlementApplied: true,
+                finalSettlementDiscount:
+                  (Number(payment.finalSettlementDiscount) || 0) + settlementDiscount,
+                quotation: {
+                  ...payment.quotation,
+                  discount: newDiscount,
+                  discountAmount: newDiscount,
+                  paymentStatus: "completed",
+                } as Quotation,
+              }
+            : payment,
+        ),
+      )
+
+      toast({
+        title: "Final settlement applied",
+        description: `Settlement discount d: ₹${settlementDiscount.toLocaleString("en-IN")} (paid ₹${Math.round(totalPaid).toLocaleString("en-IN")}). Remaining is now ₹0.`,
+      })
+      setInstallmentDialogOpen(false)
+      setActivePaymentId(null)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Failed to apply final settlement."
+      if (!useApi) {
+        // Offline/local mode only: apply locally so Remaining → 0 and d shows.
+        const originalSubtotalLocal = getPaymentOriginalSubtotal(activePayment)
+        const settlementLocal = Math.round(getDisplayRemaining(activePayment))
+        if (settlementLocal > 0) {
+          const newDiscountLocal = getPaymentDiscountAmount(activePayment) + settlementLocal
+          setCustomerPayments((prev) =>
+            prev.map((payment) =>
+              payment.quotationId === activePayment.quotationId
+                ? {
+                    ...payment,
+                    subtotal: Math.max(0, originalSubtotalLocal - newDiscountLocal),
+                    originalSubtotal: originalSubtotalLocal,
+                    discountAmount: newDiscountLocal,
+                    paymentStatus: "completed",
+                    remainingFromApi: 0,
+                    finalSettlementApplied: true,
+                    finalSettlementDiscount:
+                      (Number(payment.finalSettlementDiscount) || 0) + settlementLocal,
+                  }
+                : payment,
+            ),
+          )
+          toast({
+            title: "Final settlement applied locally",
+            description: `d: ₹${settlementLocal.toLocaleString("en-IN")}.`,
+          })
+          setInstallmentDialogOpen(false)
+          setActivePaymentId(null)
+          return
+        }
+      }
+      // API mode: do NOT hide the button — settlement was not saved to the database.
+      toast({
+        title: "Settlement not saved",
+        description: `Could not save to the database, so nothing was settled. ${message}`,
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingFinalSettlement(false)
+    }
+  }
+
   const submitInstallments = async () => {
     if (!activePayment) return
 
     const totalPaid = getTotalPaidPhases(activePayment.phases)
-    const paymentCap = activePayment.subtotal
+    const paymentCap = getPaymentEffectiveCap(activePayment)
     if (totalPaid > paymentCap + 0.5) {
       toast({
         title: "Cannot save",
@@ -1565,7 +1938,7 @@ export default function AccountManagementPage() {
 
   const handleReleaseToInstaller = async (quotation: Quotation) => {
     if (!quotation?.id) return
-    if (isQuotationSentToInstaller(quotation as Record<string, unknown>, readInstallerReleaseMap())) {
+    if (isQuotationSentToInstaller(quotation as unknown as Record<string, unknown>, readInstallerReleaseMap())) {
       toast({
         title: "Already sent",
         description: "This quotation is already visible in installer dashboard.",
@@ -2003,7 +2376,7 @@ export default function AccountManagementPage() {
                   </div>
                 </div>
                 <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-1.5 w-full lg:flex-1">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-1.5 w-full lg:flex-1">
                     <div className="w-full sm:min-w-30">
                       <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
                         <SelectTrigger className="h-9 text-sm">
@@ -2049,6 +2422,28 @@ export default function AccountManagementPage() {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="w-full sm:min-w-44">
+                      <Select
+                        value={fileStatusFilter}
+                        onValueChange={(value) => setFileStatusFilter(value as FileStatusFilter)}
+                      >
+                        <SelectTrigger className="h-9 text-sm">
+                          <SelectValue placeholder="File status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All file statuses</SelectItem>
+                          <SelectItem value="installation:pending">Installation · Pending</SelectItem>
+                          <SelectItem value="installation:in_progress">Installation · In Progress</SelectItem>
+                          <SelectItem value="installation:completed">Installation · Completed</SelectItem>
+                          <SelectItem value="metering:pending">Metering · Pending</SelectItem>
+                          <SelectItem value="metering:in_progress">Metering · In Progress</SelectItem>
+                          <SelectItem value="metering:completed">Metering · Completed</SelectItem>
+                          <SelectItem value="final_confirmation:pending">Final confirmation · Pending</SelectItem>
+                          <SelectItem value="final_confirmation:in_progress">Final confirmation · In Progress</SelectItem>
+                          <SelectItem value="final_confirmation:completed">Final confirmation · Completed</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <div className="w-full sm:min-w-36">
                       <Select value={paymentDealerFilter} onValueChange={setPaymentDealerFilter}>
                         <SelectTrigger className="h-9 text-sm">
@@ -2084,6 +2479,7 @@ export default function AccountManagementPage() {
                       fileLoginDateRange?.from ||
                       fileLoginDateRange?.to ||
                       paymentInstallmentFilter !== "all" ||
+                      fileStatusFilter !== "all" ||
                       paymentDealerFilter !== "all") && (
                       <Button
                         type="button"
@@ -2094,6 +2490,7 @@ export default function AccountManagementPage() {
                           setApproveDateRange(undefined)
                           setFileLoginDateRange(undefined)
                           setPaymentInstallmentFilter("all")
+                          setFileStatusFilter("all")
                           setPaymentDealerFilter("all")
                         }}
                       >
@@ -2132,7 +2529,7 @@ export default function AccountManagementPage() {
                           <p className="text-xl font-bold text-foreground truncate">
                             ₹{paymentDashboardStats.totalAmount.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">Sum of subtotals</p>
+                          <p className="text-[11px] text-muted-foreground">Sum of subtotals (net of settlement)</p>
                         </div>
                       </CardContent>
                     </Card>
@@ -2191,9 +2588,9 @@ export default function AccountManagementPage() {
                       visibleCustomerPayments.map((payment) => {
                         const paidAmount = getTotalPaidPhases(payment.phases)
                         const remainingAmount = getDisplayRemaining(payment)
-                        const isZeroPaid = paidAmount <= 0
-                        const isCompletedPayment =
-                          payment.paymentStatus === "completed" || remainingAmount <= 0
+                        const effectiveStatus = getEffectivePaymentStatus(payment)
+                        const isZeroPaid = paidAmount <= 0 && remainingAmount > 0
+                        const isCompletedPayment = effectiveStatus === "completed"
 
                         return (
                           <Card
@@ -2206,7 +2603,7 @@ export default function AccountManagementPage() {
                                 : "border-border/60 bg-card/80"
                             }`}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-12 gap-x-4 gap-y-3 items-start lg:items-center">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(13,minmax(0,1fr))] gap-x-4 gap-y-3 items-start lg:items-center">
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
                                 <p className="text-sm font-semibold leading-tight">
                                   Customer: {payment.customerName}
@@ -2221,7 +2618,23 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                <p className="text-sm font-semibold">₹{payment.subtotal.toLocaleString()}</p>
+                                {getPaymentDiscountAmount(payment) > 0 ? (
+                                  <>
+                                    <p className="text-sm font-medium line-through text-muted-foreground">
+                                      ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
+                                    </p>
+                                    <p className="text-sm font-semibold text-foreground">
+                                      ₹{getPaymentEffectiveCap(payment).toLocaleString()}
+                                    </p>
+                                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                                      − ₹{getPaymentDiscountAmount(payment).toLocaleString()} d
+                                    </p>
+                                  </>
+                                ) : (
+                                  <p className="text-sm font-semibold">
+                                    ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
+                                  </p>
+                                )}
                               </div>
 
                               <div className="min-w-0">
@@ -2240,7 +2653,7 @@ export default function AccountManagementPage() {
                                   </TooltipTrigger>
                                   <TooltipContent side="top" className="max-w-[300px]">
                                     <div className="space-y-1.5">
-                                      <p className="font-semibold">Installments</p>
+                                      <p className="font-semibold">Breakdown</p>
                                       {payment.phases.length === 0 ? (
                                         <p>No installments yet</p>
                                       ) : (
@@ -2249,10 +2662,22 @@ export default function AccountManagementPage() {
                                           .sort((a, b) => a.phaseNumber - b.phaseNumber)
                                           .map((phase) => (
                                             <p key={`${payment.quotationId}-${phase.phaseNumber}`}>
-                                              {formatInstallmentShortLabel(phase)}: ₹
+                                              {formatInstallmentShortLabel(phase).toLowerCase()}: ₹
                                               {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
                                             </p>
                                           ))
+                                      )}
+                                      {(Number(payment.finalSettlementDiscount) ||
+                                        (isFinalSettlementApplied(payment)
+                                          ? getPaymentDiscountAmount(payment)
+                                          : 0)) > 0 && (
+                                        <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
+                                          d: ₹
+                                          {Math.round(
+                                            Number(payment.finalSettlementDiscount) ||
+                                              getPaymentDiscountAmount(payment),
+                                          ).toLocaleString("en-IN")}
+                                        </p>
                                       )}
                                     </div>
                                   </TooltipContent>
@@ -2261,13 +2686,50 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
-                                <p
-                                  className={`text-sm font-semibold ${
-                                    remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
-                                  }`}
-                                >
-                                  ₹{Math.max(remainingAmount, 0).toLocaleString()}
-                                </p>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <p
+                                      className={`text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2 inline-block ${
+                                        remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
+                                      }`}
+                                    >
+                                      ₹{Math.max(remainingAmount, 0).toLocaleString()}
+                                    </p>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="top" className="max-w-[300px]">
+                                    <div className="space-y-1.5">
+                                      <p className="font-semibold">Breakdown</p>
+                                      {payment.phases.length === 0 ? (
+                                        <p>No installments yet</p>
+                                      ) : (
+                                        payment.phases
+                                          .slice()
+                                          .sort((a, b) => a.phaseNumber - b.phaseNumber)
+                                          .map((phase) => (
+                                            <p key={`rem-${payment.quotationId}-${phase.phaseNumber}`}>
+                                              {formatInstallmentShortLabel(phase).toLowerCase()}: ₹
+                                              {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
+                                            </p>
+                                          ))
+                                      )}
+                                      {(Number(payment.finalSettlementDiscount) ||
+                                        (isFinalSettlementApplied(payment)
+                                          ? getPaymentDiscountAmount(payment)
+                                          : 0)) > 0 && (
+                                        <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
+                                          d: ₹
+                                          {Math.round(
+                                            Number(payment.finalSettlementDiscount) ||
+                                              getPaymentDiscountAmount(payment),
+                                          ).toLocaleString("en-IN")}
+                                        </p>
+                                      )}
+                                      <p className="border-t border-border/40 pt-1.5 mt-1 text-muted-foreground">
+                                        Remaining: ₹{Math.max(remainingAmount, 0).toLocaleString("en-IN")}
+                                      </p>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
                               </div>
 
                               <div className="min-w-0">
@@ -2277,22 +2739,45 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">File login</p>
-                                <p className="text-xs font-medium leading-snug">
-                                  {formatAdminDate(payment.fileLoginAt)}
-                                </p>
-                                {payment.fileLoginStatus ? (
-                                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                                    {fileLoginStatusLabel(payment.fileLoginStatus)}
-                                  </p>
-                                ) : null}
+                              <div className="min-w-0 lg:col-span-2">
+                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">File status</p>
+                                <div className="mt-1 space-y-1">
+                                  {getJourneyFileStatusStages(payment.quotation).map((item) => (
+                                    <div
+                                      key={item.label}
+                                      className="flex items-center justify-between gap-1.5 min-w-0"
+                                    >
+                                      <span className="text-[10px] text-muted-foreground truncate">{item.label}</span>
+                                      <Badge
+                                        variant="outline"
+                                        className={`text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium ${journeyStageStatusBadgeClass(item.status)}`}
+                                      >
+                                        {formatJourneyStageStatusLabel(item.status)}
+                                      </Badge>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
 
                               <div className="min-w-0">
                                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Payment Type</p>
                                 <p className="text-sm font-semibold">
                                   {getPaymentTypeLabel(payment.paymentType || payment.paymentMode)}
+                                </p>
+                                <p
+                                  className={`text-[11px] mt-0.5 font-medium ${
+                                    effectiveStatus === "completed"
+                                      ? "text-green-700"
+                                      : effectiveStatus === "partial"
+                                        ? "text-amber-700"
+                                        : "text-red-700"
+                                  }`}
+                                >
+                                  {effectiveStatus === "completed"
+                                    ? "Completed"
+                                    : effectiveStatus === "partial"
+                                      ? "Partial"
+                                      : "Pending"}
                                 </p>
                               </div>
 
@@ -2306,7 +2791,7 @@ export default function AccountManagementPage() {
                               <div className="col-span-2 sm:col-span-3 lg:col-span-2 flex justify-end">
                                 <div className="flex flex-wrap items-center justify-end gap-2">
                                   {isQuotationSentToInstaller(
-                                    payment.quotation as Record<string, unknown>,
+                                    payment.quotation as unknown as Record<string, unknown>,
                                     readInstallerReleaseMap(),
                                   ) ? (
                                     <Badge
@@ -2387,13 +2872,35 @@ export default function AccountManagementPage() {
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Payment management</DialogTitle>
-            <DialogDescription>
-              Record installments and, for Cash or Cash + loan, subsidy cheques. When a cheque clears, apply it to
-              installments so Remaining decreases. Submit saves to the server (or local storage when API is off).
-            </DialogDescription>
           </DialogHeader>
           {activePayment && (
             <div className="space-y-4">
+              {getDisplayRemaining(activePayment) > 0 && !isFinalSettlementApplied(activePayment) && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Final settlement</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Write off the remaining balance as discount <span className="font-medium">d</span> and
+                        mark payment as completed.
+                      </p>
+                      <p className="text-base font-semibold text-amber-800 dark:text-amber-300 mt-2">
+                        Settlement amount (d): ₹
+                        {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="default"
+                      className="shrink-0"
+                      onClick={submitFinalSettlement}
+                      disabled={isSavingFinalSettlement || isSavingInstallments}
+                    >
+                      {isSavingFinalSettlement ? "Applying..." : "Submit final settlement"}
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <div>
                   <p className="text-sm font-semibold">Customer: {activePayment.customerName}</p>
@@ -2415,14 +2922,45 @@ export default function AccountManagementPage() {
                         ? ` · ${fileLoginStatusLabel(activePayment.fileLoginStatus)}`
                         : ""}
                     </span>
+                    <span>
+                      <span className="font-medium text-foreground/80">File status: </span>
+                      {getJourneyFileStatusStages(activePayment.quotation)
+                        .map((item) => `${item.label} ${formatJourneyStageStatusLabel(item.status)}`)
+                        .join(" · ")}
+                    </span>
                   </div>
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Subtotal</p>
-                  <p className="text-base font-semibold">₹{activePayment.subtotal.toLocaleString()}</p>
+                  <p className="text-base font-semibold">
+                    ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                  </p>
+                  {getPaymentDiscountAmount(activePayment) > 0 && (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                      − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()} discount
+                    </p>
+                  )}
                   <p className="text-[11px] text-muted-foreground mt-1">
                     Remaining: ₹
                     {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
+                  </p>
+                  <p className="text-[11px] mt-1">
+                    <span className="text-muted-foreground">Payment status: </span>
+                    <span
+                      className={
+                        getEffectivePaymentStatus(activePayment) === "completed"
+                          ? "font-semibold text-green-700"
+                          : getEffectivePaymentStatus(activePayment) === "partial"
+                            ? "font-semibold text-amber-700"
+                            : "font-semibold text-red-700"
+                      }
+                    >
+                      {getEffectivePaymentStatus(activePayment) === "completed"
+                        ? "Completed"
+                        : getEffectivePaymentStatus(activePayment) === "partial"
+                          ? "Partial"
+                          : "Pending"}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -2463,7 +3001,7 @@ export default function AccountManagementPage() {
                     onClick={() => {
                                     const updated = customerPayments.map((p) =>
                         p.quotationId === activePayment.quotationId
-                          ? { ...p, phases: buildInstallments(p.subtotal, 1) }
+                          ? { ...p, phases: buildInstallments(getPaymentEffectiveCap(p), 1) }
                                         : p
                                     )
                                     setCustomerPayments(updated)
@@ -2487,7 +3025,7 @@ export default function AccountManagementPage() {
                               ? {
                                   ...p,
                                   phases: buildInstallments(
-                                    p.subtotal,
+                                    getPaymentEffectiveCap(p),
                                     p.phases.length + 1,
                                     [...p.phases].sort((a, b) => a.phaseNumber - b.phaseNumber),
                                   ),
@@ -2512,7 +3050,7 @@ export default function AccountManagementPage() {
                       const paidBefore = activePayment.phases
                         .filter((p) => p.phaseNumber < phase.phaseNumber)
                         .reduce((sum, p) => sum + p.paidAmount, 0)
-                      const remainingBefore = Math.max(activePayment.subtotal - paidBefore, 0)
+                      const remainingBefore = Math.max(getPaymentEffectiveCap(activePayment) - paidBefore, 0)
                                   
                                   return (
                                     <div
@@ -2838,11 +3376,15 @@ export default function AccountManagementPage() {
                     setInstallmentDialogOpen(false)
                     setActivePaymentId(null)
                   }}
-                  disabled={isSavingInstallments}
+                  disabled={isSavingInstallments || isSavingFinalSettlement}
                 >
                   Cancel
                 </Button>
-                <Button type="button" onClick={submitInstallments} disabled={isSavingInstallments}>
+                <Button
+                  type="button"
+                  onClick={submitInstallments}
+                  disabled={isSavingInstallments || isSavingFinalSettlement}
+                >
                   {isSavingInstallments ? "Submitting..." : "Submit"}
                 </Button>
               </div>

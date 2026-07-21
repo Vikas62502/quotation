@@ -831,6 +831,21 @@ function hasAdminMeteringWccPack(q: Quotation | Record<string, unknown>): boolea
   return Boolean(discom && assigned)
 }
 
+/** Server flag: Meter in Discom → WCC Pending (before Meter Installation Pending). */
+function isMeteringWccAfterDiscomFlag(q: Quotation | Record<string, unknown>): boolean {
+  const r = q as Record<string, unknown>
+  const v = r.meteringWccAfterDiscom ?? r.metering_wcc_after_discom
+  return v === true || v === "true" || v === 1 || v === "1"
+}
+
+function withMeteringWccAfterDiscomFlag(quotation: Quotation, value: boolean): Quotation {
+  return {
+    ...quotation,
+    meteringWccAfterDiscom: value,
+    metering_wcc_after_discom: value,
+  } as Quotation
+}
+
 /** Meter Installation Pending: both site photos already saved. */
 function hasAdminMeterInstallPack(q: Quotation | Record<string, unknown>): boolean {
   const r = q as Record<string, unknown>
@@ -2168,6 +2183,25 @@ export default function AdminPanelPage() {
             metering_approved_at: q.metering_approved_at ?? q.meteringApprovedAt,
             mcoAt: q.mcoAt ?? q.mco_at,
             mco_at: q.mco_at ?? q.mcoAt,
+            discomName: q.discomName ?? q.discom_name,
+            discom_name: q.discom_name ?? q.discomName,
+            discomLocation: q.discomLocation ?? q.discom_location,
+            discom_location: q.discom_location ?? q.discomLocation,
+            remarks: q.remarks ?? q.meteringRemarks ?? q.metering_remarks,
+            authorizedRepresentative: q.authorizedRepresentative ?? q.authorized_representative,
+            authorized_representative: q.authorized_representative ?? q.authorizedRepresentative,
+            assignedPersonName: q.assignedPersonName ?? q.assigned_person_name,
+            assigned_person_name: q.assigned_person_name ?? q.assignedPersonName,
+            visitLocation: q.visitLocation ?? q.visit_location ?? q.location,
+            visit_location: q.visit_location ?? q.visitLocation ?? q.location,
+            meteringWccAfterDiscom: q.meteringWccAfterDiscom ?? q.metering_wcc_after_discom,
+            metering_wcc_after_discom: q.metering_wcc_after_discom ?? q.meteringWccAfterDiscom,
+            meterType: q.meterType ?? q.meter_type,
+            meter_type: q.meter_type ?? q.meterType,
+            meterNo: q.meterNo ?? q.meter_no,
+            meter_no: q.meter_no ?? q.meterNo,
+            statusUpdatedAt: q.statusUpdatedAt ?? q.status_updated_at,
+            status_updated_at: q.status_updated_at ?? q.statusUpdatedAt,
             installationReadyForInstaller: q.installationReadyForInstaller ?? q.installation_ready_for_installer,
             installationReleasedAt: q.installationReleasedAt ?? q.installation_released_at,
             installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
@@ -3058,7 +3092,9 @@ export default function AdminPanelPage() {
   const meteringProcessingQuotations = sortedQuotations.filter(
     (q) => getAdminMeteringStage(q) === "processing" && !isAdminMeteringWccPending(q),
   )
-  const meteringApprovedQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "approved")
+  const meteringApprovedQuotations = sortedQuotations.filter(
+    (q) => getAdminMeteringStage(q) === "approved" && !isAdminMeteringPostDiscomWcc(q),
+  )
   const meteringMeterInstallQuotations = sortedQuotations.filter((q) => isAdminMeterInstallationPending(q))
   const meteringMcoQuotations = sortedQuotations.filter((q) => getAdminMeteringStage(q) === "mco")
   /** Metering → Bank process: loan + cash+loan not yet moved to pending payment. */
@@ -3581,20 +3617,43 @@ export default function AdminPanelPage() {
   }
 
   /**
-   * Metering → WCC Pending must match Installation → Approved Installation (same people),
-   * minus rows that already have Discom name + Assigned person saved.
+   * Metering → WCC Pending:
+   * 1) Entry: Installation → Approved, not yet Send to Metering — until WCC saved → Meter Pending.
+   * 2) After Meter in Discom: server flag `meteringWccAfterDiscom`, then → Meter Installation Pending.
+   * Send to Metering (`pending_metering`) with no Discom action → Meter Pending only.
    */
+  function isAdminMeteringPostDiscomWcc(quotation: Quotation): boolean {
+    return isMeteringWccAfterDiscomFlag(quotation)
+  }
+
+  function applyMeteringWccAfterDiscomLocal(quotationId: string, value: boolean) {
+    setQuotations((prev) =>
+      prev.map((q) => (q.id === quotationId ? withMeteringWccAfterDiscomFlag(q, value) : q)),
+    )
+  }
+
   function isAdminMeteringWccPending(quotation: Quotation): boolean {
+    const stage = getAdminMeteringStage(quotation)
+
+    // Post Meter in Discom → WCC (before Meter Installation Pending)
+    if (isAdminMeteringPostDiscomWcc(quotation)) {
+      if (!isInstallationUploadComplete(quotation, installerQueueApprovedIds)) return false
+      if (stage === "meter_install" || stage === "mco") return false
+      return true
+    }
+
+    // Send to Metering with no Discom/WCC action yet → Meter Pending only (not WCC)
+    if (stage === "processing") return false
+
+    // Entry: Installation approved, not yet sent into metering pipeline
     if (isInstallationPartialApproved(quotation as any)) return false
-    // Same visibility rules as Admin Installation tabs (excludes already-in-metering pipeline).
     if (!shouldShowInAdminInstallationTab(quotation as any, readInstallerReleaseMap())) return false
-    // Same “approved” rule as Approved Installation tab (upload complete / approved queue).
     if (!isInstallationUploadComplete(quotation, installerQueueApprovedIds)) return false
     if (hasAdminMeteringWccPack(quotation)) return false
     return true
   }
 
-  /** Meter Installation Pending: moved here via Meter in Discom → To Meter Installation Pending. */
+  /** Meter Installation Pending: after WCC Pending (post-Discom path). */
   function isAdminMeterInstallationPending(quotation: Quotation): boolean {
     return getAdminMeteringStage(quotation) === "meter_install"
   }
@@ -4401,6 +4460,7 @@ export default function AdminPanelPage() {
       })
       return
     }
+    const fromMeterInDiscom = isAdminMeteringPostDiscomWcc(quotation)
     try {
       setAdminWccSavingId(quotation.id)
       if (useApi) {
@@ -4411,10 +4471,54 @@ export default function AdminPanelPage() {
           discomLocation: discomLocation || undefined,
         })
         try {
-          await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
+          await api.admin.quotations.updateOperationalStatus(
+            quotation.id,
+            fromMeterInDiscom ? "meter_installation_pending" : "pending_metering",
+          )
         } catch {
           // Details saved; stage transition may be optional if already in metering.
         }
+      }
+      if (fromMeterInDiscom) {
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
+        applyAdminMeteringStageLocal(quotation.id, "meter_install")
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === quotation.id
+              ? ({
+                  ...withMeteringWccAfterDiscomFlag(q, false),
+                  discomName,
+                  discom_name: discomName,
+                  remarks,
+                  authorizedRepresentative: assignedPersonName,
+                  authorized_representative: assignedPersonName,
+                  assignedPersonName,
+                  assigned_person_name: assignedPersonName,
+                  discomLocation: discomLocation || undefined,
+                  discom_location: discomLocation || undefined,
+                } as Quotation)
+              : q,
+          ),
+        )
+        setAdminWccDraftByQuotation((prev) => {
+          const next = { ...prev }
+          delete next[quotation.id]
+          return next
+        })
+        try {
+          await loadData()
+        } catch {
+          // local optimistic update already applied
+        }
+        applyAdminMeteringStageLocal(quotation.id, "meter_install")
+        toast({
+          title: "WCC details saved",
+          description: "Moved to Meter Installation Pending.",
+        })
+        setAdminWccModalQuotationId(null)
+        setOperationalTab("metering")
+        setOperationalProgressTab("meter_install")
+        return
       }
       setQuotations((prev) =>
         prev.map((q) =>
@@ -4466,6 +4570,42 @@ export default function AdminPanelPage() {
     }
   }
 
+  /** Meter in Discom → WCC Pending only when Installation is approved (server flag). */
+  const moveAdminMeteringFromDiscomToWcc = async (quotation: Quotation) => {
+    if (!isInstallationUploadComplete(quotation, installerQueueApprovedIds)) {
+      toast({
+        title: "Installation not approved",
+        description:
+          "Customer installation must be completed and approved before moving to WCC Pending.",
+        variant: "destructive",
+      })
+      return
+    }
+    try {
+      if (useApi) {
+        await api.admin.quotations.setMeteringWccAfterDiscom(quotation.id, true)
+      }
+      applyMeteringWccAfterDiscomLocal(quotation.id, true)
+      try {
+        await loadData()
+      } catch {
+        // optimistic flag already applied
+      }
+      applyMeteringWccAfterDiscomLocal(quotation.id, true)
+      setOperationalProgressTab("wcc")
+      toast({
+        title: "Moved to WCC Pending",
+        description: "Complete WCC details, then the row moves to Meter Installation Pending.",
+      })
+    } catch (error) {
+      toast({
+        title: "Could not move to WCC Pending",
+        description: error instanceof Error ? error.message : "Failed to update metering WCC flag.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const setAdminMeteringStage = async (
     quotation: Quotation,
     target: "approved" | "meter_install" | "mco" | "processing",
@@ -4481,16 +4621,20 @@ export default function AdminPanelPage() {
           return
         }
         await ensureAdminMeteringApproved(quotation)
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         applyAdminMeteringStageLocal(quotation.id, "approved")
         setOperationalProgressTab("done")
         await loadData()
         applyAdminMeteringStageLocal(quotation.id, "approved")
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         toast({
           title: "Moved to Meter in Discom",
-          description: "Open Meter in Discom, then move rows to Meter Installation Pending.",
+          description:
+            "When installation is approved, move the row to WCC Pending, then Meter Installation Pending.",
         })
         return
       } else if (target === "meter_install") {
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         applyAdminMeteringStageLocal(quotation.id, "meter_install")
         setOperationalProgressTab("meter_install")
         try {
@@ -4509,12 +4653,14 @@ export default function AdminPanelPage() {
           // no-op
         }
         applyAdminMeteringStageLocal(quotation.id, "meter_install")
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         toast({
           title: "Moved to Meter Installation Pending",
           description: "Upload meter installation and plant live photos in this tab.",
         })
         return
       } else if (target === "mco") {
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         // Carry Meter Installation Pending draft fields into Final Step before stage change.
         const mipDraft = getAdminMeterInstallDraft(quotation)
         const assignedPersonName = mipDraft.assignedPersonName.trim()
@@ -4585,11 +4731,13 @@ export default function AdminPanelPage() {
         })
         return
       } else {
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         await api.metering.updateStatus(quotation.id, "move_back")
         applyAdminMeteringStageLocal(quotation.id, "processing")
         setOperationalProgressTab("pending")
         await loadData()
         applyAdminMeteringStageLocal(quotation.id, "processing")
+        applyMeteringWccAfterDiscomLocal(quotation.id, false)
         toast({ title: "Stage updated", description: "Moved back to Meter Pending." })
         return
       }
@@ -6691,7 +6839,8 @@ export default function AdminPanelPage() {
                           <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No WCC pending records</p>
                           <p className="text-xs mt-1">
-                            Same as Installation → Approved Installation until Discom name and Assigned person are saved.
+                            Includes Installation → Approved (enter Meter Pending after save), and rows sent from
+                            Meter in Discom when installation is approved (then Meter Installation Pending).
                           </p>
                         </div>
                       ) : (
@@ -6826,7 +6975,8 @@ export default function AdminPanelPage() {
                           <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No meter installation pending records</p>
                           <p className="text-xs mt-1">
-                            Move rows here from Meter in Discom. Use To Final Step to send them to Final Step.
+                            Move rows here from WCC Pending (after Meter in Discom when installation is
+                            approved). Use To Final Step to send them to Final Step.
                           </p>
                         </div>
                       ) : (
@@ -7140,8 +7290,15 @@ export default function AdminPanelPage() {
                             ? "No metering records match this overdue filter"
                             : operationalProgressTab === "mco"
                               ? "No Final Step records"
-                              : "No metering records found"}
+                              : operationalProgressTab === "pending"
+                                ? "No Meter Pending records"
+                                : "No metering records found"}
                         </p>
+                        {operationalProgressTab === "pending" && filterInstallOverdue === "all" ? (
+                          <p className="text-xs mt-1">
+                            Rows appear here after Send to Metering until you move them to Discom or complete WCC.
+                          </p>
+                        ) : null}
                         {operationalProgressTab === "mco" && filterInstallOverdue === "all" ? (
                           <p className="text-xs mt-1">
                             Send rows here from Meter Installation Pending with To Final Step.
@@ -7363,9 +7520,9 @@ export default function AdminPanelPage() {
                                             <Button
                                               size="sm"
                                               className="h-8 shrink-0"
-                                              onClick={() => void setAdminMeteringStage(quotation, "meter_install")}
+                                              onClick={() => void moveAdminMeteringFromDiscomToWcc(quotation)}
                                             >
-                                              To Meter Installation Pending
+                                              To WCC Pending
                                             </Button>
                                           </>
                                         )}
@@ -10022,7 +10179,7 @@ export default function AdminPanelPage() {
                             ) : null}
                           </div>
                           <div className="md:col-span-2">
-                            <Label>Property Documents (PDF) *</Label>
+                            <Label>Property Documents (PDF)</Label>
                             <Input
                               type="file"
                               accept="application/pdf,.pdf"
@@ -10142,16 +10299,6 @@ export default function AdminPanelPage() {
                         toast({
                           title: "Invalid phone number",
                           description: "Phone number must be 10 digits.",
-                          variant: "destructive",
-                        })
-                        return
-                      }
-
-                      const missingRequiredDocuments = !form.propertyDocumentPdf
-                      if (missingRequiredDocuments) {
-                        toast({
-                          title: "Required documents missing",
-                          description: "Please upload Property documents PDF.",
                           variant: "destructive",
                         })
                         return

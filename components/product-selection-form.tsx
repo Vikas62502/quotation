@@ -972,7 +972,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         setError("Please select ACDB and DCDB")
         return
       }
-    } else if (effectiveSystemType !== "customize") {
+    } else {
       if (
         !isPanelRowComplete(
           formData.panelBrand || "",
@@ -1012,15 +1012,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     //   setError("Please add at least one panel configuration for custom setup")
     //   return
     // }
-    
-    // Ensure system type is not customize (should not be possible, but double-check)
-    if (effectiveSystemType === "customize") {
-      setError("Customize option is not available. Please select a pre-configured system.")
-      return
-    }
 
     if (
-      effectiveSystemType !== "customize" &&
       (!Number.isFinite(Number(formData.systemPrice)) || Number(formData.systemPrice) <= 0)
     ) {
       setError("Please select a pricing table configuration so system price is set correctly.")
@@ -1549,41 +1542,55 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>ACDB</Label>
-                    <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select ACDB" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(() => {
-                          // Include current value in options if not already present
-                          const allOptions = [...new Set([...acdbOptionsList, formData.acdb].filter(Boolean))]
-                          return allOptions.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {option}
-                            </SelectItem>
-                          ))
-                        })()}
-                      </SelectContent>
-                    </Select>
+                    {dcrPackageAsPerSet && isTataDcrPackage ? (
+                      <>
+                        <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                        <p className="text-xs text-muted-foreground mt-1">Varies with the selected Tata DCR package set</p>
+                      </>
+                    ) : (
+                      <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select ACDB" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(() => {
+                            // Include current value in options if not already present
+                            const allOptions = [...new Set([...acdbOptionsList, formData.acdb].filter(Boolean))]
+                            return allOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))
+                          })()}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                   <div>
                     <Label>DCDB</Label>
-                    <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select DCDB" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(() => {
-                          // Include current value in options if not already present
-                          const allOptions = [...new Set([...dcdbOptionsList, formData.dcdb].filter(Boolean))]
-                          return allOptions.map((option) => (
-                            <SelectItem key={option} value={option}>
-                              {option}
-                            </SelectItem>
-                          ))
-                        })()}
-                      </SelectContent>
-                    </Select>
+                    {dcrPackageAsPerSet && isTataDcrPackage ? (
+                      <>
+                        <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                        <p className="text-xs text-muted-foreground mt-1">Varies with the selected Tata DCR package set</p>
+                      </>
+                    ) : (
+                      <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select DCDB" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(() => {
+                            // Include current value in options if not already present
+                            const allOptions = [...new Set([...dcdbOptionsList, formData.dcdb].filter(Boolean))]
+                            return allOptions.map((option) => (
+                              <SelectItem key={option} value={option}>
+                                {option}
+                              </SelectItem>
+                            ))
+                          })()}
+                        </SelectContent>
+                      </Select>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2177,47 +2184,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         value={formData.stateSubsidy || ""}
                         onChange={(e) => updateFormData("stateSubsidy", Number.parseInt(e.target.value) || 0)}
                         placeholder="Enter state subsidy amount"
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Hybrid Specific Fields */}
-              {/* Battery Configuration - shown when Hybrid Inverter is selected */}
-              {showBatteryFields && (
-                <div className="border-t border-border pt-6">
-                  <div className="flex items-center gap-2 mb-4">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Zap className="w-4 h-4 text-primary" />
-                    </div>
-                    <h3 className="text-sm font-medium">Battery Configuration</h3>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div>
-                      <Label>Hybrid Inverter Model</Label>
-                      <Input
-                        value={formData.hybridInverter || ""}
-                        onChange={(e) => updateFormData("hybridInverter", e.target.value)}
-                        placeholder="Enter hybrid inverter model"
-                      />
-                    </div>
-                    <div>
-                      <Label>Battery Capacity</Label>
-                      <Input
-                        value={formData.batteryCapacity || ""}
-                        onChange={(e) => updateFormData("batteryCapacity", e.target.value)}
-                        placeholder="e.g., 5kWh, 10kWh"
-                      />
-                    </div>
-                    <div>
-                      <Label>Battery Price (₹)</Label>
-                      <Input
-                        type="number"
-                        min="0"
-                        value={formData.batteryPrice || ""}
-                        onChange={(e) => updateFormData("batteryPrice", Number.parseInt(e.target.value) || 0)}
-                        placeholder="Enter battery price"
                       />
                     </div>
                   </div>
