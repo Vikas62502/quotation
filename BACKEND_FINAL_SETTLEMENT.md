@@ -3,12 +3,96 @@
 Frontend: `app/dashboard/account-management/page.tsx` → `submitFinalSettlement`  
 API client: `lib/api.ts` → `finalizeSettlement` (persists to DB; throws if nothing saved server-side)
 
-> **Persistence is now mandatory.** When the API is on, the frontend NO LONGER falls back
-> to `localStorage`. If the server does not persist the settlement, the UI shows
-> **"Settlement not saved"** and keeps the **Submit final settlement** button visible.
-> The button only disappears when the persisted state (below) comes back from `GET`.
+> **DATABASE IS THE ONLY SOURCE OF TRUTH — persistence is mandatory.**
+> The frontend has **removed ALL cache / localStorage / sessionStorage** for settlement.
+> It no longer remembers settlements on the device. Therefore:
+> - If the server does **not** persist the settlement, the UI shows **"Settlement not saved"**
+>   and keeps the **Submit final settlement** button visible (nothing is faked).
+> - The settled state (net subtotal, `d`, remaining 0, hidden button) appears for **every
+>   login on every device ONLY because the backend stored it and returns it on `GET`.**
+> - So the backend MUST (a) accept the write without error, (b) persist
+>   `finalSettlementApplied` + `finalSettlementAmount` + `discountAmount` + `remaining=0` +
+>   `paymentStatus=completed`, and (c) return them on every `GET`. There is no client-side
+>   safety net anymore.
 
-**Share this file with backend.**
+**Share this file with backend.** Copy-paste controllers with full logging: **`BACKEND_FINAL_SETTLEMENT.ts`**.
+
+---
+
+## STEP-BY-STEP backend implementation (do these in order)
+
+**Step 1 — DB migration.** Add the settlement columns:
+
+```sql
+ALTER TABLE quotations
+  ADD COLUMN IF NOT EXISTS final_settlement_applied BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS final_settlement_amount  NUMERIC(12,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS final_settlement_at      TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS final_settlement_by      UUID NULL,
+  ADD COLUMN IF NOT EXISTS remaining_amount         NUMERIC(12,2) DEFAULT 0;
+```
+
+**Step 2 — Model.** Map the columns on the `Quotation` Sequelize model:
+
+```js
+finalSettlementApplied: { type: DataTypes.BOOLEAN, defaultValue: false, field: 'final_settlement_applied' },
+finalSettlementAmount:  { type: DataTypes.DECIMAL(12,2), defaultValue: 0, field: 'final_settlement_amount' },
+finalSettlementAt:      { type: DataTypes.DATE, allowNull: true, field: 'final_settlement_at' },
+finalSettlementBy:      { type: DataTypes.UUID, allowNull: true, field: 'final_settlement_by' },
+remainingAmount:        { type: DataTypes.DECIMAL(12,2), defaultValue: 0, field: 'remaining_amount' },
+```
+
+**Step 3 — Controllers.** Copy the four handlers from `BACKEND_FINAL_SETTLEMENT.ts`
+(`postFinalSettlement`, `patchPricingWithSettlement`, `patchPaymentDetailsStatusOnly`,
+`patchDiscountAbsolute`). They already include the detailed `logFS` logging.
+
+**Step 4 — Routes.** Register (auth = `account-management` or `admin`):
+
+```js
+router.post ('/quotations/:id/final-settlement', authRequired, postFinalSettlement)
+router.patch('/quotations/:id/pricing',          authRequired, patchPricingWithSettlement)
+router.patch('/quotations/:id/payment-details',  authRequired, patchPaymentDetailsStatusOnly)
+router.patch('/quotations/:id/discount',         authRequired, patchDiscountAbsolute)
+```
+
+**Step 5 — GET serializer.** In `quotationToApiJson` (used by BOTH `GET /quotations` and
+`GET /quotations/:id`) always return: `finalSettlementApplied`, `finalSettlementAmount`,
+`discountAmount`, `pricing.discountAmount`, `remaining`, `remainingAmount`, `paymentStatus`,
+and the unchanged `installments`. See `extendQuotationJsonForSettlement`.
+
+**Step 6 — Verify with logs.** Click Submit and read the server terminal (see the log
+lifecycle below). Confirm `③ DIFF` shows `finalSettlementApplied: false→true` and
+`remaining: N→0`, and there are no `⚠ WARN` lines.
+
+---
+
+## Detailed console log lifecycle (what you'll see per request)
+
+Every handler logs a timestamped, staged trace so you can confirm the data end-to-end:
+
+```
+[FinalSettlement 2026-07-21T..Z] ▶ IN  POST /final-settlement {"quotationId":"QT-..","user":"..","role":"account-management","body":{"amount":2000,"settlementAmount":2000,"discountAmount":2000,"finalAmount":290000,"paymentStatus":"completed","remaining":0,"finalSettlementApplied":true}}
+[FinalSettlement ..Z] ⚙ COMPUTE {"existingDiscount":0,"amountAfterSubsidy":292000,"paid":290000,"discountAmount":2000,"settlementAmount":2000,"finalAmount":290000,"remaining":0,"paymentStatus":"completed"}
+[FinalSettlement ..Z] ① BEFORE (db state) {"discountAmount":0,"remaining":2000,"paymentStatus":"partial","finalSettlementApplied":false,"paidSum":290000,...}
+[FinalSettlement ..Z] ② AFTER (db state)  {"discountAmount":2000,"remaining":0,"paymentStatus":"completed","finalSettlementApplied":true,"finalSettlementAmount":2000,"paidSum":290000,...}
+[FinalSettlement ..Z] ③ DIFF (what changed) {"discountAmount":{"from":0,"to":2000},"remaining":{"from":2000,"to":0},"paymentStatus":{"from":"partial","to":"completed"},"finalSettlementApplied":{"from":false,"to":true},"finalSettlementAmount":{"from":0,"to":2000}}
+[FinalSettlement ..Z] ◀ OUT 200 {...quotation returned to client...}
+```
+
+Stage legend:
+| Tag | Meaning | Use it to check |
+|-----|---------|-----------------|
+| `▶ IN` | Request received | The body actually arrived with the right fields |
+| `⚙ COMPUTE` | Derived numbers | discount/finalAmount math is correct |
+| `① BEFORE` | DB row before save | Starting state (partial, remaining > 0) |
+| `② AFTER` | DB row after `reload()` | It really persisted (completed, remaining 0) |
+| `③ DIFF` | Exact field changes | Only intended fields changed; installments untouched |
+| `⚠ WARN` | Persist mismatch | Column not mapped → fix model/migration |
+| `◀ OUT` | Response payload | Client receives the settled fields |
+| `✖ ERROR` | Crash + stack | Exact line that caused a 500 |
+
+If `③ DIFF` is empty or `⚠ WARN` appears, the columns aren't mapped (redo Steps 1–2).
+If `✖ ERROR` appears, paste its `stack` — that's the 500 root cause.
 
 ---
 
@@ -45,6 +129,8 @@ d: ₹2,000
 
 ## Frontend call order (current — `finalizeSettlement`)
 
+The client tries up to **4 DB writes**, in order, until one succeeds:
+
 ```
 1) POST /api/quotations/{id}/final-settlement          ← PREFERRED (atomic, one DB write)
       { amount: 2000, settlementAmount: 2000,
@@ -52,7 +138,7 @@ d: ₹2,000
         paymentStatus: "completed", remaining: 0, remainingAmount: 0,
         finalSettlementApplied: true }
 
-   If that returns 404/405/501, the client falls back to:
+   If 404/405/501 (missing) OR "already cleared" (see below), falls back to:
 
 2) PATCH /api/quotations/{id}/pricing
       { discountAmount: existingDiscount + settlementAmount, totalAmount, finalAmount }
@@ -60,14 +146,28 @@ d: ₹2,000
       { paymentStatus: "completed", remaining: 0, remainingAmount: 0,
         finalSettlementAmount: 2000, finalSettlementApplied: true,
         replaceInstallments: false }
-   then (last) PATCH /api/quotations/{id}/discount      { discount: <INR> }
 
-3) GET /api/quotations?status=approved                 ← must reflect settled state
+3) PATCH /api/quotations/{id}/discount                 { discount: <INR> }
+
+4) PATCH /api/quotations/{id}/payment-details          ← FLAG-ONLY (no discount)
+      { paymentStatus: "completed", remaining: 0, remainingAmount: 0,
+        finalSettlementAmount: 2000, finalSettlementApplied: true,
+        replaceInstallments: false }
+   ^ This is the GLOBAL fallback for the subtotal>amountAfterSubsidy mismatch: when the
+     server refuses a discount because it thinks the file is already paid, it must still
+     accept this flag write so EVERY login sees remaining 0 + hidden button.
+
+5) GET /api/quotations?status=approved                 ← must reflect settled state
 ```
 
-**If every write above fails, `finalizeSettlement` throws** and the frontend does not
-mark the row settled. So at least one of `POST /final-settlement`, `PATCH /pricing`,
-or `PATCH /discount` MUST succeed and persist.
+**"Already cleared" responses** (message containing `cannot exceed remaining`,
+`remaining (0)`, `already settled`, `already completed`, `nothing to settle`, or
+`paid … exceed`) are NOT treated as fatal — the client keeps trying the next write and,
+if the server still reports the file cleared, marks it settled. So the backend should
+prefer to **accept and persist the flag** rather than 400 on these.
+
+**Only if all 4 writes fail (and the server does not report it cleared)** does the client
+show "Settlement not saved". So at least one endpoint MUST persist `finalSettlementApplied`.
 
 ### Critical: do **not** require installment rewrite
 

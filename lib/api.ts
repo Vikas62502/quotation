@@ -1175,8 +1175,35 @@ export const api = {
         finalAmount: number
         paymentType?: string
         paymentMode?: string
+        /** Existing installments (unchanged) — used to persist via the proven payment-details path. */
+        phases?: Array<{
+          phaseNumber: number
+          phaseName: string
+          amount: number
+          paidAmount: number
+          status: "pending" | "partial" | "completed"
+          dueDate?: string
+          paymentDate?: string
+          paymentMode?: string
+          transactionId?: string
+          note?: string
+        }>
       },
     ) => {
+      // Diagnostics: record every attempt so we can see exactly what the backend returns.
+      const attemptLog: Array<{ endpoint: string; ok: boolean; code?: string; message?: string }> = []
+      const logAttempt = (endpoint: string, error?: unknown) => {
+        if (!error) {
+          attemptLog.push({ endpoint, ok: true })
+        } else {
+          attemptLog.push({
+            endpoint,
+            ok: false,
+            code: error instanceof ApiError ? error.code : "UNKNOWN",
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
       const atomicBody = {
         amount: payload.settlementAmount,
         settlementAmount: payload.settlementAmount,
@@ -1188,22 +1215,64 @@ export const api = {
         finalSettlementApplied: true,
       }
 
+      const isMissingEndpoint = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+
+      // A 5xx on one endpoint (buggy handler) shouldn't stop us trying the others.
+      const isServerError = (error: unknown) =>
+        error instanceof ApiError &&
+        (error.code === "HTTP_500" ||
+          error.code === "HTTP_502" ||
+          error.code === "HTTP_503" ||
+          error.code === "HTTP_504")
+
+      // Server already considers the balance cleared (its amountAfterSubsidy < AM subtotal),
+      // so it rejects a write-off it thinks is unnecessary. That's still "settled" —
+      // fall through to persist the completed/settled FLAG so all logins see it.
+      const isServerAlreadyCleared = (error: unknown) => {
+        if (!(error instanceof ApiError)) return false
+        const m = String(error.message || "").toLowerCase()
+        return (
+          m.includes("cannot exceed remaining") ||
+          m.includes("remaining (0)") ||
+          m.includes("remaining 0") ||
+          m.includes("already settled") ||
+          m.includes("already completed") ||
+          m.includes("nothing to settle") ||
+          m.includes("paid") && m.includes("exceed")
+        )
+      }
+
+      let persisted = false
+      let lastError: unknown = null
+
+      const dumpDiagnostics = () => {
+        try {
+          console.warn("[Final settlement] attempts:", JSON.stringify(attemptLog, null, 2))
+        } catch {
+          console.warn("[Final settlement] attempts:", attemptLog)
+        }
+      }
+
       // 1) Preferred: single atomic endpoint that persists discount + status + remaining.
       try {
-        return await apiRequest(`/quotations/${quotationId}/final-settlement`, {
+        const res = await apiRequest(`/quotations/${quotationId}/final-settlement`, {
           method: "POST",
           body: atomicBody,
         })
+        logAttempt("POST /final-settlement")
+        return res
       } catch (error) {
-        const missing =
-          error instanceof ApiError &&
-          (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
-        if (!missing) throw error
+        logAttempt("POST /final-settlement", error)
+        if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error) && !isServerError(error)) {
+          dumpDiagnostics()
+          throw error
+        }
+        lastError = error
       }
 
-      // 2) Fallback: persist discount via pricing, then complete payment (no installment rewrite).
-      let persisted = false
-      let lastError: unknown = null
+      // 2) Persist discount via pricing, then complete payment (no installment rewrite).
       try {
         const res = await apiRequest(`/quotations/${quotationId}/pricing`, {
           method: "PATCH",
@@ -1213,8 +1282,8 @@ export const api = {
             finalAmount: payload.finalAmount,
           },
         })
+        logAttempt("PATCH /pricing")
         persisted = true
-        // Best-effort: also mark payment completed / remaining 0.
         try {
           await apiRequest(`/quotations/${quotationId}/payment-details`, {
             method: "PATCH",
@@ -1229,24 +1298,93 @@ export const api = {
               remainingAmount: 0,
             },
           })
-        } catch {
-          // Discount persisted; status can be recomputed by backend from discount + paid.
+          logAttempt("PATCH /payment-details (status)")
+        } catch (statusErr) {
+          logAttempt("PATCH /payment-details (status)", statusErr)
         }
+        dumpDiagnostics()
         return res
       } catch (error) {
-        lastError = error
+        logAttempt("PATCH /pricing", error)
+        if (!isServerAlreadyCleared(error)) lastError = error
       }
 
-      // 3) Last fallback: discount endpoint (absolute INR).
+      // 3) Discount endpoint (absolute INR) — core quotation feature, most likely to work.
       try {
         const res = await apiRequest(`/quotations/${quotationId}/discount`, {
           method: "PATCH",
           body: { discount: payload.discountAmount },
         })
+        logAttempt("PATCH /discount")
         persisted = true
+        dumpDiagnostics()
         return res
       } catch (error) {
-        lastError = error
+        logAttempt("PATCH /discount", error)
+        if (!isServerAlreadyCleared(error)) lastError = error
+      }
+
+      // 4) PROVEN PATH — payment-details WITH installments. This is the same call the normal
+      // "Submit installments" uses and that the backend already persists reliably. Send the
+      // existing (unchanged) phases plus the settlement fields so status + flags land in the DB.
+      if (Array.isArray(payload.phases)) {
+        try {
+          const res = await apiRequest(`/quotations/${quotationId}/payment-details`, {
+            method: "PATCH",
+            body: {
+              paymentType: payload.paymentType,
+              paymentMode: payload.paymentMode,
+              paymentStatus: "completed",
+              replaceInstallments: true,
+              installments: payload.phases,
+              phases: payload.phases,
+              discountAmount: payload.discountAmount,
+              finalSettlementApplied: true,
+              finalSettlementAmount: payload.settlementAmount,
+              remaining: 0,
+              remainingAmount: 0,
+            },
+          })
+          logAttempt("PATCH /payment-details (phases)")
+          persisted = true
+          dumpDiagnostics()
+          return res
+        } catch (error) {
+          logAttempt("PATCH /payment-details (phases)", error)
+          if (!isServerAlreadyCleared(error)) lastError = error
+        }
+      }
+
+      // 5) Last resort — flag-only payment-details (no discount, no phases).
+      try {
+        const res = await apiRequest(`/quotations/${quotationId}/payment-details`, {
+          method: "PATCH",
+          body: {
+            paymentType: payload.paymentType,
+            paymentMode: payload.paymentMode,
+            paymentStatus: "completed",
+            replaceInstallments: false,
+            finalSettlementApplied: true,
+            finalSettlementAmount: payload.settlementAmount,
+            remaining: 0,
+            remainingAmount: 0,
+          },
+        })
+        logAttempt("PATCH /payment-details (flag-only)")
+        persisted = true
+        dumpDiagnostics()
+        return res
+      } catch (error) {
+        logAttempt("PATCH /payment-details (flag-only)", error)
+        if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error)) lastError = error
+      }
+
+      dumpDiagnostics()
+
+      // If the server already reports the file as cleared, treat as settled even if the
+      // flag write could not be confirmed (caller will reconcile the display).
+      if (!persisted && isServerAlreadyCleared(lastError)) {
+        return { alreadySettled: true }
       }
 
       if (!persisted) {

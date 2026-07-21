@@ -121,14 +121,6 @@ interface CustomerPayment {
 
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
-/** Cache of applied final settlements so the settled state survives refresh even if the backend GET hasn't echoed the flag yet. */
-const FINAL_SETTLEMENT_KEY = "quotationFinalSettlements"
-
-type StoredFinalSettlement = {
-  discountAmount: number
-  settlementAmount: number
-  appliedAt: string
-}
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -343,27 +335,6 @@ function persistSubsidyChequesForQuotation(quotationId: string, cheques: Subsidy
   const map = getStoredSubsidyChequesMap()
   map[quotationId] = cheques
   saveSubsidyChequesMap(map)
-}
-
-function getStoredFinalSettlements(): Record<string, StoredFinalSettlement> {
-  try {
-    const raw = localStorage.getItem(FINAL_SETTLEMENT_KEY)
-    if (!raw) return {}
-    const p = JSON.parse(raw)
-    return p && typeof p === "object" ? p : {}
-  } catch {
-    return {}
-  }
-}
-
-function persistFinalSettlement(quotationId: string, record: StoredFinalSettlement) {
-  try {
-    const map = getStoredFinalSettlements()
-    map[quotationId] = record
-    localStorage.setItem(FINAL_SETTLEMENT_KEY, JSON.stringify(map))
-  } catch {
-    // Non-fatal: cache only.
-  }
 }
 
 /** Apply cleared subsidy amount across installments in order (does not exceed phase caps). */
@@ -1100,21 +1071,14 @@ export default function AccountManagementPage() {
         const mergedSubsidy: SubsidyChequeRecord[] =
           fromApiCheques.length > 0 ? fromApiCheques : subsidyMap[q.id || ""] || []
 
-        const apiDiscountAmount = getQuotationDiscountAmount(q)
-        // Merge a locally cached settlement so the settled state survives refresh even
-        // if the backend GET hasn't echoed discount/flag yet.
-        const cachedSettlement = getStoredFinalSettlements()[q.id || ""]
+        // Settlement state comes ONLY from the database (no cache / local / session storage).
+        const discountAmount = getQuotationDiscountAmount(q)
         const apiSettled = getQuotationFinalSettlementApplied(q)
-        const discountAmount =
-          !apiSettled && cachedSettlement && cachedSettlement.discountAmount > apiDiscountAmount
-            ? cachedSettlement.discountAmount
-            : apiDiscountAmount
         const originalSubtotal = subtotal
         const effectiveSubtotal = Math.max(0, originalSubtotal - discountAmount)
         const remFromApi = pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>)
         const settlementApplied =
           apiSettled ||
-          !!cachedSettlement ||
           (discountAmount > 0 &&
             Math.max(0, originalSubtotal - getTotalPaidPhases(phases)) <= discountAmount + 0.5)
 
@@ -1138,7 +1102,6 @@ export default function AccountManagementPage() {
                   (q as Quotation & Record<string, unknown>).final_settlement_amount ??
                   0,
               ) ||
-              cachedSettlement?.settlementAmount ||
               undefined
             : undefined,
           totalAmount: q.totalAmount || 0,
@@ -1690,6 +1653,10 @@ export default function AccountManagementPage() {
             finalAmount: pricingFinalAmount,
             paymentType: activePayment.paymentType,
             paymentMode: activePayment.paymentMode,
+            phases: normalizePhaseAmountsForApi(
+              coercePhasesPaymentModes(activePayment.phases),
+              getPaymentEffectiveCap(activePayment),
+            ),
           })
         } catch (settleError) {
           // The server may already consider the balance cleared — its amountAfterSubsidy
@@ -1707,30 +1674,17 @@ export default function AccountManagementPage() {
           if (!serverAlreadyCleared) throw settleError
         }
 
-        // Cache before re-fetch so a reload keeps the settled view (net subtotal, d,
-        // remaining 0, hidden button) even if the backend GET hasn't echoed the flag.
-        persistFinalSettlement(activePayment.quotationId, {
-          discountAmount: newDiscount,
-          settlementAmount: settlementDiscount,
-          appliedAt: new Date().toISOString(),
-        })
-
         // Re-fetch from server so the settled state (and hidden button) reflects the DB.
+        // The database is the single source of truth — no local/cache/session storage.
         try {
           await loadApprovedQuotations()
         } catch {
-          // Non-fatal: settlement already persisted; local state below keeps UI correct.
+          // Non-fatal: in-memory optimistic update below keeps the current view correct.
         }
       }
 
-      // Cache the settlement so the settled state (net subtotal, d, remaining 0, hidden
-      // button) survives a refresh even before the backend GET echoes the flag.
-      persistFinalSettlement(activePayment.quotationId, {
-        discountAmount: newDiscount,
-        settlementAmount: settlementDiscount,
-        appliedAt: new Date().toISOString(),
-      })
-
+      // In-memory optimistic update only. The database is the source of truth
+      // (loadApprovedQuotations above already re-fetched the settled state).
       setCustomerPayments((prev) =>
         prev.map((payment) =>
           payment.quotationId === activePayment.quotationId
@@ -1763,39 +1717,8 @@ export default function AccountManagementPage() {
       setActivePaymentId(null)
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to apply final settlement."
-      if (!useApi) {
-        // Offline/local mode only: apply locally so Remaining → 0 and d shows.
-        const originalSubtotalLocal = getPaymentOriginalSubtotal(activePayment)
-        const settlementLocal = Math.round(getDisplayRemaining(activePayment))
-        if (settlementLocal > 0) {
-          const newDiscountLocal = getPaymentDiscountAmount(activePayment) + settlementLocal
-          setCustomerPayments((prev) =>
-            prev.map((payment) =>
-              payment.quotationId === activePayment.quotationId
-                ? {
-                    ...payment,
-                    subtotal: Math.max(0, originalSubtotalLocal - newDiscountLocal),
-                    originalSubtotal: originalSubtotalLocal,
-                    discountAmount: newDiscountLocal,
-                    paymentStatus: "completed",
-                    remainingFromApi: 0,
-                    finalSettlementApplied: true,
-                    finalSettlementDiscount:
-                      (Number(payment.finalSettlementDiscount) || 0) + settlementLocal,
-                  }
-                : payment,
-            ),
-          )
-          toast({
-            title: "Final settlement applied locally",
-            description: `d: ₹${settlementLocal.toLocaleString("en-IN")}.`,
-          })
-          setInstallmentDialogOpen(false)
-          setActivePaymentId(null)
-          return
-        }
-      }
-      // API mode: do NOT hide the button — settlement was not saved to the database.
+      // Database-only: NO local / cache / session fallback. If the server did not save it,
+      // nothing is settled and the button stays visible so it can be retried.
       toast({
         title: "Settlement not saved",
         description: `Could not save to the database, so nothing was settled. ${message}`,

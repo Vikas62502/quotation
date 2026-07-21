@@ -61,6 +61,59 @@ const N = (v) => {
 }
 const round = (v) => Math.round(N(v))
 
+/**
+ * Console logger for settlement — shows the data at every step so you can confirm the
+ * request arrived and was saved correctly. Replace with your logInfo/logError if preferred.
+ *
+ * Sample output on POST /final-settlement:
+ *   [FinalSettlement] ▶ IN  POST /final-settlement { quotationId: 'QT-..', user: '..', role: 'account-management', body: {...} }
+ *   [FinalSettlement] ⚙ COMPUTE { amountAfterSubsidy: 292000, paid: 290000, existingDiscount: 0, discountAmount: 2000, settlementAmount: 2000, finalAmount: 290000 }
+ *   [FinalSettlement] ✔ SAVED { id: 'QT-..', discountAmount: 2000, remaining: 0, paymentStatus: 'completed', finalSettlementApplied: true, finalSettlementAmount: 2000 }
+ *   [FinalSettlement] ◀ OUT 200 { ...quotation slice returned to client... }
+ */
+const logFS = (stage, data) => {
+  const ts = new Date().toISOString()
+  try {
+    console.log(`[FinalSettlement ${ts}] ${stage}`, data === undefined ? "" : JSON.stringify(data))
+  } catch {
+    console.log(`[FinalSettlement ${ts}] ${stage}`, data)
+  }
+}
+
+/** Compact snapshot of the money/settlement fields — used for BEFORE / AFTER / DIFF logs. */
+function snapshotQuotation(quotation) {
+  const p = quotation.pricing || {}
+  return {
+    status: quotation.status,
+    subtotal: N(quotation.subtotal),
+    amountAfterSubsidy: N(quotation.amountAfterSubsidy ?? p.amountAfterSubsidy),
+    discount: N(quotation.discount),
+    discountAmount: N(quotation.discountAmount ?? p.discountAmount),
+    finalAmount: N(quotation.finalAmount ?? p.finalAmount),
+    totalAmount: N(quotation.totalAmount ?? p.totalAmount),
+    remaining: N(quotation.remaining),
+    remainingAmount: N(quotation.remainingAmount),
+    paymentStatus: quotation.paymentStatus,
+    finalSettlementApplied: quotation.finalSettlementApplied === true,
+    finalSettlementAmount: N(quotation.finalSettlementAmount),
+    installmentsCount: Array.isArray(quotation.paymentPhases || quotation.installments)
+      ? (quotation.paymentPhases || quotation.installments).length
+      : 0,
+    paidSum: sumPaidInstallments(quotation),
+  }
+}
+
+/** Field-by-field before→after diff so you can see exactly what changed in the DB. */
+function diffSnapshots(before, after) {
+  const changed = {}
+  for (const key of Object.keys(after)) {
+    if (JSON.stringify(before[key]) !== JSON.stringify(after[key])) {
+      changed[key] = { from: before[key], to: after[key] }
+    }
+  }
+  return changed
+}
+
 function requireAmUser(req, res) {
   const user = req.user || req.dealer
   if (!user || !["account-management", "admin"].includes(user.role)) {
@@ -125,7 +178,7 @@ function computeSettlement(quotation, body) {
   const settlementAmount = round(body.settlementAmount ?? body.amount ?? 0)
   const finalAmount = Math.max(0, amountAfterSubsidy - discountAmount)
 
-  return {
+  const result = {
     amountAfterSubsidy,
     paid,
     discountAmount,
@@ -134,10 +187,15 @@ function computeSettlement(quotation, body) {
     remaining: 0,
     paymentStatus: "completed",
   }
+  logFS("⚙ COMPUTE", { existingDiscount: existing, ...result })
+  return result
 }
 
 /** Persist settlement WITHOUT touching installment rows. */
 async function applySettlement(quotation, s, user, { transaction } = {}) {
+  const before = snapshotQuotation(quotation)
+  logFS("① BEFORE (db state)", before)
+
   const pricing = { ...(quotation.pricing || {}) }
   pricing.discountAmount = s.discountAmount
   pricing.totalAmount = s.finalAmount
@@ -166,6 +224,22 @@ async function applySettlement(quotation, s, user, { transaction } = {}) {
     { transaction },
   )
   await quotation.reload({ transaction })
+  const after = snapshotQuotation(quotation)
+  logFS("② AFTER (db state)", after)
+  logFS("③ DIFF (what changed)", diffSnapshots(before, after))
+
+  // Sanity checks — warn if the row did not actually change as expected.
+  if (after.finalSettlementApplied !== true) {
+    logFS("⚠ WARN finalSettlementApplied NOT persisted — check model column mapping", {
+      id: quotation.id,
+    })
+  }
+  if (after.remaining !== 0 || after.remainingAmount !== 0) {
+    logFS("⚠ WARN remaining not 0 after save — check remaining column mapping", {
+      remaining: after.remaining,
+      remainingAmount: after.remainingAmount,
+    })
+  }
   return quotation
 }
 
@@ -188,18 +262,27 @@ async function applySettlement(quotation, s, user, { transaction } = {}) {
 export async function postFinalSettlement(req, res) {
   const user = requireAmUser(req, res)
   if (!user) return
+  const quotationId = req.params.quotationId || req.params.id
+  logFS("▶ IN  POST /final-settlement", {
+    quotationId,
+    user: user?.id,
+    role: user?.role,
+    body: req.body,
+  })
   try {
-    const quotationId = req.params.quotationId || req.params.id
     const quotation = await Quotation.findByPk(quotationId)
     if (!quotation) {
+      logFS("◀ OUT 404", { quotationId })
       return res.status(404).json({ success: false, error: { code: "RES_001", message: "Not found" } })
     }
     if (String(quotation.status || "").toLowerCase() !== "approved") {
+      logFS("◀ OUT 400 not-approved", { quotationId, status: quotation.status })
       return res.status(400).json({ success: false, error: { code: "VAL_010", message: "Not approved" } })
     }
 
     // Idempotent: already settled → return 200 with current state, do not double-add.
     if (quotation.finalSettlementApplied === true) {
+      logFS("◀ OUT 200 already-settled", { quotationId })
       return res.json({ success: true, data: quotationToApiJson(quotation) })
     }
 
@@ -208,8 +291,11 @@ export async function postFinalSettlement(req, res) {
     // "completed, remaining 0" (with discount clamped so payable never drops below paid).
     const s = computeSettlement(quotation, req.body || {})
     await applySettlement(quotation, s, user)
-    return res.json({ success: true, data: quotationToApiJson(quotation) })
+    const data = quotationToApiJson(quotation)
+    logFS("◀ OUT 200", data)
+    return res.json({ success: true, data })
   } catch (e) {
+    logFS("✖ ERROR final-settlement", { quotationId, message: e?.message, stack: e?.stack })
     console.error("[final-settlement] error", e)
     return res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
   }
@@ -234,10 +320,12 @@ export async function postFinalSettlement(req, res) {
 export async function patchPricingWithSettlement(req, res) {
   const user = requireAmUser(req, res)
   if (!user) return
+  const quotationId = req.params.quotationId || req.params.id
+  logFS("▶ IN  PATCH /pricing", { quotationId, user: user?.id, role: user?.role, body: req.body })
   try {
-    const quotationId = req.params.quotationId || req.params.id
     const quotation = await Quotation.findByPk(quotationId)
     if (!quotation) {
+      logFS("◀ OUT 404", { quotationId })
       return res.status(404).json({ success: false, error: { code: "RES_001", message: "Not found" } })
     }
 
@@ -246,6 +334,7 @@ export async function patchPricingWithSettlement(req, res) {
     const discountAmount = round(body.discountAmount)
 
     if (discountAmount < 0 || discountAmount > amountAfterSubsidy) {
+      logFS("◀ OUT 400 discount-out-of-range", { quotationId, discountAmount, amountAfterSubsidy })
       return res.status(400).json({
         success: false,
         error: {
@@ -258,8 +347,11 @@ export async function patchPricingWithSettlement(req, res) {
     // Reuse the same settlement application (idempotent, no installment rewrite).
     const s = computeSettlement(quotation, { discountAmount })
     await applySettlement(quotation, s, user)
-    return res.json({ success: true, data: quotationToApiJson(quotation) })
+    const data = quotationToApiJson(quotation)
+    logFS("◀ OUT 200", data)
+    return res.json({ success: true, data })
   } catch (e) {
+    logFS("✖ ERROR pricing", { quotationId, message: e?.message, stack: e?.stack })
     console.error("[pricing settlement] error", e)
     return res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
   }
@@ -292,10 +384,18 @@ export async function patchPricingWithSettlement(req, res) {
 export async function patchPaymentDetailsStatusOnly(req, res) {
   const user = requireAmUser(req, res)
   if (!user) return
+  const quotationId = req.params.quotationId || req.params.id
+  logFS("▶ IN  PATCH /payment-details", {
+    quotationId,
+    user: user?.id,
+    role: user?.role,
+    hasPhases: Array.isArray((req.body || {}).phases) || Array.isArray((req.body || {}).installments),
+    body: req.body,
+  })
   try {
-    const quotationId = req.params.quotationId || req.params.id
     const quotation = await Quotation.findByPk(quotationId)
     if (!quotation) {
+      logFS("◀ OUT 404", { quotationId })
       return res.status(404).json({ success: false, error: { code: "RES_001", message: "Not found" } })
     }
 
@@ -303,6 +403,7 @@ export async function patchPaymentDetailsStatusOnly(req, res) {
     const hasPhases = Array.isArray(body.phases) || Array.isArray(body.installments)
     if (hasPhases) {
       // Delegate to the installment-replace controller.
+      logFS("→ delegate to installment-replace (phases present)", { quotationId })
       return patchQuotationPaymentDetailsWithReplace(req, res)
     }
 
@@ -345,11 +446,15 @@ export async function patchPaymentDetailsStatusOnly(req, res) {
       patch.paymentStatus = "completed"
     }
 
+    logFS("⚙ PATCH body", patch)
     // Installment rows are intentionally left untouched here.
     await quotation.update(patch)
     await quotation.reload()
-    return res.json({ success: true, data: quotationToApiJson(quotation) })
+    const data = quotationToApiJson(quotation)
+    logFS("◀ OUT 200", data)
+    return res.json({ success: true, data })
   } catch (e) {
+    logFS("✖ ERROR payment-details", { quotationId, message: e?.message, stack: e?.stack })
     console.error("[payment-details status-only] error", e)
     return res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
   }
@@ -368,10 +473,12 @@ export async function patchPaymentDetailsStatusOnly(req, res) {
 export async function patchDiscountAbsolute(req, res) {
   const user = requireAmUser(req, res)
   if (!user) return
+  const quotationId = req.params.quotationId || req.params.id
+  logFS("▶ IN  PATCH /discount", { quotationId, user: user?.id, role: user?.role, body: req.body })
   try {
-    const quotationId = req.params.quotationId || req.params.id
     const quotation = await Quotation.findByPk(quotationId)
     if (!quotation) {
+      logFS("◀ OUT 404", { quotationId })
       return res.status(404).json({ success: false, error: { code: "RES_001", message: "Not found" } })
     }
 
@@ -379,11 +486,15 @@ export async function patchDiscountAbsolute(req, res) {
     const amountAfterSubsidy = pickAmountAfterSubsidy(quotation)
     const discountAmount =
       raw > 0 && raw <= 100 ? round((raw / 100) * amountAfterSubsidy) : round(raw)
+    logFS("⚙ discount interpret", { raw, treatedAs: raw > 0 && raw <= 100 ? "percent" : "absolute", discountAmount })
 
     const s = computeSettlement(quotation, { discountAmount })
     await applySettlement(quotation, s, user)
-    return res.json({ success: true, data: quotationToApiJson(quotation) })
+    const data = quotationToApiJson(quotation)
+    logFS("◀ OUT 200", data)
+    return res.json({ success: true, data })
   } catch (e) {
+    logFS("✖ ERROR discount", { quotationId, message: e?.message, stack: e?.stack })
     console.error("[discount absolute] error", e)
     return res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
   }
@@ -470,7 +581,12 @@ ALTER TABLE quotations
  1. JITENDRA: paid 290000, remaining 2000 → POST /final-settlement { amount:2000 }
     → 200; GET returns discountAmount 2000, remaining 0, paymentStatus completed,
       finalSettlementApplied true, installments still sum 290000.
- 2. Refresh (and other device / role): button stays hidden (flag persisted).
+ 2. Refresh (and OTHER login / device / role): button stays hidden, remaining 0, `d` shows —
+    because `final_settlement_applied` + `final_settlement_amount` are PERSISTED and returned
+    on GET. This is the "make it global, not local cache" requirement.
+ 2b. Mismatch case (SUSHILA: subtotal 190000 > amountAfterSubsidy 189000, server remaining 0):
+    the FLAG-ONLY PATCH /payment-details (attempt 4) must still 200 and persist
+    final_settlement_applied=true so all logins see it — do NOT 400 with "cannot exceed remaining".
  3. Idempotent: POST /final-settlement twice → discount stays 2000 (no double-add), still 200.
  4. NO "total paid cannot exceed payable after discount" for settlement calls.
  5. NO "Final amount must be between 0 and amount after subsidy" on pricing PATCH.
