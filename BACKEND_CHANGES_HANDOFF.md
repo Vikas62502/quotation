@@ -1694,30 +1694,64 @@ Extend existing per-file upload allowlist to include the four final-confirmation
 
 ## 11. Admin Quotations tab — Send to Metering (manual handoff)
 
-**Frontend (done):** Admin → **Quotations → All** — **Send to Metering** on each row (`app/dashboard/admin/page.tsx`, `lib/operational-install-queue.ts` → `getAdminQuotationsTabSendToMeteringState`, `lib/api.ts` → `sendQuotationToMetering`).
+**Frontend (done):** Admin → **Quotations → All** — **Metering** button on each row (`app/dashboard/admin/page.tsx` → `handleSendToMetering`, `lib/api.ts` → `sendQuotationToMetering`).
 
-**Full spec:** `BACKEND_CHANGES_REQUIRED.md` **§L.1**.
+**Copy-paste controllers + logging:** **`BACKEND_SEND_TO_METERING.ts`**.
+
+### Error that must stop
+
+```
+Cannot send to metering from installation status 'pending_installer'
+```
+
+Admin may send while OPS is still **Pending Installer**. Backend MUST allow that for `admin` when body includes `force` / `adminOverride` / `allowFromPendingInstaller`, or on `PATCH|POST /admin/quotations/:id/send-to-metering`.
 
 ### What the UI does
 
 | Trigger | Who | When button shows |
 |---------|-----|-------------------|
-| **Send to Metering** | `admin` | Quotation **not** already in metering pipeline (`pending_metering`+) |
+| **Metering** | `admin` | Quotation **not** already in metering pipeline (`pending_metering`+) |
 | Same button | `admin` | **`status` = `pending` or `approved`** (rejected/completed hidden) |
-| After success | — | UI opens **Metering → Processing**; row **leaves Installation** tab |
+| After success | — | UI opens **Metering → Meter Pending**; row appears on **Metering dashboard** too |
 
-This is the same PATCH as Installation tab **Send to Metering**, but callable earlier (e.g. **Pending Installer** while `installation_status` is still `pending_installer`).
+Frontend body always includes:
+
+```json
+{
+  "installationStatus": "pending_metering",
+  "installation_status": "pending_metering",
+  "meteringStatus": "pending_metering",
+  "metering_status": "pending_metering",
+  "force": true,
+  "adminOverride": true,
+  "allowFromPendingInstaller": true,
+  "source": "admin"
+}
+```
+
+If the server still rejects, frontend steps: `installer_approved` → `pending_metering`.
 
 ### Required backend endpoint
 
 **Preferred:**
 
 ```
-PATCH /api/admin/quotations/{quotationId}/installation-status
-Authorization: Bearer {admin}
+PATCH|POST /api/admin/quotations/{quotationId}/send-to-metering
 ```
 
-**Body (frontend sends all mirrors):**
+**Also fix:**
+
+```
+PATCH /api/admin/quotations/{quotationId}/installation-status
+```
+
+(do not reject `pending_installer` → `pending_metering` for admin/force)
+
+**Fallback paths** (frontend tries until one returns 2xx): see `sendQuotationToMetering()` / `patchOperationalWorkflowStatus()` in `lib/api.ts`.
+
+### Persist + return on GET
+
+After success, every GET (admin list + metering queue) must return:
 
 ```json
 {
@@ -1728,10 +1762,9 @@ Authorization: Bearer {admin}
 }
 ```
 
-**Fallback paths** (frontend tries until one returns 2xx): see `patchOperationalWorkflowStatus()` in `lib/api.ts` — includes `/installer/quotations/…/send-to-metering`, `/quotations/…/metering-status`, etc.
+`GET /installer/queue?status=pending_metering` must include these rows (Metering dashboard Meter Pending).
 
-### Persist + return on GET
-
+### Persist + return on GET (legacy)
 After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotations`**) must return:
 
 | Field | Value after handoff |

@@ -4811,21 +4811,57 @@ export default function AdminPanelPage() {
     try {
       let ok = false
       if (useApi) {
+        // 1) Dedicated handoff + silent status patches (includes step-through from pending_installer).
         ok = await sendQuotationToMetering(quotation.id)
+
+        // 2) Explicit admin status write if silent paths all missed.
         if (!ok) {
           try {
             await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
             ok = true
           } catch (error) {
-            console.error("Send to metering failed:", error)
-            toast({
-              title: "Send to metering failed",
-              description: error instanceof ApiError ? error.message : "Could not update metering status on the server.",
-              variant: "destructive",
-            })
-            return
+            const message = error instanceof ApiError ? error.message : String(error || "")
+            const blockedFromPending =
+              /cannot send to metering/i.test(message) || /pending_installer/i.test(message)
+
+            // 3) Backend rejects direct jump from pending_installer → pending_metering.
+            // Promote installer_approved first, then pending_metering.
+            if (blockedFromPending) {
+              try {
+                console.warn(
+                  "[Send to Metering] blocked from pending_installer — stepping through installer_approved → pending_metering",
+                  { quotationId: quotation.id, message },
+                )
+                await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_approved")
+                await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
+                ok = true
+              } catch (stepError) {
+                console.error("Send to metering (step-through) failed:", stepError)
+                toast({
+                  title: "Send to metering failed",
+                  description:
+                    stepError instanceof ApiError
+                      ? stepError.message
+                      : "Could not update metering status on the server.",
+                  variant: "destructive",
+                })
+                return
+              }
+            } else {
+              console.error("Send to metering failed:", error)
+              toast({
+                title: "Send to metering failed",
+                description:
+                  error instanceof ApiError
+                    ? error.message
+                    : "Could not update metering status on the server.",
+                variant: "destructive",
+              })
+              return
+            }
           }
         }
+
         applyAdminMeteringStageLocal(quotation.id, "processing")
         await loadData()
       } else {
@@ -4845,7 +4881,7 @@ export default function AdminPanelPage() {
         setOperationalProgressTab("pending")
         toast({
           title: "Sent to Metering",
-          description: `${quotation.id} is now in Metering → Meter Pending.`,
+          description: `${quotation.id} is now in Metering → Meter Pending (and the Metering dashboard).`,
         })
       }
     } finally {

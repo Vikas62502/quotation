@@ -235,6 +235,25 @@ function getPaymentDiscountAmount(payment: CustomerPayment): number {
   return Math.max(0, Number(payment.discountAmount) || 0)
 }
 
+/** Settlement-only discount `d` (prefer explicit backend settlement amount). */
+function getSettlementDiscountAmount(payment: CustomerPayment): number {
+  const localTracked = Number(payment.finalSettlementDiscount) || 0
+  if (localTracked > 0) return Math.max(0, localTracked)
+  const qx = payment.quotation as Quotation & Record<string, unknown>
+  const pricing = (qx.pricing || {}) as Record<string, unknown>
+  const fromApi =
+    Number(
+      qx.finalSettlementAmount ??
+        qx.final_settlement_amount ??
+        pricing.finalSettlementAmount ??
+        pricing.final_settlement_amount ??
+        0,
+    ) || 0
+  if (fromApi > 0) return Math.max(0, fromApi)
+  if (isFinalSettlementApplied(payment)) return getPaymentDiscountAmount(payment)
+  return 0
+}
+
 function getPaymentEffectiveCap(payment: CustomerPayment): number {
   return Math.max(0, getPaymentOriginalSubtotal(payment) - getPaymentDiscountAmount(payment))
 }
@@ -1096,13 +1115,13 @@ export default function AccountManagementPage() {
           discountAmount,
           finalSettlementApplied: settlementApplied,
           finalSettlementDiscount: settlementApplied
-            ? discountAmount ||
-              Number(
+            ? Number(
                 (q as Quotation & Record<string, unknown>).finalSettlementAmount ??
                   (q as Quotation & Record<string, unknown>).final_settlement_amount ??
+                  ((q as Quotation & Record<string, unknown>).pricing as Record<string, unknown> | undefined)
+                    ?.finalSettlementAmount ??
                   0,
-              ) ||
-              undefined
+              ) || undefined
             : undefined,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
@@ -2590,16 +2609,10 @@ export default function AccountManagementPage() {
                                             </p>
                                           ))
                                       )}
-                                      {(Number(payment.finalSettlementDiscount) ||
-                                        (isFinalSettlementApplied(payment)
-                                          ? getPaymentDiscountAmount(payment)
-                                          : 0)) > 0 && (
+                                      {getSettlementDiscountAmount(payment) > 0 && (
                                         <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
                                           d: ₹
-                                          {Math.round(
-                                            Number(payment.finalSettlementDiscount) ||
-                                              getPaymentDiscountAmount(payment),
-                                          ).toLocaleString("en-IN")}
+                                          {Math.round(getSettlementDiscountAmount(payment)).toLocaleString("en-IN")}
                                         </p>
                                       )}
                                     </div>
@@ -2635,16 +2648,10 @@ export default function AccountManagementPage() {
                                             </p>
                                           ))
                                       )}
-                                      {(Number(payment.finalSettlementDiscount) ||
-                                        (isFinalSettlementApplied(payment)
-                                          ? getPaymentDiscountAmount(payment)
-                                          : 0)) > 0 && (
+                                      {getSettlementDiscountAmount(payment) > 0 && (
                                         <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
                                           d: ₹
-                                          {Math.round(
-                                            Number(payment.finalSettlementDiscount) ||
-                                              getPaymentDiscountAmount(payment),
-                                          ).toLocaleString("en-IN")}
+                                          {Math.round(getSettlementDiscountAmount(payment)).toLocaleString("en-IN")}
                                         </p>
                                       )}
                                       <p className="border-t border-border/40 pt-1.5 mt-1 text-muted-foreground">
@@ -2801,15 +2808,13 @@ export default function AccountManagementPage() {
               {getDisplayRemaining(activePayment) > 0 && !isFinalSettlementApplied(activePayment) && (
                 <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">Final settlement</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Write off the remaining balance as discount <span className="font-medium">d</span> and
-                        mark payment as completed.
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold">Final settlement</p>
+                      <p className="text-xs text-muted-foreground">
+                        Write off the current remaining as discount `d` and mark payment as completed.
                       </p>
-                      <p className="text-base font-semibold text-amber-800 dark:text-amber-300 mt-2">
-                        Settlement amount (d): ₹
-                        {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
+                      <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                        Settlement amount (d): ₹{Math.round(getDisplayRemaining(activePayment)).toLocaleString("en-IN")}
                       </p>
                     </div>
                     <Button

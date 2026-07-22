@@ -217,22 +217,53 @@ export default function MeteringDashboardPage() {
           }
 
           const queueRows: any[] = []
-          let list = await safeList(() => api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }))
+          // Preferred: rows already handed to metering (Meter Pending).
+          let list = await safeList(() =>
+            api.installer.getQueue({ status: "pending_metering", page: 1, limit: 1000 }),
+          )
           queueRows.push(...list)
-          if (list.length === 0) {
-            list = await safeList(() => api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }))
+          list = await safeList(() =>
+            api.installer.getQueue({ status: "metering_in_progress", page: 1, limit: 1000 }),
+          )
+          queueRows.push(...list)
+
+          // Fallback: installer approved / pending (older backends).
+          if (queueRows.length === 0) {
+            list = await safeList(() =>
+              api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
+            )
             queueRows.push(...list)
+            if (list.length === 0) {
+              list = await safeList(() =>
+                api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
+              )
+              queueRows.push(...list)
+            }
           }
 
           // Always include admin-approved quotations explicitly for metering Processing tab visibility.
-          const approvedRows = await safeList(() => api.quotations.getAll({ status: "approved", page: 1, limit: 1000 }))
+          const approvedRows = await safeList(() =>
+            api.quotations.getAll({ status: "approved", page: 1, limit: 1000 }),
+          )
 
           // Generic queue fallback for APIs that ignore status-specific filters.
           const broadQueueRows = await safeList(() => api.installer.getQueue({ page: 1, limit: 1000 }))
 
-          const normalized = dedupeByQuotationId([...queueRows, ...approvedRows, ...broadQueueRows].map((q) => quotationFromApiRecord(q)))
-          const released = normalized.filter((q) => isQuotationReleasedToInstaller(q as any) || String(q.status || "").toLowerCase() === "approved")
-          // Keep full released/admin-approved queue visible in Processing by default.
+          const normalized = dedupeByQuotationId(
+            [...queueRows, ...approvedRows, ...broadQueueRows].map((q) => quotationFromApiRecord(q)),
+          )
+          // Prefer rows that are in the metering pipeline; still keep released/approved so
+          // newly sent pending_metering items always appear under Meter Pending.
+          const released = normalized.filter((q) => {
+            const stage = getMeteringWorkflowStage(q as any)
+            if (stage === "processing" || stage === "approved" || stage === "mco" || stage === "meter_install") {
+              return true
+            }
+            return (
+              isQuotationReleasedToInstaller(q as any) ||
+              String(q.status || "").toLowerCase() === "approved"
+            )
+          })
           setQuotations(released)
         } else {
           setQuotations([])

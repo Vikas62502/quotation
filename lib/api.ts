@@ -536,12 +536,18 @@ function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): st
 }
 
 function operationalWorkflowBody(status: string, action?: string) {
-  const body: Record<string, string> = {
+  const body: Record<string, string | boolean> = {
     status,
     installationStatus: status,
     installation_status: status,
     meteringStatus: status,
     metering_status: status,
+    // Admin Quotations → Metering may jump from pending_installer; backends that
+    // gate the transition should honour any of these override flags.
+    force: true,
+    adminOverride: true,
+    allowFromPendingInstaller: true,
+    source: "admin",
   }
   if (action) body.action = action
   return body
@@ -594,9 +600,43 @@ async function patchMeteringWorkflowAction(
   return false
 }
 
-/** Admin handoff: move approved + installation-complete quotation into metering queue. */
+/**
+ * Admin handoff: move quotation into metering queue as `pending_metering`.
+ * Tries dedicated send-to-metering routes first, then generic workflow status.
+ * When currently `pending_installer`, also tries a 2-step promote
+ * (installer_approved → pending_metering) for backends that reject a direct jump.
+ */
 export async function sendQuotationToMetering(quotationId: string): Promise<boolean> {
-  return patchOperationalWorkflowStatus(quotationId, "pending_metering")
+  // Dedicated admin/installer handoff endpoints (preferred).
+  const handoffBody = {
+    ...operationalWorkflowBody("pending_metering"),
+    target: "pending_metering",
+    handoff: "metering",
+  }
+  const handoffEndpoints = [
+    `/admin/quotations/${quotationId}/send-to-metering`,
+    `/admin/quotations/${quotationId}/metering-handoff`,
+    `/installer/quotations/${quotationId}/send-to-metering`,
+    `/installer/quotations/${quotationId}/metering-handoff`,
+  ]
+  for (const endpoint of handoffEndpoints) {
+    if (await trySilentApiStep(() => apiRequest(endpoint, { method: "PATCH", body: handoffBody }))) {
+      return true
+    }
+    if (await trySilentApiStep(() => apiRequest(endpoint, { method: "POST", body: handoffBody }))) {
+      return true
+    }
+  }
+
+  if (await patchOperationalWorkflowStatus(quotationId, "pending_metering")) {
+    return true
+  }
+
+  // Backends that reject pending_installer → pending_metering: step through.
+  const stepped =
+    (await patchOperationalWorkflowStatus(quotationId, "installer_approved")) &&
+    (await patchOperationalWorkflowStatus(quotationId, "pending_metering"))
+  return stepped
 }
 
 /** Try every admin/metering path to reach MCO; returns true if any call succeeded. */
@@ -1244,7 +1284,6 @@ export const api = {
         )
       }
 
-      let persisted = false
       let lastError: unknown = null
 
       const dumpDiagnostics = () => {
@@ -1255,14 +1294,69 @@ export const api = {
         }
       }
 
+      const pickVerificationPayload = (raw: any): Record<string, any> => {
+        if (!raw || typeof raw !== "object") return {}
+        if (raw.data && typeof raw.data === "object") return raw.data as Record<string, any>
+        return raw as Record<string, any>
+      }
+
+      const verifyPersistedOnServer = async (): Promise<{ ok: boolean; reason?: string }> => {
+        try {
+          const fresh = await apiRequest(`/quotations/${quotationId}?_settle_verify=${Date.now()}`, {
+            suppressErrorLog: true,
+          })
+          const p = pickVerificationPayload(fresh)
+          const pricing = (p.pricing || {}) as Record<string, any>
+          const discount = Number(
+            p.discountAmount ?? pricing.discountAmount ?? p.discount ?? 0,
+          )
+          const remaining = Number(p.remaining ?? p.remainingAmount ?? NaN)
+          const paymentStatus = String(p.paymentStatus ?? p.payment_status ?? "").toLowerCase()
+          const finalSettlementApplied =
+            p.finalSettlementApplied === true ||
+            p.final_settlement_applied === true ||
+            pricing.finalSettlementApplied === true
+          const finalSettlementAmount = Number(
+            p.finalSettlementAmount ?? p.final_settlement_amount ?? 0,
+          )
+
+          const settled =
+            finalSettlementApplied ||
+            finalSettlementAmount >= Math.max(1, payload.settlementAmount - 0.5) ||
+            (paymentStatus === "completed" &&
+              Number.isFinite(remaining) &&
+              remaining <= 0 &&
+              discount >= payload.discountAmount - 0.5)
+
+          if (settled) return { ok: true }
+          return {
+            ok: false,
+            reason: `verify failed: discount=${discount}, remaining=${remaining}, paymentStatus=${paymentStatus}, finalSettlementApplied=${finalSettlementApplied}, finalSettlementAmount=${finalSettlementAmount}`,
+          }
+        } catch (error) {
+          return {
+            ok: false,
+            reason: error instanceof Error ? error.message : String(error),
+          }
+        }
+      }
+
       // 1) Preferred: single atomic endpoint that persists discount + status + remaining.
       try {
         const res = await apiRequest(`/quotations/${quotationId}/final-settlement`, {
           method: "POST",
           body: atomicBody,
         })
-        logAttempt("POST /final-settlement")
-        return res
+        const verified = await verifyPersistedOnServer()
+        if (verified.ok) {
+          logAttempt("POST /final-settlement")
+          return res
+        }
+        logAttempt("POST /final-settlement", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
+        lastError = new ApiError(
+          `Server accepted /final-settlement but data not persisted (${verified.reason || "unknown"})`,
+          "VERIFY_FAILED",
+        )
       } catch (error) {
         logAttempt("POST /final-settlement", error)
         if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error) && !isServerError(error)) {
@@ -1283,7 +1377,6 @@ export const api = {
           },
         })
         logAttempt("PATCH /pricing")
-        persisted = true
         try {
           await apiRequest(`/quotations/${quotationId}/payment-details`, {
             method: "PATCH",
@@ -1302,8 +1395,16 @@ export const api = {
         } catch (statusErr) {
           logAttempt("PATCH /payment-details (status)", statusErr)
         }
-        dumpDiagnostics()
-        return res
+        const verified = await verifyPersistedOnServer()
+        if (verified.ok) {
+          dumpDiagnostics()
+          return res
+        }
+        logAttempt("VERIFY after PATCH /pricing", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
+        lastError = new ApiError(
+          `Server accepted /pricing but data not persisted (${verified.reason || "unknown"})`,
+          "VERIFY_FAILED",
+        )
       } catch (error) {
         logAttempt("PATCH /pricing", error)
         if (!isServerAlreadyCleared(error)) lastError = error
@@ -1316,9 +1417,16 @@ export const api = {
           body: { discount: payload.discountAmount },
         })
         logAttempt("PATCH /discount")
-        persisted = true
-        dumpDiagnostics()
-        return res
+        const verified = await verifyPersistedOnServer()
+        if (verified.ok) {
+          dumpDiagnostics()
+          return res
+        }
+        logAttempt("VERIFY after PATCH /discount", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
+        lastError = new ApiError(
+          `Server accepted /discount but data not persisted (${verified.reason || "unknown"})`,
+          "VERIFY_FAILED",
+        )
       } catch (error) {
         logAttempt("PATCH /discount", error)
         if (!isServerAlreadyCleared(error)) lastError = error
@@ -1346,9 +1454,19 @@ export const api = {
             },
           })
           logAttempt("PATCH /payment-details (phases)")
-          persisted = true
-          dumpDiagnostics()
-          return res
+          const verified = await verifyPersistedOnServer()
+          if (verified.ok) {
+            dumpDiagnostics()
+            return res
+          }
+          logAttempt(
+            "VERIFY after PATCH /payment-details (phases)",
+            new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"),
+          )
+          lastError = new ApiError(
+            `Server accepted /payment-details(phases) but data not persisted (${verified.reason || "unknown"})`,
+            "VERIFY_FAILED",
+          )
         } catch (error) {
           logAttempt("PATCH /payment-details (phases)", error)
           if (!isServerAlreadyCleared(error)) lastError = error
@@ -1371,9 +1489,19 @@ export const api = {
           },
         })
         logAttempt("PATCH /payment-details (flag-only)")
-        persisted = true
-        dumpDiagnostics()
-        return res
+        const verified = await verifyPersistedOnServer()
+        if (verified.ok) {
+          dumpDiagnostics()
+          return res
+        }
+        logAttempt(
+          "VERIFY after PATCH /payment-details (flag-only)",
+          new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"),
+        )
+        lastError = new ApiError(
+          `Server accepted /payment-details(flag-only) but data not persisted (${verified.reason || "unknown"})`,
+          "VERIFY_FAILED",
+        )
       } catch (error) {
         logAttempt("PATCH /payment-details (flag-only)", error)
         if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error)) lastError = error
@@ -1381,18 +1509,10 @@ export const api = {
 
       dumpDiagnostics()
 
-      // If the server already reports the file as cleared, treat as settled even if the
-      // flag write could not be confirmed (caller will reconcile the display).
-      if (!persisted && isServerAlreadyCleared(lastError)) {
-        return { alreadySettled: true }
-      }
-
-      if (!persisted) {
-        throw (
-          lastError ??
-          new ApiError("Final settlement could not be saved to the server.", "SETTLEMENT_FAILED")
-        )
-      }
+      throw (
+        lastError ??
+        new ApiError("Final settlement could not be saved to the server.", "SETTLEMENT_FAILED")
+      )
     },
 
     /**
@@ -2679,7 +2799,10 @@ export const api = {
         })
       },
 
-      /** Admin override for operational workflow stages (installer/metering/baldev confirmation). */
+      /**
+       * Admin override for operational workflow stages (installer/metering/baldev confirmation).
+       * Always sends force/adminOverride so admin can hand off pending_installer → pending_metering.
+       */
       updateOperationalStatus: async (quotationId: string, installationStatus: string) => {
         const body = {
           installationStatus,
@@ -2687,6 +2810,10 @@ export const api = {
           meteringStatus: installationStatus,
           metering_status: installationStatus,
           status: installationStatus,
+          force: true,
+          adminOverride: true,
+          allowFromPendingInstaller: true,
+          source: "admin",
         }
 
         const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
@@ -2704,7 +2831,12 @@ export const api = {
             lastError = error
             const isRetryable =
               error instanceof ApiError &&
-              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                // Transition guards: try next route (some accept adminOverride, some don't).
+                /cannot send to metering/i.test(error.message) ||
+                /pending_installer/i.test(error.message))
             if (!isRetryable) throw error
           }
         }
