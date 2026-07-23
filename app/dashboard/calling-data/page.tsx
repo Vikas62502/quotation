@@ -412,10 +412,11 @@ function readCallingQueueArray(value: unknown): unknown[] {
 }
 
 function getScheduledLeadDedupeKey(lead: CallingLead): string {
-  const id = String(lead.id || "").trim()
-  if (id && !/^lead-\d+$/i.test(id)) return `id:${id.toLowerCase()}`
+  // Prefer mobile so the same person from API + action-log (different IDs) counts as 1 lead.
   const mobile = normalizePhoneDigits(lead.mobile || "")
   if (mobile.length >= 8) return `mobile:${mobile}`
+  const id = String(lead.id || "").trim()
+  if (id && !/^lead-\d+$/i.test(id)) return `id:${id.toLowerCase()}`
   return `row:${(lead.name || "").trim().toLowerCase()}|${mobile}`
 }
 
@@ -924,25 +925,50 @@ export default function CallingDataPage() {
     sources.forEach((entry) => {
       const normalized = normalizeActionLog(entry)
       if (!normalized?.id) return
-      const fingerprint = [
-        normalized.leadId || "",
-        normalized.actionAt || "",
-        normalized.action || "",
-      ].join("|")
-      const existingId = fingerprintMap.get(fingerprint)
+      const mobile = normalizePhoneDigits(normalized.mobile || "")
+      const actionAtMs = normalized.actionAt ? new Date(normalized.actionAt).getTime() : 0
+      const actionMinute = Number.isFinite(actionAtMs) && actionAtMs > 0 ? Math.floor(actionAtMs / 60000) : ""
+      const followUpDay = normalized.nextFollowUpAt
+        ? new Date(normalized.nextFollowUpAt).toISOString().slice(0, 10)
+        : ""
+      // Collapse API + local duplicates of the same schedule/call for one lead.
+      const fingerprints = [
+        [normalized.leadId || "", normalized.actionAt || "", normalized.action || ""].join("|"),
+        mobile.length >= 8
+          ? ["m", mobile, normalized.action || "", actionMinute, followUpDay].join("|")
+          : "",
+        mobile.length >= 8 && (normalized.action === "follow_up" || normalized.action === "rescheduled")
+          ? ["sched", mobile, followUpDay || actionMinute].join("|")
+          : "",
+      ].filter(Boolean)
+
+      let existingId: string | undefined
+      for (const fingerprint of fingerprints) {
+        existingId = fingerprintMap.get(fingerprint)
+        if (existingId) break
+      }
       if (existingId) {
         const existing = map.get(existingId)!
-        map.set(existingId, {
+        const merged: ActionLogItem = {
           ...existing,
           ...normalized,
+          id: existing.id,
+          leadId: existing.leadId || normalized.leadId,
           callRemark: pickRicherCallRemark(existing.callRemark, normalized.callRemark),
           statusText: normalized.statusText || existing.statusText,
           statusCategory: normalized.statusCategory || existing.statusCategory,
-        })
+          nextFollowUpAt: normalized.nextFollowUpAt || existing.nextFollowUpAt,
+          actionAt:
+            new Date(normalized.actionAt || 0).getTime() >= new Date(existing.actionAt || 0).getTime()
+              ? normalized.actionAt || existing.actionAt
+              : existing.actionAt || normalized.actionAt,
+        }
+        map.set(existingId, merged)
+        for (const fingerprint of fingerprints) fingerprintMap.set(fingerprint, existingId)
         return
       }
       map.set(normalized.id, normalized)
-      fingerprintMap.set(fingerprint, normalized.id)
+      for (const fingerprint of fingerprints) fingerprintMap.set(fingerprint, normalized.id)
     })
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
@@ -1690,14 +1716,13 @@ export default function CallingDataPage() {
   }, [leads, callingVisibilityCtx])
 
   const scheduledCount = useMemo(() => {
-    const now = Date.now()
-    return leads.filter((lead) => {
+    // One row per lead (already deduped by mobile) with a future/today follow-up.
+    return scheduledLeads.filter((lead) => {
       if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
-      if (lead.status !== "rescheduled") return false
       if (!lead.nextFollowUpAt) return false
-      return new Date(lead.nextFollowUpAt).getTime() > now
+      return !Number.isNaN(new Date(lead.nextFollowUpAt).getTime())
     }).length
-  }, [leads, callingVisibilityCtx])
+  }, [scheduledLeads, callingVisibilityCtx])
 
   const interestedActions = useMemo(
     () =>

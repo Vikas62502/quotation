@@ -1848,6 +1848,120 @@ After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotation
 
 ---
 
+## 13. Admin — Product Needed (installation-pending brand dashboard)
+
+**Frontend:** Admin Panel → Overview → **Product Needed**  
+**API call:** `GET /admin/product-needed` via `api.admin.productNeeded.getAll`  
+**Full reference:** `BACKEND_ADMIN_PRODUCT_NEEDED.ts`  
+**Client logic:** `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`
+
+### Goal
+
+Procurement dashboard for **installation-pending jobs only** (same gate as Admin → Pending Installation):
+
+- One **brand card** per panel brand (Waaree, Adani, Tata…) with wattage / set lines inside
+- One **brand card** per inverter brand with kW / set lines inside
+- “As per the set” with missing qty → **1 set per job** (e.g. Tata across 2 jobs = **2 sets**)
+
+Frontend already aggregates client-side from `GET /admin/quotations` when this route is missing. Ship the dedicated endpoint for correct filtering at scale.
+
+### Required backend
+
+1. **`GET /admin/product-needed`** (admin JWT only)
+2. Query params:
+
+| Param | Notes |
+|-------|--------|
+| `scope` | `installation_pending` (default). **Do not** require legacy `tab=file_login` |
+| `dealerId`, `search`, `startDate`, `endDate` | Optional filters |
+| `dateField` | `installation_released` (default) or `created` |
+| `page`, `limit` | Default limit 500, max 2000 |
+
+3. **Eligibility** (must match Pending Installation):
+   - Released / sent to installer (`installation_ready_for_installer` / `installation_released_at` / `pending_installer` / `installer_in_progress`)
+   - **Exclude** partial approved, `installer_approved`, metering stages, baldev/completed, `installer_approved_at`
+4. Each row must include structured **`panelLines`** + **`inverterBrand` / `inverterSize` / `inverterQuantity`** (not summary strings alone)
+5. Optionally return **`data.aggregates`** (brand cards) computed on the **full filtered set** before pagination — see `buildBrandAggregates` in `BACKEND_ADMIN_PRODUCT_NEEDED.ts`
+6. Ensure **`GET /admin/quotations`** still returns release flags + products so SPA fallback works
+
+### Response shape (minimum)
+
+```json
+{
+  "success": true,
+  "data": {
+    "rows": [
+      {
+        "quotationId": "QT-…",
+        "dealerId": "…",
+        "customerName": "…",
+        "customerMobile": "…",
+        "dealerName": "…",
+        "systemKw": "5kW",
+        "systemType": "DCR",
+        "panels": "Waaree 540W × 10",
+        "inverter": "Vsole/Xwatt · 5kW",
+        "panelLines": [{ "brand": "Waaree", "size": "540W", "quantity": 10 }],
+        "inverterBrand": "Vsole/Xwatt",
+        "inverterSize": "5kW",
+        "inverterQuantity": 1,
+        "installationReleasedAt": "2026-07-01T10:00:00.000Z",
+        "quotationStatus": "approved"
+      }
+    ],
+    "aggregates": {
+      "jobCount": 22,
+      "totalPanels": 151,
+      "totalInverters": 22,
+      "panels": [
+        {
+          "brand": "Waaree",
+          "totalQuantity": 63,
+          "jobCount": 8,
+          "sizes": [
+            { "size": "540W", "quantity": 54, "jobCount": 7, "unit": "panels" },
+            { "size": "560W", "quantity": 9, "jobCount": 1, "unit": "panels" }
+          ]
+        },
+        {
+          "brand": "Tata",
+          "totalQuantity": 2,
+          "jobCount": 2,
+          "sizes": [
+            { "size": "As per the set", "quantity": 2, "jobCount": 2, "unit": "sets" }
+          ]
+        }
+      ],
+      "inverters": []
+    },
+    "pagination": { "page": 1, "limit": 2000, "total": 22, "totalPages": 1 }
+  }
+}
+```
+
+### Checklist
+
+- [ ] `GET /admin/product-needed?scope=installation_pending` → **200** (admin)
+- [ ] Dealer / visitor → **403**
+- [ ] Only Pending Installation jobs (not Approved Installation / metering)
+- [ ] `panelLines` present and wattage normalized (`540W`)
+- [ ] Set packages with qty `0` count as **sets** (1 per job)
+- [ ] Optional `aggregates.panels` / `aggregates.inverters` = one card per brand
+- [ ] `dealerId` + date filters applied server-side
+- [ ] SPA still works if route returns **404** (quotation-list fallback)
+
+### QA
+
+1. Send a job to installer → it appears in Product Needed; approve installation → it **leaves**.
+2. Two Adani jobs (540W×10 and 620W×5) → **one Adani card** with two size lines (`10` and `5`), not two brand cards.
+3. Two Tata “As per the set” jobs with qty 0 → Tata card shows **2 sets**.
+4. Filter by dealer → totals only for that dealer.
+5. Non-admin token → **403**.
+
+**Reference:** `BACKEND_ADMIN_PRODUCT_NEEDED.ts`, `lib/admin-product-needed.ts` (`isQuotationEligibleForProductNeeded`, `aggregateProductNeededDashboard`).
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -1867,5 +1981,7 @@ After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotation
 | `lib/final-confirmation-documents.ts` | Final confirmation multipart field names + FormData builder |
 | `lib/api.ts` | `uploadFinalConfirmationDocuments`, `sendQuotationToMetering` |
 | `lib/operational-install-queue.ts` | `getAdminQuotationsTabSendToMeteringState`, installation vs metering visibility |
+| **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`** | **§13** Admin Product Needed — installation-pending + brand aggregates |
+| `lib/admin-product-needed.ts` | Product Needed eligibility + brand card aggregation (frontend) |
 | **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |

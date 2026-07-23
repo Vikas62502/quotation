@@ -3153,6 +3153,8 @@ export const api = {
 
     productNeeded: {
       getAll: async (params?: {
+        scope?: "installation_pending"
+        /** @deprecated Prefer scope=installation_pending; kept for older backends */
         tab?: "file_login" | "login_approved"
         page?: number
         limit?: number
@@ -3160,7 +3162,7 @@ export const api = {
         search?: string
         startDate?: string
         endDate?: string
-        dateField?: "file_login" | "approved"
+        dateField?: "installation_released" | "created" | "file_login" | "approved"
       }) => {
         const queryParams = new URLSearchParams()
         if (params) {

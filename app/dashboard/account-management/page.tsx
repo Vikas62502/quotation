@@ -283,24 +283,14 @@ function isFinalSettlementApplied(payment: CustomerPayment): boolean {
 }
 
 /**
- * Remaining = effective cap − paid (installment math is source of truth).
- * Do not force ₹0 from paymentStatus/API remaining when installments still leave a gap —
- * that hid Final Settlement and showed Remaining ₹0 while "after installment" still had ₹35,000.
+ * Remaining = Subtotal (net of settlement discount) − Paid.
+ * Always use AM installment/subtotal math — never prefer API remaining alone
+ * (API remaining is often after-subsidy and then Paid ₹0 shows Remaining ≠ Subtotal).
  */
 function getDisplayRemaining(payment: CustomerPayment): number {
+  if (isFinalSettlementApplied(payment)) return 0
   const phasePaid = getTotalPaidPhases(payment.phases)
-  const computed = Math.max(0, getPaymentEffectiveCap(payment) - phasePaid)
-  if (isFinalSettlementApplied(payment) || computed <= 0) {
-    return 0
-  }
-  // Prefer installment math whenever phases exist.
-  if (payment.phases.length > 0) {
-    return computed
-  }
-  if (payment.remainingFromApi != null && Number.isFinite(payment.remainingFromApi)) {
-    return Math.max(0, payment.remainingFromApi)
-  }
-  return computed
+  return Math.max(0, getPaymentEffectiveCap(payment) - phasePaid)
 }
 
 /** Derive payment status from amounts so UI matches Remaining (not stale API "completed"). */
@@ -1189,6 +1179,12 @@ export default function AccountManagementPage() {
     return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
   }
 
+  /** Final settlement is for Cash and Cash + loan only — not Loan-only. */
+  const isFinalSettlementEligible = (payment: CustomerPayment) => {
+    const t = getPaymentTypeValue(payment)
+    return t === "cash" || t === "mix"
+  }
+
   const getFinancingBankDisplay = (payment: CustomerPayment): string => {
     const t = getPaymentTypeValue(payment)
     if (t !== "loan" && t !== "mix") return "—"
@@ -1595,6 +1591,15 @@ export default function AccountManagementPage() {
 
   const submitFinalSettlement = async () => {
     if (!activePayment) return
+
+    if (!isFinalSettlementEligible(activePayment)) {
+      toast({
+        title: "Settlement not available",
+        description: "Final settlement is only for Cash and Cash + loan payments (not Loan-only).",
+        variant: "destructive",
+      })
+      return
+    }
 
     // Settlement amount = Remaining only (e.g. ₹2,000) — that becomes discount `d`.
     const settlementDiscount = Math.round(getDisplayRemaining(activePayment))
@@ -2805,7 +2810,9 @@ export default function AccountManagementPage() {
           </DialogHeader>
           {activePayment && (
             <div className="space-y-4">
-              {getDisplayRemaining(activePayment) > 0 && !isFinalSettlementApplied(activePayment) && (
+              {isFinalSettlementEligible(activePayment) &&
+                getDisplayRemaining(activePayment) > 0 &&
+                !isFinalSettlementApplied(activePayment) && (
                 <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="space-y-1">

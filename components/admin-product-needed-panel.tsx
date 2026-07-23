@@ -4,22 +4,21 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import type { Quotation } from "@/lib/quotation-context"
 import type { Dealer } from "@/lib/auth-context"
 import {
+  aggregateProductNeededDashboard,
   formatProductNeededDate,
-  productNeededRowsToCsv,
+  productNeededDashboardToCsv,
   type ProductNeededDateRange,
   type ProductNeededRow,
-  type ProductNeededTab,
 } from "@/lib/admin-product-needed"
 import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { loadAdminProductNeededRows } from "@/lib/load-admin-product-needed"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Download, Loader2, Package, RotateCcw, Search } from "lucide-react"
+import { Download, Loader2, Package, RotateCcw, Search, Zap } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 type Props = {
@@ -50,7 +49,6 @@ export function AdminProductNeededPanel({
   refreshToken = 0,
 }: Props) {
   const { toast } = useToast()
-  const [tab, setTab] = useState<ProductNeededTab>("file_login")
   const [search, setSearch] = useState("")
   const [searchDebounced, setSearchDebounced] = useState("")
   const [dealerFilter, setDealerFilter] = useState("all")
@@ -58,12 +56,12 @@ export function AdminProductNeededPanel({
   const [customFrom, setCustomFrom] = useState("")
   const [customTo, setCustomTo] = useState("")
   const [rows, setRows] = useState<ProductNeededRow[]>([])
-  const [tabCounts, setTabCounts] = useState({ fileLogin: 0, loginApproved: 0 })
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [unavailable, setUnavailable] = useState(false)
   const [customRangePending, setCustomRangePending] = useState(false)
   const [loadSource, setLoadSource] = useState<string | null>(null)
+  const [showJobs, setShowJobs] = useState(false)
 
   useEffect(() => {
     if (dateRange !== "custom") return
@@ -92,7 +90,6 @@ export function AdminProductNeededPanel({
           dealers,
           useApi,
           getDealerName,
-          tab,
           dealerId: dealerFilter,
           search: searchDebounced,
           dateRange,
@@ -100,7 +97,6 @@ export function AdminProductNeededPanel({
           customTo,
         })
         setRows(result.rows)
-        setTabCounts(result.tabCounts)
         setUnavailable(result.unavailable)
         setCustomRangePending(result.customRangePending)
         setLoadSource(result.source)
@@ -126,7 +122,6 @@ export function AdminProductNeededPanel({
       getDealerName,
       quotations,
       searchDebounced,
-      tab,
       useApi,
     ],
   )
@@ -141,34 +136,33 @@ export function AdminProductNeededPanel({
     void loadRows({ background: true })
   }, [enabled, loadRows, refreshToken])
 
+  const dashboard = useMemo(() => aggregateProductNeededDashboard(rows), [rows])
+
   const downloadCsv = () => {
-    if (rows.length === 0) {
+    if (dashboard.jobCount === 0) {
       toast({
         title: "No data to export",
-        description: "Adjust filters to include at least one row.",
+        description: "Adjust filters to include at least one installation-pending job.",
         variant: "destructive",
       })
       return
     }
-    const csv = productNeededRowsToCsv(rows, tab)
+    const csv = productNeededDashboardToCsv(dashboard)
     const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" })
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     const stamp = new Date().toISOString().slice(0, 10)
     link.href = url
-    link.download = `product-needed-${tab}-${stamp}.csv`
+    link.download = `product-needed-installation-pending-${stamp}.csv`
     document.body.appendChild(link)
     link.click()
     link.remove()
     URL.revokeObjectURL(url)
     toast({
       title: "Download started",
-      description: `Exported ${rows.length} row(s).`,
+      description: `Exported ${dashboard.panels.length} panel brand(s), ${dashboard.inverters.length} inverter brand(s), ${dashboard.jobCount} job(s).`,
     })
   }
-
-  const dateFilterLabel =
-    tab === "login_approved" ? "Filter by approve date" : "Filter by file login date"
 
   const sourceHint = useMemo(() => {
     if (!useApi) return "Local quotations"
@@ -188,9 +182,8 @@ export function AdminProductNeededPanel({
               {refreshing ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : null}
             </CardTitle>
             <CardDescription className="mt-1">
-              Procurement view — panels and inverter only. Includes quotations with installation
-              approved or completion images uploaded. File login and login + approved in separate
-              tabs.
+              Procurement dashboard for installation-pending jobs only. Totals are rolled up by panel
+              brand + wattage and inverter brand + rating.
               {sourceHint ? (
                 <span className="block text-xs mt-1 text-muted-foreground/80">{sourceHint}</span>
               ) : null}
@@ -214,153 +207,265 @@ export function AdminProductNeededPanel({
           </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-5">
         {unavailable ? (
           <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
             Product Needed API is not available yet. Deploy{" "}
             <code className="text-xs">GET /admin/product-needed</code> (see{" "}
             <code className="text-xs">BACKEND_ADMIN_PRODUCT_NEEDED.ts</code>) or load quotations
-            first so the panel can build rows client-side.
+            first so the panel can build totals client-side.
           </div>
         ) : null}
 
-        <Tabs value={tab} onValueChange={(value) => setTab(value as ProductNeededTab)}>
-          <TabsList className="w-full sm:w-auto">
-            <TabsTrigger value="file_login">File login ({tabCounts.fileLogin})</TabsTrigger>
-            <TabsTrigger value="login_approved">
-              Login + approved ({tabCounts.loginApproved})
-            </TabsTrigger>
-          </TabsList>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="relative sm:col-span-2 lg:col-span-1">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              className="pl-8"
+              placeholder="Search ID, customer, mobile, brand…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <Select value={dealerFilter} onValueChange={setDealerFilter}>
+            <SelectTrigger>
+              <SelectValue placeholder="Dealer" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All dealers</SelectItem>
+              {dealers.map((dealer) => (
+                <SelectItem key={dealer.id} value={dealer.id}>
+                  {dealer.firstName} {dealer.lastName}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={dateRange} onValueChange={(v) => setDateRange(v as ProductNeededDateRange)}>
+            <SelectTrigger>
+              <SelectValue placeholder="Filter by release date" />
+            </SelectTrigger>
+            <SelectContent>
+              {DATE_RANGE_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="flex items-center gap-2">
+            {loading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : null}
+            <Badge variant="secondary" className="text-xs">
+              Installation pending
+            </Badge>
+          </div>
+        </div>
 
-          <TabsContent value={tab} className="mt-4 space-y-4 focus-visible:outline-none">
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <div className="relative sm:col-span-2 lg:col-span-1">
-                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  className="pl-8"
-                  placeholder="Search ID, customer, mobile…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+        {dateRange === "custom" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">From</Label>
+              <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">To</Label>
+              <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            </div>
+          </div>
+        ) : null}
+
+        {!loading && customRangePending ? (
+          <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
+            <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p>Select a from and to date for the custom range.</p>
+          </div>
+        ) : loading && rows.length === 0 ? (
+          <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
+            <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin opacity-60" />
+            <p>Loading product needed totals…</p>
+          </div>
+        ) : !loading && dashboard.jobCount === 0 ? (
+          <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
+            <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
+            <p>No installation-pending jobs match these filters.</p>
+            <p className="text-xs mt-2">
+              Only jobs still in Pending Installation (sent to installer, not yet approved) are
+              counted.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Jobs pending</p>
+                <p className="mt-1 text-3xl font-semibold tabular-nums">{dashboard.jobCount}</p>
               </div>
-              <Select value={dealerFilter} onValueChange={setDealerFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Dealer" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All dealers</SelectItem>
-                  {dealers.map((dealer) => (
-                    <SelectItem key={dealer.id} value={dealer.id}>
-                      {dealer.firstName} {dealer.lastName}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={dateRange} onValueChange={(v) => setDateRange(v as ProductNeededDateRange)}>
-                <SelectTrigger>
-                  <SelectValue placeholder={dateFilterLabel} />
-                </SelectTrigger>
-                <SelectContent>
-                  {DATE_RANGE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <div className="flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">
-                  {rows.length} row{rows.length === 1 ? "" : "s"}
-                </Badge>
-                {loading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : null}
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Panels needed</p>
+                <p className="mt-1 text-3xl font-semibold tabular-nums">{dashboard.totalPanels}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {dashboard.panels.length} brand{dashboard.panels.length === 1 ? "" : "s"}
+                </p>
+              </div>
+              <div className="rounded-xl border bg-muted/30 p-4">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Inverters needed
+                </p>
+                <p className="mt-1 text-3xl font-semibold tabular-nums">{dashboard.totalInverters}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {dashboard.inverters.length} brand{dashboard.inverters.length === 1 ? "" : "s"}
+                </p>
               </div>
             </div>
 
-            {dateRange === "custom" ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md">
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">From</Label>
-                  <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs text-muted-foreground">To</Label>
-                  <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
-                </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Package className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold">Panels by brand</h3>
               </div>
-            ) : null}
-
-            {!loading && customRangePending ? (
-              <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
-                <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                <p>Select a from and to date for the custom range.</p>
-              </div>
-            ) : !loading && rows.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
-                <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
-                <p>No quotations match this tab and filters.</p>
-                <p className="text-xs mt-2">
-                  Only installation-approved or image-uploaded files are listed.
+              {dashboard.panels.length === 0 ? (
+                <p className="text-sm text-muted-foreground border border-dashed rounded-lg p-4">
+                  No panel lines found on these jobs.
                 </p>
-              </div>
-            ) : loading && rows.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
-                <Loader2 className="w-8 h-8 mx-auto mb-3 animate-spin opacity-60" />
-                <p>Loading product needed data…</p>
-              </div>
-            ) : (
-              <div className="rounded-lg border overflow-auto max-h-[min(70vh,720px)] w-full min-w-0">
-                <table className="w-full min-w-[1100px] text-sm">
-                  <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
-                    <tr className="border-b text-left">
-                      <th className="p-3 font-medium whitespace-nowrap">Quotation</th>
-                      <th className="p-3 font-medium whitespace-nowrap">Customer</th>
-                      <th className="p-3 font-medium whitespace-nowrap">Dealer</th>
-                      <th className="p-3 font-medium whitespace-nowrap">kW</th>
-                      <th className="p-3 font-medium whitespace-nowrap">Type</th>
-                      <th className="p-3 font-medium min-w-[220px]">Panels</th>
-                      <th className="p-3 font-medium min-w-[160px]">Inverter</th>
-                      <th className="p-3 font-medium whitespace-nowrap">File login</th>
-                      {tab === "login_approved" ? (
-                        <th className="p-3 font-medium whitespace-nowrap">Approved</th>
-                      ) : null}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map((row) => (
-                      <tr key={row.quotationId} className="border-b last:border-0 align-top">
-                        <td className="p-3 font-mono text-xs whitespace-nowrap">{row.quotationId}</td>
-                        <td className="p-3 whitespace-nowrap">
-                          <div className="font-medium">{row.customerName}</div>
-                          <div className="text-xs text-muted-foreground">{row.customerMobile}</div>
-                        </td>
-                        <td className="p-3 whitespace-nowrap">{row.dealerName}</td>
-                        <td className="p-3 whitespace-nowrap">{row.systemKw}</td>
-                        <td className="p-3 whitespace-nowrap">
-                          <Badge variant="outline" className="text-[10px]">
-                            {row.systemType}
-                          </Badge>
-                        </td>
-                        <td className="p-3 text-xs leading-relaxed min-w-[220px]">{row.panels}</td>
-                        <td className="p-3 text-xs whitespace-nowrap min-w-[160px]">{row.inverter}</td>
-                        <td className="p-3 text-xs whitespace-nowrap">
-                          <div>{row.fileLoginStatus}</div>
-                          <div className="text-muted-foreground">
-                            {formatProductNeededDate(row.fileLoginAt)}
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {dashboard.panels.map((card) => (
+                    <div
+                      key={card.key}
+                      className="rounded-xl border p-4 bg-background hover:border-primary/40 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-semibold leading-tight">{card.brand}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {card.jobCount} job{card.jobCount === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-semibold tabular-nums">{card.totalQuantity}</p>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            total
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-1.5 border-t pt-3">
+                        {card.sizes.map((line) => (
+                          <div
+                            key={`${card.key}-${line.size}`}
+                            className="flex items-center justify-between gap-3 text-sm"
+                          >
+                            <span className="text-muted-foreground truncate">{line.size}</span>
+                            <span className="font-semibold tabular-nums whitespace-nowrap">
+                              {line.quantity}
+                              <span className="ml-1 text-[10px] font-normal uppercase text-muted-foreground">
+                                {line.unit === "sets" ? "sets" : "pcs"}
+                              </span>
+                            </span>
                           </div>
-                        </td>
-                        {tab === "login_approved" ? (
-                          <td className="p-3 text-xs whitespace-nowrap">
-                            {formatProductNeededDate(row.statusApprovedAt)}
-                          </td>
-                        ) : null}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-primary" />
+                <h3 className="text-sm font-semibold">Inverters by brand</h3>
               </div>
-            )}
-          </TabsContent>
-        </Tabs>
+              {dashboard.inverters.length === 0 ? (
+                <p className="text-sm text-muted-foreground border border-dashed rounded-lg p-4">
+                  No inverter lines found on these jobs.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                  {dashboard.inverters.map((card) => (
+                    <div
+                      key={card.key}
+                      className="rounded-xl border p-4 bg-background hover:border-primary/40 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-lg font-semibold leading-tight">{card.brand}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {card.jobCount} job{card.jobCount === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-2xl font-semibold tabular-nums">{card.totalQuantity}</p>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            total
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-3 space-y-1.5 border-t pt-3">
+                        {card.sizes.map((line) => (
+                          <div
+                            key={`${card.key}-${line.size}`}
+                            className="flex items-center justify-between gap-3 text-sm"
+                          >
+                            <span className="text-muted-foreground truncate">{line.size}</span>
+                            <span className="font-semibold tabular-nums whitespace-nowrap">
+                              {line.quantity}
+                              <span className="ml-1 text-[10px] font-normal uppercase text-muted-foreground">
+                                {line.unit === "sets" ? "sets" : "pcs"}
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">Jobs included</h3>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setShowJobs((v) => !v)}>
+                  {showJobs ? "Hide list" : `Show ${dashboard.jobCount} jobs`}
+                </Button>
+              </div>
+              {showJobs ? (
+                <div className="rounded-lg border overflow-auto max-h-[min(50vh,480px)] w-full min-w-0">
+                  <table className="w-full min-w-[900px] text-sm">
+                    <thead className="sticky top-0 z-10 bg-muted/95 backdrop-blur-sm">
+                      <tr className="border-b text-left">
+                        <th className="p-3 font-medium whitespace-nowrap">Quotation</th>
+                        <th className="p-3 font-medium whitespace-nowrap">Customer</th>
+                        <th className="p-3 font-medium whitespace-nowrap">Dealer</th>
+                        <th className="p-3 font-medium whitespace-nowrap">kW</th>
+                        <th className="p-3 font-medium min-w-[200px]">Panels</th>
+                        <th className="p-3 font-medium min-w-[140px]">Inverter</th>
+                        <th className="p-3 font-medium whitespace-nowrap">Released</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dashboard.rows.map((row) => (
+                        <tr key={row.quotationId} className="border-b last:border-0 align-top">
+                          <td className="p-3 font-mono text-xs whitespace-nowrap">{row.quotationId}</td>
+                          <td className="p-3 whitespace-nowrap">
+                            <div className="font-medium">{row.customerName}</div>
+                            <div className="text-xs text-muted-foreground">{row.customerMobile}</div>
+                          </td>
+                          <td className="p-3 whitespace-nowrap">{row.dealerName}</td>
+                          <td className="p-3 whitespace-nowrap">{row.systemKw}</td>
+                          <td className="p-3 text-xs leading-relaxed">{row.panels}</td>
+                          <td className="p-3 text-xs whitespace-nowrap">{row.inverter}</td>
+                          <td className="p-3 text-xs whitespace-nowrap">
+                            {formatProductNeededDate(row.installationReleasedAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   )

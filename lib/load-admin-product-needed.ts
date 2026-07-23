@@ -4,7 +4,6 @@ import type { Quotation } from "@/lib/quotation-context"
 import {
   buildProductNeededApiFilters,
   buildProductNeededRow,
-  countProductNeededTabs,
   extractProductNeededFromApiResponse,
   filterProductNeededRows,
   filterQuotationsForProductNeeded,
@@ -13,15 +12,12 @@ import {
   type ProductNeededDateRange,
   type ProductNeededFilterOptions,
   type ProductNeededRow,
-  type ProductNeededTab,
-  type ProductNeededTabCounts,
 } from "@/lib/admin-product-needed"
 
 export type AdminProductNeededLoadSource = "admin_product_needed" | "quotations" | "local" | "none"
 
 export interface AdminProductNeededLoadResult {
   rows: ProductNeededRow[]
-  tabCounts: ProductNeededTabCounts
   source: AdminProductNeededLoadSource
   /** True when API mode is on but no endpoint or data path worked. */
   unavailable: boolean
@@ -34,7 +30,6 @@ export interface AdminProductNeededLoadOptions {
   dealers: Dealer[]
   useApi: boolean
   getDealerName: (dealerId: string, quotation?: Quotation) => string
-  tab: ProductNeededTab
   dealerId: string
   search: string
   dateRange: ProductNeededDateRange
@@ -44,7 +39,7 @@ export interface AdminProductNeededLoadOptions {
 
 function toSharedFilters(
   filters: Omit<AdminProductNeededLoadOptions, "quotations" | "dealers" | "useApi" | "getDealerName">,
-): Omit<ProductNeededFilterOptions, "dateField"> {
+): ProductNeededFilterOptions {
   return {
     dealerId: filters.dealerId,
     search: filters.search,
@@ -56,35 +51,19 @@ function toSharedFilters(
 
 function buildRowsFromQuotations(
   quotationList: Quotation[],
-  tab: ProductNeededTab,
   filters: Omit<AdminProductNeededLoadOptions, "quotations" | "dealers" | "useApi" | "getDealerName">,
   getDealerName: (dealerId: string, quotation?: Quotation) => string,
 ): ProductNeededRow[] {
-  return filterQuotationsForProductNeeded(quotationList, tab, {
-    ...toSharedFilters(filters),
-    dateField: tab === "login_approved" ? "approved" : "file_login",
-  }).map((quotation) => buildProductNeededRow(quotation, getDealerName(quotation.dealerId, quotation)))
+  return filterQuotationsForProductNeeded(quotationList, toSharedFilters(filters)).map((quotation) =>
+    buildProductNeededRow(quotation, getDealerName(quotation.dealerId, quotation)),
+  )
 }
 
 function applyClientFiltersToApiRows(
   rows: ProductNeededRow[],
-  quotationList: Quotation[],
-  tab: ProductNeededTab,
   filters: Omit<AdminProductNeededLoadOptions, "quotations" | "dealers" | "useApi" | "getDealerName">,
 ): ProductNeededRow[] {
-  const shared = toSharedFilters(filters)
-  const dateField = tab === "login_approved" ? "approved" : "file_login"
-
-  if (quotationList.length > 0) {
-    const allowedIds = new Set(
-      filterQuotationsForProductNeeded(quotationList, tab, { ...shared, dateField }).map((q) =>
-        String(q.id || ""),
-      ),
-    )
-    return rows.filter((row) => allowedIds.has(row.quotationId))
-  }
-
-  return filterProductNeededRows(rows, tab, { ...shared, dateField })
+  return filterProductNeededRows(rows, toSharedFilters(filters))
 }
 
 async function tryAdminProductNeededEndpoint(
@@ -106,12 +85,11 @@ async function tryAdminProductNeededEndpoint(
 
 function loadFromLocalStorage(
   dealers: Dealer[],
-  tab: ProductNeededTab,
   options: Omit<AdminProductNeededLoadOptions, "quotations" | "useApi">,
 ): ProductNeededRow[] {
   const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]") as Quotation[]
   void dealers
-  return buildRowsFromQuotations(allQuotations, tab, options, options.getDealerName)
+  return buildRowsFromQuotations(allQuotations, options, options.getDealerName)
 }
 
 async function fetchQuotationListFallback(existing: Quotation[]): Promise<Quotation[]> {
@@ -135,8 +113,7 @@ async function fetchQuotationListFallback(existing: Quotation[]): Promise<Quotat
 export async function loadAdminProductNeededRows(
   options: AdminProductNeededLoadOptions,
 ): Promise<AdminProductNeededLoadResult> {
-  const { quotations, dealers, useApi, getDealerName, tab, ...filters } = options
-  const sharedFilters = toSharedFilters({ tab, ...filters })
+  const { quotations, dealers, useApi, getDealerName, ...filters } = options
   const customRangePending = isProductNeededCustomRangePending(
     filters.dateRange,
     filters.customFrom,
@@ -144,23 +121,19 @@ export async function loadAdminProductNeededRows(
   )
 
   if (customRangePending) {
-    const quotationList = useApi ? quotations : (JSON.parse(localStorage.getItem("quotations") || "[]") as Quotation[])
     return {
       rows: [],
-      tabCounts: countProductNeededTabs(quotationList, sharedFilters),
-      source: useApi ? "admin_product_needed" : "local",
+      source: useApi ? "quotations" : "local",
       unavailable: false,
       customRangePending: true,
     }
   }
 
-  const apiFilters = buildProductNeededApiFilters({ tab, ...filters })
+  const apiFilters = buildProductNeededApiFilters(filters)
 
   if (!useApi) {
-    const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]") as Quotation[]
     return {
-      rows: loadFromLocalStorage(dealers, tab, { ...filters, tab, getDealerName }),
-      tabCounts: countProductNeededTabs(allQuotations, sharedFilters),
+      rows: loadFromLocalStorage(dealers, { ...filters, dealers, getDealerName }),
       source: "local",
       unavailable: false,
       customRangePending: false,
@@ -172,26 +145,16 @@ export async function loadAdminProductNeededRows(
   const fromAdmin = await tryAdminProductNeededEndpoint(apiFilters)
   if (fromAdmin !== null) {
     quotationList = await fetchQuotationListFallback(quotationList)
-
-    const rows = applyClientFiltersToApiRows(fromAdmin.rows, quotationList, tab, { tab, ...filters })
-    const tabCounts =
+    // Prefer quotation list so panel/inverter totals use structured product fields
+    // and the installation-pending gate matches Admin → Pending Installation.
+    const rows =
       quotationList.length > 0
-        ? countProductNeededTabs(quotationList, sharedFilters)
-        : (fromAdmin.tabCounts ?? {
-            fileLogin: filterProductNeededRows(fromAdmin.rows, "file_login", {
-              ...sharedFilters,
-              dateField: "file_login",
-            }).length,
-            loginApproved: filterProductNeededRows(fromAdmin.rows, "login_approved", {
-              ...sharedFilters,
-              dateField: "approved",
-            }).length,
-          })
+        ? buildRowsFromQuotations(quotationList, filters, getDealerName)
+        : applyClientFiltersToApiRows(fromAdmin.rows, filters)
 
     return {
       rows,
-      tabCounts,
-      source: "admin_product_needed",
+      source: quotationList.length > 0 ? "quotations" : "admin_product_needed",
       unavailable: false,
       customRangePending: false,
     }
@@ -201,8 +164,7 @@ export async function loadAdminProductNeededRows(
 
   if (quotationList.length > 0) {
     return {
-      rows: buildRowsFromQuotations(quotationList, tab, { tab, ...filters }, getDealerName),
-      tabCounts: countProductNeededTabs(quotationList, sharedFilters),
+      rows: buildRowsFromQuotations(quotationList, filters, getDealerName),
       source: "quotations",
       unavailable: false,
       customRangePending: false,
@@ -211,7 +173,6 @@ export async function loadAdminProductNeededRows(
 
   return {
     rows: [],
-    tabCounts: { fileLogin: 0, loginApproved: 0 },
     source: "none",
     unavailable: true,
     customRangePending: false,
