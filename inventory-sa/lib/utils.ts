@@ -210,7 +210,45 @@ export function formatProductSaveError(err: unknown, fallback: string): string {
   ) {
     return "File storage on the server is not configured (AWS). With the latest app version, saves without a photo use JSON only. If this still appears, the API may be initializing S3 on every request — your backend must skip cloud upload unless a real file is uploaded."
   }
+
+  if (
+    blob.includes("products_created_by_fkey") ||
+    (blob.includes("violates foreign key constraint") && blob.includes("created_by"))
+  ) {
+    return (
+      "Cannot save product: your Admin login is not linked in the inventory users table " +
+      "(products.created_by foreign key). Backend must upsert the quotation Admin into inventory " +
+      "`users` on Open Super Admin / POST /products, or accept a valid created_by. " +
+      "See BACKEND_CHANGES_HANDOFF.md §14."
+    )
+  }
+
+  const status =
+    typeof err === "object" && err !== null && "status" in err
+      ? Number((err as { status?: number }).status)
+      : NaN
   const primary = err instanceof Error ? err.message : fallback
+  const normalized = (primary || "").trim().toLowerCase()
+
+  // Prefer the real DB/API message when present (e.g. FK / serial errors).
+  if (
+    primary &&
+    normalized !== "server error" &&
+    !normalized.startsWith("http error") &&
+    (blob.includes("violates") || blob.includes("duplicate") || blob.includes("constraint"))
+  ) {
+    return primary
+  }
+
+  if (status === 500 || normalized === "server error" || normalized.includes("internal server error")) {
+    return (
+      "Inventory API returned Server error (500) while saving the product. " +
+      "Usually this is a backend crash on POST/PUT /products (serial insert, unit enum, created_by FK, or AWS init). " +
+      "Ask backend to return the real exception message instead of generic \"Server error\"." +
+      (primary && normalized !== "server error" ? ` Details: ${primary}` : "")
+    )
+  }
+
   return primary || fallback
 }
 

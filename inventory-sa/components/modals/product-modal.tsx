@@ -20,6 +20,7 @@ import {
   convertKgPriceToPiecePrice,
   convertPiecePriceToKgPrice,
   unitToFormSelectValue,
+  resolveApiUnit,
   isSerialRequiredForDispatch,
   formatSaleQuantity,
 } from "@/inventory-sa/lib/utils"
@@ -84,7 +85,11 @@ export default function ProductModal({ product, onClose, onSave }: ProductModalP
   // Check if user is agent (only agents can set price) or super-admin (can set selling price)
   const currentUser = authService.getUser()
   const isAgent = currentUser?.role === "agent"
-  const isSuperAdmin = currentUser?.role === "super-admin"
+  // Quotation Admin → Open Super Admin maps to inventory effective super-admin
+  const isSuperAdmin =
+    currentUser?.role === "super-admin" ||
+    currentUser?.authSource === "quotation-admin" ||
+    currentUser?.inventoryAccess === true
 
   // Unit mapping: reference unit -> display name
   const unitDisplayMap: Record<string, string> = {
@@ -1133,24 +1138,47 @@ export default function ProductModal({ product, onClose, onSave }: ProductModalP
       return { product: updated, action: "update" }
     }
 
-    const productData: any = {
+    // Match manual Add Product flow: create catalog row first, then attach serials.
+    // Single-shot POST /products with serial_numbers often 500s on inventory API.
+    const costPrice = line.unitPrice > 0 ? line.unitPrice : 0
+    const productData: Record<string, unknown> = {
       name: line.stockItemName,
       model: (line.modelName || line.stockItemName).trim() || line.stockItemName,
       category: categoryName,
       wattage: line.wattage || undefined,
       quantity,
-      unit: line.formUnit,
-      unit_price: 0,
+      unit: resolveApiUnit(line.formUnit || "Quantity"),
+      unit_price: costPrice,
       product_name: line.stockItemName,
       product_category: categoryName,
     }
+    if (costPrice > 0) {
+      productData.default_price = costPrice
+    }
+
+    let created = await productsApi.create(productData as any)
+
     if (serials.length > 0) {
-      productData.serial_numbers = serials
+      try {
+        created = await productsApi.update(created.id, {
+          stock_to_add: 0,
+          serial_numbers: serials,
+          product_name: line.stockItemName,
+          product_category: categoryName,
+          ...(costPrice > 0 ? { default_price: costPrice } : {}),
+        })
+        created = {
+          ...created,
+          serial_numbers: created.serial_numbers ?? serials,
+        }
+      } catch (serialErr: unknown) {
+        const detail = formatProductSaveError(serialErr, "Failed to attach serial numbers")
+        throw new Error(
+          `Product "${line.stockItemName}" was created, but serials failed: ${detail}. Open Edit Product and add serials manually.`
+        )
+      }
     }
-    if (line.unitPrice > 0) {
-      productData.default_price = line.unitPrice
-    }
-    const created = await productsApi.create(productData)
+
     return { product: created, action: "create" }
   }
 
@@ -1830,10 +1858,16 @@ export default function ProductModal({ product, onClose, onSave }: ProductModalP
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 z-50">
-      <Card className="bg-card border-border shadow-2xl p-4 sm:p-6 lg:p-8 max-w-[95%] sm:max-w-lg w-full my-4 sm:my-8 max-h-[95vh] overflow-y-auto">
+    <div className="dark fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-2 sm:p-4">
+      <Card
+        className={`bg-card border-border text-foreground shadow-2xl p-4 sm:p-6 lg:p-8 w-full my-4 sm:my-8 max-h-[95vh] overflow-y-auto max-w-[95%] ${
+          product ? "sm:max-w-lg" : "sm:max-w-3xl"
+        }`}
+      >
         <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold text-foreground">{product ? "Edit Product" : "Add New Product"}</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-foreground">
+            {product ? "Edit Product" : "Add New Product"}
+          </h2>
           <button 
             onClick={() => {
               // If on Step 2, product hasn't been created yet, so just close

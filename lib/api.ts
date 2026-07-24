@@ -800,27 +800,58 @@ export const api = {
     },
 
     getCallingQueueNext: async () => {
-      try {
-        return await apiRequest("/dealers/me/calling-queue/next")
-      } catch (error) {
-        // Backward compatibility if backend uses /current instead of /next.
-        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
-          return apiRequest("/dealers/me/calling-queue/current")
+      const tryPaths = [
+        "/dealers/me/calling-queue/next",
+        "/dealers/me/lead-queue/next",
+        "/dealers/me/calling-queue/current",
+        "/dealers/me/lead-queue/current",
+      ]
+      let lastError: unknown = null
+      for (const path of tryPaths) {
+        try {
+          return await apiRequest(path, { suppressErrorLog: path !== tryPaths[0] })
+        } catch (error) {
+          lastError = error
+          if (!(error instanceof ApiError)) throw error
+          // Try next alias on missing/broken routes (500 SYS_001 on /current is common).
+          const retryable =
+            error.code === "HTTP_404" ||
+            error.code === "HTTP_405" ||
+            error.code === "HTTP_500" ||
+            error.code === "HTTP_501" ||
+            error.code === "SYS_001" ||
+            /internal server error/i.test(error.message)
+          if (!retryable) throw error
         }
-        throw error
       }
+      throw lastError instanceof Error ? lastError : new ApiError("Calling queue unavailable", "SYS_001")
     },
 
     getCallingQueueCurrent: async () => {
-      try {
-        return await apiRequest("/dealers/me/calling-queue/current")
-      } catch (error) {
-        // Backward compatibility if backend exposes only /next.
-        if (error instanceof ApiError && (error.code === "HTTP_404" || error.code === "HTTP_405")) {
-          return apiRequest("/dealers/me/calling-queue/next")
+      const tryPaths = [
+        "/dealers/me/calling-queue/current",
+        "/dealers/me/lead-queue/current",
+        "/dealers/me/calling-queue/next",
+        "/dealers/me/lead-queue/next",
+      ]
+      let lastError: unknown = null
+      for (const path of tryPaths) {
+        try {
+          return await apiRequest(path, { suppressErrorLog: path !== tryPaths[0] })
+        } catch (error) {
+          lastError = error
+          if (!(error instanceof ApiError)) throw error
+          const retryable =
+            error.code === "HTTP_404" ||
+            error.code === "HTTP_405" ||
+            error.code === "HTTP_500" ||
+            error.code === "HTTP_501" ||
+            error.code === "SYS_001" ||
+            /internal server error/i.test(error.message)
+          if (!retryable) throw error
         }
-        throw error
       }
+      throw lastError instanceof Error ? lastError : new ApiError("Calling queue unavailable", "SYS_001")
     },
 
     updateCallingLeadAction: async (
@@ -2623,7 +2654,25 @@ export const api = {
       },
     },
 
-    uploadLeadsCsv: async (file: File, dealerIds: string[], activeLimitPerDealer?: number) => {
+    uploadLeadsCsv: async (
+      file: File,
+      dealerIds: string[],
+      options?:
+        | number
+        | {
+            activeLimitPerDealer?: number
+            assignmentMode?: "round_robin_all" | "active_cap"
+          },
+    ) => {
+      const opts =
+        typeof options === "number"
+          ? { activeLimitPerDealer: options, assignmentMode: "active_cap" as const }
+          : {
+              activeLimitPerDealer: options?.activeLimitPerDealer,
+              assignmentMode: options?.assignmentMode ?? "round_robin_all",
+            }
+      const assignAll = opts.assignmentMode === "round_robin_all"
+
       const buildFormData = (config: {
         fileKey: "file" | "csvFile"
         dealerMode: "array-brackets" | "repeat-key" | "json-string"
@@ -2631,6 +2680,7 @@ export const api = {
       }) => {
         const formData = new FormData()
         formData.append(config.fileKey, file)
+        formData.append("assignmentMode", opts.assignmentMode)
 
         if (config.dealerMode === "array-brackets") {
           dealerIds.forEach((dealerId) => formData.append("dealerIds[]", dealerId))
@@ -2640,8 +2690,14 @@ export const api = {
           formData.append("dealerIds", JSON.stringify(dealerIds))
         }
 
-        if (config.limitKey && activeLimitPerDealer && Number.isFinite(activeLimitPerDealer)) {
-          formData.append(config.limitKey, String(activeLimitPerDealer))
+        // round_robin_all: assign every CSV row to pool dealers (Unassigned → 0).
+        // active_cap: only fill up to activeLimitPerDealer open leads per dealer.
+        if (config.limitKey) {
+          if (assignAll) {
+            formData.append(config.limitKey, String(Number.MAX_SAFE_INTEGER))
+          } else if (opts.activeLimitPerDealer && Number.isFinite(opts.activeLimitPerDealer)) {
+            formData.append(config.limitKey, String(opts.activeLimitPerDealer))
+          }
         }
 
         return formData
@@ -2668,6 +2724,38 @@ export const api = {
             error instanceof ApiError &&
             (error.code === "VAL_001" || error.code === "HTTP_400" || error.message.toLowerCase().includes("validation"))
           if (!isValidationError) throw error
+        }
+      }
+
+      throw lastError
+    },
+
+    /**
+     * Drain Unassigned → Assigned for one upload batch (round-robin across batch dealer pool).
+     * POST /hr/leads/uploads/:id/assign-unassigned (aliases tried below).
+     */
+    assignUnassignedLeads: async (batchId: string) => {
+      const safeBatchId = encodeURIComponent(batchId)
+      const endpoints = [
+        `/hr/leads/uploads/${safeBatchId}/assign-unassigned`,
+        `/hr/calling-uploads/${safeBatchId}/assign-unassigned`,
+        `/hr/uploads/${safeBatchId}/assign-unassigned`,
+        `/admin/leads/uploads/${safeBatchId}/assign-unassigned`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest<Record<string, unknown>>(endpoint, {
+            method: "POST",
+            body: JSON.stringify({ assignmentMode: "round_robin_all" }),
+          })
+        } catch (error) {
+          lastError = error
+          const isMissingEndpoint =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!isMissingEndpoint) throw error
         }
       }
 

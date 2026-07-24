@@ -800,9 +800,17 @@ export async function postHrLeadsUploadCsv(req, res, db) {
       return
     }
 
-    // Frontend sends 1. Keep safe default to 1 for backend correctness.
+    // Frontend may send assignmentMode=round_robin_all to assign every row (Unassigned → 0).
+    // Legacy active_cap keeps per-dealer open-lead limit (default 1).
+    const assignmentMode = String(req.body.assignmentMode || "").trim().toLowerCase()
+    const assignAllAtUpload = assignmentMode === "round_robin_all" || assignmentMode === "round-robin-all"
+
     const requestedLimit = Number(req.body.activeLimitPerDealer ?? req.body.activeLeadsLimit)
-    const activeLimitPerDealer = Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.floor(requestedLimit) : 1
+    const activeLimitPerDealer = assignAllAtUpload
+      ? Number.MAX_SAFE_INTEGER
+      : Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.floor(requestedLimit)
+        : 1
 
     // parseCsvRowsFromFile is backend-specific parser you already use
     const parsedRows = await db.parseCsvRowsFromFile(file.path)
@@ -1019,10 +1027,86 @@ export async function getHrLeadsUploadById(req, res, db) {
 }
 
 /**
+ * POST /hr/leads/uploads/:uploadId/assign-unassigned
+ * Drain Unassigned → Assigned for one upload: round-robin across upload.dealerIds.
+ * Goal: unassignedCount === 0 after success (Assigned rises; Completed unchanged).
+ * Process oldest uploads first when HR runs bulk (SPA does that client-side).
+ */
+export async function postHrLeadsUploadAssignUnassigned(req, res, db) {
+  try {
+    const user = req.hr ?? req.user
+    if (!user || user.role !== "hr") {
+      res.status(401).json({ success: false, error: { code: "AUTH_003", message: "HR required" } })
+      return
+    }
+
+    const uploadId = req.params.uploadId || req.params.id
+    const upload = await db.hrLeadUploads.findById(uploadId)
+    if (!upload) {
+      res.status(404).json({ success: false, error: { code: "NOT_001", message: "Upload not found" } })
+      return
+    }
+
+    const dealerIds = asArray(upload.dealerIds).filter(Boolean)
+    if (dealerIds.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_002", message: "Upload has no dealer pool — re-upload with dealers selected" },
+      })
+      return
+    }
+
+    // Oldest unassigned first (FCFS within the batch)
+    const unassigned = await db.hrLeads.findMany({
+      uploadId,
+      // status queued/pending OR assignedDealerId null/unassigned sentinel
+      unassignedOnly: true,
+      orderBy: "queuedAt_ASC", // or createdAt ASC
+    })
+
+    let assigned = 0
+    let cursor = 0
+    for (const lead of unassigned) {
+      const dealerId = dealerIds[cursor % dealerIds.length]
+      cursor += 1
+      await db.hrLeads.updateById(lead.id, {
+        assignedDealerId: dealerId,
+        assignedAt: new Date(),
+        status: "assigned",
+      })
+      assigned += 1
+    }
+
+    const allLeads = await db.hrLeads.findAllByUploadId(uploadId)
+    const counts = computeHrUploadLeadCounts(allLeads)
+
+    res.json({
+      success: true,
+      uploadId,
+      assigned,
+      unassignedRemaining: counts.unassignedCount,
+      unassignedCount: counts.unassignedCount,
+      assignedCount: counts.assignedCount,
+      completedCount: counts.completedCount,
+      rowCount: counts.rowCount,
+      counts: {
+        assigned: counts.assignedCount,
+        unassigned: counts.unassignedCount,
+        completed: counts.completedCount,
+      },
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
+  }
+}
+
+/**
  * Additional routes (Express example):
  *   router.post('/hr/leads/upload-csv', hrAuth, upload.single('file'), postHrLeadsUploadCsv)
  *   router.get('/hr/leads/uploads', hrAuth, getHrLeadsUploads)
  *   router.get('/hr/leads/uploads/:uploadId', hrAuth, getHrLeadsUploadById)
+ *   router.post('/hr/leads/uploads/:uploadId/assign-unassigned', hrAuth, postHrLeadsUploadAssignUnassigned)
  */
 
 /**

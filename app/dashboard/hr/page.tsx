@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2 } from "lucide-react"
+import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, UserPlus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
   buildCallingActionsQueryDates,
@@ -244,6 +244,7 @@ export default function HrDashboardPage() {
   const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
   const [isLoadingUploadedBatches, setIsLoadingUploadedBatches] = useState(false)
+  const [assigningBatchId, setAssigningBatchId] = useState<string | null>(null)
   const [uploadedBatchesLoadError, setUploadedBatchesLoadError] = useState<string | null>(null)
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false)
   const [activeBatch, setActiveBatch] = useState<UploadedLeadBatch | null>(null)
@@ -908,6 +909,101 @@ export default function HrDashboardPage() {
     await loadBatchPreviewPage(batch, firstPage, activeBatchLimit)
   }
 
+  const assignUnassignedForBatch = async (batch: UploadedLeadBatch) => {
+    if (!useApi) {
+      toast({
+        title: "API mode required",
+        description: "Enable backend API mode to assign unassigned leads.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (batch.unassignedCount <= 0) {
+      toast({
+        title: "Nothing to assign",
+        description: "This batch already has Unassigned = 0.",
+      })
+      return
+    }
+
+    setAssigningBatchId(batch.id)
+    try {
+      const result = await api.hr.assignUnassignedLeads(batch.id)
+      const assigned = Number(
+        result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? result?.data?.assignedCount ?? 0,
+      )
+      const remaining = Number(
+        result?.unassignedRemaining ??
+          result?.unassignedCount ??
+          result?.data?.unassignedRemaining ??
+          result?.data?.unassignedCount ??
+          Math.max(0, batch.unassignedCount - assigned),
+      )
+      setRealtimeTick((prev) => prev + 1)
+      toast({
+        title: remaining === 0 ? "Unassigned cleared" : "Partial assign",
+        description:
+          remaining === 0
+            ? `Assigned ${assigned || batch.unassignedCount} lead(s) to pool dealers. Unassigned is now 0.`
+            : `Assigned ${assigned} lead(s). ${remaining} still unassigned — check backend assign-unassigned support (HANDOFF §15).`,
+        variant: remaining === 0 ? "default" : "destructive",
+      })
+      return { ok: remaining === 0, assigned, remaining }
+    } catch (error) {
+      const message =
+        error instanceof ApiError
+          ? error.details?.[0]?.message || error.message
+          : error instanceof Error
+            ? error.message
+            : "Failed to assign unassigned leads."
+      toast({
+        title: "Assign unassigned failed",
+        description: `${message} Backend must implement POST …/assign-unassigned (HANDOFF §15).`,
+        variant: "destructive",
+      })
+      return { ok: false, assigned: 0, remaining: batch.unassignedCount }
+    } finally {
+      setAssigningBatchId(null)
+    }
+  }
+
+  const assignAllUnassignedOldestFirst = async () => {
+    const pending = [...uploadedLeadBatches]
+      .filter((b) => b.unassignedCount > 0)
+      .sort((a, b) => new Date(a.uploadedAt || 0).getTime() - new Date(b.uploadedAt || 0).getTime())
+    if (pending.length === 0) {
+      toast({ title: "Nothing to assign", description: "All batches already have Unassigned = 0." })
+      return
+    }
+
+    setAssigningBatchId("__all__")
+    let totalAssigned = 0
+    let failed = 0
+    try {
+      for (const batch of pending) {
+        try {
+          const result = await api.hr.assignUnassignedLeads(batch.id)
+          totalAssigned += Number(
+            result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? batch.unassignedCount ?? 0,
+          )
+        } catch {
+          failed += 1
+          break
+        }
+      }
+      setRealtimeTick((prev) => prev + 1)
+      toast({
+        title: failed ? "Stopped on backend error" : "Unassigned drain started",
+        description: failed
+          ? `Assigned ${totalAssigned} lead(s) then failed. Implement POST …/assign-unassigned (HANDOFF §15).`
+          : `Processed ${pending.length} batch(es) oldest-first. Assigned ~${totalAssigned} lead(s). Refresh badges should show Unassigned → 0.`,
+        variant: failed ? "destructive" : "default",
+      })
+    } finally {
+      setAssigningBatchId(null)
+    }
+  }
+
   const activeBatchTotalPages = Math.max(1, Math.ceil(activeBatchTotalRows / activeBatchLimit))
 
   const getCallingRangeBounds = () => {
@@ -1004,7 +1100,9 @@ export default function HrDashboardPage() {
           <h1 className="text-xl font-semibold">HR Calling Assignment</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Upload CSV leads and choose dealer pool. Leads are distributed using dynamic work queue (next free dealer gets next lead).
+          Upload CSV leads and choose dealer pool. Leads stay in a shared FIFO work queue —
+          next free dealer in the pool gets the next unassigned lead (first-come-first-serve).
+          Goal: Unassigned → 0 and Assigned → 0 as dealers finish calls (Completed grows to row count).
         </p>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
@@ -1069,7 +1167,9 @@ export default function HrDashboardPage() {
                       })}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      First-come-first-serve: all CSV rows are split evenly across selected dealers at upload (round-robin). Unassigned stays 0 unless a row has no dealer.
+                      All CSV rows are assigned round-robin to the selected dealers (Unassigned → 0). Dealers work
+                      their assigned leads first-come-first-serve in Calling Data until Assigned also drains to
+                      Completed.
                     </p>
                   </div>
                 )}
@@ -1087,7 +1187,32 @@ export default function HrDashboardPage() {
           <TabsContent value="uploaded-data">
             <Card className="border-border/60">
               <CardHeader>
-                <CardTitle className="text-base">Uploaded Lead Data</CardTitle>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="space-y-1.5">
+                    <CardTitle className="text-base">Uploaded Lead Data</CardTitle>
+                    <CardDescription>
+                      Clear Unassigned first: use{" "}
+                      <span className="font-medium text-foreground">Assign unassigned</span> so remaining rows go
+                      round-robin to that file&apos;s dealers. Prefer oldest uploads first (FCFS). Dealers then finish
+                      Assigned → Completed in Calling Data.
+                    </CardDescription>
+                  </div>
+                  {uploadedLeadBatches.some((b) => b.unassignedCount > 0) ? (
+                    <Button
+                      size="sm"
+                      className="gap-1 shrink-0"
+                      disabled={assigningBatchId != null}
+                      onClick={() => void assignAllUnassignedOldestFirst()}
+                    >
+                      {assigningBatchId === "__all__" ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <UserPlus className="w-4 h-4" />
+                      )}
+                      Assign all unassigned (oldest first)
+                    </Button>
+                  ) : null}
+                </div>
               </CardHeader>
               <CardContent>
                 {isLoadingUploadedBatches ? (
@@ -1138,6 +1263,22 @@ export default function HrDashboardPage() {
                               </Badge>
                             ))}
                             </div>
+                            {batch.unassignedCount > 0 ? (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                className="gap-1 shrink-0"
+                                disabled={assigningBatchId != null}
+                                onClick={() => assignUnassignedForBatch(batch)}
+                              >
+                                {assigningBatchId === batch.id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <UserPlus className="w-4 h-4" />
+                                )}
+                                Assign unassigned
+                              </Button>
+                            ) : null}
                             <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={() => openBatchPreview(batch)}>
                               <Eye className="w-4 h-4" />
                               View

@@ -1962,6 +1962,197 @@ Frontend already aggregates client-side from `GET /admin/quotations` when this r
 
 ---
 
+## 14. Inventory — `products_created_by_fkey` on POST /products
+
+**Frontend:** Quotation Admin → Open Super Admin → Add Product / Tally Import  
+**Failing call:** `POST /api/products` → **500**  
+**Live error:**
+`insert or update on table "products" violates foreign key constraint "products_created_by_fkey"`
+
+### Root cause
+
+`products.created_by` is set to the **quotation Admin JWT user id**, but that id is **not** in inventory `users`.
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_PRODUCTS_CREATED_BY.ts` — copy `resolveInventoryCreatedBy` into inventory `POST /products`.
+
+| Step | Action |
+|------|--------|
+| 1 | If `jwt.sub` exists in inventory `users` → use it |
+| 2 | Else if body `created_by` / `createdBy` is a valid inventory user → use it |
+| 3 | Else if same `username` exists in inventory `users` → use it |
+| 4 | Else **upsert** inventory user with `id = jwt.sub`, `role = super-admin` |
+| 5 | Else fall back to any active super-admin; else **400** `INV_USER_MISSING` |
+
+Never INSERT `products.created_by` with a bare JWT id that is absent from `users`.
+
+Also:
+- Honor JSON create without image / without serials (SPA attaches serials on PUT)
+- Return real DB/error messages (not only `SYS_001` / `"Server error"`)
+
+### Frontend already does
+
+- Sends `created_by` when it can resolve an inventory user
+- Creates product then PUT serials
+- Clearer FK error copy
+
+Frontend **cannot** fix this alone if the API ignores body `created_by` and does not upsert.
+
+### Checklist
+
+- [ ] Quotation Admin → Tally import / Add Product → **201/200** (no FK error)
+- [ ] Inventory `users` has JWT sub **or** `created_by` → valid `users.id`
+- [ ] Native inventory super-admin create unchanged
+- [ ] Body `created_by` accepted when JWT user missing
+- [ ] Missing actor → **400** `INV_USER_MISSING` with clear message
+
+### QA
+
+1. Quotation Admin login → Open Super Admin → import Inverter + serials → saved.
+2. `SELECT * FROM users WHERE id = '<jwt-sub>';` → row exists (after upsert) **or** product.created_by points elsewhere valid.
+3. Repeat create — no 500.
+
+**Reference:** `BACKEND_PRODUCTS_CREATED_BY.ts`
+
+---
+
+## 15. Calling Data — drain Unassigned+Assigned to **0** + fix empty Current Lead
+
+**Frontend:** Dealer → **Calling Data** (e.g. Harshita) + HR → **Uploaded Lead Data**  
+**APIs:** `GET …/calling-queue/next|current` + `POST …/uploads/:id/assign-unassigned`  
+**Full references:** `BACKEND_ASSIGN_UNASSIGNED.ts` + `BACKEND_CALLING_QUEUE_CURRENT.ts`  
+**Related:** §3 (`LEAD_004` / claim), `BACKEND_CHANGES_REQUIRED.md` §7.7–7.8
+
+### Live blocker (Jul 2026)
+
+**HR Uploaded Data (example top row):** Unassigned **193** · Assigned **37** · Completed 2370  
+**Dealer Calling Data (Harshita):** **“No calling data pending for you.”**
+
+```
+GET /api/dealers/me/calling-queue/current → 500 SYS_001
+GET /api/dealers/me/calling-queue/next    → empty / no claim of Assigned or Unassigned
+```
+
+**Product requirement (any how):** every batch must reach Unassigned **0** and Assigned **0**. Remaining rows must appear as Current Lead for pool dealers until Completed absorbs them.
+
+| Step | Who | What |
+|------|-----|------|
+| 1 | Backend + HR | `POST …/assign-unassigned` (or `/next` claim) → Unassigned **0** |
+| 2 | Backend + Dealer | `/next` returns that dealer’s Assigned lead → they complete → Assigned drains |
+| 3 | Repeat | Oldest uploads first until all batches are `0 / 0 / rowCount` |
+
+SPA falls back across `/next`↔`/current` on 500 — but empty `/next` still blanks Current Lead. **Backend must ship both queue fix and assign-unassigned.**
+
+### Required backend
+
+#### A) Stop 500 on `/current` (minimum today)
+
+| Rule | Detail |
+|------|--------|
+| Always **200** | `{ success: true, lead: null \| object, queue: [], … }` |
+| No uncaught joins | Null assignee / missing upload / missing customer must not throw |
+| Thin handler | Return dealer’s open `in_progress`/`assigned` row only; else `lead: null` |
+| Optional | On unexpected error still return **200 empty** (not SYS_001) |
+
+#### B) `/next` = FCFS source of truth
+
+1. If dealer has open assigned/`in_progress` → return that lead.
+2. Else claim **oldest unassigned** lead in uploads where dealer ∈ `dealerIds` / `eligibleDealerIds` (`FOR UPDATE SKIP LOCKED`).
+3. Persist `assigned_dealer_id` before response (or auto-claim on `start` — §3).
+4. Include lead in `lead` **and** `queue` / `pendingLeads` / `leads`.
+5. On completion action → mark completed + return `nextLead` (repeat until pool empty).
+6. Reclaim stuck Assigned (no activity 4–24h) back to unassigned pool.
+
+#### C) Drain Unassigned → 0 (HR + upload) — **product priority**
+
+**Full reference (implement this):** `BACKEND_ASSIGN_UNASSIGNED.ts`  
+Also mirrored in: `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `postHrLeadsUploadAssignUnassigned`
+
+HR Uploaded Data still shows yellow **Unassigned** (193, 97, 74, …). Product wants that badge **to 0 first** by assigning remaining rows to the batch dealer pool (round-robin), then dealers work Assigned → Completed.
+
+| Piece | Detail |
+|-------|--------|
+| **NEW** | `POST /hr/leads/uploads/:uploadId/assign-unassigned` — round-robin all unassigned in that upload to `upload.dealerIds` → `unassignedCount === 0` |
+| Upload patch | Honor `assignmentMode=round_robin_all` (SPA sends this) → assign **every** new row; ignore `activeLimitPerDealer=1` cap |
+| Bulk order | SPA “Assign all unassigned (oldest first)” calls that POST per batch sorted by `uploadedAt ASC` |
+| Counts | After assign: `unassignedCount === 0`, `assignedCount` rises, `completedCount` unchanged |
+| Dealer UI | `/next` / `/current` return dealer’s next **assigned** lead FIFO (see `BACKEND_CALLING_QUEUE_CURRENT.ts`) |
+
+```http
+POST /api/hr/leads/uploads/:uploadId/assign-unassigned
+Authorization: Bearer <HR_JWT>
+Content-Type: application/json
+
+{ "assignmentMode": "round_robin_all" }
+```
+
+```json
+{
+  "success": true,
+  "uploadId": "…",
+  "assigned": 193,
+  "unassignedCount": 0,
+  "unassignedRemaining": 0,
+  "assignedCount": 230,
+  "completedCount": 2370,
+  "rowCount": 2600,
+  "counts": { "assigned": 230, "unassigned": 0, "completed": 2370 }
+}
+```
+
+#### D) HR counts (§7.8)
+
+Live `unassignedCount` + `assignedCount` + `completedCount` === `rowCount` from DB. Goal: Unassigned **0**, then Assigned **0**, Completed = rows.
+
+### Response shape (both `/next` and `/current`)
+
+```json
+{
+  "success": true,
+  "lead": { "id": "…", "name": "…", "mobile": "…", "status": "assigned", "assignedDealerId": "<jwt-dealer-id>", "uploadBatchId": "…", "queuedAt": "…" },
+  "currentLead": { },
+  "nextLead": { },
+  "queue": [ ],
+  "pendingLeads": [ ],
+  "leads": [ ],
+  "scheduledLeads": [ ],
+  "recentActions": [ ],
+  "pendingCount": 1,
+  "queuedCount": 0,
+  "scheduledCount": 0,
+  "completedCount": 0,
+  "counts": { "pending": 1, "queued": 0, "scheduled": 0, "completed": 0 }
+}
+```
+
+Empty: `"lead": null`, arrays `[]`, counts `0` — still **200**.
+
+### Checklist
+
+- [ ] `GET …/calling-queue/current` → **200** (never SYS_001) with or without a lead
+- [ ] `GET …/calling-queue/next` → allocates FIFO unassigned when dealer free + Unassigned > 0; also returns next already-assigned lead
+- [ ] Claim/lock so two dealers cannot get the same lead
+- [ ] Completion returns `nextLead` until Unassigned+Assigned drain
+- [ ] Stuck assigned reclaimed to pool (optional if all leads are pre-assigned)
+- [ ] `POST …/uploads/:id/assign-unassigned` → Unassigned → 0 for that batch
+- [ ] Upload honors `assignmentMode=round_robin_all` (no active-cap leftover queue)
+- [ ] Optional aliases `/lead-queue/next|current` or keep 404 (SPA falls through)
+
+### QA
+
+1. Dealer refresh Calling Data → Current Lead shows (no console 500 on `/current`).
+2. Curl `/current` with no open lead → `200 { "lead": null }`.
+3. Curl `/next` while batch has Unassigned → `200` with `assignedDealerId` set.
+4. Complete call → next lead appears until batch Unassigned 0 / Assigned 0.
+5. HR Uploaded Data badges match DB live counts.
+6. HR **Assign unassigned** on a batch with Unassigned 193 → badge becomes **0**, Assigned rises by 193.
+7. New CSV upload with dealers selected → Unassigned **0** immediately (`round_robin_all`).
+
+**Reference:** `BACKEND_ASSIGN_UNASSIGNED.ts` (Unassigned → 0) + `BACKEND_CALLING_QUEUE_CURRENT.ts` (`/current` + `/next`) + `postHrLeadsUploadAssignUnassigned` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -1983,5 +2174,10 @@ Frontend already aggregates client-side from `GET /admin/quotations` when this r
 | `lib/operational-install-queue.ts` | `getAdminQuotationsTabSendToMeteringState`, installation vs metering visibility |
 | **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`** | **§13** Admin Product Needed — installation-pending + brand aggregates |
 | `lib/admin-product-needed.ts` | Product Needed eligibility + brand card aggregation (frontend) |
+| **§14** (this file) | Inventory Tally import — `products_created_by_fkey` + serial attach |
+| **`BACKEND_PRODUCTS_CREATED_BY.ts`** | **§14** upsert quotation Admin into inventory `users` for `created_by` |
+| **§15** (this file) | Calling `/current` 500 SYS_001 + FCFS drain Unassigned/Assigned |
+| **`BACKEND_ASSIGN_UNASSIGNED.ts`** | **§15-C** `POST …/assign-unassigned` + upload `round_robin_all` |
+| **`BACKEND_CALLING_QUEUE_CURRENT.ts`** | **§15** implement `/calling-queue/current` + `/next` (never SYS_001) |
 | **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |

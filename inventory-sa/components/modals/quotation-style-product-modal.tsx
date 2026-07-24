@@ -17,6 +17,11 @@ const COMMON_CATEGORIES = [
   "Other",
 ]
 
+/**
+ * @deprecated Unused. Quotation Super Admin and Inventory SA both use the full
+ * `product-modal.tsx` (multi-row add + Tally Purchase JSON import + edit).
+ * Keep only as reference for the old simple Name/Model/Category form.
+ */
 export interface QuotationStyleProductModalProps {
   product?: Product | null
   onClose: () => void

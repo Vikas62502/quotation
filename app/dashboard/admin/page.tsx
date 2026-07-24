@@ -1008,15 +1008,15 @@ function AdminQuotationRowActions({
 
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1">
-      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onTimeline(quotation)} title="Status timeline">
-        <History className="w-4 h-4" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onDocuments(quotation)} title="Document Submission">
-        <FileText className="w-4 h-4" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onView(quotation)} title="View Details">
-        <Eye className="w-4 h-4" />
-      </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onTimeline(quotation)} title="Status timeline">
+          <History className="w-4 h-4" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onDocuments(quotation)} title="Document Submission">
+          <FileText className="w-4 h-4" />
+        </Button>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onView(quotation)} title="View Details">
+          <Eye className="w-4 h-4" />
+        </Button>
       {sendToMetering.visible ? (
         <Button
           type="button"
@@ -4041,12 +4041,12 @@ export default function AdminPanelPage() {
         adminMeteringDocByQuotation[adminMeteringQuotationId] || null,
       )
       const meterDocUrl = parseMeterDocumentUrlFromApiPayload(saveResp)
-      const id = adminMeteringQuotationId
-      setQuotations((prev) =>
-        prev.map((q) =>
-          q.id === id
-            ? ({
-                ...q,
+        const id = adminMeteringQuotationId
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === id
+              ? ({
+                  ...q,
                 discomName,
                 discom_name: discomName,
                 remarks,
@@ -4056,14 +4056,14 @@ export default function AdminPanelPage() {
                 discom_location: adminMeteringDraft.discomLocation.trim() || undefined,
                 ...(meterDocUrl
                   ? {
-                      meterDocumentUrl: meterDocUrl,
-                      meter_document_url: meterDocUrl,
+                  meterDocumentUrl: meterDocUrl,
+                  meter_document_url: meterDocUrl,
                     }
                   : {}),
-              } as Quotation)
-            : q,
-        ),
-      )
+                } as Quotation)
+              : q,
+          ),
+        )
       await loadData()
       toast({ title: "Saved", description: "Metering details saved." })
       setAdminMeteringModalOpen(false)
@@ -4848,18 +4848,18 @@ export default function AdminPanelPage() {
                 return
               }
             } else {
-              console.error("Send to metering failed:", error)
-              toast({
-                title: "Send to metering failed",
+            console.error("Send to metering failed:", error)
+            toast({
+              title: "Send to metering failed",
                 description:
                   error instanceof ApiError
                     ? error.message
                     : "Could not update metering status on the server.",
-                variant: "destructive",
-              })
-              return
-            }
+              variant: "destructive",
+            })
+            return
           }
+        }
         }
 
         applyAdminMeteringStageLocal(quotation.id, "processing")
@@ -4942,17 +4942,17 @@ export default function AdminPanelPage() {
     if (!adminInstallQuotation) return
     const isPartial = mode === "partial"
     if (!isPartial) {
-      const requiredFields = ADMIN_INSTALLATION_IMAGE_FIELDS.filter((f) => isAdminImageFieldRequired(f))
-      const missingFields = requiredFields.filter(
-        (field) => !(adminInstallMediaByField[field.key] && adminInstallMediaByField[field.key]!.length > 0),
-      )
-      if (missingFields.length > 0) {
-        toast({
-          title: "Images required",
-          description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
-          variant: "destructive",
-        })
-        return
+    const requiredFields = ADMIN_INSTALLATION_IMAGE_FIELDS.filter((f) => isAdminImageFieldRequired(f))
+    const missingFields = requiredFields.filter(
+      (field) => !(adminInstallMediaByField[field.key] && adminInstallMediaByField[field.key]!.length > 0),
+    )
+    if (missingFields.length > 0) {
+      toast({
+        title: "Images required",
+        description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+        variant: "destructive",
+      })
+      return
       }
     } else {
       const hasAnyImage =
@@ -5093,10 +5093,10 @@ export default function AdminPanelPage() {
         formData,
         { caller: "admin" },
       )
-      const uploadedId = adminInstallQuotation.id
+        const uploadedId = adminInstallQuotation.id
       const applyLocalPartialOrApproved = () => {
         const now = new Date().toISOString()
-        setQuotations((prev) =>
+          setQuotations((prev) =>
           prev.map((row) => {
             if (row.id !== uploadedId) return row
             const merged =
@@ -6870,16 +6870,16 @@ export default function AdminPanelPage() {
                     }
 
                     if (operationalProgressTab === "wcc") {
-                      return activeQuotationList.length === 0 ? (
-                        <div className="text-center py-12 text-muted-foreground">
-                          <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    return activeQuotationList.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No WCC pending records</p>
                           <p className="text-xs mt-1">
                             Includes Installation → Approved (enter Meter Pending after save), and rows sent from
                             Meter in Discom when installation is approved (then Meter Installation Pending).
                           </p>
-                        </div>
-                      ) : (
+                      </div>
+                    ) : (
                         <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                           <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                             <table className="w-full min-w-[64rem] border-collapse text-left">
@@ -6897,8 +6897,8 @@ export default function AdminPanelPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {visibleQuotationList.map((quotation) => {
-                                  const qAny = quotation as unknown as Record<string, unknown>
+                        {visibleQuotationList.map((quotation) => {
+                          const qAny = quotation as unknown as Record<string, unknown>
                                   const nestedDealer = qAny.dealer as Record<string, unknown> | null | undefined
                                   const fromList = dealers.find((d) => d.id === quotation.dealerId)
                                   const dealerName =
@@ -7185,7 +7185,7 @@ export default function AdminPanelPage() {
                                       : undefined)
                                   const i2 = getSecondInstallmentAmount(quotation)
                                   const bankLabel = getMeteringBankDetailsLabel(quotation) || "—"
-                                  const meteringStage = getAdminMeteringStage(quotation)
+                          const meteringStage = getAdminMeteringStage(quotation)
                                   const stageLabel =
                                     meteringStage === "mco"
                                       ? "Final Step"
@@ -7206,7 +7206,7 @@ export default function AdminPanelPage() {
                                     getAdminBankProcessDraft(quotation).bankLocation.trim() || "—"
                                   const bankRemarksDraft =
                                     getAdminBankProcessDraft(quotation).remarks.trim() || "—"
-                                  return (
+                          return (
                                     <tr
                                       key={quotation.id}
                                       className="border-b border-border/50 transition-colors hover:bg-muted/35 last:border-b-0"
@@ -7226,7 +7226,7 @@ export default function AdminPanelPage() {
                                           <p className="text-[10px] font-medium text-muted-foreground/90 truncate">
                                             {quotation.id}
                                           </p>
-                                        </div>
+                                  </div>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
                                         <p className="text-xs font-medium max-w-[11rem] truncate" title={dealerName}>
@@ -7299,14 +7299,14 @@ export default function AdminPanelPage() {
                                               To Pending payment
                                             </Button>
                                           ) : null}
-                                        </div>
+                                  </div>
                                       </td>
                                     </tr>
                                   )
                                 })}
                               </tbody>
                             </table>
-                          </div>
+                                  </div>
                           <IncrementalListSentinel
                             sentinelRef={quotationListSentinelRef}
                             visibleCount={visibleQuotationCount}
@@ -7314,7 +7314,7 @@ export default function AdminPanelPage() {
                             hasMore={hasMoreQuotationList}
                             onLoadMore={loadMoreQuotationList}
                           />
-                        </div>
+                                  </div>
                       )
                     }
 
@@ -7426,7 +7426,7 @@ export default function AdminPanelPage() {
                                         : meteringStage === "meter_install"
                                           ? "Meter Installation Pending"
                                           : getMeteringWorkflowRaw(qAny) ||
-                                            getInstallationWorkflowStatus(qAny) ||
+                                        getInstallationWorkflowStatus(qAny) ||
                                             "—"
                                 return (
                                   <tr
@@ -7452,7 +7452,7 @@ export default function AdminPanelPage() {
                                         <p className="text-[10px] font-medium text-muted-foreground/90 truncate">
                                           {quotation.id}
                                         </p>
-                                      </div>
+                                  </div>
                                     </td>
                                     <td className="px-3 py-2.5 align-middle">
                                       <div className="min-w-[8.5rem] max-w-[11rem]">
@@ -7532,38 +7532,38 @@ export default function AdminPanelPage() {
                                           onClick={() => openAdminMeteringDetails(quotation)}
                                         >
                                           Details
-                                        </Button>
-                                        {meteringStage === "processing" && (
-                                          <Button
-                                            size="sm"
+                                    </Button>
+                                    {meteringStage === "processing" && (
+                                      <Button
+                                        size="sm"
                                             className="h-8 shrink-0"
-                                            onClick={() => void setAdminMeteringStage(quotation, "approved")}
-                                            disabled={!hasRequiredAdminMeteringDetails(quotation)}
-                                          >
+                                        onClick={() => void setAdminMeteringStage(quotation, "approved")}
+                                        disabled={!hasRequiredAdminMeteringDetails(quotation)}
+                                      >
                                             To Discom
-                                          </Button>
-                                        )}
-                                        {meteringStage === "approved" && (
-                                          <>
-                                            <Button
-                                              variant="outline"
-                                              size="sm"
+                                      </Button>
+                                    )}
+                                    {meteringStage === "approved" && (
+                                      <>
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
                                               className="h-8 shrink-0"
-                                              onClick={() => void setAdminMeteringStage(quotation, "processing")}
-                                            >
+                                          onClick={() => void setAdminMeteringStage(quotation, "processing")}
+                                        >
                                               To Pending
-                                            </Button>
+                                        </Button>
                                             <Button
                                               size="sm"
                                               className="h-8 shrink-0"
                                               onClick={() => void moveAdminMeteringFromDiscomToWcc(quotation)}
                                             >
                                               To WCC Pending
-                                            </Button>
-                                          </>
-                                        )}
-                                        {meteringStage === "mco" && (
-                                          <>
+                                        </Button>
+                                      </>
+                                    )}
+                                    {meteringStage === "mco" && (
+                                      <>
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -7571,18 +7571,18 @@ export default function AdminPanelPage() {
                                               onClick={() => openAdminMcoDocsModal(quotation)}
                                             >
                                               MCO Docs
-                                            </Button>
-                                            <Button
-                                              size="sm"
+                                        </Button>
+                                        <Button
+                                          size="sm"
                                               className="h-8 shrink-0"
-                                              onClick={() => void moveAdminToBaldevConfirmation(quotation)}
+                                          onClick={() => void moveAdminToBaldevConfirmation(quotation)}
                                               disabled={
                                                 !hasRequiredAdminMeteringDetails(quotation) ||
                                                 !hasRequiredAdminMcoDocuments(quotation)
                                               }
-                                            >
+                                        >
                                               To Confirmation
-                                            </Button>
+                                        </Button>
                                             <Button
                                               variant="outline"
                                               size="sm"
@@ -7590,10 +7590,10 @@ export default function AdminPanelPage() {
                                               onClick={() => void setAdminMeteringStage(quotation, "approved")}
                                             >
                                               To Discom
-                                            </Button>
-                                          </>
-                                        )}
-                                      </div>
+                                        </Button>
+                                      </>
+                                    )}
+                                  </div>
                                     </td>
                                     )}
                                   </tr>
@@ -7907,18 +7907,18 @@ export default function AdminPanelPage() {
                               </tr>
                             </thead>
                             <tbody>
-                              {visibleQuotationList.map((quotation) => {
-                                const installerStatus = getInstallerQueueStatusForAdmin(quotation)
-                                const qAny = quotation as any
-                                const sentToInstallationAt =
-                                  qAny.installationReleasedAt || qAny.installation_released_at
-                                const installationListDate =
-                                  sentToInstallationAt ||
-                                  qAny.approvedAt ||
-                                  qAny.approvedDate ||
-                                  qAny.statusUpdatedAt ||
-                                  quotation.createdAt
-                                const sentBaseStr = installationListDate ? String(installationListDate) : ""
+                        {visibleQuotationList.map((quotation) => {
+                          const installerStatus = getInstallerQueueStatusForAdmin(quotation)
+                          const qAny = quotation as any
+                          const sentToInstallationAt =
+                            qAny.installationReleasedAt || qAny.installation_released_at
+                          const installationListDate =
+                            sentToInstallationAt ||
+                            qAny.approvedAt ||
+                            qAny.approvedDate ||
+                            qAny.statusUpdatedAt ||
+                            quotation.createdAt
+                          const sentBaseStr = installationListDate ? String(installationListDate) : ""
                                 const sentParsedOk = sentBaseStr
                                   ? !Number.isNaN(new Date(sentBaseStr).getTime())
                                   : false
@@ -7928,7 +7928,7 @@ export default function AdminPanelPage() {
                                 const storedInstallYmd = toYmdFromStored(
                                   qAny.installationScheduledAt as string | undefined,
                                 )
-                                const installationDateInputValue = storedInstallYmd || defaultInstallYmd
+                          const installationDateInputValue = storedInstallYmd || defaultInstallYmd
                                 const overdueTone = installationOverdueTone(
                                   installationDateInputValue,
                                   installerStatus,
@@ -7969,7 +7969,7 @@ export default function AdminPanelPage() {
                                     ? gatherInstallationPublicImageUrls(qAny, 24)
                                     : []
                                 const showDetailRow = showExpanded || thumbs.length > 0
-                                return (
+                          return (
                                   <Fragment key={quotation.id}>
                                     <tr
                                       className={cn(
@@ -7993,7 +7993,7 @@ export default function AdminPanelPage() {
                                           <p className="text-[10px] font-medium text-muted-foreground/90 truncate">
                                             {quotation.id}
                                           </p>
-                                        </div>
+                                  </div>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
                                         <div className="min-w-[8.5rem] max-w-[11rem]">
@@ -8011,82 +8011,82 @@ export default function AdminPanelPage() {
                                       <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                                         <p className="text-xs font-medium inline-flex items-center gap-1">
                                           <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
-                                          {installationListDate
-                                            ? new Date(installationListDate as string).toLocaleDateString("en-IN")
-                                            : "N/A"}
-                                        </p>
+                                      {installationListDate
+                                        ? new Date(installationListDate as string).toLocaleDateString("en-IN")
+                                        : "N/A"}
+                                    </p>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
                                         <div className="min-w-[9.5rem]">
-                                          <Input
-                                            id={`install-date-${quotation.id}`}
-                                            type="date"
+                                    <Input
+                                      id={`install-date-${quotation.id}`}
+                                      type="date"
                                             className="h-8 text-xs w-[9.5rem]"
-                                            value={installationDateInputValue}
-                                            disabled={!sentParsedOk}
-                                            onChange={(e) => {
-                                              const v = e.target.value
-                                              const id = quotation.id
-                                              setQuotations((prev) =>
-                                                prev.map((q) =>
-                                                  q.id === id ? { ...q, installationScheduledAt: v || undefined } : q,
-                                                ),
+                                      value={installationDateInputValue}
+                                      disabled={!sentParsedOk}
+                                      onChange={(e) => {
+                                        const v = e.target.value
+                                        const id = quotation.id
+                                        setQuotations((prev) =>
+                                          prev.map((q) =>
+                                            q.id === id ? { ...q, installationScheduledAt: v || undefined } : q,
+                                          ),
+                                        )
+                                        setInstallationScheduledDateInLocalMap(id, v || undefined)
+                                        try {
+                                          const all = JSON.parse(localStorage.getItem("quotations") || "[]")
+                                          const next = Array.isArray(all)
+                                            ? all.map((qRow: any) =>
+                                                qRow?.id === id
+                                                  ? { ...qRow, installationScheduledAt: v || undefined }
+                                                  : qRow,
                                               )
-                                              setInstallationScheduledDateInLocalMap(id, v || undefined)
-                                              try {
-                                                const all = JSON.parse(localStorage.getItem("quotations") || "[]")
-                                                const next = Array.isArray(all)
-                                                  ? all.map((qRow: any) =>
-                                                      qRow?.id === id
-                                                        ? { ...qRow, installationScheduledAt: v || undefined }
-                                                        : qRow,
-                                                    )
-                                                  : all
-                                                localStorage.setItem("quotations", JSON.stringify(next))
-                                              } catch {
-                                                // no-op
-                                              }
-                                              void (async () => {
-                                                if (!useApi) return
-                                                try {
+                                            : all
+                                          localStorage.setItem("quotations", JSON.stringify(next))
+                                        } catch {
+                                          // no-op
+                                        }
+                                        void (async () => {
+                                          if (!useApi) return
+                                          try {
                                                   await api.admin.quotations.updateInstallationScheduledDate(
                                                     id,
                                                     v || null,
                                                   )
-                                                } catch {
-                                                  // Local map + quotations JSON already updated; API route may not exist yet.
-                                                }
-                                              })()
-                                            }}
-                                          />
-                                          {!sentParsedOk ? (
+                                          } catch {
+                                            // Local map + quotations JSON already updated; API route may not exist yet.
+                                          }
+                                        })()
+                                      }}
+                                    />
+                                    {!sentParsedOk ? (
                                             <p className="text-[10px] text-muted-foreground mt-0.5">Set release first</p>
-                                          ) : null}
-                                        </div>
+                                    ) : null}
+                                  </div>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
-                                        <Select
-                                          key={`inst-team-${quotation.id}-${installationTeamsRefresh}`}
-                                          value={getInstallationTeamIdForQuotation(quotation.id, qAny) || "__none__"}
-                                          onValueChange={(v) =>
+                                    <Select
+                                      key={`inst-team-${quotation.id}-${installationTeamsRefresh}`}
+                                      value={getInstallationTeamIdForQuotation(quotation.id, qAny) || "__none__"}
+                                      onValueChange={(v) =>
                                             void persistInstallationTeamAssignment(
                                               quotation.id,
                                               v === "__none__" ? "" : v,
                                             )
-                                          }
-                                        >
+                                      }
+                                    >
                                           <SelectTrigger className="h-8 text-xs w-[9.5rem]">
-                                            <SelectValue placeholder="Unassigned" />
-                                          </SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="__none__">Unassigned</SelectItem>
-                                            {installationTeams.map((t) => (
-                                              <SelectItem key={t.id} value={t.id}>
-                                                {t.name}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
+                                        <SelectValue placeholder="Unassigned" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__none__">Unassigned</SelectItem>
+                                        {installationTeams.map((t) => (
+                                          <SelectItem key={t.id} value={t.id}>
+                                            {t.name}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                       </td>
                                       <td className="px-3 py-2.5 align-middle">
                                         <Badge
@@ -8097,7 +8097,7 @@ export default function AdminPanelPage() {
                                           )}
                                         >
                                           {statusLabel}
-                                        </Badge>
+                                    </Badge>
                                       </td>
                                       <td
                                         className={cn(
@@ -8106,8 +8106,8 @@ export default function AdminPanelPage() {
                                         )}
                                       >
                                         <div className="flex flex-nowrap items-center justify-end gap-1.5">
-                                          {installerStatus === "pending" ? (
-                                            <>
+                                    {installerStatus === "pending" ? (
+                                      <>
                                               <Button
                                                 size="sm"
                                                 variant="outline"
@@ -8116,94 +8116,94 @@ export default function AdminPanelPage() {
                                                   void updateOperationalStage(quotation.id, "installer_in_progress")
                                                 }
                                               >
-                                                <Clock3 className="w-3.5 h-3.5 mr-1" />
+                                          <Clock3 className="w-3.5 h-3.5 mr-1" />
                                                 Start
-                                              </Button>
+                                        </Button>
                                               <Button
                                                 size="sm"
                                                 className="h-8 shrink-0"
                                                 onClick={() => void openAdminInstallDialog(quotation)}
                                               >
-                                                <ChevronDown className="w-3.5 h-3.5 mr-1" />
-                                                Upload
-                                              </Button>
-                                            </>
-                                          ) : null}
+                                          <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                          Upload
+                                        </Button>
+                                      </>
+                                    ) : null}
                                           {installerStatus === "inprogress" || installerStatus === "partial" ? (
                                             <Button
                                               size="sm"
                                               className="h-8 shrink-0"
                                               onClick={() => void openAdminInstallDialog(quotation)}
                                             >
-                                              <ChevronDown className="w-3.5 h-3.5 mr-1" />
+                                        <ChevronDown className="w-3.5 h-3.5 mr-1" />
                                               {installerStatus === "partial" ? "Continue" : "Upload"}
-                                            </Button>
-                                          ) : null}
+                                      </Button>
+                                    ) : null}
                                           <Button
                                             variant="outline"
                                             size="sm"
                                             className="h-8 shrink-0"
                                             onClick={() => setStatusHistoryQuotation(quotation)}
                                           >
-                                            <History className="w-3.5 h-3.5 mr-1" />
-                                            Timeline
-                                          </Button>
-                                          {installerStatus === "approved" ? (
-                                            <>
-                                              {(() => {
-                                                const sendToMetering = getSendToMeteringMenuState(quotation)
-                                                if (!sendToMetering.visible) return null
-                                                return (
-                                                  <Button
-                                                    type="button"
-                                                    size="sm"
+                                      <History className="w-3.5 h-3.5 mr-1" />
+                                      Timeline
+                                    </Button>
+                                    {installerStatus === "approved" ? (
+                                      <>
+                                        {(() => {
+                                          const sendToMetering = getSendToMeteringMenuState(quotation)
+                                          if (!sendToMetering.visible) return null
+                                          return (
+                                            <Button
+                                              type="button"
+                                              size="sm"
                                                     className={cn(
                                                       "h-8 shrink-0",
                                                       !sendToMetering.enabled ? "opacity-60" : "",
                                                     )}
-                                                    onClick={() => void handleSendToMetering(quotation)}
-                                                    disabled={sendingToMeteringId === quotation.id}
-                                                    title={sendToMetering.hint || "Send to metering team"}
-                                                  >
-                                                    <Gauge className="w-3.5 h-3.5 mr-1" />
+                                              onClick={() => void handleSendToMetering(quotation)}
+                                              disabled={sendingToMeteringId === quotation.id}
+                                              title={sendToMetering.hint || "Send to metering team"}
+                                            >
+                                              <Gauge className="w-3.5 h-3.5 mr-1" />
                                                     {sendingToMeteringId === quotation.id
                                                       ? "Sending..."
                                                       : "To Metering"}
-                                                  </Button>
-                                                )
-                                              })()}
-                                              <Button
-                                                type="button"
-                                                size="sm"
-                                                variant="secondary"
+                                            </Button>
+                                          )
+                                        })()}
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="secondary"
                                                 className="h-8 shrink-0"
-                                                onClick={() => void openAdminInstallDialog(quotation)}
-                                              >
-                                                <Edit className="w-3.5 h-3.5 mr-1" />
+                                          onClick={() => void openAdminInstallDialog(quotation)}
+                                        >
+                                          <Edit className="w-3.5 h-3.5 mr-1" />
                                                 Edit
-                                              </Button>
-                                              <Button
-                                                type="button"
-                                                size="sm"
-                                                variant="outline"
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          variant="outline"
                                                 className="h-8 shrink-0 border-amber-800/40 text-amber-950 dark:text-amber-100"
-                                                onClick={() =>
-                                                  setInstallRevertTarget({
-                                                    id: quotation.id,
-                                                    label: formatPersonName(
-                                                      quotation.customer.firstName,
-                                                      quotation.customer.lastName,
-                                                      quotation.id,
-                                                    ),
-                                                  })
-                                                }
-                                              >
-                                                <RotateCcw className="w-3.5 h-3.5 mr-1" />
+                                          onClick={() =>
+                                            setInstallRevertTarget({
+                                              id: quotation.id,
+                                              label: formatPersonName(
+                                                quotation.customer.firstName,
+                                                quotation.customer.lastName,
+                                                quotation.id,
+                                              ),
+                                            })
+                                          }
+                                        >
+                                          <RotateCcw className="w-3.5 h-3.5 mr-1" />
                                                 Revert
-                                              </Button>
-                                            </>
-                                          ) : null}
-                                        </div>
+                                        </Button>
+                                      </>
+                                    ) : null}
+                                  </div>
                                       </td>
                                     </tr>
                                     {showDetailRow ? (
@@ -8211,19 +8211,19 @@ export default function AdminPanelPage() {
                                         <td colSpan={7} className="px-3 py-3">
                                           {thumbs.length > 0 ? (
                                             <div className="mb-3 space-y-2">
-                                              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                                                Uploaded installation photos
-                                              </p>
-                                              <div className="flex max-w-full gap-3 overflow-x-auto pb-1">
-                                                {thumbs.map((url, idx) => (
-                                                  <InstallationPublicPhoto
-                                                    key={`${quotation.id}-inst-${idx}`}
-                                                    rawUrl={url}
-                                                    quotationId={quotation.id}
-                                                  />
-                                                ))}
-                                              </div>
-                                            </div>
+                                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                      Uploaded installation photos
+                                    </p>
+                                        <div className="flex max-w-full gap-3 overflow-x-auto pb-1">
+                                          {thumbs.map((url, idx) => (
+                                            <InstallationPublicPhoto
+                                              key={`${quotation.id}-inst-${idx}`}
+                                              rawUrl={url}
+                                              quotationId={quotation.id}
+                                            />
+                                          ))}
+                                        </div>
+                                  </div>
                                           ) : installerStatus === "approved" || installerStatus === "partial" ? (
                                             <p className="mb-3 text-[11px] text-muted-foreground">
                                               No photos on file yet. Use{" "}
@@ -8232,33 +8232,33 @@ export default function AdminPanelPage() {
                                               </span>{" "}
                                               to add or replace images.
                                             </p>
-                                          ) : null}
+                                ) : null}
                                           {showExpanded && adminInstallQuotation ? (
-                                            <InstallationCompletionPanel
-                                              imageFields={
-                                                ADMIN_INSTALLATION_IMAGE_FIELDS as readonly {
-                                                  key: string
-                                                  label: string
-                                                  required?: boolean
-                                                  multiple?: boolean
-                                                }[]
-                                              }
+                                    <InstallationCompletionPanel
+                                      imageFields={
+                                        ADMIN_INSTALLATION_IMAGE_FIELDS as readonly {
+                                          key: string
+                                          label: string
+                                          required?: boolean
+                                          multiple?: boolean
+                                        }[]
+                                      }
                                               filesByField={
                                                 adminInstallMediaByField as Record<
                                                   string,
                                                   InstallationUploadedFile[] | undefined
                                                 >
                                               }
-                                              onFilesChange={(fieldKey, files) =>
-                                                setAdminInstallMediaByField((prev) => ({
-                                                  ...prev,
-                                                  [fieldKey]: files.map((f) => ({
-                                                    name: f.name,
-                                                    url: URL.createObjectURL(f),
-                                                    localFile: f,
-                                                  })),
-                                                }))
-                                              }
+                                      onFilesChange={(fieldKey, files) =>
+                                        setAdminInstallMediaByField((prev) => ({
+                                          ...prev,
+                                          [fieldKey]: files.map((f) => ({
+                                            name: f.name,
+                                            url: URL.createObjectURL(f),
+                                            localFile: f,
+                                          })),
+                                        }))
+                                      }
                                               piFiles={adminInstallPiMedia}
                                               onPiFilesChange={(files) => {
                                                 if (!files.length) return
@@ -8273,47 +8273,47 @@ export default function AdminPanelPage() {
                                               }}
                                               onRemovePiFile={(index) =>
                                                 setAdminInstallPiMedia((prev) => prev.filter((_, i) => i !== index))
-                                              }
-                                              extraExpenses={adminInstallExtraExpenses}
-                                              onAddExpense={() =>
-                                                setAdminInstallExtraExpenses((prev) => [
-                                                  ...prev,
-                                                  { id: newAdminExpenseLineId(), description: "", amount: "" },
-                                                ])
-                                              }
-                                              onExpenseChange={(id, patch) =>
-                                                setAdminInstallExtraExpenses((prev) =>
-                                                  prev.map((line) => (line.id === id ? { ...line, ...patch } : line)),
-                                                )
-                                              }
-                                              onRemoveExpense={(id) =>
+                                      }
+                                      extraExpenses={adminInstallExtraExpenses}
+                                      onAddExpense={() =>
+                                        setAdminInstallExtraExpenses((prev) => [
+                                          ...prev,
+                                          { id: newAdminExpenseLineId(), description: "", amount: "" },
+                                        ])
+                                      }
+                                      onExpenseChange={(id, patch) =>
+                                        setAdminInstallExtraExpenses((prev) =>
+                                          prev.map((line) => (line.id === id ? { ...line, ...patch } : line)),
+                                        )
+                                      }
+                                      onRemoveExpense={(id) =>
                                                 setAdminInstallExtraExpenses((prev) =>
                                                   prev.filter((line) => line.id !== id),
                                                 )
-                                              }
-                                              dimensions={adminInstallDimensions}
-                                              onDimensionsChange={(next) =>
-                                                setAdminInstallDimensions((prev) => ({
-                                                  ...prev,
-                                                  ...(next.length !== undefined ? { length: next.length } : {}),
-                                                  ...(next.width !== undefined ? { width: next.width } : {}),
-                                                  ...(next.height !== undefined ? { height: next.height } : {}),
-                                                }))
-                                              }
-                                              notes={adminInstallNotes}
-                                              onNotesChange={setAdminInstallNotes}
-                                              infoSections={[
-                                                {
-                                                  title: "Customer Details",
-                                                  rows: [
-                                                    {
-                                                      label: "Customer",
-                                                      value: formatPersonName(
-                                                        adminInstallQuotation.customer.firstName,
-                                                        adminInstallQuotation.customer.lastName,
-                                                        "N/A",
-                                                      ),
-                                                    },
+                                      }
+                                      dimensions={adminInstallDimensions}
+                                      onDimensionsChange={(next) =>
+                                        setAdminInstallDimensions((prev) => ({
+                                          ...prev,
+                                          ...(next.length !== undefined ? { length: next.length } : {}),
+                                          ...(next.width !== undefined ? { width: next.width } : {}),
+                                          ...(next.height !== undefined ? { height: next.height } : {}),
+                                        }))
+                                      }
+                                      notes={adminInstallNotes}
+                                      onNotesChange={setAdminInstallNotes}
+                                      infoSections={[
+                                        {
+                                          title: "Customer Details",
+                                          rows: [
+                                            {
+                                              label: "Customer",
+                                              value: formatPersonName(
+                                                adminInstallQuotation.customer.firstName,
+                                                adminInstallQuotation.customer.lastName,
+                                                "N/A",
+                                              ),
+                                            },
                                                     {
                                                       label: "Mobile",
                                                       value: adminInstallQuotation.customer.mobile || "N/A",
@@ -8326,74 +8326,74 @@ export default function AdminPanelPage() {
                                                       label: "Agent Mobile",
                                                       value: getDealerMobile(adminInstallQuotation.dealerId),
                                                     },
-                                                  ],
-                                                },
-                                                {
-                                                  title: "Visitor / Location Details",
-                                                  rows: [
-                                                    {
-                                                      label: "Visit Location",
-                                                      value: (() => {
-                                                        const rawAddress = adminInstallQuotation.customer.address
-                                                        const addressText =
-                                                          rawAddress && typeof rawAddress === "object"
+                                          ],
+                                        },
+                                        {
+                                          title: "Visitor / Location Details",
+                                          rows: [
+                                            {
+                                              label: "Visit Location",
+                                              value: (() => {
+                                                const rawAddress = adminInstallQuotation.customer.address
+                                                const addressText =
+                                                  rawAddress && typeof rawAddress === "object"
                                                             ? [
                                                                 rawAddress.street,
                                                                 rawAddress.city,
                                                                 rawAddress.state,
                                                                 rawAddress.pincode,
                                                               ]
-                                                                .filter(Boolean)
-                                                                .join(", ")
-                                                            : String(rawAddress || "")
+                                                        .filter(Boolean)
+                                                        .join(", ")
+                                                    : String(rawAddress || "")
                                                         return (
                                                           (adminInstallQuotation as any).visitLocation ||
                                                           (adminInstallQuotation as any).location ||
                                                           addressText ||
                                                           "N/A"
                                                         )
-                                                      })(),
-                                                    },
-                                                  ],
-                                                },
-                                                {
-                                                  title: "Product Specification",
-                                                  rows: (() => {
+                                              })(),
+                                            },
+                                          ],
+                                        },
+                                        {
+                                          title: "Product Specification",
+                                          rows: (() => {
                                                     const productSpec =
                                                       getAdminInstallProductSpec(adminInstallQuotation)
-                                                    return [
+                                            return [
                                                       {
                                                         label: "System Type",
                                                         value: String(productSpec.systemType || "N/A"),
                                                       },
-                                                      {
-                                                        label: "Panel Configuration",
-                                                        value: `${String(productSpec.panelBrand || "N/A")} ${String(productSpec.panelSize || "")} x ${String(productSpec.panelQuantity || "0")}`,
-                                                      },
-                                                      {
-                                                        label: "Inverter",
-                                                        value: `${String(productSpec.inverterBrand || "N/A")} - ${String(productSpec.inverterSize || "N/A")}`,
-                                                      },
+                                              {
+                                                label: "Panel Configuration",
+                                                value: `${String(productSpec.panelBrand || "N/A")} ${String(productSpec.panelSize || "")} x ${String(productSpec.panelQuantity || "0")}`,
+                                              },
+                                              {
+                                                label: "Inverter",
+                                                value: `${String(productSpec.inverterBrand || "N/A")} - ${String(productSpec.inverterSize || "N/A")}`,
+                                              },
                                                       {
                                                         label: "Phase",
                                                         value: String(productSpec.phase || "N/A"),
                                                       },
-                                                      {
-                                                        label: "Structure",
-                                                        value: `${String(productSpec.structureType || "N/A")} - ${String(productSpec.structureSize || "N/A")}`,
-                                                      },
-                                                    ]
-                                                  })(),
-                                                },
-                                              ]}
-                                              saveLabel="Complete & Mark as Approved"
+                                              {
+                                                label: "Structure",
+                                                value: `${String(productSpec.structureType || "N/A")} - ${String(productSpec.structureSize || "N/A")}`,
+                                              },
+                                            ]
+                                          })(),
+                                        },
+                                      ]}
+                                      saveLabel="Complete & Mark as Approved"
                                               secondarySaveLabel="Partial Approved"
-                                              saving={adminInstallSaving}
-                                              onCancel={() => setAdminInstallExpandedId(null)}
+                                      saving={adminInstallSaving}
+                                      onCancel={() => setAdminInstallExpandedId(null)}
                                               onSave={() => void submitAdminInstallationUpload("approved")}
                                               onSecondarySave={() => void submitAdminInstallationUpload("partial")}
-                                            />
-                                          ) : null}
+                                    />
+                                ) : null}
                                         </td>
                                       </tr>
                                     ) : null}
@@ -8668,53 +8668,53 @@ export default function AdminPanelPage() {
                                 <p className="text-sm font-semibold">₹{amount.toLocaleString()}</p>
                               </td>
                               <td className="py-2 px-2 align-middle">
-                                <Select
-                                  value={quotation.status || "pending"}
+                                  <Select
+                                    value={quotation.status || "pending"}
                                   onValueChange={(value) =>
                                     handleQuotationStatusChange(quotation.id, value as QuotationStatus)
                                   }
-                                >
+                                  >
                                   <SelectTrigger className="h-8 w-[7.5rem] text-xs">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="pending">Pending</SelectItem>
-                                    <SelectItem value="approved">Approved</SelectItem>
-                                    <SelectItem value="rejected">Rejected</SelectItem>
-                                    <SelectItem value="completed">Completed</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="pending">Pending</SelectItem>
+                                      <SelectItem value="approved">Approved</SelectItem>
+                                      <SelectItem value="rejected">Rejected</SelectItem>
+                                      <SelectItem value="completed">Completed</SelectItem>
+                                    </SelectContent>
+                                  </Select>
                               </td>
                               <td className="py-2 px-2 align-middle">
-                                <Badge
+                                  <Badge
                                   variant="outline"
                                   className="text-[10px] capitalize font-medium max-w-[8.5rem] truncate"
                                   title={opsLabel}
-                                >
+                                  >
                                   {opsLabel}
-                                </Badge>
+                                  </Badge>
                               </td>
                               <td className="py-2 px-2 align-middle">
-                                <Select
-                                  value={
-                                    optimisticFileLoginSelect[quotation.id] ??
-                                    quotation.fileLoginStatus ??
-                                    "unset"
-                                  }
-                                  onValueChange={(value) => void handleFileLoginSelectChange(quotation, value)}
-                                >
+                                  <Select
+                                    value={
+                                      optimisticFileLoginSelect[quotation.id] ??
+                                      quotation.fileLoginStatus ??
+                                      "unset"
+                                    }
+                                    onValueChange={(value) => void handleFileLoginSelectChange(quotation, value)}
+                                  >
                                   <SelectTrigger
                                     className="h-8 w-[8.5rem] text-xs"
                                     title={fileLoginSummary}
                                   >
-                                    <SelectValue placeholder="File login" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="unset">Not set</SelectItem>
-                                    <SelectItem value="already_login">Already logged in</SelectItem>
-                                    <SelectItem value="login_now">Login now</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                      <SelectValue placeholder="File login" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="unset">Not set</SelectItem>
+                                      <SelectItem value="already_login">Already logged in</SelectItem>
+                                      <SelectItem value="login_now">Login now</SelectItem>
+                                    </SelectContent>
+                                  </Select>
                               </td>
                               <td className="py-2 px-2 align-middle">
                                 <p
@@ -9710,7 +9710,7 @@ export default function AdminPanelPage() {
               </CardHeader>
               <CardContent>
                 <Button onClick={() => router.push("/dashboard/inventory")}>
-                  Open Inventory
+                  Open Super Admin
                 </Button>
               </CardContent>
             </Card>

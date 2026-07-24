@@ -139,10 +139,31 @@ export const productsApi = {
       product_category?: string
       /** Super Admin: selling price (separate from cost/unit_price) */
       selling_price?: number
+      /**
+       * Optional inventory `users.id` for products.created_by.
+       * Used when quotation Admin JWT id is not in inventory users
+       * (avoids products_created_by_fkey). Backend should prefer a valid
+       * body value, or upsert the JWT user — see BACKEND handoff §14.
+       */
+      created_by?: string
     }
   ): Promise<Product> {
     const imageFile =
       product.image instanceof File && product.image.size > 0 ? product.image : undefined
+
+    // Quotation Admin JWT often isn't in inventory `users` → FK on created_by.
+    // Resolve a real inventory user id when possible; backend must honor it or upsert JWT user.
+    let createdBy = product.created_by?.trim() || ""
+    if (!createdBy) {
+      try {
+        const { resolveInventoryCreatedByForWrite } = await import(
+          "@/inventory-sa/lib/resolve-inventory-created-by"
+        )
+        createdBy = (await resolveInventoryCreatedByForWrite()) || ""
+      } catch {
+        createdBy = ""
+      }
+    }
 
     // Without an image file, use JSON — many backends only initialize S3 on multipart uploads.
     if (!imageFile) {
@@ -170,6 +191,10 @@ export const productsApi = {
       if (product.product_category) body.product_category = product.product_category
       if (product.selling_price !== undefined && product.selling_price > 0) {
         body.selling_price = product.selling_price
+      }
+      if (createdBy) {
+        body.created_by = createdBy
+        body.createdBy = createdBy
       }
       return apiClient.post<Product>("/products", body)
     }
@@ -201,6 +226,10 @@ export const productsApi = {
     }
     if (product.selling_price !== undefined && product.selling_price > 0) {
       formData.append("selling_price", product.selling_price.toString())
+    }
+    if (createdBy) {
+      formData.append("created_by", createdBy)
+      formData.append("createdBy", createdBy)
     }
 
     return apiClient.post<Product>("/products", formData, true)

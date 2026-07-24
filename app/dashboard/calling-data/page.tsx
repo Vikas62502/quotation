@@ -1248,6 +1248,13 @@ export default function CallingDataPage() {
       }
     }
     const sanctionedIds = new Set<string>()
+    const addSanctioned = (item: unknown) => {
+      if (!item || typeof item !== "object") return
+      const row = item as Record<string, unknown>
+      const nested = (row.lead || row.customerLead || row) as Record<string, unknown>
+      const id = String(nested?.id || nested?._id || nested?.leadId || nested?.lead_id || "").trim()
+      if (id) sanctionedIds.add(id)
+    }
     for (const item of [
       response?.lead,
       response?.nextLead,
@@ -1255,10 +1262,9 @@ export default function CallingDataPage() {
       response?.activeLead,
       rawLead,
       pinned,
+      ...queueCandidates,
     ]) {
-      if (!item) continue
-      const id = String(item?.id || item?._id || item?.leadId || item?.lead_id || "").trim()
-      if (id) sanctionedIds.add(id)
+      addSanctioned(item)
     }
     if (pinned?.id) sanctionedIds.add(pinned.id)
     setQueueSanctionedLeadIds((prev) => new Set([...prev, ...sanctionedIds]))
@@ -1436,18 +1442,32 @@ export default function CallingDataPage() {
     const preservePinnedLead = options?.preservePinnedLead ?? !!pinnedCurrentLeadRef.current
 
     try {
-      const [nextResult, currentResult] = await Promise.allSettled([
-        api.dealers.getCallingQueueNext(),
-        api.dealers.getCallingQueueCurrent(),
-      ])
-      const nextResponse = nextResult.status === "fulfilled" ? nextResult.value : null
-      const currentResponse = currentResult.status === "fulfilled" ? currentResult.value : null
+      // Prefer /next (allocator). Treat /current as optional — it often 500s (SYS_001)
+      // while /next still returns the lead.
+      const nextResult = await Promise.allSettled([api.dealers.getCallingQueueNext()])
+      const currentResult = await Promise.allSettled([api.dealers.getCallingQueueCurrent()])
+      const nextResponse = nextResult[0].status === "fulfilled" ? nextResult[0].value : null
+      const currentResponse = currentResult[0].status === "fulfilled" ? currentResult[0].value : null
 
       if (!nextResponse && !currentResponse) {
-        const failed = nextResult.status === "rejected" ? nextResult.reason : currentResult.reason
+        const failed =
+          nextResult[0].status === "rejected"
+            ? nextResult[0].reason
+            : currentResult[0].status === "rejected"
+              ? currentResult[0].reason
+              : new Error("Calling queue unavailable")
         throw failed
       }
 
+      if (!nextResponse && currentResponse) {
+        console.warn(
+          "[calling-data] /calling-queue/next failed; using /current (or fallback) response only.",
+        )
+      } else if (nextResponse && !currentResponse) {
+        console.warn(
+          "[calling-data] /calling-queue/current failed (often SYS_001); using /next only.",
+        )
+      }
       const toArray = (value: any): any[] => {
         if (Array.isArray(value)) return value
         if (Array.isArray(value?.items)) return value.items
@@ -1689,22 +1709,37 @@ export default function CallingDataPage() {
     const leadOrder = new Map(leads.map((lead, index) => [lead.id, index]))
 
     return leads
-      // Assigned leads from HR FCFS must not require API sanction id when assignee matches dealer.
+      // FCFS work queue: assignee match, or pool/unassigned rows returned by /next|/current.
       .filter((lead) => {
         if (callingLeadAssignedToOtherDealer(lead, currentDealerIdentity)) return false
         if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
         if (!isLeadCallableNow(lead)) return false
         if (callingLeadAssignedToDealer(lead, currentDealerIdentity)) return true
         if (callingLeadIsPoolUnassigned(lead)) {
-          return queueSanctionedLeadIds.has(lead.id)
+          // Prefer API-sanctioned ids (full queue/pending lists), else allow one pull from
+          // dealer-eligible batches so free dealers are not stuck while Unassigned > 0.
+          if (queueSanctionedLeadIds.has(lead.id)) return true
+          const bid = String(lead.uploadBatchId || "").trim()
+          if (bid && callingVisibilityCtx.dealerCallingBatchIds.includes(bid)) return true
+          const eligible = lead.eligibleDealerIds
+          if (Array.isArray(eligible) && eligible.length > 0 && currentDealerIdentity.id) {
+            const cur = currentDealerIdentity.id.toLowerCase()
+            return eligible.some((id) => String(id).trim().toLowerCase() === cur)
+          }
+          return false
         }
         return false
       })
       .sort((a, b) => {
+        // FIFO: oldest queued/assigned first (first-come-first-serve)
+        const aQueued = a.queuedAt ? new Date(a.queuedAt).getTime() : NaN
+        const bQueued = b.queuedAt ? new Date(b.queuedAt).getTime() : NaN
+        const aTime = Number.isFinite(aQueued) ? aQueued : getLeadSortTime(a)
+        const bTime = Number.isFinite(bQueued) ? bQueued : getLeadSortTime(b)
+        if (aTime !== bTime) return aTime - bTime
         const aOrder = leadOrder.get(a.id) ?? Number.MAX_SAFE_INTEGER
         const bOrder = leadOrder.get(b.id) ?? Number.MAX_SAFE_INTEGER
-        if (aOrder !== bOrder) return aOrder - bOrder
-        return getLeadSortTime(a) - getLeadSortTime(b)
+        return aOrder - bOrder
       })
   }, [leads, callingVisibilityCtx, currentDealerIdentity, queueSanctionedLeadIds])
 
@@ -3437,8 +3472,21 @@ export default function CallingDataPage() {
             <TabsContent value="current_lead" className="mt-3 focus-visible:outline-none">
         {!currentLead ? (
           <Card>
-            <CardContent className="py-10 text-center text-muted-foreground">
-              No calling data pending for you.
+            <CardContent className="py-10 text-center text-muted-foreground space-y-2">
+              <p>No calling data pending for you.</p>
+              <p className="text-sm max-w-lg mx-auto">
+                If HR Uploaded Data still shows Unassigned / Assigned above 0 for your batches, the backend is not
+                returning your next lead. It must fix{" "}
+                <span className="font-medium text-foreground">GET /dealers/me/calling-queue/next</span> (and stop
+                500 on <span className="font-medium text-foreground">/current</span>) so your Assigned rows appear
+                here first, then claim remaining Unassigned until both badges are 0 — see HANDOFF §15 /
+                BACKEND_ASSIGN_UNASSIGNED.ts.
+              </p>
+              {backendCounts?.queued != null && Number(backendCounts.queued) > 0 ? (
+                <span className="block text-sm text-muted-foreground">
+                  Queue still reports {backendCounts.queued} queued lead(s). Refresh this tab after backend deploy.
+                </span>
+              ) : null}
             </CardContent>
           </Card>
         ) : (
