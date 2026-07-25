@@ -3394,6 +3394,69 @@ export default function AdminPanelPage() {
     })
   }
 
+  const downloadFilteredVisitorReportsCsv = () => {
+    const exportList = filteredVisitorReportRows
+    if (exportList.length === 0) {
+      toast({
+        title: "No data to download",
+        description: "Apply different filters or search to include visitor reports.",
+      })
+      return
+    }
+
+    const headers = [
+      "Visit ID",
+      "Quotation ID",
+      "Customer Name",
+      "Customer Mobile",
+      "Visitor",
+      "Agent",
+      "Status",
+      "Visit Date",
+      "Visit Time",
+      "Location",
+      "Notes",
+      "Rejection Reason",
+      "Created At",
+    ]
+
+    const rows = exportList.map((row) => [
+      row.id,
+      row.quotationId || "",
+      row.customerName || "",
+      row.customerMobile || "",
+      row.visitorNames || "",
+      row.dealerName || "",
+      getVisitStatusLabel(row.status),
+      row.date || "",
+      row.time || "",
+      row.location || "",
+      row.notes || "",
+      row.rejectionReason || "",
+      row.createdAt ? new Date(row.createdAt).toLocaleString() : "",
+    ])
+
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => csvEscape(cell)).join(","))
+      .join("\n")
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    const dateStamp = new Date().toISOString().slice(0, 10)
+    link.href = url
+    link.download = `visitor-reports-filtered-${dateStamp}.csv`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+
+    toast({
+      title: "Download started",
+      description: `Exported ${exportList.length} filtered visitor report${exportList.length === 1 ? "" : "s"}.`,
+    })
+  }
+
   const isWithinCallingRange = (actionAt?: string) => {
     if (callingRange === "all") return true
     if (!actionAt) return false
@@ -6375,15 +6438,26 @@ export default function AdminPanelPage() {
                       : null}
                     {visitorReportRefreshing ? " — updating…" : null}
                   </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void loadVisitorReports()}
-                    disabled={visitorReportLoading || visitorReportRefreshing}
-                  >
-                    <RotateCcw className="w-4 h-4 mr-2" />
-                    Refresh
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={downloadFilteredVisitorReportsCsv}
+                      disabled={filteredVisitorReportTotal === 0 || visitorReportLoading}
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Download CSV
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void loadVisitorReports()}
+                      disabled={visitorReportLoading || visitorReportRefreshing}
+                    >
+                      <RotateCcw className="w-4 h-4 mr-2" />
+                      Refresh
+                    </Button>
+                  </div>
                 </div>
 
                 {visitorReportLoading && visitorReportRows.length === 0 ? (

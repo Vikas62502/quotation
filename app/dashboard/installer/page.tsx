@@ -1,18 +1,35 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, Wrench, CheckCircle2, Clock3, Search, CalendarDays, Gauge, Edit, ChevronDown, Users } from "lucide-react"
+import {
+  LogOut,
+  Wrench,
+  CheckCircle2,
+  Clock3,
+  Search,
+  CalendarDays,
+  Gauge,
+  Edit,
+  ChevronDown,
+  Users,
+  Package,
+} from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { InstallationTeamsDialog } from "@/components/installation-teams-dialog"
-import { api, apiErrorToUserMessage, sendQuotationToMetering, ApiError } from "@/lib/api"
+import { MeteringWorkflowPanel } from "@/components/metering/metering-workflow-panel"
+import { SuperAdminInventoryPanel } from "@/components/inventory/super-admin-inventory-panel"
+import { buildInventoryAuthUserFromQuotationSession } from "@/lib/admin-access"
+import { authService as inventoryAuthService } from "@/inventory-sa/lib/auth"
+import { resolveApiBaseUrl } from "@/lib/resolve-api-base-url"
+import { api, apiErrorToUserMessage, getAuthToken, sendQuotationToMetering, ApiError } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
 import {
@@ -213,11 +230,15 @@ const installerQuotationFromApiRecord = (raw: unknown): InstallerQuotation => {
   return { ...flat, products } as InstallerQuotation
 }
 
+/** Top-level areas on the installation dashboard, mirroring Admin's Metering + Inventory. */
+type InstallerSection = "installation" | "metering" | "inventory"
+
 export default function InstallerDashboardPage() {
   const router = useRouter()
   const { isAuthenticated, role, installer, installationTeamUser, logout } = useAuth()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
+  const [activeSection, setActiveSection] = useState<InstallerSection>("installation")
   const [activeTab, setActiveTab] = useState<"all" | "pending" | "approved">("pending")
   const [searchTerm, setSearchTerm] = useState("")
   const [quotations, setQuotations] = useState<InstallerQuotation[]>([])
@@ -272,6 +293,47 @@ export default function InstallerDashboardPage() {
     if (!canManageInstallationTeams) return
     void loadInstallationTeamsList(useApi).then(setInstallationTeams)
   }, [useApi, canManageInstallationTeams, installationTeamsRefresh])
+
+  const inventoryDisplayName =
+    [installer?.firstName, installer?.lastName].filter(Boolean).join(" ").trim() ||
+    installer?.username ||
+    installationTeamUser?.teamName ||
+    installationTeamUser?.username ||
+    (role === "installation-team" ? "Installation team" : "Installer")
+
+  const getInventoryToken = useCallback(
+    () =>
+      getAuthToken() ||
+      inventoryAuthService.getToken() ||
+      (typeof window !== "undefined"
+        ? localStorage.getItem("authToken") || localStorage.getItem("auth_token")
+        : null),
+    [],
+  )
+
+  // Reuse the installer JWT for inventory APIs so no second login is needed.
+  useEffect(() => {
+    if (activeSection !== "inventory") return
+    const token = getInventoryToken()
+    if (!token) return
+    const sessionUser = installer || installationTeamUser
+    inventoryAuthService.setToken(token)
+    inventoryAuthService.setUser(
+      buildInventoryAuthUserFromQuotationSession({
+        id: (sessionUser as { id?: string })?.id || "installer",
+        username: (sessionUser as { username?: string })?.username || "installer",
+        name: inventoryDisplayName,
+        role: role || "installer",
+        isActive: true,
+        loginUser: {
+          role: role || "installer",
+          inventoryAccess: true,
+          requiresInventoryLogin: false,
+          inventoryRole: "super-admin",
+        },
+      }),
+    )
+  }, [activeSection, getInventoryToken, installer, installationTeamUser, inventoryDisplayName, role])
 
   const handlePersistInstallationTeamAssignment = async (quotationId: string, teamId: string) => {
     const normalized = teamId.trim() || undefined
@@ -1197,6 +1259,49 @@ export default function InstallerDashboardPage() {
           )}
         </p>
 
+        <div className="w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+          {(
+            [
+              { key: "installation" as const, label: "Installation", icon: Wrench },
+              { key: "metering" as const, label: "Metering", icon: Gauge },
+              { key: "inventory" as const, label: "Inventory", icon: Package },
+            ] as const
+          ).map((item) => {
+            const Icon = item.icon
+            return (
+              <Button
+                key={item.key}
+                type="button"
+                size="sm"
+                variant={activeSection === item.key ? "default" : "ghost"}
+                className={`h-9 text-sm gap-1.5 ${activeSection === item.key ? "shadow-sm" : ""}`}
+                onClick={() => setActiveSection(item.key)}
+              >
+                <Icon className="w-4 h-4" />
+                {item.label}
+              </Button>
+            )
+          })}
+        </div>
+
+        {activeSection === "metering" ? (
+          <MeteringWorkflowPanel
+            description={`Metering queue for ${inventoryDisplayName}. Same Meter Pending → Meter in Discom → MCO flow as the Admin panel, saved through the backend metering APIs.`}
+          />
+        ) : activeSection === "inventory" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Inventory for {inventoryDisplayName} — using your installation login (no extra login). Same panel as the
+              Admin/Super Admin inventory.
+            </p>
+            <SuperAdminInventoryPanel
+              getAuthToken={getInventoryToken}
+              apiBaseUrl={resolveApiBaseUrl()}
+              userName={inventoryDisplayName}
+            />
+          </div>
+        ) : (
+        <>
         <Card className="border-border/60 bg-card/90 shadow-sm">
           <CardContent className="pt-5 space-y-3">
             <div className="w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
@@ -1535,6 +1640,8 @@ export default function InstallerDashboardPage() {
             })
           )}
         </div>
+        </>
+        )}
       </main>
     </div>
   )
