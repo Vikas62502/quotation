@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, UserPlus } from "lucide-react"
+import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, UserPlus, Search } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
   buildCallingActionsQueryDates,
@@ -84,6 +84,12 @@ type UploadedLeadBatch = {
   rows: ParsedCsvRow[]
 }
 
+type GlobalMobileSearchHit = ParsedCsvRow & {
+  uploadId?: string
+  fileName?: string
+  uploadedAt?: string
+}
+
 const extractUploadedLeadBatchesList = (response: unknown): any[] => {
   if (!response) return []
   if (Array.isArray(response)) return response
@@ -105,9 +111,14 @@ const extractUploadedLeadBatchesList = (response: unknown): any[] => {
   return []
 }
 
+/** Per-dealer open-lead cap sent on upload (backend Zod max is 50). Keep at 1 — same as earlier working assign. */
 const DEFAULT_ACTIVE_LIMIT = 1
-/** FCFS: every lead in the CSV is assigned round-robin across selected dealers at upload. */
-const HR_UPLOAD_ASSIGNMENT_MODE = "round_robin_all" as const
+/**
+ * Upload uses active_cap (proven backend path). Drain leftover Unassigned with
+ * "Assign unassigned" / assign-unassigned API — do NOT send round_robin_all on
+ * upload (that path sent oversized limits → "expected number to be <=50").
+ */
+const HR_UPLOAD_ASSIGNMENT_MODE = "active_cap" as const
 
 const ACTION_LABEL_MAP: Record<string, string> = {
   called: "Called",
@@ -253,6 +264,12 @@ export default function HrDashboardPage() {
   const [activeBatchLimit, setActiveBatchLimit] = useState(50)
   const [activeBatchTotalRows, setActiveBatchTotalRows] = useState(0)
   const [isLoadingBatchRows, setIsLoadingBatchRows] = useState(false)
+  const [batchMobileQuery, setBatchMobileQuery] = useState("")
+  const [globalMobileQuery, setGlobalMobileQuery] = useState("")
+  const [globalMobileHits, setGlobalMobileHits] = useState<GlobalMobileSearchHit[]>([])
+  const [isSearchingGlobalMobile, setIsSearchingGlobalMobile] = useState(false)
+  const [globalMobileSearchError, setGlobalMobileSearchError] = useState<string | null>(null)
+  const [globalMobileSearched, setGlobalMobileSearched] = useState(false)
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [callingRange, setCallingRange] = useState<
     "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
@@ -782,18 +799,33 @@ export default function HrDashboardPage() {
     }
   }
 
-  const loadBatchPreviewPage = async (batch: UploadedLeadBatch, page: number, limit: number) => {
+  const loadBatchPreviewPage = async (
+    batch: UploadedLeadBatch,
+    page: number,
+    limit: number,
+    mobileFilter?: string,
+  ) => {
     setIsLoadingBatchRows(true)
+    const mobileDigits = normalizeMobile(mobileFilter ?? batchMobileQuery)
     try {
       if (!useApi) {
-        const allRows = batch.rows || []
+        const allRows = (batch.rows || []).filter((row) => {
+          if (!mobileDigits) return true
+          const rowMobile = normalizeMobile(row.mobile || "")
+          const alt = normalizeMobile(row.altMobile || "")
+          return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+        })
         const start = (page - 1) * limit
         const pagedRows = allRows.slice(start, start + limit)
         setActiveBatchRows(pagedRows)
         setActiveBatchTotalRows(allRows.length)
         return
       }
-      const response = await api.hr.uploadedLeads.getById(batch.id, { page, limit })
+      const response = await api.hr.uploadedLeads.getById(batch.id, {
+        page,
+        limit,
+        ...(mobileDigits ? { mobile: mobileDigits, q: mobileDigits, search: mobileDigits } : {}),
+      })
       const rawBatch =
         response?.batch ||
         response?.upload ||
@@ -849,11 +881,19 @@ export default function HrDashboardPage() {
           counts: rawBatch?.counts ?? response?.counts ?? response?.data?.batch?.counts,
         }
         const normalized = normalizeUploadedLeadBatch(countSource, dealers, 0)
-        const pageRows = Array.isArray(rowsSource)
+        let pageRows = Array.isArray(rowsSource)
           ? normalizeBatchRows(rowsSource)
           : normalized.rows || []
+        // Client-side mobile filter when backend ignored the query param
+        if (mobileDigits) {
+          pageRows = pageRows.filter((row) => {
+            const rowMobile = normalizeMobile(row.mobile || "")
+            const alt = normalizeMobile(row.altMobile || "")
+            return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+          })
+        }
         const displayCounts = resolveHrUploadBatchCounts(
-          pageRows,
+          Array.isArray(rowsSource) ? normalizeBatchRows(rowsSource) : normalized.rows || [],
           totalRows || normalized.rowCount,
           countSource,
         )
@@ -862,27 +902,53 @@ export default function HrDashboardPage() {
           return {
             ...base,
             ...normalized,
+            id: base.id || batch.id,
+            fileName: base.fileName || batch.fileName,
+            uploadedAt: base.uploadedAt || batch.uploadedAt,
             rowCount: displayCounts.rowCount,
             assignedCount: displayCounts.assigned,
             unassignedCount: displayCounts.unassigned,
             completedCount: displayCounts.completed,
           }
         })
-        if (Array.isArray(rowsSource)) {
-          setActiveBatchRows(pageRows)
+        setActiveBatchRows(pageRows)
+        // When filtering by mobile, prefer match count over full batch size if backend didn't filter totals
+        if (mobileDigits && paginationTotal <= 0 && pageRows.length >= 0 && pageRows.length < limit) {
+          setActiveBatchTotalRows(pageRows.length)
         } else {
-          setActiveBatchRows(normalized.rows || [])
+          const rowsForPaging =
+            paginationTotal > 0
+              ? paginationTotal
+              : totalRows > 0
+                ? totalRows
+                : normalized.rowCount || normalized.rows.length
+          setActiveBatchTotalRows(mobileDigits && pageRows.length < rowsForPaging && paginationTotal <= 0 ? pageRows.length : rowsForPaging)
         }
-        const rowsForPaging =
-          paginationTotal > 0 ? paginationTotal : totalRows > 0 ? totalRows : normalized.rowCount || normalized.rows.length
-        setActiveBatchTotalRows(rowsForPaging)
       } else {
         if (Array.isArray(rowsSource)) {
-          const normalizedRows = normalizeBatchRows(rowsSource)
+          let normalizedRows = normalizeBatchRows(rowsSource)
+          if (mobileDigits) {
+            normalizedRows = normalizedRows.filter((row) => {
+              const rowMobile = normalizeMobile(row.mobile || "")
+              const alt = normalizeMobile(row.altMobile || "")
+              return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+            })
+          }
           setActiveBatchRows(normalizedRows)
-          setActiveBatchTotalRows(totalRowsFromResponse > 0 ? totalRowsFromResponse : normalizedRows.length)
+          setActiveBatchTotalRows(
+            mobileDigits
+              ? normalizedRows.length
+              : totalRowsFromResponse > 0
+                ? totalRowsFromResponse
+                : normalizedRows.length,
+          )
         } else {
-          const allRows = batch.rows || []
+          const allRows = (batch.rows || []).filter((row) => {
+            if (!mobileDigits) return true
+            const rowMobile = normalizeMobile(row.mobile || "")
+            const alt = normalizeMobile(row.altMobile || "")
+            return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+          })
           const start = (page - 1) * limit
           setActiveBatchRows(allRows.slice(start, start + limit))
           setActiveBatchTotalRows(allRows.length)
@@ -890,7 +956,12 @@ export default function HrDashboardPage() {
       }
     } catch {
       // Fallback: if detail endpoint is unavailable, show already available rows.
-      const allRows = batch.rows || []
+      const allRows = (batch.rows || []).filter((row) => {
+        if (!mobileDigits) return true
+        const rowMobile = normalizeMobile(row.mobile || "")
+        const alt = normalizeMobile(row.altMobile || "")
+        return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+      })
       const start = (page - 1) * limit
       setActiveBatchRows(allRows.slice(start, start + limit))
       setActiveBatchTotalRows(allRows.length)
@@ -905,8 +976,121 @@ export default function HrDashboardPage() {
     setActiveBatch(batch)
     setActiveBatchRows([])
     setActiveBatchPage(firstPage)
+    setBatchMobileQuery("")
     setActiveBatchTotalRows(batch.rowCount || batch.rows.length || 0)
-    await loadBatchPreviewPage(batch, firstPage, activeBatchLimit)
+    await loadBatchPreviewPage(batch, firstPage, activeBatchLimit, "")
+  }
+
+  const applyBatchMobileSearch = async () => {
+    if (!activeBatch) return
+    setActiveBatchPage(1)
+    await loadBatchPreviewPage(activeBatch, 1, activeBatchLimit, batchMobileQuery)
+  }
+
+  const searchLeadsByMobileGlobal = async () => {
+    const mobileDigits = normalizeMobile(globalMobileQuery)
+    if (!mobileDigits) {
+      toast({
+        title: "Enter mobile number",
+        description: "Type a mobile number to search across all uploaded lead data.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!useApi) {
+      toast({
+        title: "API mode required",
+        description: "Enable backend API mode to search leads by mobile.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsSearchingGlobalMobile(true)
+    setGlobalMobileSearchError(null)
+    setGlobalMobileSearched(true)
+    try {
+      try {
+        const response = await api.hr.uploadedLeads.searchByMobile(mobileDigits, { limit: 100 })
+        const source = (response?.leads || response?.rows || (response as any)?.items || []) as any[]
+        if (Array.isArray(source) && source.length > 0) {
+          const hits: GlobalMobileSearchHit[] = normalizeBatchRows(source).map((row, index) => {
+            const raw = source[index] || {}
+            return {
+              ...row,
+              uploadId: String(raw.uploadId || raw.upload_id || raw.batchId || raw.uploadBatchId || ""),
+              fileName: String(raw.fileName || raw.uploadFileName || raw.batchFileName || ""),
+              uploadedAt: String(raw.uploadedAt || raw.uploadUploadedAt || ""),
+            }
+          })
+          setGlobalMobileHits(hits)
+          return
+        }
+      } catch (error) {
+        // Fall through to per-batch scan when dedicated search route is missing.
+        const isMissing =
+          error instanceof ApiError &&
+          (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+        if (!isMissing) throw error
+      }
+
+      // Fallback: query each upload with mobile filter (oldest → newest for stable order)
+      const hits: GlobalMobileSearchHit[] = []
+      const batches = [...uploadedLeadBatches].sort(
+        (a, b) => new Date(a.uploadedAt || 0).getTime() - new Date(b.uploadedAt || 0).getTime(),
+      )
+      for (const batch of batches) {
+        try {
+          const response = await api.hr.uploadedLeads.getById(batch.id, {
+            page: 1,
+            limit: 50,
+            mobile: mobileDigits,
+            q: mobileDigits,
+            search: mobileDigits,
+          })
+          const rowsSource =
+            response?.rows ||
+            response?.items ||
+            response?.leads ||
+            response?.data?.rows ||
+            response?.data?.items ||
+            response?.data?.leads ||
+            []
+          const rows = normalizeBatchRows(Array.isArray(rowsSource) ? rowsSource : []).filter((row) => {
+            const rowMobile = normalizeMobile(row.mobile || "")
+            const alt = normalizeMobile(row.altMobile || "")
+            return rowMobile.includes(mobileDigits) || alt.includes(mobileDigits)
+          })
+          for (const row of rows) {
+            hits.push({
+              ...row,
+              uploadId: batch.id,
+              fileName: batch.fileName,
+              uploadedAt: batch.uploadedAt,
+            })
+          }
+        } catch {
+          // skip batch if detail endpoint fails
+        }
+      }
+      setGlobalMobileHits(hits)
+      if (hits.length === 0) {
+        setGlobalMobileSearchError(
+          "No leads found for this mobile. If you expected a match, backend may need GET /hr/leads/search?mobile=…",
+        )
+      }
+    } catch (error) {
+      setGlobalMobileHits([])
+      const message =
+        error instanceof ApiError
+          ? error.details?.[0]?.message || error.message
+          : error instanceof Error
+            ? error.message
+            : "Mobile search failed."
+      setGlobalMobileSearchError(message)
+    } finally {
+      setIsSearchingGlobalMobile(false)
+    }
   }
 
   const assignUnassignedForBatch = async (batch: UploadedLeadBatch) => {
@@ -928,7 +1112,7 @@ export default function HrDashboardPage() {
 
     setAssigningBatchId(batch.id)
     try {
-      const result = await api.hr.assignUnassignedLeads(batch.id)
+      const result = (await api.hr.assignUnassignedLeads(batch.id)) as any
       const assigned = Number(
         result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? result?.data?.assignedCount ?? 0,
       )
@@ -982,7 +1166,7 @@ export default function HrDashboardPage() {
     try {
       for (const batch of pending) {
         try {
-          const result = await api.hr.assignUnassignedLeads(batch.id)
+          const result = (await api.hr.assignUnassignedLeads(batch.id)) as any
           totalAssigned += Number(
             result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? batch.unassignedCount ?? 0,
           )
@@ -1167,9 +1351,10 @@ export default function HrDashboardPage() {
                       })}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      All CSV rows are assigned round-robin to the selected dealers (Unassigned → 0). Dealers work
-                      their assigned leads first-come-first-serve in Calling Data until Assigned also drains to
-                      Completed.
+                      Leads are saved and seeded to the selected dealers on upload. To push any leftover rows out
+                      (Unassigned → 0), use <span className="font-medium text-foreground">Assign unassigned</span> on
+                      the batch below. Dealers then work assigned leads first-come-first-serve in Calling Data until
+                      Assigned drains to Completed.
                     </p>
                   </div>
                 )}
@@ -1214,7 +1399,115 @@ export default function HrDashboardPage() {
                   ) : null}
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center rounded-md border border-border/60 bg-muted/20 p-3">
+                  <div className="flex-1 space-y-1">
+                    <p className="text-sm font-medium">Global search by mobile</p>
+                    <p className="text-xs text-muted-foreground">
+                      Find a lead across every uploaded CSV by mobile number (exact or partial last digits).
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Input
+                      value={globalMobileQuery}
+                      onChange={(e) => setGlobalMobileQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void searchLeadsByMobileGlobal()
+                      }}
+                      placeholder="e.g. 9602209955"
+                      inputMode="numeric"
+                      className="w-[180px] h-9"
+                    />
+                    <Button
+                      size="sm"
+                      className="gap-1"
+                      disabled={isSearchingGlobalMobile}
+                      onClick={() => void searchLeadsByMobileGlobal()}
+                    >
+                      {isSearchingGlobalMobile ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
+                      Search
+                    </Button>
+                    {globalMobileSearched ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          setGlobalMobileQuery("")
+                          setGlobalMobileHits([])
+                          setGlobalMobileSearched(false)
+                          setGlobalMobileSearchError(null)
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {globalMobileSearched ? (
+                  <div className="rounded-md border border-border/70 overflow-hidden">
+                    {isSearchingGlobalMobile ? (
+                      <div className="py-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Searching by mobile…
+                      </div>
+                    ) : globalMobileHits.length === 0 ? (
+                      <p className="py-8 text-center text-sm text-muted-foreground">
+                        {globalMobileSearchError || "No leads found for this mobile number."}
+                      </p>
+                    ) : (
+                      <div className="overflow-auto max-h-[360px]">
+                        <table className="w-full table-fixed text-sm">
+                          <thead className="sticky top-0 bg-background z-10">
+                            <tr className="text-left text-muted-foreground border-b">
+                              <th className="py-2 px-3 w-[14%]">Upload</th>
+                              <th className="py-2 px-3 w-[14%]">Name</th>
+                              <th className="py-2 px-3 w-[11%]">Mobile</th>
+                              <th className="py-2 px-3 w-[12%]">K Number</th>
+                              <th className="py-2 px-3 w-[24%]">Address</th>
+                              <th className="py-2 px-3 w-[14%]">Assigned Dealer</th>
+                              <th className="py-2 px-3 w-[11%]">Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {globalMobileHits.map((row, idx) => {
+                              const display = getHrLeadRowDisplay(row)
+                              return (
+                                <tr
+                                  key={`global-mobile-${row.mobile}-${row.uploadId || idx}-${idx}`}
+                                  className="border-t border-border/40"
+                                >
+                                  <td className="py-2 px-3 break-words whitespace-normal text-xs text-muted-foreground">
+                                    {row.fileName || row.uploadId || "—"}
+                                  </td>
+                                  <td className="py-2 px-3 break-words whitespace-normal">{row.name || "N/A"}</td>
+                                  <td className="py-2 px-3 break-all whitespace-normal">{row.mobile || "N/A"}</td>
+                                  <td className="py-2 px-3 break-all whitespace-normal">{row.kNumber || "N/A"}</td>
+                                  <td className="py-2 px-3 break-words whitespace-normal">{row.address || "N/A"}</td>
+                                  <td className="py-2 px-3 break-words whitespace-normal">{display.dealerLabel}</td>
+                                  <td className="py-2 px-3">
+                                    <Badge variant="outline" className={display.statusBadgeClassName}>
+                                      {display.statusLabel}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                        <p className="px-3 py-2 text-xs text-muted-foreground border-t">
+                          {globalMobileHits.length} match{globalMobileHits.length === 1 ? "" : "es"} for mobile containing{" "}
+                          {normalizeMobile(globalMobileQuery)}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
                 {isLoadingUploadedBatches ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -1476,6 +1769,37 @@ export default function HrDashboardPage() {
               <span className="block text-xs text-muted-foreground">{HR_UPLOAD_COUNT_LEGEND}</span>
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={batchMobileQuery}
+              onChange={(e) => setBatchMobileQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void applyBatchMobileSearch()
+              }}
+              placeholder="Search this file by mobile…"
+              inputMode="numeric"
+              className="w-[220px] h-9"
+            />
+            <Button size="sm" className="gap-1" disabled={isLoadingBatchRows || !activeBatch} onClick={() => void applyBatchMobileSearch()}>
+              {isLoadingBatchRows ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+              Search mobile
+            </Button>
+            {batchMobileQuery ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={isLoadingBatchRows || !activeBatch}
+                onClick={async () => {
+                  setBatchMobileQuery("")
+                  if (!activeBatch) return
+                  setActiveBatchPage(1)
+                  await loadBatchPreviewPage(activeBatch, 1, activeBatchLimit, "")
+                }}
+              >
+                Clear
+              </Button>
+            ) : null}
+          </div>
           <div className="border rounded-md">
             {isLoadingBatchRows ? (
               <div className="py-10 flex items-center justify-center gap-2 text-sm text-muted-foreground">

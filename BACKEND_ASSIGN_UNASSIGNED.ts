@@ -25,8 +25,13 @@
  *   POST /hr/leads/uploads/:uploadId/assign-unassigned
  *     body: { "assignmentMode": "round_robin_all" }
  *   POST /hr/leads/upload-csv
- *     multipart: assignmentMode=round_robin_all + activeLimitPerDealer=MAX_SAFE_INTEGER
- *   GET  /dealers/me/calling-queue/next   ← MUST return Harshita’s next assigned lead
+ *     multipart (default / working path):
+ *       file, dealerIds[], activeLimitPerDealer=1
+ *       (SPA does NOT send oversized limits — Zod rejects >50 with
+ *        "Too big: expected number to be <=50")
+ *     optional: assignmentMode=round_robin_all → backend MUST ignore the
+ *       numeric cap and assign EVERY created row (Unassigned → 0 at upload)
+ *   GET  /dealers/me/calling-queue/next   ← MUST return dealer’s next assigned lead
  *   GET  /dealers/me/calling-queue/current ← MUST 200 (never SYS_001)
  *
  * =============================================================================
@@ -252,11 +257,14 @@ export async function postHrLeadsUploadAssignUnassigned(req, res, db) {
  * =============================================================================
  *
  * POST /api/hr/leads/upload-csv
- * Multipart fields SPA sends:
+ * Multipart fields SPA sends (default Assign Leads):
  *   file | csvFile
  *   dealerIds[] | dealerIds
+ *   activeLimitPerDealer | activeLeadsLimit = 1..50  (Zod max 50 — never larger)
+ *
+ * Optional (when SPA opts into full assign-at-upload):
  *   assignmentMode = "round_robin_all"
- *   activeLimitPerDealer = 9007199254740991   (MAX_SAFE_INTEGER) when assign-all
+ *   → IGNORE activeLimitPerDealer and assign every created row.
  *
  * Patch inside postHrLeadsUploadCsv allocator:
  */

@@ -579,8 +579,24 @@ export const stockRequestsApi = {
       serial_number_ranges?: Record<string, { from: string; to: string }>
       /** Map product_id -> serial numbers selected for dispatch. Backend updates status to "dispatched". */
       serial_numbers?: Record<string, string[]>
+      /** Inventory users.id — avoids stock_requests_dispatched_by_id_fkey when JWT sub is missing from users */
+      dispatched_by_id?: string
+      dispatched_by?: string
     }
   ): Promise<StockRequest> {
+    let dispatchedBy =
+      data?.dispatched_by_id || data?.dispatched_by || undefined
+    if (!dispatchedBy) {
+      try {
+        const { resolveInventoryCreatedByForWrite } = await import(
+          "@/inventory-sa/lib/resolve-inventory-created-by"
+        )
+        dispatchedBy = (await resolveInventoryCreatedByForWrite()) || undefined
+      } catch {
+        dispatchedBy = undefined
+      }
+    }
+
     if (data?.dispatch_image) {
       const formData = new FormData()
       if (data.rejection_reason) {
@@ -596,6 +612,10 @@ export const stockRequestsApi = {
       if (data.serial_numbers) {
         formData.append("serial_numbers", JSON.stringify(data.serial_numbers))
       }
+      if (dispatchedBy) {
+        formData.append("dispatched_by_id", dispatchedBy)
+        formData.append("dispatched_by", dispatchedBy)
+      }
       return apiClient.post<StockRequest>(`/stock-requests/${id}/dispatch`, formData, true)
     }
     const body: any = {}
@@ -610,6 +630,10 @@ export const stockRequestsApi = {
     }
     if (data?.serial_numbers) {
       body.serial_numbers = JSON.stringify(data.serial_numbers)
+    }
+    if (dispatchedBy) {
+      body.dispatched_by_id = dispatchedBy
+      body.dispatched_by = dispatchedBy
     }
     return apiClient.post<StockRequest>(`/stock-requests/${id}/dispatch`, body)
   },

@@ -61,7 +61,7 @@
  */
 "use client"
 
-import { useState, useEffect, useCallback, useMemo } from "react"
+import { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -92,6 +92,8 @@ import {
   Truck,
   Check,
   XCircle,
+  Upload,
+  FileJson,
 } from "lucide-react"
 import ProductModal from "@/inventory-sa/components/modals/product-modal"
 import type { Product as InventoryProduct } from "@/inventory-sa/lib/api"
@@ -506,49 +508,342 @@ function CreateAgentModal({
 interface StockRequestModalProps {
   adminId: string
   adminName: string
+  /** Super Admin catalog — same list as Overview / Products (preferred). */
+  catalogProducts?: IProduct[]
   onClose: () => void
   onSuccess: () => void
   fetch: <T>(path: string, opts?: RequestInit) => Promise<T>
 }
 
+function productStockQty(p: IProduct): number {
+  const n = Number(p.central_stock ?? p.quantity ?? 0)
+  return Number.isFinite(n) ? n : 0
+}
+
+function productLabel(p: IProduct): string {
+  const bits = [p.name, p.model].filter(Boolean)
+  return bits.join(" — ") || p.id
+}
+
+function normalizeProductMatchKey(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+}
+
+function matchCatalogProduct(
+  catalog: IProduct[],
+  raw: Record<string, unknown>,
+): IProduct | null {
+  const id = String(
+    raw.product_id || raw.productId || raw.id || raw.productID || "",
+  ).trim()
+  if (id) {
+    const byId = catalog.find((p) => p.id === id)
+    if (byId) return byId
+  }
+
+  const nameKey = normalizeProductMatchKey(
+    raw.name || raw.product_name || raw.productName || raw.stockitemname || raw.stockItemName,
+  )
+  const modelKey = normalizeProductMatchKey(raw.model || raw.sku || raw.code)
+  if (!nameKey && !modelKey) return null
+
+  for (const p of catalog) {
+    const pName = normalizeProductMatchKey(p.name)
+    const pModel = normalizeProductMatchKey(p.model)
+    if (nameKey && (pName === nameKey || pModel === nameKey)) return p
+    if (modelKey && (pModel === modelKey || pName === modelKey)) return p
+  }
+
+  // Fuzzy contains match (longer keys only)
+  if (nameKey.length >= 4) {
+    const fuzzy = catalog.find((p) => {
+      const pName = normalizeProductMatchKey(p.name)
+      const pModel = normalizeProductMatchKey(p.model)
+      return pName.includes(nameKey) || nameKey.includes(pName) || pModel.includes(nameKey)
+    })
+    if (fuzzy) return fuzzy
+  }
+  return null
+}
+
+function extractStockRequestJsonRows(parsed: unknown): {
+  rows: Record<string, unknown>[]
+  notes?: string
+} {
+  if (Array.isArray(parsed)) {
+    return { rows: parsed.filter((r) => r && typeof r === "object") as Record<string, unknown>[] }
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("JSON must be an array of products or an object with items/products")
+  }
+  const root = parsed as Record<string, unknown>
+  let notes =
+    typeof root.notes === "string"
+      ? root.notes
+      : typeof root.note === "string"
+        ? root.note
+        : typeof root.reference === "string"
+          ? root.reference
+          : undefined
+
+  for (const key of ["items", "products", "rows", "data", "line_items", "lineItems"]) {
+    const v = root[key]
+    if (Array.isArray(v)) {
+      return {
+        rows: v.filter((r) => r && typeof r === "object") as Record<string, unknown>[],
+        notes,
+      }
+    }
+  }
+
+  // Tally-style voucher
+  if (Array.isArray(root.allinventoryentries)) {
+    return {
+      rows: (root.allinventoryentries as unknown[]).filter(
+        (r) => r && typeof r === "object",
+      ) as Record<string, unknown>[],
+      notes,
+    }
+  }
+
+  // Tally exports wrap the voucher as:
+  // { tallymessage: [{ reference, vouchernumber, allinventoryentries: [...] }] }
+  const tallyMessages = Array.isArray(root.tallymessage)
+    ? root.tallymessage
+    : Array.isArray(root.tallyMessage)
+      ? root.tallyMessage
+      : []
+  for (const message of tallyMessages) {
+    if (!message || typeof message !== "object") continue
+    const voucher = message as Record<string, unknown>
+    if (!Array.isArray(voucher.allinventoryentries)) continue
+    const reference = String(voucher.reference || voucher.vouchernumber || "").trim()
+    if (!notes && reference) notes = `Tally purchase: ${reference}`
+    return {
+      rows: (voucher.allinventoryentries as unknown[]).filter(
+        (r) => r && typeof r === "object",
+      ) as Record<string, unknown>[],
+      notes,
+    }
+  }
+
+  throw new Error(
+    'No product rows found. Supported: Tally purchase JSON, [{ "name": "…", "quantity": 1 }], or { "items": [ … ] }',
+  )
+}
+
+function parseQtyFromJsonRow(raw: Record<string, unknown>): number {
+  const direct = Number(
+    raw.quantity ?? raw.qty ?? raw.requested_quantity ?? raw.requestedQty ?? raw.Quantity,
+  )
+  if (Number.isFinite(direct) && direct > 0) return direct
+
+  const billed = String(raw.billedqty || raw.actualqty || raw.qty_text || "").trim()
+  if (billed) {
+    const m = billed.match(/([\d.]+)/)
+    if (m) {
+      const n = Number(m[1])
+      if (Number.isFinite(n) && n > 0) return n
+    }
+  }
+  return 0
+}
+
+type StockRequestJsonImportResult = {
+  items: Array<{ product_id: string; quantity: string }>
+  unmatched: string[]
+  notes?: string
+}
+
+function buildStockRequestItemsFromJson(
+  parsed: unknown,
+  catalog: IProduct[],
+): StockRequestJsonImportResult {
+  const { rows, notes } = extractStockRequestJsonRows(parsed)
+  if (rows.length === 0) {
+    throw new Error("JSON has no product rows")
+  }
+
+  const merged = new Map<string, number>()
+  const unmatched: string[] = []
+
+  for (const raw of rows) {
+    const qty = parseQtyFromJsonRow(raw)
+    const product = matchCatalogProduct(catalog, raw)
+    if (!product) {
+      const label =
+        String(
+          raw.name ||
+            raw.product_name ||
+            raw.model ||
+            raw.stockitemname ||
+            raw.product_id ||
+            raw.id ||
+            "unknown",
+        ).trim() || "unknown"
+      unmatched.push(label)
+      continue
+    }
+    if (!(qty > 0)) {
+      unmatched.push(`${productLabel(product)} (qty missing/invalid)`)
+      continue
+    }
+    merged.set(product.id, (merged.get(product.id) || 0) + qty)
+  }
+
+  const items = Array.from(merged.entries()).map(([product_id, quantity]) => ({
+    product_id,
+    quantity: String(quantity),
+  }))
+
+  if (items.length === 0) {
+    throw new Error(
+      unmatched.length
+        ? `No products matched Super Admin catalog. Unmatched: ${unmatched.slice(0, 5).join(", ")}`
+        : "No valid products with quantity > 0 in JSON",
+    )
+  }
+
+  return { items, unmatched, notes }
+}
+
 function StockRequestModal({
   adminId,
   adminName,
+  catalogProducts,
   onClose,
   onSuccess,
   fetch: apiFetch,
 }: StockRequestModalProps) {
-  const [products, setProducts] = useState<IProduct[]>([])
-  const [loadingProducts, setLoadingProducts] = useState(true)
+  const [products, setProducts] = useState<IProduct[]>(
+    Array.isArray(catalogProducts) && catalogProducts.length > 0 ? catalogProducts : [],
+  )
+  const [loadingProducts, setLoadingProducts] = useState(
+    !(Array.isArray(catalogProducts) && catalogProducts.length > 0),
+  )
+  const [productSearch, setProductSearch] = useState("")
   const [items, setItems] = useState<Array<{ product_id: string; quantity: string }>>([
     { product_id: "", quantity: "" },
   ])
   const [notes, setNotes] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [jsonFileName, setJsonFileName] = useState<string | null>(null)
+  const [jsonImportInfo, setJsonImportInfo] = useState<string | null>(null)
+  const [parsingJson, setParsingJson] = useState(false)
+  const jsonInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
-    apiFetch<IProduct[]>("/products")
-      .then((d) => setProducts(Array.isArray(d) ? d : []))
-      .catch((e) => setError(e?.message || "Failed to load products"))
-      .finally(() => setLoadingProducts(false))
-  }, [])
+    if (Array.isArray(catalogProducts) && catalogProducts.length > 0) {
+      setProducts(catalogProducts)
+      setLoadingProducts(false)
+      return
+    }
+    let cancelled = false
+    setLoadingProducts(true)
+    apiFetch<unknown>("/products")
+      .then((d) => {
+        if (cancelled) return
+        setProducts(asArrayList<IProduct>(d))
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e?.message || "Failed to load Super Admin products")
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProducts(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [apiFetch, catalogProducts])
+
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase()
+    const list = [...products].sort((a, b) =>
+      productLabel(a).localeCompare(productLabel(b), undefined, { sensitivity: "base" }),
+    )
+    if (!q) return list
+    return list.filter((p) => {
+      const hay = [p.name, p.model, p.category, p.wattage, p.id]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+      return hay.includes(q)
+    })
+  }, [products, productSearch])
+
+  const selectedIds = useMemo(
+    () => new Set(items.map((it) => it.product_id).filter(Boolean)),
+    [items],
+  )
 
   const addLine = () => setItems((p) => [...p, { product_id: "", quantity: "" }])
-  const removeLine = (i: number) => setItems((p) => p.filter((_, idx) => idx !== i))
+  const removeLine = (i: number) => setItems((p) => (p.length <= 1 ? p : p.filter((_, idx) => idx !== i)))
   const updateLine = (i: number, field: "product_id" | "quantity", val: string) =>
     setItems((p) => p.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)))
+
+  const applyJsonImport = (parsed: unknown, fileName: string) => {
+    const result = buildStockRequestItemsFromJson(parsed, products)
+    setItems(result.items)
+    setJsonFileName(fileName)
+    if (result.notes?.trim()) {
+      setNotes((prev) => (prev.trim() ? prev : result.notes!.trim()))
+    }
+    const unmatchedNote =
+      result.unmatched.length > 0
+        ? ` · ${result.unmatched.length} row(s) skipped (no catalog match / bad qty)`
+        : ""
+    setJsonImportInfo(
+      `Loaded ${result.items.length} product line(s) from JSON${unmatchedNote}. Review qty, then Submit Request.`,
+    )
+    setError(null)
+  }
+
+  const handleJsonFile = async (file: File | null) => {
+    if (!file) return
+    if (products.length === 0) {
+      setError("Super Admin products not loaded yet — wait a moment and try again")
+      return
+    }
+    setParsingJson(true)
+    setError(null)
+    setJsonImportInfo(null)
+    try {
+      const text = await file.text()
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        throw new Error("Invalid JSON file — check the file contents")
+      }
+      applyJsonImport(parsed, file.name)
+    } catch (err: any) {
+      setJsonFileName(null)
+      setJsonImportInfo(null)
+      setError(err?.message || "Failed to import JSON")
+    } finally {
+      setParsingJson(false)
+      if (jsonInputRef.current) jsonInputRef.current.value = ""
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
     const validItems = items.filter((it) => it.product_id && Number(it.quantity) > 0)
     if (validItems.length === 0) {
-      setError("Add at least one product with qty > 0")
+      setError("Add at least one product with quantity greater than 0 (or upload a JSON list)")
       return
     }
     setSubmitting(true)
     try {
+      const noteParts = [
+        notes.trim(),
+        jsonFileName ? `Imported from JSON: ${jsonFileName}` : "",
+      ].filter(Boolean)
       await apiFetch("/stock-requests", {
         method: "POST",
         body: JSON.stringify({
@@ -557,7 +852,7 @@ function StockRequestModal({
             product_id: it.product_id,
             quantity: Number(it.quantity),
           })),
-          notes: notes.trim() || undefined,
+          notes: noteParts.length ? noteParts.join(" | ") : undefined,
           on_behalf_of_admin_id: adminId,
         }),
       })
@@ -571,114 +866,282 @@ function StockRequestModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-5 border-b border-border shrink-0">
-          <div>
-            <h2 className="text-lg font-bold text-foreground">Request Stock</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">On behalf of: {adminName}</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:p-4 backdrop-blur-[2px]">
+      <div className="flex w-full max-w-2xl max-h-[92vh] flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-border bg-gradient-to-r from-orange-50 to-amber-50/80 px-5 py-4">
+          <div className="min-w-0 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500 text-white shadow-sm">
+                <Package className="h-4 w-4" />
+              </span>
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">Request Stock</h2>
+                <p className="text-xs text-muted-foreground">
+                  From Super Admin catalog · On behalf of{" "}
+                  <span className="font-medium text-foreground">{adminName}</span>
+                </p>
+              </div>
+            </div>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 overflow-y-auto flex-1">
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-red-600 text-sm">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              {error}
-            </div>
-          )}
-          {loadingProducts ? (
-            <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Loading products…
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <Label className="text-muted-foreground text-sm font-medium">Products</Label>
-              {items.map((item, i) => (
-                <div key={i} className="flex gap-2">
-                  <select
-                    value={item.product_id}
-                    onChange={(e) => updateLine(i, "product_id", e.target.value)}
-                    className="flex-1 px-3 py-2 bg-muted border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-primary"
-                  >
-                    <option value="">Select product…</option>
-                    {products.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} — {p.model}
-                      </option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
-                    value={item.quantity}
-                    onChange={(e) => updateLine(i, "quantity", e.target.value)}
-                    placeholder="Qty"
-                    className="w-24 bg-muted border-border text-foreground"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeLine(i)}
-                    className="text-muted-foreground hover:text-red-600 px-1"
-                    disabled={items.length === 1}
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
+
+        <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
+          <div className="space-y-4 overflow-y-auto p-5">
+            {error && (
+              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {/* JSON upload — fills product lines from file */}
+            <div className="rounded-xl border border-dashed border-orange-300/80 bg-orange-50/40 p-4 space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                    <FileJson className="h-4 w-4 text-orange-600" />
+                    Upload product JSON
+                  </div>
+                  <p className="text-xs text-muted-foreground max-w-md">
+                    Upload a Tally purchase JSON or a product list. Matched rows fill the list below from the Super
+                    Admin catalog, then click Submit Request to raise it.
+                  </p>
+                  <p className="text-[11px] text-muted-foreground font-mono">
+                    {`Tally: tallymessage[].allinventoryentries · or [{ "name": "…", "quantity": 1 }]`}
+                  </p>
                 </div>
-              ))}
-              <Button
-                type="button"
-                variant="outline"
-                onClick={addLine}
-                className="border-border text-muted-foreground hover:bg-muted text-xs"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Add Product
-              </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <input
+                    ref={jsonInputRef}
+                    type="file"
+                    accept=".json,application/json"
+                    className="hidden"
+                    onChange={(e) => void handleJsonFile(e.target.files?.[0] || null)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={loadingProducts || parsingJson || products.length === 0}
+                    className="border-orange-300 bg-white text-orange-800 hover:bg-orange-50"
+                    onClick={() => jsonInputRef.current?.click()}
+                  >
+                    {parsingJson ? (
+                      <>
+                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                        Reading…
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="mr-1.5 h-3.5 w-3.5" />
+                        Choose JSON
+                      </>
+                    )}
+                  </Button>
+                  {jsonFileName ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground"
+                      onClick={() => {
+                        setJsonFileName(null)
+                        setJsonImportInfo(null)
+                        setItems([{ product_id: "", quantity: "" }])
+                      }}
+                    >
+                      Clear import
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+              {jsonFileName ? (
+                <p className="text-xs text-orange-900/80">
+                  File: <span className="font-medium">{jsonFileName}</span>
+                  {jsonImportInfo ? ` — ${jsonImportInfo}` : null}
+                </p>
+              ) : jsonImportInfo ? (
+                <p className="text-xs text-emerald-800">{jsonImportInfo}</p>
+              ) : null}
             </div>
-          )}
-          <div className="space-y-1.5">
-            <Label className="text-muted-foreground text-sm">Notes (optional)</Label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Any notes for this request…"
-              className="w-full px-3 py-2 bg-muted border border-border rounded-lg text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary resize-none"
-            />
+
+            {loadingProducts ? (
+              <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
+                Loading Super Admin products…
+              </div>
+            ) : products.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-10 text-center">
+                <Package className="mx-auto mb-2 h-8 w-8 text-muted-foreground/60" />
+                <p className="text-sm font-medium text-foreground">No Super Admin products found</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Add products in Overview / catalog first, then request stock here.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <Label className="text-sm font-medium text-foreground">Products to request</Label>
+                    <p className="text-xs text-muted-foreground">
+                      {products.length} product{products.length === 1 ? "" : "s"} in Super Admin stock
+                      {items.some((it) => it.product_id)
+                        ? ` · ${items.filter((it) => it.product_id).length} selected`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="relative w-full sm:w-56">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      value={productSearch}
+                      onChange={(e) => setProductSearch(e.target.value)}
+                      placeholder="Filter products…"
+                      className="h-9 pl-8 text-sm"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2.5 rounded-xl border border-border/80 bg-muted/25 p-3">
+                  {items.map((item, i) => {
+                    const selected = products.find((p) => p.id === item.product_id)
+                    const stock = selected ? productStockQty(selected) : null
+                    const options = filteredProducts.filter(
+                      (p) => p.id === item.product_id || !selectedIds.has(p.id),
+                    )
+                    return (
+                      <div
+                        key={`${item.product_id || "empty"}-${i}`}
+                        className="rounded-lg border border-border bg-background p-3 shadow-sm space-y-2"
+                      >
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Product {i + 1}
+                            </Label>
+                            <select
+                              value={item.product_id}
+                              onChange={(e) => updateLine(i, "product_id", e.target.value)}
+                              className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-orange-400/40"
+                            >
+                              <option value="">Select Super Admin product…</option>
+                              {options.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {productLabel(p)}
+                                  {p.category ? ` · ${p.category}` : ""}
+                                  {` · stock ${productStockQty(p).toLocaleString("en-IN", {
+                                    minimumFractionDigits: 0,
+                                    maximumFractionDigits: 2,
+                                  })}`}
+                                  {p.unit ? ` ${p.unit}` : ""}
+                                </option>
+                              ))}
+                            </select>
+                            {selected ? (
+                              <p className="text-[11px] text-muted-foreground">
+                                {selected.category || "Uncategorized"}
+                                {selected.wattage ? ` · ${selected.wattage}` : ""}
+                                {stock != null
+                                  ? ` · Available ${stock.toLocaleString("en-IN", {
+                                      minimumFractionDigits: 0,
+                                      maximumFractionDigits: 2,
+                                    })}${selected.unit ? ` ${selected.unit}` : ""}`
+                                  : ""}
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="flex items-end gap-2 sm:w-[140px]">
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                                Qty
+                              </Label>
+                              <Input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                value={item.quantity}
+                                onChange={(e) => updateLine(i, "quantity", e.target.value)}
+                                placeholder="0"
+                                className="h-10 bg-background"
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeLine(i)}
+                              disabled={items.length === 1}
+                              className="mb-0.5 rounded-lg p-2 text-muted-foreground transition hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
+                              aria-label="Remove line"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+
+                  {filteredProducts.length === 0 && productSearch.trim() ? (
+                    <p className="px-1 py-2 text-center text-xs text-muted-foreground">
+                      No products match “{productSearch.trim()}”.
+                    </p>
+                  ) : null}
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addLine}
+                    className="mt-1 border-dashed border-border text-muted-foreground hover:bg-background hover:text-foreground"
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Add another product
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium text-foreground">Notes (optional)</Label>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                placeholder="Delivery note, urgency, or reference…"
+                className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-orange-400/40"
+              />
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-muted/20 px-5 py-4">
+            <Button type="button" variant="outline" onClick={onClose} className="min-w-[96px]">
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={submitting || loadingProducts || products.length === 0}
+              className="min-w-[140px] bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                  Submitting…
+                </>
+              ) : (
+                <>
+                  <Package className="mr-1.5 h-4 w-4" />
+                  Submit Request
+                </>
+              )}
+            </Button>
           </div>
         </form>
-        <div className="flex justify-end gap-3 p-5 border-t border-border shrink-0">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onClose}
-            className="border-border text-muted-foreground hover:bg-muted"
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit as any}
-            disabled={submitting || loadingProducts}
-            className="bg-emerald-600 hover:bg-emerald-700 text-white"
-          >
-            {submitting ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                Submitting…
-              </>
-            ) : (
-              <>
-                <Package className="w-4 h-4 mr-1.5" />
-                Submit Request
-              </>
-            )}
-          </Button>
-        </div>
       </div>
     </div>
   )
@@ -1156,14 +1619,85 @@ interface ApprovalModalProps {
   fetch: <T>(path: string, opts?: RequestInit) => Promise<T>
 }
 
+function serialNeedsSelection(category: string): boolean {
+  return SERIAL_CATEGORIES.has(String(category || "").trim().toLowerCase())
+}
+
+async function fetchAvailableSerialsForProduct(
+  apiFetch: <T>(path: string, opts?: RequestInit) => Promise<T>,
+  productId: string,
+  productName?: string,
+): Promise<ISerialNumber[]> {
+  const attempts: Array<() => Promise<unknown>> = [
+    () => apiFetch(`/products/${productId}/serial-numbers?status=available`),
+    () => apiFetch(`/products/${productId}/serial-numbers`),
+    () => apiFetch(`/serial-numbers?product_id=${encodeURIComponent(productId)}&status=available`),
+    () => apiFetch(`/serial-numbers?product_id=${encodeURIComponent(productId)}`),
+    () =>
+      apiFetch(
+        `/product-serial-numbers?product_id=${encodeURIComponent(productId)}&status=available`,
+      ),
+    () => apiFetch(`/product-serial-numbers?product_id=${encodeURIComponent(productId)}`),
+  ]
+  if (productName) {
+    const encoded = encodeURIComponent(productName)
+    attempts.push(
+      () => apiFetch(`/serial-numbers?product_name=${encoded}&status=available`),
+      () => apiFetch(`/serial-numbers?product_name=${encoded}`),
+      () => apiFetch(`/product-serial-numbers?product_name=${encoded}&status=available`),
+      () => apiFetch(`/product-serial-numbers?product_name=${encoded}`),
+    )
+  }
+
+  const bySerial = new Map<string, ISerialNumber>()
+  for (const attempt of attempts) {
+    try {
+      const raw = await attempt()
+      const list = asArrayList<ISerialNumber | string>(raw)
+      for (const row of list) {
+        const sn = (typeof row === "string" ? row : row?.serial_number || "").trim()
+        if (!sn) continue
+        const status = (typeof row === "string" ? "" : String(row.status || "")).toLowerCase()
+        const normalized: ISerialNumber =
+          typeof row === "string"
+            ? { id: `sn-${sn}`, product_id: productId, serial_number: sn, status: "available" }
+            : {
+                ...row,
+                id: row.id || `sn-${sn}`,
+                product_id: row.product_id || productId,
+                serial_number: sn,
+              }
+        const existing = bySerial.get(sn)
+        if (!existing || (status === "available" && existing.status !== "available")) {
+          bySerial.set(sn, normalized)
+        }
+      }
+    } catch {
+      // try next endpoint
+    }
+  }
+
+  const excluded = new Set(["dispatched", "sold", "acknowledged", "used", "allocated"])
+  return Array.from(bySerial.values())
+    .filter((s) => {
+      const status = String(s.status || "").toLowerCase()
+      if (excluded.has(status)) return false
+      return !status || status === "available"
+    })
+    .sort((a, b) => a.serial_number.localeCompare(b.serial_number, undefined, { sensitivity: "base" }))
+}
+
 function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch }: ApprovalModalProps) {
   const [lines, setLines] = useState(
     request.items.map((it) => ({
       product_id: it.product_id,
       quantity: String(it.quantity),
-      serials: (it.serial_numbers || []).join(", "),
-    }))
+      selectedSerials: [] as string[],
+    })),
   )
+  const [availableByProduct, setAvailableByProduct] = useState<Record<string, ISerialNumber[]>>({})
+  const [loadingSerials, setLoadingSerials] = useState(true)
+  const [serialSearch, setSerialSearch] = useState<Record<number, string>>({})
   const [dispatchImage, setDispatchImage] = useState<File | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
   const [submitting, setSubmitting] = useState<"dispatch" | "reject" | null>(null)
@@ -1179,17 +1713,66 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
     return (p?.category || "").toLowerCase()
   }
 
-  const updateLine = (i: number, field: "quantity" | "serials", val: string) =>
-    setLines((p) => p.map((row, idx) => (idx === i ? { ...row, [field]: val } : row)))
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      setLoadingSerials(true)
+      const map: Record<string, ISerialNumber[]> = {}
+      await Promise.all(
+        request.items.map(async (it) => {
+          const category = productCategory(it.product_id, it.product)
+          if (!serialNeedsSelection(category)) {
+            map[it.product_id] = []
+            return
+          }
+          const name = products?.[it.product_id]?.name || it.product?.name
+          map[it.product_id] = await fetchAvailableSerialsForProduct(apiFetch, it.product_id, name)
+        }),
+      )
+      if (!cancelled) {
+        setAvailableByProduct(map)
+        setLoadingSerials(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request.id, apiFetch])
+
+  const updateQuantity = (i: number, val: string) => {
+    setLines((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== i) return row
+        const maxQty = Math.max(0, Math.floor(Number(val) || 0))
+        return {
+          ...row,
+          quantity: val,
+          selectedSerials: row.selectedSerials.slice(0, maxQty),
+        }
+      }),
+    )
+  }
+
+  const toggleSerial = (i: number, serial: string, maxQty: number) => {
+    setLines((prev) =>
+      prev.map((row, idx) => {
+        if (idx !== i) return row
+        const selected = row.selectedSerials.includes(serial)
+        if (selected) {
+          return { ...row, selectedSerials: row.selectedSerials.filter((s) => s !== serial) }
+        }
+        if (row.selectedSerials.length >= maxQty) return row
+        return { ...row, selectedSerials: [...row.selectedSerials, serial] }
+      }),
+    )
+  }
 
   const buildSerialMap = (): Record<string, string[]> => {
     const map: Record<string, string[]> = {}
     for (const l of lines) {
-      const serials = l.serials
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean)
-      if (serials.length > 0) map[l.product_id] = serials
+      if (l.selectedSerials.length > 0) map[l.product_id] = [...l.selectedSerials]
     }
     return map
   }
@@ -1204,15 +1787,51 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
       setError("All dispatch quantities must be greater than 0")
       return
     }
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i]
+      const orig = request.items[i]
+      const needsSerials = serialNeedsSelection(productCategory(line.product_id, orig?.product))
+      if (!needsSerials) continue
+      const qty = Math.floor(Number(line.quantity) || 0)
+      const available = availableByProduct[line.product_id] || []
+      if (available.length === 0) {
+        setError(
+          `${productName(line.product_id, orig?.product)}: no available serial numbers in Super Admin stock`,
+        )
+        return
+      }
+      if (line.selectedSerials.length !== qty) {
+        setError(
+          `${productName(line.product_id, orig?.product)}: select exactly ${qty} serial number${qty === 1 ? "" : "s"} (${line.selectedSerials.length} selected)`,
+        )
+        return
+      }
+    }
+
     const serialMap = buildSerialMap()
     setSubmitting("dispatch")
     try {
+      let dispatchedById: string | null = null
+      try {
+        const { resolveInventoryCreatedByForWrite } = await import(
+          "@/inventory-sa/lib/resolve-inventory-created-by"
+        )
+        dispatchedById = await resolveInventoryCreatedByForWrite()
+      } catch {
+        dispatchedById = null
+      }
+
       if (dispatchImage) {
         const fd = new FormData()
         fd.append("dispatch_image", dispatchImage)
         fd.append("items", JSON.stringify(items))
         if (Object.keys(serialMap).length > 0) {
           fd.append("serial_numbers", JSON.stringify(serialMap))
+        }
+        if (dispatchedById) {
+          fd.append("dispatched_by_id", dispatchedById)
+          fd.append("dispatched_by", dispatchedById)
         }
         await apiFetch(`/stock-requests/${request.id}/dispatch`, {
           method: "POST",
@@ -1223,6 +1842,10 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
         if (Object.keys(serialMap).length > 0) {
           body.serial_numbers = JSON.stringify(serialMap)
         }
+        if (dispatchedById) {
+          body.dispatched_by_id = dispatchedById
+          body.dispatched_by = dispatchedById
+        }
         await apiFetch(`/stock-requests/${request.id}/dispatch`, {
           method: "POST",
           body: JSON.stringify(body),
@@ -1231,7 +1854,14 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
       onSuccess()
       onClose()
     } catch (err: any) {
-      setError(err?.message || "Failed to dispatch request")
+      const raw = String(err?.message || err?.details || "")
+      if (/dispatched_by_id_fkey|stock_requests_dispatched_by/i.test(raw)) {
+        setError(
+          "Dispatch failed: your login user is not in inventory users (dispatched_by_id FK). Backend must upsert JWT user or honor dispatched_by_id — see HANDOFF §16 / BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts",
+        )
+      } else {
+        setError(err?.message || "Failed to dispatch request")
+      }
     } finally {
       setSubmitting(null)
     }
@@ -1260,7 +1890,7 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg max-h-[92vh] flex flex-col">
+      <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-border shrink-0">
           <div>
             <h2 className="text-lg font-bold text-foreground">Review &amp; Dispatch</h2>
@@ -1288,11 +1918,15 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
             <Label className="text-muted-foreground text-sm font-medium">Items</Label>
             {lines.map((line, i) => {
               const orig = request.items[i]
-              const showSerials = SERIAL_CATEGORIES.has(
-                productCategory(line.product_id, orig?.product)
-              )
+              const showSerials = serialNeedsSelection(productCategory(line.product_id, orig?.product))
+              const dispatchQty = Math.max(0, Math.floor(Number(line.quantity) || 0))
+              const available = availableByProduct[line.product_id] || []
+              const searchQ = (serialSearch[i] || "").trim().toLowerCase()
+              const visibleSerials = searchQ
+                ? available.filter((s) => s.serial_number.toLowerCase().includes(searchQ))
+                : available
               return (
-                <div key={i} className="rounded-lg border border-border bg-card p-3 space-y-2">
+                <div key={`${line.product_id}-${i}`} className="rounded-lg border border-border bg-card p-3 space-y-2">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium text-foreground">
                       {productName(line.product_id, orig?.product)}
@@ -1305,24 +1939,82 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
                     <Label className="text-xs text-muted-foreground w-24">Dispatch qty</Label>
                     <Input
                       type="number"
-                      min="0.01"
-                      step="0.01"
+                      min="1"
+                      step="1"
                       value={line.quantity}
-                      onChange={(e) => updateLine(i, "quantity", e.target.value)}
+                      onChange={(e) => updateQuantity(i, e.target.value)}
                       className="w-28 bg-muted border-border text-foreground"
                     />
                   </div>
                   {showSerials && (
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">
-                        Serial numbers (comma-separated)
-                      </Label>
-                      <Input
-                        value={line.serials}
-                        onChange={(e) => updateLine(i, "serials", e.target.value)}
-                        placeholder="SN001, SN002, …"
-                        className="bg-muted border-border text-foreground text-sm"
-                      />
+                    <div className="space-y-2 pt-1 border-t border-border/60">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Label className="text-xs text-muted-foreground">
+                          Select available serials ({line.selectedSerials.length}/{dispatchQty})
+                        </Label>
+                        {loadingSerials ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                            Loading serials…
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground">
+                            {available.length} available
+                          </span>
+                        )}
+                      </div>
+                      {!loadingSerials && available.length > 0 ? (
+                        <>
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                              value={serialSearch[i] || ""}
+                              onChange={(e) =>
+                                setSerialSearch((prev) => ({ ...prev, [i]: e.target.value }))
+                              }
+                              placeholder="Search serial numbers…"
+                              className="h-8 pl-8 text-xs bg-muted border-border"
+                            />
+                          </div>
+                          <div className="max-h-40 overflow-y-auto rounded-lg border border-border bg-muted/30 p-2 grid gap-1.5 sm:grid-cols-2">
+                            {visibleSerials.map((sn) => {
+                              const checked = line.selectedSerials.includes(sn.serial_number)
+                              const atLimit = !checked && line.selectedSerials.length >= dispatchQty
+                              return (
+                                <label
+                                  key={sn.id || sn.serial_number}
+                                  className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
+                                    atLimit
+                                      ? "opacity-45 cursor-not-allowed"
+                                      : "cursor-pointer hover:bg-background"
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    disabled={atLimit || dispatchQty <= 0}
+                                    onChange={() => toggleSerial(i, sn.serial_number, dispatchQty)}
+                                    className="rounded border-border"
+                                  />
+                                  <span className="font-mono text-xs text-foreground">{sn.serial_number}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                          {searchQ && visibleSerials.length === 0 ? (
+                            <p className="text-[11px] text-muted-foreground">No serials match “{searchQ}”.</p>
+                          ) : null}
+                          {line.selectedSerials.length !== dispatchQty && dispatchQty > 0 ? (
+                            <p className="text-[11px] text-amber-700">
+                              Select exactly {dispatchQty} serial{dispatchQty === 1 ? "" : "s"} to match dispatch qty.
+                            </p>
+                          ) : null}
+                        </>
+                      ) : !loadingSerials ? (
+                        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+                          No available serial numbers for this product in Super Admin stock. Add / free serials first.
+                        </p>
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -1379,7 +2071,7 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
             </Button>
             <Button
               onClick={handleDispatch}
-              disabled={submitting !== null}
+              disabled={submitting !== null || loadingSerials}
               className="bg-emerald-600 hover:bg-emerald-700 text-white"
             >
               {submitting === "dispatch" ? (
@@ -3017,6 +3709,7 @@ export function SuperAdminInventoryPanel({
                 <Button
                   onClick={() => {
                     if (!selectedAdminId) return alert("Select an admin first")
+                    void loadProducts()
                     setShowStockRequest(true)
                   }}
                   className="bg-amber-600 hover:bg-amber-700 text-foreground text-xs sm:text-sm"
@@ -3516,6 +4209,7 @@ export function SuperAdminInventoryPanel({
         <StockRequestModal
           adminId={selectedAdminId}
           adminName={selectedAdmin.name || selectedAdmin.username}
+          catalogProducts={products}
           onClose={() => setShowStockRequest(false)}
           onSuccess={() => loadStockRequests()}
           fetch={apiFetch}

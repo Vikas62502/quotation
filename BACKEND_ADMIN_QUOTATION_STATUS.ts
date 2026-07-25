@@ -779,6 +779,16 @@ function mapHrUploadLeadRow(r, dealerNameById) {
  * - Store upload metadata in hr_lead_uploads
  * - Store parsed rows in hr_leads
  * - Enforce per-dealer active cap (default 1) when assigning initial rows
+ *
+ * LIVE BUG (Jul 2026): SPA "Assign Leads" → after a delay → 500 "Internal server error".
+ * Validation now passes (SPA sends activeLimitPerDealer=1, Zod max 50). The crash is
+ * inside this handler. Harden as below — never let parse / insert / allocate throw uncaught.
+ *
+ * Multipart fields SPA sends (retries 3 shapes on 400/500):
+ *   file | csvFile
+ *   dealerIds[] | dealerIds (repeat) | dealerIds (JSON string)
+ *   activeLimitPerDealer | activeLeadsLimit = 1..50
+ *   (optional) assignmentMode=round_robin_all → ignore cap, assign every row
  */
 export async function postHrLeadsUploadCsv(req, res, db) {
   try {
@@ -800,20 +810,58 @@ export async function postHrLeadsUploadCsv(req, res, db) {
       return
     }
 
+    // Reject unknown dealer ids BEFORE insert/assign (avoids FK 500 mid-loop).
+    const knownDealers = await db.dealers.findByIds(dealerIds)
+    const knownIds = new Set((knownDealers || []).map((d) => String(d.id)))
+    const missing = dealerIds.filter((id) => !knownIds.has(String(id)))
+    if (missing.length > 0) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: "VAL_002",
+          message: `Unknown dealerId(s): ${missing.slice(0, 5).join(", ")}`,
+        },
+      })
+      return
+    }
+
     // Frontend may send assignmentMode=round_robin_all to assign every row (Unassigned → 0).
     // Legacy active_cap keeps per-dealer open-lead limit (default 1).
+    // CRITICAL: never require SPA to send a number > Zod max(50). When assign-all,
+    // ignore the numeric cap server-side (use MAX_SAFE_INTEGER internally only).
     const assignmentMode = String(req.body.assignmentMode || "").trim().toLowerCase()
     const assignAllAtUpload = assignmentMode === "round_robin_all" || assignmentMode === "round-robin-all"
 
     const requestedLimit = Number(req.body.activeLimitPerDealer ?? req.body.activeLeadsLimit)
-    const activeLimitPerDealer = assignAllAtUpload
-      ? Number.MAX_SAFE_INTEGER
-      : Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? Math.floor(requestedLimit)
+    // Cap accepted request value at 50 to match Zod — assign-all bypasses via flag, not via huge number.
+    const cappedRequested =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(50, Math.floor(requestedLimit))
         : 1
+    const activeLimitPerDealer = assignAllAtUpload ? Number.MAX_SAFE_INTEGER : cappedRequested
 
-    // parseCsvRowsFromFile is backend-specific parser you already use
-    const parsedRows = await db.parseCsvRowsFromFile(file.path)
+    // Parse CSV — bad file must be 400, never uncaught 500.
+    let parsedRows
+    try {
+      parsedRows = await db.parseCsvRowsFromFile(file.path)
+    } catch (parseErr) {
+      console.error("[hr/upload-csv] CSV parse failed", parseErr)
+      res.status(400).json({
+        success: false,
+        error: {
+          code: "VAL_001",
+          message: `Invalid CSV: ${parseErr?.message || "parse failed"}`,
+        },
+      })
+      return
+    }
+    if (!Array.isArray(parsedRows) || parsedRows.length === 0) {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_001", message: "CSV has no data rows" },
+      })
+      return
+    }
     const parsed = parsedRows.length
 
     const upload = await db.hrLeadUploads.create({
@@ -826,39 +874,61 @@ export async function postHrLeadsUploadCsv(req, res, db) {
 
     let created = 0
     let skippedDuplicate = 0
+    let skippedInvalid = 0
     const leadIds = []
 
-    for (const row of parsedRows) {
-      const mobile = String(row.mobile || "").replace(/\D/g, "").slice(-10)
-      if (!mobile) continue
+    // Chunked insert — large CSVs (thousands of rows) otherwise timeout → 500.
+    const CHUNK = 500
+    for (let offset = 0; offset < parsedRows.length; offset += CHUNK) {
+      const slice = parsedRows.slice(offset, offset + CHUNK)
+      for (const row of slice) {
+        try {
+          const mobile = String(row.mobile || row.Mobile || row.phone || "")
+            .replace(/\D/g, "")
+            .slice(-10)
+          if (mobile.length !== 10) {
+            skippedInvalid += 1
+            continue
+          }
 
-      const exists = await db.hrLeads.exists({ mobile, uploadId: upload.id })
-      if (exists) {
-        skippedDuplicate += 1
-        continue
+          const exists = await db.hrLeads.exists({ mobile, uploadId: upload.id })
+          if (exists) {
+            skippedDuplicate += 1
+            continue
+          }
+
+          const lead = await db.hrLeads.create({
+            uploadId: upload.id,
+            name: row.name || row.Name || "",
+            mobile,
+            altMobile: row.altMobile || row.alt_mobile || "",
+            kNumber: row.kNumber || row.k_number || "",
+            address: row.address || "",
+            city: row.city || "",
+            state: row.state || "",
+            customerNote: row.customerNote || row.customer_note || "",
+            status: "queued",
+            queuedAt: new Date(),
+          })
+          leadIds.push(lead.id)
+          created += 1
+        } catch (rowErr) {
+          // Unique index / constraint → skip, do not abort whole upload with 500.
+          const msg = String(rowErr?.message || rowErr || "")
+          if (/unique|duplicate|23505/i.test(msg)) {
+            skippedDuplicate += 1
+            continue
+          }
+          console.error("[hr/upload-csv] row insert failed", rowErr)
+          skippedInvalid += 1
+        }
       }
-
-      const lead = await db.hrLeads.create({
-        uploadId: upload.id,
-        name: row.name || "",
-        mobile,
-        altMobile: row.altMobile || "",
-        kNumber: row.kNumber || "",
-        address: row.address || "",
-        city: row.city || "",
-        state: row.state || "",
-        customerNote: row.customerNote || "",
-        status: "queued",
-      })
-      leadIds.push(lead.id)
-      created += 1
     }
 
     // Queue allocator (DB-transaction recommended in real impl)
     let assigned = 0
     const activeCountByDealer = new Map()
     for (const dealerId of dealerIds) {
-      // Count only leads that are visible/claimable by dealer right now.
       const activeCount = await db.hrLeads.count({ assignedDealerId: dealerId, status: "assigned" })
       activeCountByDealer.set(dealerId, activeCount)
     }
@@ -873,16 +943,25 @@ export async function postHrLeadsUploadCsv(req, res, db) {
         if (currentActive < activeLimitPerDealer) {
           // Important: frontend "Current Lead" hides status=queued/completed.
           // So assigned leads must be marked `assigned` (or `in_progress`).
-          await db.hrLeads.updateById(leadId, { assignedDealerId: dealerId, status: "assigned" })
-          activeCountByDealer.set(dealerId, currentActive + 1)
-          dealerCursor = (idx + 1) % dealerIds.length
-          assigned += 1
-          allocated = true
-          break
+          try {
+            await db.hrLeads.updateById(leadId, {
+              assignedDealerId: dealerId,
+              status: "assigned",
+              assignedAt: new Date(),
+            })
+            activeCountByDealer.set(dealerId, currentActive + 1)
+            dealerCursor = (idx + 1) % dealerIds.length
+            assigned += 1
+            allocated = true
+            break
+          } catch (assignErr) {
+            // FK / lock failure on one dealer → try next, don't 500 the whole request.
+            console.error("[hr/upload-csv] assign failed", dealerId, assignErr)
+          }
         }
       }
       if (!allocated) {
-        // stays queued
+        // stays queued (Unassigned badge) — drain later via assign-unassigned
       }
     }
 
@@ -897,11 +976,14 @@ export async function postHrLeadsUploadCsv(req, res, db) {
       queued,
       queuedAtUpload: queued,
       skippedDuplicate,
+      skippedInvalid,
       uploadId: upload.id,
     })
   } catch (e) {
-    console.error(e)
-    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
+    console.error("[hr/upload-csv] unhandled", e)
+    // Prefer surfacing a short message so SPA / logs aren't just "Internal error".
+    const message = e?.message ? String(e.message).slice(0, 200) : "Internal error"
+    res.status(500).json({ success: false, error: { code: "SYS_001", message } })
   }
 }
 
@@ -979,20 +1061,30 @@ export async function getHrLeadsUploadById(req, res, db) {
     const page = Number.isFinite(pageRaw) ? Math.max(1, Math.floor(pageRaw)) : 1
     const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(200, Math.floor(limitRaw))) : 50
 
+    const rawMobile = String(req.query.mobile || req.query.q || req.query.search || "").trim()
+    const mobileDigits = rawMobile.replace(/\D/g, "")
+    const mobileFilter = mobileDigits.length > 10 ? mobileDigits.slice(-10) : mobileDigits
+
     const upload = await db.hrLeadUploads.findByIdWithCounts(uploadId)
     if (!upload) {
       res.status(404).json({ success: false, error: { code: "RES_001", message: "Upload not found" } })
       return
     }
 
-    const { rows, total } = await db.hrLeads.findByUploadIdPaginated(uploadId, { page, limit })
+    const { rows, total } = await db.hrLeads.findByUploadIdPaginated(uploadId, {
+      page,
+      limit,
+      mobile: mobileFilter || undefined,
+    })
     const dealerNameById = await db.dealers.getNameMapByIds(upload.dealerIds || [])
 
     const counts = upload.counts || computeHrUploadLeadCounts(await db.hrLeads.findAllByUploadId(uploadId))
-    const rowCount = Number(upload.rowCount || counts.rowCount || total || 0)
+    const rowCount = Number(upload.rowCount || counts.rowCount || 0)
     const assignedCount = Number(upload.assignedCount ?? counts.assignedCount ?? 0)
     const unassignedCount = Number(upload.unassignedCount ?? counts.unassignedCount ?? 0)
     const completedCount = Number(upload.completedCount ?? counts.completedCount ?? 0)
+    // When mobile filter is active, pagination.total = filtered match count
+    const listTotal = mobileFilter ? Number(total || rows.length) : rowCount
 
     res.json({
       success: true,
@@ -1012,13 +1104,14 @@ export async function getHrLeadsUploadById(req, res, db) {
         dealerIds: upload.dealerIds || [],
       },
       rows: rows.map((r) => mapHrUploadLeadRow(r, dealerNameById)),
-      totalRows: rowCount,
+      totalRows: listTotal,
       pagination: {
         page,
         limit,
-        total: rowCount,
-        totalPages: Math.max(1, Math.ceil(rowCount / limit)),
+        total: listTotal,
+        totalPages: Math.max(1, Math.ceil(listTotal / limit)),
       },
+      mobile: mobileFilter || null,
     })
   } catch (e) {
     console.error(e)
@@ -1107,7 +1200,86 @@ export async function postHrLeadsUploadAssignUnassigned(req, res, db) {
  *   router.get('/hr/leads/uploads', hrAuth, getHrLeadsUploads)
  *   router.get('/hr/leads/uploads/:uploadId', hrAuth, getHrLeadsUploadById)
  *   router.post('/hr/leads/uploads/:uploadId/assign-unassigned', hrAuth, postHrLeadsUploadAssignUnassigned)
+ *   router.get('/hr/leads/search', hrAuth, getHrLeadsSearchByMobile)
  */
+
+/**
+ * GET /hr/leads/search?mobile=9602209955&limit=100
+ * Global mobile search across all HR uploaded leads (SPA Uploaded Lead Data).
+ * Also honor q / search query aliases.
+ *
+ * Match last-10 digits of mobile OR alt_mobile (contains / ends-with).
+ * Include upload fileName so HR sees which CSV the lead came from.
+ *
+ * Response:
+ * {
+ *   success: true,
+ *   mobile: "9602209955",
+ *   total: 1,
+ *   leads: [{
+ *     id, name, mobile, altMobile, kNumber, address, city, state,
+ *     status, assignedDealerId, assignedDealerName,
+ *     uploadId, fileName, uploadedAt
+ *   }]
+ * }
+ *
+ * Detail filter (optional): GET /hr/leads/uploads/:uploadId?mobile=…&page=1&limit=50
+ * should apply the same mobile filter within one batch.
+ */
+export async function getHrLeadsSearchByMobile(req, res, db) {
+  try {
+    const user = req.hr ?? req.user
+    if (!user || user.role !== "hr") {
+      res.status(401).json({ success: false, error: { code: "AUTH_003", message: "HR required" } })
+      return
+    }
+
+    const rawMobile = String(req.query.mobile || req.query.q || req.query.search || "").trim()
+    const digits = rawMobile.replace(/\D/g, "")
+    const mobile = digits.length > 10 ? digits.slice(-10) : digits
+    if (!mobile) {
+      res.status(400).json({
+        success: false,
+        error: { code: "VAL_001", message: "mobile query required" },
+      })
+      return
+    }
+
+    const limitRaw = Number(req.query.limit || 100)
+    const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(500, Math.floor(limitRaw))) : 100
+
+    // Prefer indexed LIKE / ends-with on normalized mobile columns.
+    // SELECT l.*, u.file_name, u.uploaded_at
+    // FROM hr_leads l
+    // JOIN hr_lead_uploads u ON u.id = l.upload_id
+    // WHERE RIGHT(regexp_replace(l.mobile, '\D', '', 'g'), 10) LIKE '%' || $mobile || '%'
+    //    OR RIGHT(regexp_replace(COALESCE(l.alt_mobile,''), '\D', '', 'g'), 10) LIKE '%' || $mobile || '%'
+    // ORDER BY u.uploaded_at DESC, l.created_at DESC
+    // LIMIT $limit
+    const rows = await db.hrLeads.searchByMobile({ mobile, limit })
+    const dealerNameById = await db.dealers.getNameMapByIds(
+      rows.map((r) => r.assignedDealerId || r.assigned_dealer_id).filter(Boolean),
+    )
+
+    const leads = rows.map((r) => ({
+      ...mapHrUploadLeadRow(r, dealerNameById),
+      uploadId: r.uploadId || r.upload_id,
+      fileName: r.fileName || r.file_name || r.uploadFileName,
+      uploadedAt: r.uploadedAt || r.uploaded_at,
+    }))
+
+    res.json({
+      success: true,
+      mobile,
+      total: leads.length,
+      leads,
+      rows: leads,
+    })
+  } catch (e) {
+    console.error(e)
+    res.status(500).json({ success: false, error: { code: "SYS_001", message: "Internal error" } })
+  }
+}
 
 /**
  * -----------------------------------------------------------------------------

@@ -2567,12 +2567,15 @@ export const api = {
 
         throw lastError
       },
-      getById: async (batchId: string, params?: { page?: number; limit?: number }) => {
+      getById: async (
+        batchId: string,
+        params?: { page?: number; limit?: number; mobile?: string; q?: string; search?: string },
+      ): Promise<any> => {
         const safeBatchId = encodeURIComponent(batchId)
         const queryParams = new URLSearchParams()
         if (params) {
           Object.entries(params).forEach(([key, value]) => {
-            if (value !== undefined) queryParams.append(key, String(value))
+            if (value !== undefined && value !== "") queryParams.append(key, String(value))
           })
         }
         const query = queryParams.toString()
@@ -2599,6 +2602,62 @@ export const api = {
               rows: body.rows ?? nested?.rows,
               pagination: body.pagination ?? nested?.pagination,
               totalRows: body.totalRows ?? nested?.totalRows,
+            }
+          } catch (error) {
+            lastError = error
+            const isMissingEndpoint =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!isMissingEndpoint) throw error
+          }
+        }
+
+        throw lastError
+      },
+
+      /**
+       * Global lead lookup by mobile across all HR uploads.
+       * GET /hr/leads/search?mobile=XXXXXXXXXX (aliases tried below).
+       */
+      searchByMobile: async (mobile: string, params?: { limit?: number }): Promise<any> => {
+        const digits = String(mobile || "").replace(/\D/g, "")
+        const normalized = digits.length > 10 ? digits.slice(-10) : digits
+        if (!normalized) {
+          throw new ApiError("Enter a mobile number to search", "VAL_001")
+        }
+
+        const queryParams = new URLSearchParams()
+        queryParams.set("mobile", normalized)
+        if (params?.limit != null) queryParams.set("limit", String(params.limit))
+        // Some backends accept q/search instead of mobile
+        queryParams.set("q", normalized)
+        queryParams.set("search", normalized)
+        const querySuffix = `?${queryParams.toString()}`
+
+        const endpoints = [
+          `/hr/leads/search${querySuffix}`,
+          `/hr/calling-leads/search${querySuffix}`,
+          `/hr/leads${querySuffix}`,
+          `/admin/leads/search${querySuffix}`,
+        ]
+
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            const body = await apiRequest<Record<string, unknown>>(endpoint)
+            const nested =
+              body?.data && typeof body.data === "object" && !Array.isArray(body.data)
+                ? (body.data as Record<string, unknown>)
+                : null
+            return {
+              ...body,
+              leads: body.leads ?? body.rows ?? body.items ?? nested?.leads ?? nested?.rows ?? nested?.items,
+              rows: body.rows ?? body.leads ?? nested?.rows ?? nested?.leads,
+              total:
+                body.total ??
+                nested?.total ??
+                (body.pagination as { total?: number } | undefined)?.total ??
+                (nested?.pagination as { total?: number } | undefined)?.total,
             }
           } catch (error) {
             lastError = error
@@ -2668,10 +2727,20 @@ export const api = {
         typeof options === "number"
           ? { activeLimitPerDealer: options, assignmentMode: "active_cap" as const }
           : {
-              activeLimitPerDealer: options?.activeLimitPerDealer,
-              assignmentMode: options?.assignmentMode ?? "round_robin_all",
+              activeLimitPerDealer: options?.activeLimitPerDealer ?? 1,
+              assignmentMode: options?.assignmentMode ?? "active_cap",
             }
       const assignAll = opts.assignmentMode === "round_robin_all"
+
+      // Backend Zod: activeLimitPerDealer / activeLeadsLimit must be <= 50.
+      // Never send MAX_SAFE_INTEGER / row counts — that causes:
+      // "Assignment failed: Too big: expected number to be <=50"
+      const BACKEND_LIMIT_MAX = 50
+      const limitValue = (() => {
+        const raw = Number(opts.activeLimitPerDealer)
+        const n = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 1
+        return Math.min(Math.max(1, n), BACKEND_LIMIT_MAX)
+      })()
 
       const buildFormData = (config: {
         fileKey: "file" | "csvFile"
@@ -2680,7 +2749,12 @@ export const api = {
       }) => {
         const formData = new FormData()
         formData.append(config.fileKey, file)
-        formData.append("assignmentMode", opts.assignmentMode)
+
+        // Only send assignmentMode when explicitly round_robin_all (optional backend flag).
+        // Default active_cap matches the earlier working upload (file + dealers + limit=1).
+        if (assignAll) {
+          formData.append("assignmentMode", "round_robin_all")
+        }
 
         if (config.dealerMode === "array-brackets") {
           dealerIds.forEach((dealerId) => formData.append("dealerIds[]", dealerId))
@@ -2690,14 +2764,8 @@ export const api = {
           formData.append("dealerIds", JSON.stringify(dealerIds))
         }
 
-        // round_robin_all: assign every CSV row to pool dealers (Unassigned → 0).
-        // active_cap: only fill up to activeLimitPerDealer open leads per dealer.
         if (config.limitKey) {
-          if (assignAll) {
-            formData.append(config.limitKey, String(Number.MAX_SAFE_INTEGER))
-          } else if (opts.activeLimitPerDealer && Number.isFinite(opts.activeLimitPerDealer)) {
-            formData.append(config.limitKey, String(opts.activeLimitPerDealer))
-          }
+          formData.append(config.limitKey, String(limitValue))
         }
 
         return formData
@@ -2720,11 +2788,34 @@ export const api = {
           return await multipartRequest("/hr/leads/upload-csv", "POST", formData)
         } catch (error) {
           lastError = error
-          const isValidationError =
+          // Retry the next multipart shape on validation OR server errors.
+          // A different field layout (file vs csvFile, dealerIds[] vs JSON,
+          // activeLimitPerDealer vs activeLeadsLimit) can dodge a backend
+          // parser/allocator bug that 500s ("Internal server error").
+          const isRetryable =
             error instanceof ApiError &&
-            (error.code === "VAL_001" || error.code === "HTTP_400" || error.message.toLowerCase().includes("validation"))
-          if (!isValidationError) throw error
+            (error.code === "VAL_001" ||
+              error.code === "VAL_002" ||
+              error.code === "HTTP_400" ||
+              error.code === "HTTP_422" ||
+              error.code === "HTTP_500" ||
+              error.code === "SYS_001" ||
+              error.message.toLowerCase().includes("validation"))
+          if (!isRetryable) throw error
         }
+      }
+
+      // All shapes failed. If the server kept 500-ing, make the cause explicit
+      // so it's clear this is a backend upload/allocator bug, not a client one.
+      if (
+        lastError instanceof ApiError &&
+        (lastError.code === "HTTP_500" || lastError.code === "SYS_001")
+      ) {
+        throw new ApiError(
+          `Lead upload failed on the server (500). POST /hr/leads/upload-csv threw while parsing the CSV or assigning leads. Backend must return 400 (not 500) for bad rows and guard the round-robin allocator. See BACKEND_ASSIGN_UNASSIGNED.ts / handoff §15-C.`,
+          lastError.code,
+          (lastError as ApiError).details,
+        )
       }
 
       throw lastError
@@ -2734,7 +2825,7 @@ export const api = {
      * Drain Unassigned → Assigned for one upload batch (round-robin across batch dealer pool).
      * POST /hr/leads/uploads/:id/assign-unassigned (aliases tried below).
      */
-    assignUnassignedLeads: async (batchId: string) => {
+    assignUnassignedLeads: async (batchId: string): Promise<any> => {
       const safeBatchId = encodeURIComponent(batchId)
       const endpoints = [
         `/hr/leads/uploads/${safeBatchId}/assign-unassigned`,

@@ -2074,7 +2074,9 @@ HR Uploaded Data still shows yellow **Unassigned** (193, 97, 74, …). Product w
 | Piece | Detail |
 |-------|--------|
 | **NEW** | `POST /hr/leads/uploads/:uploadId/assign-unassigned` — round-robin all unassigned in that upload to `upload.dealerIds` → `unassignedCount === 0` |
-| Upload patch | Honor `assignmentMode=round_robin_all` (SPA sends this) → assign **every** new row; ignore `activeLimitPerDealer=1` cap |
+| Upload patch | Honor `assignmentMode=round_robin_all` when present → assign **every** new row; ignore `activeLimitPerDealer` cap |
+| SPA upload (default) | Sends **`activeLimitPerDealer=1`** only (earlier working path). Does **not** send oversized limits. |
+| ⚠️ Validator | Zod rejects `activeLimitPerDealer` / `activeLeadsLimit` **> 50** with **"Too big: expected number to be <=50"**. SPA always sends **1..50**. For full drain use `POST …/assign-unassigned`, or honor `round_robin_all` while ignoring the numeric cap. |
 | Bulk order | SPA “Assign all unassigned (oldest first)” calls that POST per batch sorted by `uploadedAt ASC` |
 | Counts | After assign: `unassignedCount === 0`, `assignedCount` rises, `completedCount` unchanged |
 | Dealer UI | `/next` / `/current` return dealer’s next **assigned** lead FIFO (see `BACKEND_CALLING_QUEUE_CURRENT.ts`) |
@@ -2100,6 +2102,29 @@ Content-Type: application/json
   "counts": { "assigned": 230, "unassigned": 0, "completed": 2370 }
 }
 ```
+
+#### C-2) Upload returns **500 "Internal server error"** (live bug)
+
+**Call:** `POST /hr/leads/upload-csv` (multipart) → clicks **Assign Leads** → after a delay → `500`.
+Validation now passes (SPA sends `activeLimitPerDealer=1`), so the crash is **inside** the handler.
+
+Most likely causes — fix all:
+
+| Cause | Fix |
+|-------|-----|
+| CSV parser throws on a bad/empty row, odd delimiter, or BOM/encoding | Wrap parse in try/catch → return **400 VAL_001** with row number, never uncaught 500 |
+| Round-robin allocator throws (empty `dealerIds`, division, null dealer) | Guard: if `dealerIds.length === 0` → 400 VAL_002; skip nulls |
+| Duplicate mobile / unique index violation on insert | Catch PG unique error → count as `skippedDuplicate`, keep going |
+| FK on `assigned_dealer_id` (dealer id not in `dealers`/`users`) | Validate dealer ids exist before assign; 400 if unknown |
+| Large CSV → request/DB timeout | Batch inserts (chunk 500–1000), stream parse, raise timeout, or return 202 + async |
+
+**Contract:** handler must be fully wrapped so any failure returns a JSON error
+(`{ success:false, error:{ code, message } }`) with **4xx for bad input**, and only
+a true server fault is 500. Never let the CSV parse or allocator throw uncaught.
+
+SPA resilience: the client retries 3 multipart shapes (file/csvFile, dealerIds[]/JSON,
+activeLimitPerDealer/activeLeadsLimit) on `400/422/500/SYS_001`. If all 500, it surfaces
+"Lead upload failed on the server (500)…". Fixing the handler above resolves it.
 
 #### D) HR counts (§7.8)
 
@@ -2137,6 +2162,7 @@ Empty: `"lead": null`, arrays `[]`, counts `0` — still **200**.
 - [ ] Stuck assigned reclaimed to pool (optional if all leads are pre-assigned)
 - [ ] `POST …/uploads/:id/assign-unassigned` → Unassigned → 0 for that batch
 - [ ] Upload honors `assignmentMode=round_robin_all` (no active-cap leftover queue)
+- [ ] **`POST /hr/leads/upload-csv` never 500s on Assign Leads** — parse/insert/allocate hardened (§15-C-2); Zod max 50 still honored; chunked inserts for large CSVs
 - [ ] Optional aliases `/lead-queue/next|current` or keep 404 (SPA falls through)
 
 ### QA
@@ -2150,6 +2176,44 @@ Empty: `"lead": null`, arrays `[]`, counts `0` — still **200**.
 7. New CSV upload with dealers selected → Unassigned **0** immediately (`round_robin_all`).
 
 **Reference:** `BACKEND_ASSIGN_UNASSIGNED.ts` (Unassigned → 0) + `BACKEND_CALLING_QUEUE_CURRENT.ts` (`/current` + `/next`) + `postHrLeadsUploadAssignUnassigned` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`
+
+---
+
+## 16. Inventory — `stock_requests_dispatched_by_id_fkey` on dispatch
+
+**Frontend:** Quotation Admin → Inventory → Stock Requests → **Review & Dispatch**  
+**Failing call:** `POST /api/stock-requests/:id/dispatch` → **500**  
+**Live error:**
+`insert or update on table "stock_requests" violates foreign key constraint "stock_requests_dispatched_by_id_fkey"`
+
+### Root cause
+
+Same as §14: Quotation Admin JWT `sub` is written to `stock_requests.dispatched_by_id`, but that id is **not** in inventory `users`.
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`
+
+| Step | Action |
+|------|--------|
+| 1 | Reuse / copy `resolveInventoryCreatedBy` from §14 |
+| 2 | Honor body `dispatched_by_id` / `dispatched_by` if valid inventory user |
+| 3 | Else upsert JWT user into inventory `users`, then set `dispatched_by_id` |
+| 4 | Never UPDATE with a bare JWT id missing from `users` |
+| 5 | Return **400 INV_USER_MISSING** (not opaque SYS_001) on FK |
+
+### Frontend already does
+
+- Sends `dispatched_by_id` when it can resolve an inventory user
+- Clearer error copy pointing at this section
+
+### QA
+
+1. Quotation Admin → Review & Dispatch with selected serials → **200**, status `dispatched`
+2. Row `dispatched_by_id` exists in inventory `users`
+3. No `stock_requests_dispatched_by_id_fkey` in response
+
+**Reference:** `BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`, `BACKEND_PRODUCTS_CREATED_BY.ts`
 
 ---
 
@@ -2179,5 +2243,7 @@ Empty: `"lead": null`, arrays `[]`, counts `0` — still **200**.
 | **§15** (this file) | Calling `/current` 500 SYS_001 + FCFS drain Unassigned/Assigned |
 | **`BACKEND_ASSIGN_UNASSIGNED.ts`** | **§15-C** `POST …/assign-unassigned` + upload `round_robin_all` |
 | **`BACKEND_CALLING_QUEUE_CURRENT.ts`** | **§15** implement `/calling-queue/current` + `/next` (never SYS_001) |
+| **§16** (this file) | Inventory dispatch — `stock_requests_dispatched_by_id_fkey` |
+| **`BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`** | **§16** upsert JWT user for `dispatched_by_id` |
 | **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |
