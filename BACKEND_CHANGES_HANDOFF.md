@@ -2217,11 +2217,64 @@ Same as §14: Quotation Admin JWT `sub` is written to `stock_requests.dispatched
 
 ---
 
+## 17. Metering — dual track (Meter process left + Bank process right)
+
+**Frontend:** Admin → Metering, `/dashboard/metering`, Installer → Metering  
+**Full handoff:** **`BACKEND_METERING_DUAL_TRACK.md`**  
+**Meter stages detail:** `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`
+
+### UI
+
+| Track | Tabs (order) |
+|-------|----------------|
+| **Meter process** (left, blue outline) | Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step |
+| **Bank process** (right, amber outline) | Bank Process → Pending Payment |
+
+Bank is **parallel** (loan / cash+loan only) — not after Final Step.
+
+### Backend still required
+
+1. Meter statuses + `meteringWccAfterDiscom` (existing handoff).
+2. **NEW** `bankProcessDone` / `bank_process_done` (+ optional `bank_process_done_at`) echoed on GET.
+3. **NEW** `PATCH …/bank-process` (or payment-details) accepting `bankProcessDone: true` without changing metering stage.
+4. Echo `paymentType` / `payment_type` (`loan` | `mix` | `cash`) on list rows.
+5. Authorize **`installer`** on metering status / details / WCC / bank routes used by Installer → Metering (else `403 AUTH_004`).
+
+### QA (short)
+
+1. Loan row in Meter Pending also in Bank Process.
+2. Mark bank done → Pending Payment; still in Meter tab; survives refresh.
+3. Installer Metering tab loads queue without AUTH_004.
+
+---
+
+## 18. Document Submission — Property Documents (PDF) optional
+
+**Frontend:** Dashboard / Quotations Document Submission — label has no `*`; client no longer blocks Submit when PDF is missing.
+
+**Backend:** **`BACKEND_PROPERTY_DOCUMENT_OPTIONAL.md`**
+
+### Required API change
+
+On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
+
+1. Remove `propertyDocumentPdf` from any **required** file list (Zod / manual checks).
+2. Do **not** return **400** when the property PDF part is omitted or when the quotation has never stored one.
+3. Still accept and store the PDF when uploaded; leave null when never provided.
+4. Keep `geotagRoofPhoto` / `customerWithHousePhoto` optional as today.
+
+### QA
+
+1. Submit documents without Property Documents PDF → **200**.
+2. Later upload PDF only → persists; reopen shows View link.
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
-| `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (final confirmation uploads + accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags) |
+| `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (final confirmation uploads + accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags), **PATCH …/documents** (property PDF optional) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
 | `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
@@ -2245,5 +2298,10 @@ Same as §14: Quotation Admin JWT `sub` is written to `stock_requests.dispatched
 | **`BACKEND_CALLING_QUEUE_CURRENT.ts`** | **§15** implement `/calling-queue/current` + `/next` (never SYS_001) |
 | **§16** (this file) | Inventory dispatch — `stock_requests_dispatched_by_id_fkey` |
 | **`BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`** | **§16** upsert JWT user for `dispatched_by_id` |
+| **§17** (this file) | Metering dual track — Meter left + Bank right |
+| **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
+| **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |
+| **§18** (this file) | Document Submission — Property Documents PDF optional |
+| **`BACKEND_PROPERTY_DOCUMENT_OPTIONAL.md`** | **§18** stop requiring `propertyDocumentPdf` on PATCH …/documents |
 | **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |

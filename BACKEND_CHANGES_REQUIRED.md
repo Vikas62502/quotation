@@ -195,6 +195,7 @@ Dealer/admin **Document Submission** dialog uploads KYC, bank, and property file
        }
      }
      ```
+   - **Do not** treat missing **`propertyDocumentPdf`** as a validation error (Jul 2026 — see **`BACKEND_PROPERTY_DOCUMENT_OPTIONAL.md`** / HANDOFF **§18**).
    - Do **not** leak stack traces in production responses. Log server-side with `quotationId`, received field names, file sizes, and S3 error codes (never log file contents or secrets).
 
 6. **Success response**

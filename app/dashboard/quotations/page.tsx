@@ -1226,7 +1226,7 @@ export default function QuotationsPage() {
                           ) : null}
                         </div>
                         <div className="md:col-span-2">
-                          <Label>Property Documents (PDF) *</Label>
+                          <Label>Property Documents (PDF)</Label>
                           <Input
                             type="file"
                             accept="application/pdf,.pdf"
@@ -1394,13 +1394,12 @@ export default function QuotationsPage() {
                       !form.aadharBack ||
                       !form.panImage ||
                       !form.electricityBillImage ||
-                      !form.bankPassbookImage ||
-                      !form.propertyDocumentPdf
+                      !form.bankPassbookImage
                     if (missingBaseImages) {
                       toast({
                         title: "Required images missing",
                         description:
-                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, Bank Passbook image, and Property documents PDF.",
+                          "Please upload Aadhar front/back, PAN image, Electricity Bill image, and Bank Passbook image.",
                         variant: "destructive",
                       })
                       return
