@@ -17,6 +17,9 @@ API client: `lib/api.ts` → `finalizeSettlement` (persists to DB; throws if not
 
 **Share this file with backend.** Copy-paste controllers with full logging: **`BACKEND_FINAL_SETTLEMENT.ts`**.
 
+**Revert (undo mistaken settlement):** Account Management → Manage → **Revert settlement**.  
+Full handoff: **`BACKEND_REVERT_SETTLEMENT.md`**. Preferred route: `POST /quotations/:id/revert-final-settlement` (also `DELETE /final-settlement`).
+
 ---
 
 ## STEP-BY-STEP backend implementation (do these in order)

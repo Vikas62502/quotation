@@ -1374,7 +1374,7 @@ export default function DashboardPage() {
                           ) : null}
                         </div>
                         <div className="md:col-span-2">
-                          <Label>Property Documents (PDF) *</Label>
+                          <Label>Property Documents (PDF)</Label>
                           <Input
                             type="file"
                             accept="application/pdf,.pdf"
@@ -1504,16 +1504,6 @@ export default function DashboardPage() {
                       toast({
                         title: "Invalid phone number",
                         description: "Phone number must be 10 digits.",
-                        variant: "destructive",
-                      })
-                      return
-                    }
-
-                    const missingRequiredDocuments = !form.propertyDocumentPdf
-                    if (missingRequiredDocuments) {
-                      toast({
-                        title: "Required documents missing",
-                        description: "Please upload Property documents PDF.",
                         variant: "destructive",
                       })
                       return

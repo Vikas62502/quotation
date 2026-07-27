@@ -735,6 +735,7 @@ export default function AccountManagementPage() {
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
   const [isSavingInstallments, setIsSavingInstallments] = useState(false)
   const [isSavingFinalSettlement, setIsSavingFinalSettlement] = useState(false)
+  const [isRevertingFinalSettlement, setIsRevertingFinalSettlement] = useState(false)
   const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
   const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
   const [subsidyDraftAmount, setSubsidyDraftAmount] = useState("")
@@ -1750,6 +1751,154 @@ export default function AccountManagementPage() {
       })
     } finally {
       setIsSavingFinalSettlement(false)
+    }
+  }
+
+  /** Undo mistaken final settlement / discount `d` — restores payable and remaining. */
+  const revertFinalSettlement = async () => {
+    if (!activePayment) return
+
+    const currentDiscount = getPaymentDiscountAmount(activePayment)
+    const settlementDiscount =
+      Math.round(getSettlementDiscountAmount(activePayment)) || Math.round(currentDiscount)
+    if (settlementDiscount <= 0 && currentDiscount <= 0) {
+      toast({
+        title: "Nothing to revert",
+        description: "There is no settlement discount to remove.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const amountToRevert = settlementDiscount > 0 ? settlementDiscount : currentDiscount
+    const confirmed = window.confirm(
+      `Revert settlement discount d of ₹${amountToRevert.toLocaleString("en-IN")}?\n\nThis was marked by mistake — the payable subtotal and remaining balance will be restored.`,
+    )
+    if (!confirmed) return
+
+    const originalSubtotal = getPaymentOriginalSubtotal(activePayment)
+    const newDiscount = Math.max(0, currentDiscount - amountToRevert)
+    const newEffectiveCap = Math.max(0, originalSubtotal - newDiscount)
+    const totalPaid = getTotalPaidPhases(activePayment.phases)
+    const restoredRemaining = Math.max(0, newEffectiveCap - totalPaid)
+    const restoredStatus: NonNullable<CustomerPayment["paymentStatus"]> =
+      restoredRemaining <= 0 && totalPaid > 0
+        ? "completed"
+        : totalPaid > 0
+          ? "partial"
+          : "pending"
+
+    const existingPricingDiscount = getQuotationDiscountAmount(activePayment.quotation)
+    const amountAfterSubsidy = getQuotationAmountAfterSubsidy(activePayment.quotation)
+    // Prefer subtracting from pricing discount; fall back to absolute newDiscount.
+    const pricingDiscount = Math.max(
+      0,
+      Math.min(existingPricingDiscount, Math.max(0, existingPricingDiscount - amountToRevert)),
+    )
+    // If quotation discount tracked the full AM discount, use newDiscount instead.
+    const pricingDiscountFinal =
+      Math.abs(existingPricingDiscount - currentDiscount) < 1 ? newDiscount : pricingDiscount
+    const pricingFinalAmount = Math.max(0, amountAfterSubsidy - pricingDiscountFinal)
+
+    setIsRevertingFinalSettlement(true)
+    try {
+      if (!useApi) {
+        const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
+        const updatedQuotations = allQuotations.map((q: Quotation) =>
+          q.id === activePayment.quotationId
+            ? ({
+                ...q,
+                discount: newDiscount,
+                discountAmount: newDiscount,
+                paymentStatus: restoredStatus,
+                remaining: restoredRemaining,
+                remainingAmount: restoredRemaining,
+                finalSettlementApplied: false,
+                finalSettlementAmount: 0,
+                final_settlement_applied: false,
+                final_settlement_amount: 0,
+                pricing: {
+                  ...(q as Quotation & { pricing?: Record<string, unknown> }).pricing,
+                  discountAmount: newDiscount,
+                  amountAfterSubsidy,
+                  totalAmount: newEffectiveCap,
+                  finalAmount: newEffectiveCap,
+                  finalSettlementApplied: false,
+                  finalSettlementAmount: 0,
+                },
+              } as Quotation)
+            : q,
+        )
+        localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
+        setQuotations(
+          updatedQuotations.filter((q: Quotation) => String(q.status || "").toLowerCase() === "approved"),
+        )
+        const coercedPhases = coercePhasesPaymentModes(activePayment.phases)
+        saveStoredPaymentPlan(activePayment.quotationId, {
+          paymentType: activePayment.paymentType,
+          paymentMode: activePayment.paymentMode || "cash",
+          paymentStatus: restoredStatus,
+          phases: normalizePhaseAmountsForApi(coercedPhases, newEffectiveCap),
+        })
+      } else {
+        await api.quotations.revertSettlement(activePayment.quotationId, {
+          settlementAmount: amountToRevert,
+          discountAmount: pricingDiscountFinal,
+          finalAmount: pricingFinalAmount,
+          remaining: restoredRemaining,
+          paymentStatus: restoredStatus,
+          paymentType: activePayment.paymentType,
+          paymentMode: activePayment.paymentMode,
+        })
+        try {
+          await loadApprovedQuotations()
+        } catch {
+          // Non-fatal — optimistic update below.
+        }
+      }
+
+      setCustomerPayments((prev) =>
+        prev.map((payment) =>
+          payment.quotationId === activePayment.quotationId
+            ? {
+                ...payment,
+                subtotal: newEffectiveCap,
+                originalSubtotal,
+                discountAmount: newDiscount,
+                paymentStatus: restoredStatus,
+                remainingFromApi: restoredRemaining,
+                finalSettlementApplied: false,
+                finalSettlementDiscount: 0,
+                quotation: {
+                  ...payment.quotation,
+                  discount: newDiscount,
+                  discountAmount: newDiscount,
+                  paymentStatus: restoredStatus,
+                  finalSettlementApplied: false,
+                  finalSettlementAmount: 0,
+                  final_settlement_applied: false,
+                  final_settlement_amount: 0,
+                } as Quotation,
+              }
+            : payment,
+        ),
+      )
+
+      toast({
+        title: "Settlement reverted",
+        description: `Removed discount d: ₹${amountToRevert.toLocaleString("en-IN")}. Remaining is now ₹${Math.round(restoredRemaining).toLocaleString("en-IN")}.`,
+      })
+      setInstallmentDialogOpen(false)
+      setActivePaymentId(null)
+    } catch (error) {
+      const message = error instanceof ApiError ? error.message : "Failed to revert settlement."
+      toast({
+        title: "Revert not saved",
+        description: `Could not save to the database. ${message}`,
+        variant: "destructive",
+      })
+    } finally {
+      setIsRevertingFinalSettlement(false)
     }
   }
 
@@ -2829,9 +2978,41 @@ export default function AccountManagementPage() {
                       variant="default"
                       className="shrink-0"
                       onClick={submitFinalSettlement}
-                      disabled={isSavingFinalSettlement || isSavingInstallments}
+                      disabled={isSavingFinalSettlement || isRevertingFinalSettlement || isSavingInstallments}
                     >
                       {isSavingFinalSettlement ? "Applying..." : "Submit final settlement"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {(getPaymentDiscountAmount(activePayment) > 0 ||
+                isFinalSettlementApplied(activePayment) ||
+                getSettlementDiscountAmount(activePayment) > 0) && (
+                <div className="rounded-lg border border-rose-200/80 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20 px-4 py-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold">Revert settlement</p>
+                      <p className="text-xs text-muted-foreground">
+                        Undo a settlement discount applied by mistake. Restores the payable subtotal and remaining.
+                      </p>
+                      <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+                        Discount to remove (d): ₹
+                        {(
+                          Math.round(getSettlementDiscountAmount(activePayment)) ||
+                          Math.round(getPaymentDiscountAmount(activePayment))
+                        ).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="shrink-0"
+                      onClick={() => void revertFinalSettlement()}
+                      disabled={
+                        isRevertingFinalSettlement || isSavingFinalSettlement || isSavingInstallments
+                      }
+                    >
+                      {isRevertingFinalSettlement ? "Reverting..." : "Revert settlement"}
                     </Button>
                   </div>
                 </div>
