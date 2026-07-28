@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { CalendarDays, CheckCircle2, ClipboardList, FileCheck, Search } from "lucide-react"
+import { CalendarDays, CheckCircle2, ClipboardList, FileCheck, Search, Wallet, Wrench } from "lucide-react"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -21,7 +21,28 @@ import {
 } from "@/lib/operational-install-queue"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
 
-export type MeteringStage = "processing" | "approved" | "mco"
+/** Meter process (left) + Bank process (right) tabs — same order as Admin Metering. */
+export type MeteringStage =
+  | "processing"
+  | "approved"
+  | "wcc"
+  | "meter_install"
+  | "mco"
+  | "bank_process"
+  | "pending_payment"
+
+const METER_PROCESS_TABS: MeteringStage[] = ["processing", "approved", "wcc", "meter_install", "mco"]
+const BANK_PROCESS_TABS: MeteringStage[] = ["bank_process", "pending_payment"]
+
+const EMPTY_SEARCH_BY_TAB: Record<MeteringStage, string> = {
+  processing: "",
+  approved: "",
+  wcc: "",
+  meter_install: "",
+  mco: "",
+  bank_process: "",
+  pending_payment: "",
+}
 
 type MeteringWorkflowItem = {
   discomName?: string
@@ -88,6 +109,14 @@ type MeteringQuotation = {
   complete_dcr_report_image_name?: string
   phase?: string
   products?: { phase?: string }
+  meteringWccAfterDiscom?: boolean
+  metering_wcc_after_discom?: boolean
+  bankProcessDone?: boolean
+  bank_process_done?: boolean
+  paymentType?: string
+  payment_type?: string
+  paymentMode?: string
+  payment_mode?: string
 }
 
 type MeteringModalDraft = {
@@ -120,11 +149,36 @@ const dedupeByQuotationId = (rows: MeteringQuotation[]) => {
   return Array.from(map.values())
 }
 
-function stageFromBackend(q: MeteringQuotation): MeteringStage | null {
+function stageFromBackend(q: MeteringQuotation): Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment"> | null {
   const stage = getMeteringWorkflowStage(q as Record<string, unknown>)
-  // Admin Meter Installation Pending still appears under Meter in Discom here.
-  if (stage === "meter_install") return "approved"
-  return stage as MeteringStage | null
+  if (stage === "processing" || stage === "approved" || stage === "meter_install" || stage === "mco") {
+    return stage
+  }
+  return null
+}
+
+function isWccAfterDiscomFlag(q: MeteringQuotation): boolean {
+  const r = q as Record<string, unknown>
+  const v = r.meteringWccAfterDiscom ?? r.metering_wcc_after_discom
+  return v === true || v === 1 || String(v).toLowerCase() === "true"
+}
+
+function getPaymentTypeRaw(q: MeteringQuotation): string {
+  const r = q as Record<string, unknown>
+  return String(r.paymentType || r.payment_type || r.paymentMode || r.payment_mode || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_")
+}
+
+function isBankProcessEligible(q: MeteringQuotation): boolean {
+  const t = getPaymentTypeRaw(q)
+  return t === "loan" || t === "mix" || t === "cash_loan" || t === "cash+loan" || t.includes("loan")
+}
+
+function isBankProcessDone(q: MeteringQuotation): boolean {
+  const r = q as Record<string, unknown>
+  return Boolean(r.bankProcessDone || r.bank_process_done)
 }
 
 export type MeteringWorkflowPanelProps = {
@@ -149,11 +203,7 @@ export function MeteringWorkflowPanel({
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<MeteringStage>("processing")
-  const [searchByTab, setSearchByTab] = useState<Record<MeteringStage, string>>({
-    processing: "",
-    approved: "",
-    mco: "",
-  })
+  const [searchByTab, setSearchByTab] = useState<Record<MeteringStage, string>>(EMPTY_SEARCH_BY_TAB)
   const [quotations, setQuotations] = useState<MeteringQuotation[]>([])
   const [workflowMap, setWorkflowMap] = useState<Record<string, MeteringWorkflowItem>>({})
   const [meterDocumentByQuotation, setMeterDocumentByQuotation] = useState<Record<string, File | null>>({})
@@ -284,7 +334,7 @@ export function MeteringWorkflowPanel({
     void load()
   }, [toast, useApi])
 
-  const getMeteringStage = (q: MeteringQuotation): MeteringStage | null => {
+  const getMeteringStage = (q: MeteringQuotation): Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment"> | null => {
     const fromApi = stageFromBackend(q)
     if (fromApi) return fromApi
     const raw = String(
@@ -294,7 +344,15 @@ export function MeteringWorkflowPanel({
     return "processing"
   }
 
-  const applyLocalMeteringStage = (id: string, stage: MeteringStage) => {
+  const isInMeterPipeline = (q: MeteringQuotation) => getMeteringStage(q) !== null || isWccAfterDiscomFlag(q)
+
+  const isWccPending = (q: MeteringQuotation) => {
+    if (!isWccAfterDiscomFlag(q)) return false
+    const stage = getMeteringStage(q)
+    return stage !== "meter_install" && stage !== "mco"
+  }
+
+  const applyLocalMeteringStage = (id: string, stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">) => {
     const now = new Date().toISOString()
     setQuotations((prev) =>
       prev.map((q) => {
@@ -306,10 +364,23 @@ export function MeteringWorkflowPanel({
             installation_status: "mco",
             meteringStatus: "mco",
             metering_status: "mco",
+            meteringWccAfterDiscom: false,
+            metering_wcc_after_discom: false,
             mcoAt: now,
             mco_at: now,
             meteringApprovedAt: q.meteringApprovedAt || q.metering_approved_at || now,
             metering_approved_at: q.metering_approved_at || q.meteringApprovedAt || now,
+          }
+        }
+        if (stage === "meter_install") {
+          return {
+            ...q,
+            installationStatus: "meter_installation_pending",
+            installation_status: "meter_installation_pending",
+            meteringStatus: "meter_installation_pending",
+            metering_status: "meter_installation_pending",
+            meteringWccAfterDiscom: false,
+            metering_wcc_after_discom: false,
           }
         }
         if (stage === "approved") {
@@ -334,7 +405,43 @@ export function MeteringWorkflowPanel({
     )
   }
 
-  const setStage = async (id: string, stage: MeteringStage) => {
+  const moveToWccPending = async (id: string) => {
+    try {
+      await api.admin.quotations.setMeteringWccAfterDiscom(id, true)
+    } catch {
+      // keep local flag even if backend route is missing
+    }
+    setQuotations((prev) =>
+      prev.map((q) =>
+        q.id === id
+          ? { ...q, meteringWccAfterDiscom: true, metering_wcc_after_discom: true }
+          : q,
+      ),
+    )
+    setActiveTab("wcc")
+    toast({
+      title: "Moved to WCC Pending",
+      description: "Complete WCC, then move to Meter Installation Pending.",
+    })
+  }
+
+  const markBankProcessDone = (id: string) => {
+    setQuotations((prev) =>
+      prev.map((q) =>
+        q.id === id ? { ...q, bankProcessDone: true, bank_process_done: true } : q,
+      ),
+    )
+    setActiveTab("pending_payment")
+    toast({
+      title: "Moved to Pending Payment",
+      description: "Bank process marked done for this quotation.",
+    })
+  }
+
+  const setStage = async (
+    id: string,
+    stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">,
+  ) => {
     if (!useApi) return
 
     if (stage === "mco") {
@@ -347,8 +454,23 @@ export function MeteringWorkflowPanel({
         // keep local MCO placement
       }
       toast({
-        title: "Moved to MCO",
-        description: persisted ? "Quotation is in the MCO tab." : "Shown in the MCO tab. Server sync pending.",
+        title: "Moved to Final Step",
+        description: persisted ? "Quotation is in Final Step." : "Shown in Final Step. Server sync pending.",
+      })
+      return
+    }
+
+    if (stage === "meter_install") {
+      applyLocalMeteringStage(id, "meter_install")
+      setActiveTab("meter_install")
+      try {
+        await api.admin.quotations.updateOperationalStatus(id, "meter_installation_pending")
+      } catch {
+        // local placement is enough if route missing
+      }
+      toast({
+        title: "Moved to Meter Installation Pending",
+        description: "Quotation is in Meter Installation Pending.",
       })
       return
     }
@@ -748,7 +870,7 @@ export function MeteringWorkflowPanel({
     (q as any).approvedAt || (q as any).approvedDate || (q as any).statusUpdatedAt || q.createdAt
 
   const getDisplayedApprovedDate = (q: MeteringQuotation, tab: MeteringStage) =>
-    tab === "approved"
+    tab === "approved" || tab === "wcc" || tab === "meter_install"
       ? (q as any).meteringApprovedAt || (q as any).metering_approved_at || getAdminApprovedDate(q)
       : tab === "mco"
         ? (q as any).mcoAt ||
@@ -789,7 +911,7 @@ export function MeteringWorkflowPanel({
   const processingList = useMemo(
     () =>
       filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "processing"),
+        quotations.filter((q) => getMeteringStage(q) === "processing" && !isWccPending(q)),
         searchByTab.processing,
       ).sort((a, b) => toTimestamp(getAdminApprovedDate(a)) - toTimestamp(getAdminApprovedDate(b))),
     [quotations, searchByTab.processing],
@@ -798,7 +920,7 @@ export function MeteringWorkflowPanel({
   const approvedList = useMemo(
     () =>
       filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "approved"),
+        quotations.filter((q) => getMeteringStage(q) === "approved" && !isWccPending(q)),
         searchByTab.approved,
       ).sort((a, b) => {
         const aDate = (a as any).meteringApprovedAt || (a as any).metering_approved_at || getAdminApprovedDate(a)
@@ -806,6 +928,24 @@ export function MeteringWorkflowPanel({
         return toTimestamp(bDate) - toTimestamp(aDate)
       }),
     [quotations, searchByTab.approved],
+  )
+
+  const wccList = useMemo(
+    () =>
+      filterSearch(
+        quotations.filter((q) => isWccPending(q)),
+        searchByTab.wcc,
+      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+    [quotations, searchByTab.wcc],
+  )
+
+  const meterInstallList = useMemo(
+    () =>
+      filterSearch(
+        quotations.filter((q) => getMeteringStage(q) === "meter_install"),
+        searchByTab.meter_install,
+      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+    [quotations, searchByTab.meter_install],
   )
 
   const mcoList = useMemo(
@@ -821,9 +961,32 @@ export function MeteringWorkflowPanel({
     [quotations, searchByTab.mco],
   )
 
+  const bankProcessList = useMemo(
+    () =>
+      filterSearch(
+        quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && !isBankProcessDone(q)),
+        searchByTab.bank_process,
+      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+    [quotations, searchByTab.bank_process],
+  )
+
+  const pendingPaymentList = useMemo(
+    () =>
+      filterSearch(
+        quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && isBankProcessDone(q)),
+        searchByTab.pending_payment,
+      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+    [quotations, searchByTab.pending_payment],
+  )
+
   const stageBadgeClass = (tab: MeteringStage) => {
     if (tab === "processing") return "border-amber-300/80 bg-amber-50 text-amber-800"
     if (tab === "approved") return "border-sky-300/80 bg-sky-50 text-sky-800"
+    if (tab === "wcc") return "border-violet-300/80 bg-violet-50 text-violet-800"
+    if (tab === "meter_install") return "border-indigo-300/80 bg-indigo-50 text-indigo-800"
+    if (tab === "bank_process" || tab === "pending_payment") {
+      return "border-amber-400/80 bg-amber-50 text-amber-900"
+    }
     return "border-emerald-300/80 bg-emerald-50 text-emerald-800"
   }
 
@@ -866,7 +1029,9 @@ export function MeteringWorkflowPanel({
               ? new Date(getDisplayedApprovedDate(q, tab) as string).toLocaleDateString("en-IN")
               : "N/A"}
           </p>
-          <p className="text-[10px] text-muted-foreground">{tab === "mco" ? "MCO" : "Approved"}</p>
+          <p className="text-[10px] text-muted-foreground">
+            {tab === "mco" ? "Final Step" : tab === "wcc" ? "WCC" : tab === "meter_install" ? "Install" : "Approved"}
+          </p>
         </td>
         <td className="px-3 py-2.5 align-middle whitespace-nowrap">
           <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 text-xs font-medium">
@@ -903,7 +1068,7 @@ export function MeteringWorkflowPanel({
             <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => openDetailsModal(q.id)}>
               Details
             </Button>
-            {!readOnly && tab === "processing" && hasRequiredMeteringDetails(q.id) && (
+            {!readOnly && tab === "processing" && (
               <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "approved")}>
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                 To Discom
@@ -919,11 +1084,28 @@ export function MeteringWorkflowPanel({
                 >
                   To Pending
                 </Button>
-                <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "mco")}>
-                  <FileCheck className="w-3.5 h-3.5 mr-1" />
-                  To MCO
+                <Button size="sm" className="h-8 shrink-0" onClick={() => void moveToWccPending(q.id)}>
+                  To WCC Pending
                 </Button>
               </>
+            )}
+            {!readOnly && tab === "wcc" && (
+              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "meter_install")}>
+                <Wrench className="w-3.5 h-3.5 mr-1" />
+                To Meter Install
+              </Button>
+            )}
+            {!readOnly && tab === "meter_install" && (
+              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "mco")}>
+                <FileCheck className="w-3.5 h-3.5 mr-1" />
+                To Final Step
+              </Button>
+            )}
+            {!readOnly && tab === "bank_process" && (
+              <Button size="sm" className="h-8 shrink-0" onClick={() => markBankProcessDone(q.id)}>
+                <Wallet className="w-3.5 h-3.5 mr-1" />
+                To Pending Payment
+              </Button>
             )}
             {!readOnly && tab === "mco" && (
               <>
@@ -942,11 +1124,16 @@ export function MeteringWorkflowPanel({
                   variant="outline"
                   size="sm"
                   className="h-8 shrink-0"
-                  onClick={() => void setStage(q.id, "approved")}
+                  onClick={() => void setStage(q.id, "meter_install")}
                 >
-                  To Discom
+                  To Meter Install
                 </Button>
               </>
+            )}
+            {!readOnly && tab === "pending_payment" && (
+              <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-900">
+                Awaiting payment
+              </Badge>
             )}
           </div>
         </td>
@@ -1001,48 +1188,102 @@ export function MeteringWorkflowPanel({
       {showDescription && description !== null && (
         <p className="text-sm text-muted-foreground">
           {description ||
-            "Track jobs across Meter Pending, Meter in Discom, and MCO. Metering details and stage transitions are persisted via backend metering workflow APIs."}
+            "Meter process flows left → right: Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step. Loan / Cash+loan files also appear in the separate Bank process track on the right."}
         </p>
       )}
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as MeteringStage)}>
-          <TabsList className="h-auto flex-wrap justify-start">
-            <TabsTrigger value="processing" className="h-10 px-4 text-sm gap-2">
-              <ClipboardList className="w-3.5 h-3.5" />
-              Meter Pending ({processingList.length})
-            </TabsTrigger>
-            <TabsTrigger value="approved" className="h-10 px-4 text-sm gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Meter in Discom ({approvedList.length})
-            </TabsTrigger>
-            <TabsTrigger value="mco" className="h-10 px-4 text-sm gap-2">
-              <FileCheck className="w-3.5 h-3.5" />
-              MCO ({mcoList.length})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <div className="relative w-full md:w-80">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input
-            value={searchByTab[activeTab]}
-            onChange={(e) =>
-              setSearchByTab((prev) => ({
-                ...prev,
-                [activeTab]: e.target.value,
-              }))
-            }
-            placeholder={`Search in ${activeTab} by customer, mobile, quotation id`}
-            className="h-9 pl-8 text-sm"
-          />
+      <div className="flex flex-col xl:flex-row xl:items-start gap-3">
+        <div className="flex-1 min-w-0 rounded-lg border-2 border-sky-300/80 bg-sky-50/40 p-1.5">
+          <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-sky-800/80">
+            Meter process
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {(
+              [
+                { key: "processing" as const, label: `Meter Pending (${processingList.length})`, icon: ClipboardList },
+                { key: "approved" as const, label: `Meter in Discom (${approvedList.length})`, icon: CheckCircle2 },
+                { key: "wcc" as const, label: `WCC Pending (${wccList.length})`, icon: ClipboardList },
+                {
+                  key: "meter_install" as const,
+                  label: `Meter Installation Pending (${meterInstallList.length})`,
+                  icon: Wrench,
+                },
+                { key: "mco" as const, label: `Final Step (${mcoList.length})`, icon: FileCheck },
+              ] as const
+            ).map((item) => {
+              const Icon = item.icon
+              return (
+                <Button
+                  key={item.key}
+                  type="button"
+                  size="sm"
+                  variant={activeTab === item.key ? "default" : "ghost"}
+                  className={cn("h-8 text-xs gap-1.5", activeTab === item.key && "shadow-sm")}
+                  onClick={() => setActiveTab(item.key)}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {item.label}
+                </Button>
+              )
+            })}
+          </div>
         </div>
+
+        <div className="xl:w-auto shrink-0 rounded-lg border-2 border-amber-300/80 bg-amber-50/40 p-1.5">
+          <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
+            Bank process
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {(
+              [
+                {
+                  key: "bank_process" as const,
+                  label: `Bank Process (${bankProcessList.length})`,
+                },
+                {
+                  key: "pending_payment" as const,
+                  label: `Pending Payment (${pendingPaymentList.length})`,
+                },
+              ] as const
+            ).map((item) => (
+              <Button
+                key={item.key}
+                type="button"
+                size="sm"
+                variant={activeTab === item.key ? "default" : "ghost"}
+                className={cn("h-8 text-xs gap-1.5", activeTab === item.key && "shadow-sm")}
+                onClick={() => setActiveTab(item.key)}
+              >
+                <Wallet className="w-3.5 h-3.5" />
+                {item.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="relative w-full md:w-80 md:ml-auto">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+        <Input
+          value={searchByTab[activeTab]}
+          onChange={(e) =>
+            setSearchByTab((prev) => ({
+              ...prev,
+              [activeTab]: e.target.value,
+            }))
+          }
+          placeholder="Search by customer, mobile, quotation id"
+          className="h-9 pl-8 text-sm"
+        />
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as MeteringStage)}>
         <TabsList className="hidden">
-          <TabsTrigger value="processing">p</TabsTrigger>
-          <TabsTrigger value="approved">a</TabsTrigger>
-          <TabsTrigger value="mco">m</TabsTrigger>
+          {[...METER_PROCESS_TABS, ...BANK_PROCESS_TABS].map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {key}
+            </TabsTrigger>
+          ))}
         </TabsList>
         <TabsContent value="processing" className="space-y-3 pt-2">
           {renderTabBody(processingList, "processing", "No items in Meter Pending.")}
@@ -1050,8 +1291,20 @@ export function MeteringWorkflowPanel({
         <TabsContent value="approved" className="space-y-3 pt-2">
           {renderTabBody(approvedList, "approved", "No items in Meter in Discom.")}
         </TabsContent>
+        <TabsContent value="wcc" className="space-y-3 pt-2">
+          {renderTabBody(wccList, "wcc", "No items in WCC Pending.")}
+        </TabsContent>
+        <TabsContent value="meter_install" className="space-y-3 pt-2">
+          {renderTabBody(meterInstallList, "meter_install", "No items in Meter Installation Pending.")}
+        </TabsContent>
         <TabsContent value="mco" className="space-y-3 pt-2">
-          {renderTabBody(mcoList, "mco", "No items in MCO.")}
+          {renderTabBody(mcoList, "mco", "No items in Final Step.")}
+        </TabsContent>
+        <TabsContent value="bank_process" className="space-y-3 pt-2">
+          {renderTabBody(bankProcessList, "bank_process", "No loan / cash+loan items in Bank Process.")}
+        </TabsContent>
+        <TabsContent value="pending_payment" className="space-y-3 pt-2">
+          {renderTabBody(pendingPaymentList, "pending_payment", "No items in Pending Payment.")}
         </TabsContent>
       </Tabs>
 

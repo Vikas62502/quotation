@@ -6681,30 +6681,84 @@ export default function AdminPanelPage() {
               </Dialog>
               <CardHeader>
                 {operationalTab !== "all" ? (
+                  operationalTab === "metering" ? (
+                    <div className="mb-3 flex flex-col lg:flex-row gap-2 lg:items-stretch">
+                      <div className="flex-1 min-w-0 rounded-lg border-2 border-sky-300/80 bg-sky-50/40 p-1.5">
+                        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-sky-800/80">
+                          Meter process
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {(
+                            [
+                              {
+                                key: "pending" as const,
+                                label: `Meter Pending (${meteringProcessingQuotations.length})`,
+                              },
+                              {
+                                key: "done" as const,
+                                label: `Meter in Discom (${meteringApprovedQuotations.length})`,
+                              },
+                              {
+                                key: "wcc" as const,
+                                label: `WCC Pending (${meteringWccPendingQuotations.length})`,
+                              },
+                              {
+                                key: "meter_install" as const,
+                                label: `Meter Installation Pending (${meteringMeterInstallQuotations.length})`,
+                              },
+                              {
+                                key: "mco" as const,
+                                label: `Final Step (${meteringMcoQuotations.length})`,
+                              },
+                            ] as const
+                          ).map((item) => (
+                            <Button
+                              key={item.key}
+                              type="button"
+                              size="sm"
+                              variant={operationalProgressTab === item.key ? "default" : "ghost"}
+                              className={cn("h-8", operationalProgressTab === item.key && "shadow-sm")}
+                              onClick={() => setOperationalProgressTab(item.key)}
+                            >
+                              {item.label}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="lg:w-auto shrink-0 rounded-lg border-2 border-amber-300/80 bg-amber-50/40 p-1.5">
+                        <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
+                          Bank process
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {(
+                            [
+                              {
+                                key: "bank_process" as const,
+                                label: `Bank Process (${meteringBankProcessQuotations.length})`,
+                              },
+                              {
+                                key: "pending_payment" as const,
+                                label: `Pending Payment (${meteringPendingPaymentQuotations.length})`,
+                              },
+                            ] as const
+                          ).map((item) => (
+                            <Button
+                              key={item.key}
+                              type="button"
+                              size="sm"
+                              variant={operationalProgressTab === item.key ? "default" : "ghost"}
+                              className={cn("h-8", operationalProgressTab === item.key && "shadow-sm")}
+                              onClick={() => setOperationalProgressTab(item.key)}
+                            >
+                              {item.label}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
                   <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
-                    {(operationalTab === "metering"
-                      ? ([
-                          { key: "pending" as const, label: "Meter Pending" },
-                          { key: "done" as const, label: "Meter in Discom" },
-                          {
-                            key: "wcc" as const,
-                            label: `WCC Pending (${meteringWccPendingQuotations.length})`,
-                          },
-                          {
-                            key: "meter_install" as const,
-                            label: `Meter Installation Pending (${meteringMeterInstallQuotations.length})`,
-                          },
-                          {
-                            key: "bank_process" as const,
-                            label: `Bank process (${meteringBankProcessQuotations.length})`,
-                          },
-                          {
-                            key: "pending_payment" as const,
-                            label: `Pending payment (${meteringPendingPaymentQuotations.length})`,
-                          },
-                          { key: "mco" as const, label: "Final Step" },
-                        ] as const)
-                      : operationalTab === "installation"
+                    {(operationalTab === "installation"
                         ? ([
                             { key: "all" as const, label: "All" },
                             { key: "pending" as const, label: "Pending Installation" },
@@ -6733,6 +6787,7 @@ export default function AdminPanelPage() {
                       </Button>
                     ))}
                   </div>
+                  )
                 ) : null}
                 <div className="flex flex-col sm:flex-row gap-3">
                   <div className="relative flex-1">
@@ -7429,12 +7484,11 @@ export default function AdminPanelPage() {
                     ) : (
                       <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                         <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
-                          <table className="w-full min-w-[104rem] border-collapse text-left">
+                          <table className="w-full min-w-[94rem] border-collapse text-left">
                             <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
                               <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                                 <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Dealer</th>
-                                <th className="px-3 py-2.5 whitespace-nowrap">Amount</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Date</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Phase</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Address</th>
@@ -7537,9 +7591,6 @@ export default function AdminPanelPage() {
                                       </div>
                                     </td>
                                     <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-                                      <MeteringAmountCell quotation={quotation} />
-                                    </td>
-                                    <td className="px-3 py-2.5 align-middle whitespace-nowrap">
                                       <p className="text-xs font-medium inline-flex items-center gap-1">
                                         <Calendar className="w-3 h-3 text-muted-foreground shrink-0" />
                                         {dateLabel}
@@ -7612,7 +7663,6 @@ export default function AdminPanelPage() {
                                         size="sm"
                                             className="h-8 shrink-0"
                                         onClick={() => void setAdminMeteringStage(quotation, "approved")}
-                                        disabled={!hasRequiredAdminMeteringDetails(quotation)}
                                       >
                                             To Discom
                                       </Button>

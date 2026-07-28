@@ -53,7 +53,7 @@ export default function MeteringDashboardPage() {
         </div>
 
         <MeteringWorkflowPanel
-          description={`Welcome, ${meteringUser?.firstName || "Metering"}. Track jobs across Meter Pending, Meter in Discom, and MCO. Metering details and stage transitions are persisted via backend metering workflow APIs.`}
+          description={`Welcome, ${meteringUser?.firstName || "Metering"}. Meter process (left): Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step. Bank process (right): Bank Process → Pending Payment for loan / cash+loan files.`}
         />
       </main>
     </div>
