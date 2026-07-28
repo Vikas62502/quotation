@@ -106,9 +106,24 @@ export function useProductCatalog() {
           if (!panelBrands.some((b) => String(b).trim().toLowerCase() === "ina")) {
             panelBrands.push("INA")
           }
+          if (!panelBrands.some((b) => String(b).trim().toLowerCase() === "renew energy")) {
+            panelBrands.push("Renew Energy")
+          }
           const panelSizes = Array.isArray(catalogData.panels?.sizes) ? [...catalogData.panels.sizes] : []
           for (const size of inaPanelSizes) {
             if (!panelSizes.includes(size)) panelSizes.push(size)
+          }
+          const inverterSizes = Array.isArray(catalogData.inverters?.sizes)
+            ? [...catalogData.inverters.sizes]
+            : []
+          for (const size of ["50kW", "80kW", "100kW"]) {
+            if (!inverterSizes.includes(size)) inverterSizes.push(size)
+          }
+          const structureSizes = Array.isArray(catalogData.structures?.sizes)
+            ? [...catalogData.structures.sizes]
+            : []
+          for (const size of ["25kW", "30kW", "50kW", "80kW", "100kW"]) {
+            if (!structureSizes.includes(size)) structureSizes.push(size)
           }
           setCatalog({
             panels: {
@@ -118,11 +133,11 @@ export function useProductCatalog() {
             inverters: {
               types: Array.isArray(catalogData.inverters?.types) ? catalogData.inverters.types : [],
               brands: Array.isArray(catalogData.inverters?.brands) ? catalogData.inverters.brands : [],
-              sizes: Array.isArray(catalogData.inverters?.sizes) ? catalogData.inverters.sizes : [],
+              sizes: inverterSizes,
             },
             structures: {
               types: Array.isArray(catalogData.structures?.types) ? catalogData.structures.types : [],
-              sizes: Array.isArray(catalogData.structures?.sizes) ? catalogData.structures.sizes : [],
+              sizes: structureSizes,
             },
             meters: {
               brands: Array.isArray(catalogData.meters?.brands) ? catalogData.meters.brands : [],

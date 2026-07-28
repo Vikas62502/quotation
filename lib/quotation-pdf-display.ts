@@ -93,19 +93,37 @@ export function buildMeterBrandDropdownOptions(catalogBrands?: string[]): string
 export type PdfPanelRangeKey =
   | "waaree_540_560_bifacial"
   | "waaree_580_700_bifacial_topcon"
+  | "waaree_580_630"
   | "adani_540_580_bifacial"
   | "adani_610_625_bifacial_topcon"
+  | "adani_600_630"
   | "premier_600_625_bifacial_topcon"
   | "ina_500_600_bifacial"
   | "tata_530_570"
   | "renewsys_540_580"
   | "renewsys_600_630_bifacial_topcon"
+  | "renew_energy_600_630"
 
 /** Fixed panel watt range for Tata DCR package sets (Jun 2026 sheet). */
 export const TATA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "tata_530_570"
 
 /** INA DCR package — 500W–600W bifacial range on proposal PDF. */
 export const INA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "ina_500_600_bifacial"
+
+/** 80kW Non-DCR Vsole/Xwatt commercial set — panel ranges on PDF. */
+export const NON_DCR_80KW_PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey> = {
+  renewenergy: "renew_energy_600_630",
+  waaree: "waaree_580_630",
+  adani: "adani_600_630",
+}
+
+/** PDF panel range for 80kW Non-DCR packages (Renew Energy / Waaree / Adani). */
+export function defaultPdfPanelRangeKeyForNonDcr80KwPackage(
+  panelBrand?: string,
+): PdfPanelRangeKey | null {
+  const key = normalizePanelBrandKey(panelBrand)
+  return NON_DCR_80KW_PANEL_RANGE_BY_BRAND[key] ?? null
+}
 
 /** Default PDF panel range when a DCR browse package column is selected. */
 export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): PdfPanelRangeKey | null {
@@ -149,6 +167,11 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     pdfSpecification: "580-700W Bifacial Topcon",
   },
   {
+    key: "waaree_580_630",
+    label: "580W - 630W",
+    pdfSpecification: "580W - 630W",
+  },
+  {
     key: "adani_540_580_bifacial",
     label: "540-580W Bifacial",
     pdfSpecification: "540-580W Bifacial",
@@ -157,6 +180,11 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     key: "adani_610_625_bifacial_topcon",
     label: "610-625W Bifacial Topcon",
     pdfSpecification: "610-625W Bifacial Topcon",
+  },
+  {
+    key: "adani_600_630",
+    label: "600W - 630W",
+    pdfSpecification: "600W - 630W",
   },
   {
     key: "premier_600_625_bifacial_topcon",
@@ -183,17 +211,23 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     label: "600-630W Bifacial Topcon",
     pdfSpecification: "600-630W Bifacial Topcon",
   },
+  {
+    key: "renew_energy_600_630",
+    label: "600W - 630W",
+    pdfSpecification: "600W - 630W",
+  },
 ]
 
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
-  waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon"],
-  adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon"],
+  waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon", "waaree_580_630"],
+  adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon", "adani_600_630"],
   premierenergies: ["premier_600_625_bifacial_topcon"],
   premier: ["premier_600_625_bifacial_topcon"],
   ina: ["ina_500_600_bifacial"],
   tata: [TATA_DCR_PANEL_RANGE_KEY],
   // Optional on PDF — do not auto-select; exact entered size (e.g. 545W) until user checks a range.
-  renewsys: ["renewsys_540_580", "renewsys_600_630_bifacial_topcon"],
+  renewsys: ["renewsys_540_580", "renewsys_600_630_bifacial_topcon", "renew_energy_600_630"],
+  renewenergy: ["renew_energy_600_630", "renewsys_600_630_bifacial_topcon", "renewsys_540_580"],
 }
 
 function normalizePanelBrandKey(brand?: string): string {
@@ -215,6 +249,7 @@ export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPa
   // panel size (e.g. 625W) and quantity drive PDF text + system kW until a range is chosen.
   if (
     brandKey === "renewsys" ||
+    brandKey === "renewenergy" ||
     brandKey === "waaree" ||
     brandKey === "adani" ||
     brandKey === "premier" ||

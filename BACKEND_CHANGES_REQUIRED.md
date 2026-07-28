@@ -3088,6 +3088,40 @@ Each row should include where possible: **`id`**, **`leadId`**, **`dealerId`**, 
 
 **Frontend:** `app/dashboard/hr/page.tsx` (Dealer Actions tab), `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts`. Data source is **API only** (no browser `callingActionHistory` merge on this tab).
 
+### J.2) Dealer Calling Data — backend source of truth (no local-cache counting)
+
+**Frontend:** `app/dashboard/calling-data/page.tsx` (dealer analytics summary + flow tabs).
+
+#### Goal
+
+For dealer Calling Data, counts and history must come from backend rows only, so each call submit is counted once.
+
+#### Required backend behavior
+
+1. Provide canonical dealer action rows from API:
+   - `GET /api/dealers/calling-actions` (or currently wired equivalent)
+   - and/or queue payload arrays from `GET /api/dealers/me/calling-queue/next` + `/current`
+2. Ensure each logical action event is returned once (no duplicate rows for same submit).
+3. Every row should include:
+   - `id` (stable unique action id)
+   - `leadId`
+   - `action` (`called` / `follow_up` / `not_interested` / `rescheduled` / `start`)
+   - `actionAt`
+   - `callRemark` (or `call_remark`)
+   - recommended: `statusText` / `statusCategory` for bucket classification
+4. If backend retries writes, enforce idempotency to avoid duplicate inserts.
+
+#### Suggested DB/API guardrails
+
+- Unique key or dedupe guard for action rows (example pattern: `(lead_id, action, action_at)` or request idempotency key).
+- On duplicate retry, return existing action row with 200/409-safe semantics instead of creating a second row.
+
+#### QA
+
+- Submit one dealer action once -> connected/not-connected + outcome bucket increments by exactly 1.
+- Refresh and reopen in another tab/device -> counts remain unchanged (no second increment).
+- Dealer action history endpoint shows one row for that submit.
+
 #### Why backend must return structured status
 
 Dealer UI saves outcomes from a fixed status picker (`app/dashboard/calling-data/page.tsx`). HR summary cards aggregate into four buckets:
@@ -4060,7 +4094,7 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 | `pdfDcrPanelRangeKey` | `both` — DCR panels |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR panels |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 — 530W–570W range on proposal PDF).
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, **`waaree_580_630`** (80kW Non-DCR), `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, **`adani_600_630`** (80kW Non-DCR), `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 — 530W–570W range on proposal PDF), `renewsys_540_580`, `renewsys_600_630_bifacial_topcon`, **`renew_energy_600_630`** (Renew Energy 80kW Non-DCR — 600W–630W). See **`BACKEND_NON_DCR_80KW.md`** / HANDOFF **§19**.
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 

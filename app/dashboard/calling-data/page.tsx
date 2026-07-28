@@ -14,12 +14,11 @@ import {
   resolveCallingAssigneeId,
 } from "@/lib/calling-lead-assignee"
 import {
-  appendDealerCallingAction,
   pickRicherCallRemark,
-  readDealerCallingActions,
   resolveCallingActionRemark,
   resolveLeadPriorCallReview,
   type PriorCallReviewSource,
+  type StoredDealerCallingAction,
 } from "@/lib/dealer-calling-action-history"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -535,7 +534,7 @@ function scheduledLeadFromActionLog(item: ActionLogItem): CallingLead | null {
 
 function enrichScheduledLeadFromLocalHistory(
   lead: CallingLead,
-  localActions: ReturnType<typeof readDealerCallingActions>,
+  localActions: StoredDealerCallingAction[],
 ): CallingLead {
   const leadMobile = normalizePhoneDigits(lead.mobile || "")
   const matches = localActions
@@ -904,7 +903,7 @@ export default function CallingDataPage() {
 
 
   const getStoredDealerActionBuckets = () => {
-    const stored = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const stored: ActionLogItem[] = []
     const dialled = stored.filter((item) =>
       ["called", "follow_up", "not_interested", "rescheduled"].includes(String(item.action || "").toLowerCase()),
     )
@@ -1010,7 +1009,7 @@ export default function CallingDataPage() {
       ...dialledActions,
       ...connectedActionItems,
       ...notConnectedActionItems,
-      ...(currentDealerId ? readDealerCallingActions(currentDealerId) : []),
+      // Backend source of truth: do not mix in local cache rows.
     ]
   }, [recentActions, dialledActions, connectedActionItems, notConnectedActionItems, currentDealerId])
 
@@ -1269,7 +1268,7 @@ export default function CallingDataPage() {
     if (pinned?.id) sanctionedIds.add(pinned.id)
     setQueueSanctionedLeadIds((prev) => new Set([...prev, ...sanctionedIds]))
 
-    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const localScheduledHistory: StoredDealerCallingAction[] = []
     const enrichLeadFromHistory = (lead: CallingLead) =>
       enrichScheduledLeadFromLocalHistory(lead, localScheduledHistory)
 
@@ -1394,7 +1393,7 @@ export default function CallingDataPage() {
       ...readArray(response?.callingActions),
     ])
 
-    const localScheduledHistory = currentDealerId ? readDealerCallingActions(currentDealerId) : []
+    const localScheduledHistory: StoredDealerCallingAction[] = []
     const mergedScheduled = collectScheduledLeads(response, normalizeApiLead, allActions).map((lead) =>
       enrichScheduledLeadFromLocalHistory(lead, localScheduledHistory),
     )
@@ -1549,9 +1548,7 @@ export default function CallingDataPage() {
   const loadDealerAnalyticsActions = async () => {
     if (!authReady || !isAuthenticated) return
 
-    const localActions = currentDealerId
-      ? mergeActionLogEntries(readDealerCallingActions(currentDealerId))
-      : []
+    const localActions: ActionLogItem[] = []
 
     if (!useApi || !currentDealerId) {
       setAnalyticsActions(localActions)
@@ -1582,7 +1579,10 @@ export default function CallingDataPage() {
     }
 
     const fromApi = apiRows.map((entry) => normalizeActionLog(entry))
-    const merged = mergeActionLogEntries([...fromApi, ...localActions])
+    // Avoid double-counting the same call from API + local cache.
+    // API is the source of truth; use local rows only when API has no data.
+    const sourceRows = fromApi.length > 0 ? fromApi : localActions
+    const merged = mergeActionLogEntries(sourceRows)
     setAnalyticsActions(merged.length > 0 ? merged : localActions)
   }
 
@@ -2324,10 +2324,7 @@ export default function CallingDataPage() {
       state: lead.state,
       customerNote: lead.customerNote,
     }
-    if (currentDealerId) {
-      appendDealerCallingAction(currentDealerId, actionItem)
-      void loadDealerAnalyticsActions()
-    }
+    // Backend source of truth: avoid writing call history into local cache.
     setRecentActions((prev) => {
       const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
       return [actionItem, ...withoutDup]

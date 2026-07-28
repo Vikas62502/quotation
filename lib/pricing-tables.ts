@@ -572,6 +572,7 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "80kW", phase:"3-Phase", panelBrand: "Adani", panelSize: "600W", inverterBrand: "Vsole/Xwatt", inverterSize: "80kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "80kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Waaree NON DCR 3-Phase
   { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
@@ -586,6 +587,10 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "non-dcr", systemSize: "20kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "20kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "20kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "80kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Vsole/Xwatt", inverterSize: "80kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "80kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  
+  // Renew Energy NON DCR 3-Phase (80kW Vsole/Xwatt set)
+  { systemType: "non-dcr", systemSize: "80kW", phase:"3-Phase", panelBrand: "Renew Energy", panelSize: "600W", inverterBrand: "Vsole/Xwatt", inverterSize: "80kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "80kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Tata NON DCR 3-Phase
   { systemType: "non-dcr", systemSize: "3kW", phase:"3-Phase", panelBrand: "Tata", panelSize: "550W", inverterBrand: "GoodWe", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
@@ -711,7 +716,14 @@ export function getSystemConfiguration(
   const data = pricingData || getPricingData()
   const configs = mergeSystemConfigsWithDefaults(data.systemConfigs)
 
-  const brandKey = dcrFormPanelBrandForPricingType(resolveDcrPricingPanelType(panelBrand.trim()))
+  const rawBrand = panelBrand.trim()
+  // DCR packages map browse columns → form brands; Non-DCR keeps catalog brands (e.g. Renew Energy).
+  const brandKey =
+    systemType === "dcr"
+      ? dcrFormPanelBrandForPricingType(resolveDcrPricingPanelType(rawBrand))
+      : rawBrand.toLowerCase().includes("renew")
+        ? "Renew Energy"
+        : rawBrand
 
   // Exact match — include phase when provided (e.g. 6kW Tata 1-Phase vs 3-Phase)
   let config: SystemConfigurationPreset | undefined
@@ -1075,6 +1087,10 @@ export const nonDcrPricing: SystemPricing[] = [
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Adani", price: 1000000 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Waaree", price: 1000000 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Tata", price: 1101000 },
+  // 80kW Non-DCR — Vsole/Xwatt set (Renew Energy / Waaree / Adani)
+  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Renew Energy", price: 2510000 },
+  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Waaree", price: 2590000 },
+  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Adani", price: 2590000 },
 ]
 
 // BOTH (DCR + NON DCR) System Pricing
@@ -1185,24 +1201,32 @@ export function getNonDcrPrice(
   const data = pricingData || getPricingData()
   const pricingTable = data.nonDcr || nonDcrPricing
   
-  // Use panel brand directly (Adani, Waaree, or Tata)
+  // Use panel brand directly (Adani, Waaree, Tata, Renew Energy)
   // If brand is not in pricing table, try to find closest match
   let panelType = panelBrand
-  
+
   // Map panel brands to pricing table types
-  if (panelBrand !== "Tata" && panelBrand !== "Adani" && panelBrand !== "Waaree") {
+  const brandLower = panelBrand.trim().toLowerCase()
+  if (brandLower.includes("renew")) {
+    panelType = "Renew Energy" // RenewSys / Renew Energy → same Non-DCR set price
+  } else if (
+    panelBrand !== "Tata" &&
+    panelBrand !== "Adani" &&
+    panelBrand !== "Waaree" &&
+    panelBrand !== "Renew Energy"
+  ) {
     // Default to Adani for unknown brands (legacy support)
     panelType = "Adani"
   }
-  
+
   const pricing = pricingTable.find(
     (p) =>
       p.systemSize === systemSize &&
       p.phase === phase &&
       p.inverterSize === inverterSize &&
-      p.panelType === panelType
+      p.panelType === panelType,
   )
-  
+
   return pricing ? pricing.price : null
 }
 

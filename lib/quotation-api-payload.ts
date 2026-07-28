@@ -165,8 +165,60 @@ function normalizePanelSizeForApiCatalog(size: string | undefined): string | und
 const INA_API_PANEL_BRAND_ALIAS = "Adani"
 const INA_API_PANEL_SIZE_ALIAS = "555W"
 
+/** Renew Energy package brand is not in the live catalog yet — map to RenewSys for API. */
+const RENEW_ENERGY_API_PANEL_BRAND_ALIAS = "RenewSys"
+/** Prefer a catalog-known PDF range key until backend allowlists renew_energy_600_630. */
+const RENEW_ENERGY_PDF_RANGE_KEY = "renew_energy_600_630"
+const RENEW_ENERGY_API_PDF_RANGE_ALIAS = "renewsys_600_630_bifacial_topcon"
+
 function isInaPanelBrand(brand?: string): boolean {
   return String(brand || "").trim().toLowerCase() === "ina"
+}
+
+function isRenewEnergyPanelBrand(brand?: string): boolean {
+  const b = String(brand || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+  return b === "renew energy" || b === "renewenergy"
+}
+
+/** Catalog alias used only for API — not a dealer-facing brand switch target. */
+function isRenewEnergyCatalogAliasBrand(brand?: string): boolean {
+  return String(brand || "").trim().toLowerCase() === "renewsys"
+}
+
+/**
+ * True when the dealer picked a different Non-DCR brand (Adani / Waaree / …).
+ * Sticky renewEnergyPackage markers must not override an explicit brand change.
+ */
+function isExplicitOtherPanelBrand(brand?: string): boolean {
+  const b = String(brand || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+  if (!b) return false
+  if (b === "renew energy" || b === "renewenergy" || b === "renewsys") return false
+  return true
+}
+
+/** True when the dealer selected a Renew Energy Non-DCR package (UI / PDF). */
+export function isRenewEnergyPanelPackage(products: ProductSelection): boolean {
+  // Explicit Adani / Waaree / Tata / etc. wins over leftover Renew Energy markers.
+  if (isExplicitOtherPanelBrand(products.panelBrand)) return false
+
+  const record = products as ProductSelection & Record<string, unknown>
+  return (
+    isRenewEnergyPanelBrand(products.panelBrand) ||
+    isRenewEnergyPanelBrand(products.dcrPanelBrand) ||
+    pdfRangeKeyValue(record, "pdfPanelRangeKey", "pdf_panel_range_key") === RENEW_ENERGY_PDF_RANGE_KEY ||
+    String(record.panelType || record.panel_type || "")
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, " ") === "renew energy" ||
+    record.renewEnergyPackage === true ||
+    record.renew_energy_package === true
+  )
 }
 
 /** True when the dealer selected an INA DCR package (UI / PDF), even if API uses catalog alias. */
@@ -228,12 +280,38 @@ function withInaApiCatalogMarkers(products: ProductSelection): ProductSelection 
 function mapPanelBrandForApiCatalog(brand: string | undefined): string | undefined {
   if (!brand?.trim()) return brand
   if (brand.trim().toLowerCase() === "ina") return INA_API_PANEL_BRAND_ALIAS
+  if (isRenewEnergyPanelBrand(brand)) return RENEW_ENERGY_API_PANEL_BRAND_ALIAS
   return brand
+}
+
+/** Map newer PDF range keys to catalog-known keys until backend allowlists them. */
+function mapPdfPanelRangeKeyForApiCatalog(key: string | undefined | null): string {
+  const trimmed = String(key || "").trim()
+  if (trimmed === RENEW_ENERGY_PDF_RANGE_KEY) return RENEW_ENERGY_API_PDF_RANGE_ALIAS
+  // New 80kW Non-DCR ranges — keep as-is first; stripped candidate retries without flags.
+  return trimmed
+}
+
+function withRenewEnergyApiCatalogMarkers(products: ProductSelection): ProductSelection {
+  const record = products as ProductSelection & Record<string, unknown>
+  const primaryRange = pdfRangeKeyValue(record, "pdfPanelRangeKey", "pdf_panel_range_key") ?? ""
+  const mappedRange = mapPdfPanelRangeKeyForApiCatalog(primaryRange || RENEW_ENERGY_PDF_RANGE_KEY)
+  const next = { ...products } as ProductSelection & Record<string, unknown>
+  next.panelBrand = RENEW_ENERGY_API_PANEL_BRAND_ALIAS
+  next.panelType = "Renew Energy"
+  next.panel_type = "Renew Energy"
+  next.renewEnergyPackage = true
+  next.renew_energy_package = true
+  next.pdfPanelRangeKey = mappedRange
+  next.pdf_panel_range_key = mappedRange
+  next.pdfUsePanelSizeRange = true
+  next.pdf_use_panel_size_range = true
+  return next as ProductSelection
 }
 
 function normalizePanelBrandAndSizeForApiCatalog(products: ProductSelection): ProductSelection {
   const snapSize = (size?: string) => normalizePanelSizeForApiCatalog(size) ?? size
-  return {
+  let next: ProductSelection = {
     ...products,
     panelBrand: mapPanelBrandForApiCatalog(products.panelBrand) ?? products.panelBrand,
     dcrPanelBrand: mapPanelBrandForApiCatalog(products.dcrPanelBrand) ?? products.dcrPanelBrand,
@@ -241,6 +319,40 @@ function normalizePanelBrandAndSizeForApiCatalog(products: ProductSelection): Pr
     panelSize: snapSize(products.panelSize),
     dcrPanelSize: snapSize(products.dcrPanelSize),
     nonDcrPanelSize: snapSize(products.nonDcrPanelSize),
+  }
+
+  const record = next as ProductSelection & Record<string, unknown>
+  const primary = pdfRangeKeyValue(record, "pdfPanelRangeKey", "pdf_panel_range_key")
+  if (primary) {
+    const mapped = mapPdfPanelRangeKeyForApiCatalog(primary)
+    if (mapped !== primary) {
+      next = {
+        ...next,
+        pdfPanelRangeKey: mapped,
+        pdf_panel_range_key: mapped,
+      } as ProductSelection
+    }
+  }
+
+  return next
+}
+
+/** Restore Renew Energy in the form after API round-trip (catalog stores RenewSys alias). */
+export function restoreRenewEnergyPanelBrandForForm(products: ProductSelection): ProductSelection {
+  if (!isRenewEnergyPanelPackage(products)) return products
+
+  const record = products as ProductSelection & Record<string, unknown>
+  const range = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const displayRange =
+    range === RENEW_ENERGY_API_PDF_RANGE_ALIAS || !range ? RENEW_ENERGY_PDF_RANGE_KEY : range
+
+  return {
+    ...products,
+    panelBrand: "Renew Energy",
+    panelType: "Renew Energy",
+    renewEnergyPackage: true,
+    pdfPanelRangeKey: displayRange,
+    pdfUsePanelSizeRange: true,
   }
 }
 
@@ -295,9 +407,51 @@ export function mergeQuotationProductsForDisplay(raw: unknown): ProductSelection
   const base = merged && Object.keys(merged).length > 0 ? merged : fallback
   const priorDisplay = priorHint ? restoreDcrPackageDisplayForForm(priorHint) : undefined
   const withIna = preserveInaDisplayFromPrior(priorHint, base)
-  const withPdfFlags = preservePdfDisplayFlagsFromPrior(priorDisplay, withIna)
+  const withRenew = preserveRenewEnergyDisplayFromPrior(priorHint, withIna)
+  const withPdfFlags = preservePdfDisplayFlagsFromPrior(priorDisplay, withRenew)
   const withLocal = applyLocalQuotationPdfFlags(quotationId || undefined, withPdfFlags)
   return restoreDcrPackageDisplayForForm(withLocal)
+}
+
+/**
+ * Keep Renew Energy panel brand + PDF range when API round-trip replaces catalog alias (RenewSys).
+ * Do not force Renew Energy when the dealer switched to Adani / Waaree / another brand.
+ */
+export function preserveRenewEnergyDisplayFromPrior(
+  prior: ProductSelection | null | undefined,
+  next: ProductSelection,
+): ProductSelection {
+  // Dealer changed away from Renew Energy — keep Adani / Waaree / etc.
+  if (isExplicitOtherPanelBrand(next.panelBrand)) {
+    return next
+  }
+
+  const priorDisplay = prior ? restoreDcrPackageDisplayForForm(prior) : null
+  if (!priorDisplay || !isRenewEnergyPanelPackage(priorDisplay)) {
+    return next
+  }
+
+  if (isRenewEnergyPanelPackage(next)) {
+    return restoreRenewEnergyPanelBrandForForm(next)
+  }
+
+  // Only restore when API returned the catalog alias (or dropped the brand).
+  if (!isRenewEnergyCatalogAliasBrand(next.panelBrand) && String(next.panelBrand || "").trim()) {
+    return next
+  }
+
+  return restoreRenewEnergyPanelBrandForForm({
+    ...next,
+    panelBrand: "Renew Energy",
+    panelType: "Renew Energy",
+    renewEnergyPackage: true,
+    pdfPanelRangeKey: RENEW_ENERGY_PDF_RANGE_KEY,
+    pdfUsePanelSizeRange: true,
+    panel_type: "Renew Energy",
+    renew_energy_package: true,
+    pdf_panel_range_key: RENEW_ENERGY_PDF_RANGE_KEY,
+    pdf_use_panel_size_range: true,
+  } as ProductSelection)
 }
 
 /**
@@ -462,6 +616,9 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
   if (isInaPanelPackage(products)) {
     next = withInaApiCatalogMarkers(next)
   }
+  if (isRenewEnergyPanelPackage(products)) {
+    next = withRenewEnergyApiCatalogMarkers(next)
+  }
   return backfillPanelQuantityForPdfRange(next)
 }
 
@@ -486,14 +643,15 @@ export function syncDcrPanelFieldsFromPrimary(products: ProductSelection): Produ
  */
 export function restoreDcrPackageDisplayForForm(products: ProductSelection): ProductSelection {
   const withIna = restoreInaPanelBrandForForm(products)
+  const withRenew = restoreRenewEnergyPanelBrandForForm(withIna)
 
-  if (String(withIna.systemType || "").toLowerCase() !== "dcr") {
-    return applyDefaultPdfPanelRanges(withIna)
+  if (String(withRenew.systemType || "").toLowerCase() !== "dcr") {
+    return applyDefaultPdfPanelRanges(withRenew)
   }
 
-  const record = withIna as ProductSelection & Record<string, unknown>
-  const brand = (withIna.panelBrand || withIna.dcrPanelBrand || "").trim().toLowerCase()
-  const existingRange = String(withIna.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const record = withRenew as ProductSelection & Record<string, unknown>
+  const brand = (withRenew.panelBrand || withRenew.dcrPanelBrand || "").trim().toLowerCase()
+  const existingRange = String(withRenew.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
   const pdfPanelRangeKey = existingRange
 
   const isTataDcrPackage =
@@ -502,23 +660,23 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
     String(record.tata_dcr_panel_range || "").trim() === "true"
 
   const asPerSetPackage =
-    isAsPerTheSetLabel(withIna.panelSize) ||
-    isAsPerTheSetLabel(withIna.dcrPanelSize) ||
-    isAsPerTheSetLabel(withIna.inverterSize) ||
-    isAsPerTheSetLabel(withIna.inverterBrand) ||
+    isAsPerTheSetLabel(withRenew.panelSize) ||
+    isAsPerTheSetLabel(withRenew.dcrPanelSize) ||
+    isAsPerTheSetLabel(withRenew.inverterSize) ||
+    isAsPerTheSetLabel(withRenew.inverterBrand) ||
     isTataDcrPackage
 
-  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(withIna)
+  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(withRenew)
 
-  const panelBrand = withIna.panelBrand || withIna.dcrPanelBrand || ""
+  const panelBrand = withRenew.panelBrand || withRenew.dcrPanelBrand || ""
 
   return applyDefaultPdfPanelRanges({
-    ...withIna,
+    ...withRenew,
     panelBrand,
-    pdfPanelRangeKey: pdfPanelRangeKey || withIna.pdfPanelRangeKey,
+    pdfPanelRangeKey: pdfPanelRangeKey || withRenew.pdfPanelRangeKey,
     panelSize: DCR_AS_PER_THE_SET,
     panelQuantity: 0,
-    dcrPanelBrand: withIna.dcrPanelBrand || panelBrand,
+    dcrPanelBrand: withRenew.dcrPanelBrand || panelBrand,
     dcrPanelSize: DCR_AS_PER_THE_SET,
     dcrPanelQuantity: 0,
     inverterBrand: DCR_AS_PER_THE_SET,
@@ -532,6 +690,24 @@ export function productsForApiUpdate(products: ProductSelection): ProductSelecti
   const withQty = backfillPanelQuantityForPdfRange(synced)
   const catalogSafe = toCatalogCompatibleProducts(withQty)
   const flags = buildPdfDisplayFlagsPayload(withQty) as PdfFlagRecord
+  if (isRenewEnergyPanelPackage(withQty)) {
+    const renewSafe = withRenewEnergyApiCatalogMarkers(catalogSafe)
+    return {
+      ...renewSafe,
+      ...flags,
+      panelBrand: RENEW_ENERGY_API_PANEL_BRAND_ALIAS,
+      panelType: "Renew Energy",
+      panel_type: "Renew Energy",
+      renewEnergyPackage: true,
+      renew_energy_package: true,
+      pdfPanelRangeKey: mapPdfPanelRangeKeyForApiCatalog(
+        String(flags.pdfPanelRangeKey || RENEW_ENERGY_PDF_RANGE_KEY),
+      ),
+      pdf_panel_range_key: mapPdfPanelRangeKeyForApiCatalog(
+        String(flags.pdfPanelRangeKey || RENEW_ENERGY_PDF_RANGE_KEY),
+      ),
+    } as ProductSelection
+  }
   if (!isInaPanelPackage(withQty)) {
     return { ...catalogSafe, ...flags } as ProductSelection
   }
@@ -557,7 +733,13 @@ export function isProductsValidationApiError(error: unknown): boolean {
     msg.includes("invalid input") ||
     msg.includes("invalid product") ||
     msg.includes("product catalog") ||
-    msg.includes("val_003")
+    msg.includes("val_003") ||
+    msg.includes("not allowed") ||
+    msg.includes("not in catalog") ||
+    msg.includes("panel brand") ||
+    msg.includes("panelbrand") ||
+    msg.includes("enum") ||
+    msg.includes("validation")
   )
 }
 
@@ -592,8 +774,20 @@ export function buildProductsApiPayloadCandidates(products: ProductSelection): P
     : null
   const stripped = stripPdfDisplayFlags(catalogSafe)
 
+  // Some live catalogs still max structure sizes at 20kW — retry large commercial sets with 20kW structure SKU.
+  const structureKw = parseNominalSystemKw(catalogSafe.structureSize)
+  const structureCapped =
+    structureKw > 20
+      ? stripPdfDisplayFlags({ ...catalogSafe, structureSize: "20kW" })
+      : null
+
   const candidates = dedupeProductPayloads(
-    inaWithoutPdfRange ? [withFlags, inaWithoutPdfRange, stripped] : [withFlags, stripped],
+    [
+      withFlags,
+      ...(inaWithoutPdfRange ? [inaWithoutPdfRange] : []),
+      stripped,
+      ...(structureCapped ? [structureCapped] : []),
+    ].filter(Boolean) as ProductSelection[],
   )
 
   // Commercial DCR/BOTH: every candidate must keep the commercial flag + subsidy 0.

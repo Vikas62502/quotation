@@ -1,7 +1,7 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { isInaPanelPackage, restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
-import {
+  import {
   calculateSystemSize,
   formatQuotationPhaseLabel,
   resolveQuotationPhase,
@@ -18,6 +18,7 @@ import {
   normalizeInverterBrandForDisplay,
   QUOTATION_AS_PER_THE_SET_LABEL,
   resolvePdfPanelRangeKey,
+  defaultPdfPanelRangeKeyForNonDcr80KwPackage,
   type PdfPanelRangeKey,
   isPdfCommercialSet,
 } from "@/lib/quotation-pdf-display"
@@ -400,7 +401,17 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   const systemType = String(p.systemType || (p as Record<string, unknown>).system_type || "")
   const gradeLabel = getPanelGradeLabel(systemType)
   const primary = resolvePrimaryPanelFields(p)
-  const primaryRange = resolvePdfPanelRangeKey(p, "primary")
+  const systemKwForPackage =
+    Number.parseFloat(getSystemKwLabel(p as ProductSelection).replace(/[^0-9.]/g, "")) ||
+    Number.parseFloat(String(p.inverterSize || "").replace(/[^0-9.]/g, "")) ||
+    0
+  const isNonDcr80KwPackage =
+    systemType.toLowerCase().replace(/_/g, "-") === "non-dcr" && systemKwForPackage >= 79.5
+  const primaryRange =
+    resolvePdfPanelRangeKey(p, "primary") ||
+    (isNonDcr80KwPackage
+      ? defaultPdfPanelRangeKeyForNonDcr80KwPackage(primary.brand || String(p.panelBrand || ""))
+      : null)
   const dcrRange = resolvePdfPanelRangeKey(p, "dcr")
   const nonDcrRange = resolvePdfPanelRangeKey(p, "nonDcr")
 
@@ -482,6 +493,9 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
       isAsPerTheSetLabel(String(p.inverterSize || "")) ||
       isAsPerTheSetLabel(String(p.inverterBrand || "")))
 
+  // 20kW and above: PDF shows CT / BT instead of ACDB / DCDB (e.g. 80kW commercial sites)
+  const useCtBtLabels = systemKwForPackage >= 20
+
   const rows: SpecRow[] = [
     ...panelRows,
     {
@@ -509,13 +523,15 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
       qty: "As Per BOM",
     },
     {
-      component: "ACDB / DCDB",
-      specification: "AC & DC Distribution Box",
-      brandModel: showTataDcrAsPerSetForAcdbDcdb
+      component: useCtBtLabels ? "CT / BT" : "ACDB / DCDB",
+      specification: useCtBtLabels ? "CT & BT Distribution" : "AC & DC Distribution Box",
+      brandModel: useCtBtLabels
         ? `${QUOTATION_AS_PER_THE_SET_LABEL} / ${QUOTATION_AS_PER_THE_SET_LABEL}`
-        : p.acdb || p.dcdb
-          ? `${p.acdb || ""} ${p.dcdb || ""}`.trim()
-          : "Havells MCB",
+        : showTataDcrAsPerSetForAcdbDcdb
+          ? `${QUOTATION_AS_PER_THE_SET_LABEL} / ${QUOTATION_AS_PER_THE_SET_LABEL}`
+          : p.acdb || p.dcdb
+            ? `${p.acdb || ""} ${p.dcdb || ""}`.trim()
+            : "Havells MCB",
       qty: "1 Set",
     },
     {

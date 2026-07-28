@@ -54,6 +54,7 @@ import {
   getPanelPdfRangeOptionsForBrand,
   defaultPdfPanelRangeKeyForDcrPricingType,
   defaultPdfPanelRangeKeyForPanelBrand,
+  defaultPdfPanelRangeKeyForNonDcr80KwPackage,
   applyDefaultPdfPanelRanges,
   getPanelPdfRangeLabel,
   TATA_DCR_PANEL_RANGE_KEY,
@@ -512,31 +513,60 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   }
 
   const updatePanelBrand = (field: "panelBrand" | "dcrPanelBrand" | "nonDcrPanelBrand", brand: string) => {
-    const defaultRange = defaultPdfPanelRangeKeyForPanelBrand(brand)
-    const isIna = brand.trim().toLowerCase() === "ina"
-    const inaMarkers = isIna
-      ? { panelType: "INA" as const, inaDcrPackage: true as const }
-      : { panelType: undefined, inaDcrPackage: undefined }
-    setFormData((prev) => ({
-      ...prev,
-      [field]: brand,
-      ...inaMarkers,
-      ...(field === "panelBrand"
+    const brandLower = brand.trim().toLowerCase().replace(/\s+/g, " ")
+    const isIna = brandLower === "ina"
+    const isRenewEnergy = brandLower === "renew energy" || brandLower === "renewenergy"
+    const packageMarkers = isIna
+      ? {
+          panelType: "INA" as const,
+          inaDcrPackage: true as const,
+          renewEnergyPackage: undefined,
+          renew_energy_package: undefined,
+        }
+      : isRenewEnergy
         ? {
-            pdfPanelRangeKey: defaultRange,
-            pdfUsePanelSizeRange: Boolean(defaultRange),
+            panelType: "Renew Energy" as const,
+            renewEnergyPackage: true as const,
+            renew_energy_package: true as const,
+            inaDcrPackage: undefined,
           }
-        : {}),
-      ...(field === "dcrPanelBrand"
-        ? {
-            pdfDcrPanelRangeKey: defaultRange,
-            panelBrand: brand,
-            pdfPanelRangeKey: defaultRange,
-            pdfUsePanelSizeRange: Boolean(defaultRange),
+        : {
+            panelType: undefined,
+            inaDcrPackage: undefined,
+            renewEnergyPackage: undefined,
+            renew_energy_package: undefined,
           }
-        : {}),
-      ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: defaultRange } : {}),
-    }))
+    setFormData((prev) => {
+      const is80KwNonDcr =
+        String(prev.systemType || "").toLowerCase() === "non-dcr" &&
+        (String(prev.inverterSize || "").trim() === "80kW" ||
+          String(prev.structureSize || "").trim() === "80kW" ||
+          Number(prev.systemPrice) >= 2500000)
+      const defaultRange =
+        is80KwNonDcr && field !== "dcrPanelBrand"
+          ? (defaultPdfPanelRangeKeyForNonDcr80KwPackage(brand) ?? "")
+          : defaultPdfPanelRangeKeyForPanelBrand(brand)
+      return {
+        ...prev,
+        [field]: brand,
+        ...packageMarkers,
+        ...(field === "panelBrand"
+          ? {
+              pdfPanelRangeKey: defaultRange,
+              pdfUsePanelSizeRange: Boolean(defaultRange),
+            }
+          : {}),
+        ...(field === "dcrPanelBrand"
+          ? {
+              pdfDcrPanelRangeKey: defaultRange,
+              panelBrand: brand,
+              pdfPanelRangeKey: defaultRange,
+              pdfUsePanelSizeRange: Boolean(defaultRange),
+            }
+          : {}),
+        ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: defaultRange } : {}),
+      }
+    })
     setError("")
   }
 
@@ -729,6 +759,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         systemConfig.acdb || preFilledData.acdb,
         systemConfig.dcdb || preFilledData.dcdb,
       )
+      const packagePanelBrand = systemConfig.panelBrand || config.panelType || ""
+      const packageBrandLower = packagePanelBrand.trim().toLowerCase().replace(/\s+/g, " ")
+      const isRenewEnergyPackage =
+        packageBrandLower === "renew energy" || packageBrandLower === "renewenergy"
+      const pdfRangeKey =
+        config.systemSize === "80kW"
+          ? (defaultPdfPanelRangeKeyForNonDcr80KwPackage(packagePanelBrand) ?? "")
+          : ""
 
       setFormData((prev) => {
         const updated = {
@@ -743,6 +781,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           stateSubsidy: 0,
           // Store the system price from the selected configuration
           systemPrice: config.price,
+          pdfPanelRangeKey: pdfRangeKey,
+          pdfUsePanelSizeRange: Boolean(pdfRangeKey),
+          // Clear sticky Renew Energy markers when switching to Adani / Waaree / etc.
+          panelType: isRenewEnergyPackage ? "Renew Energy" : undefined,
+          renewEnergyPackage: isRenewEnergyPackage ? true : undefined,
+          renew_energy_package: isRenewEnergyPackage ? true : undefined,
         }
         console.log("[ProductSelectionForm] NON DCR config selected from dialog - filled all fields:", updated)
         console.log("[ProductSelectionForm] ACDB from config:", systemConfig.acdb, "DCDB from config:", systemConfig.dcdb)
@@ -753,7 +797,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     } else {
       // Fallback to basic calculation if no preset found
       const systemKw = Number.parseFloat(config.systemSize.replace("kW", ""))
-      const panelBrand = config.panelType === "Tata" ? "Tata" : config.panelType === "Waaree" ? "Waaree" : "Adani"
+      const panelBrand =
+        config.panelType === "Tata"
+          ? "Tata"
+          : config.panelType === "Waaree"
+            ? "Waaree"
+            : config.panelType === "Renew Energy" ||
+                String(config.panelType).trim().toLowerCase().replace(/\s+/g, " ") === "renew energy"
+              ? "Renew Energy"
+              : "Adani"
+      const isRenewEnergyPackage = panelBrand === "Renew Energy"
       const nonDcrBest = bestPanelConfigWithinSystemKw(systemKw, {
         panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
         preferredPanelSize: config.panelType,
@@ -763,6 +816,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
       const defaultAcdb = formatACDBOption("Havells", fallbackPhase)
       const defaultDcdb = formatDCDBOption("Havells", fallbackPhase)
+      const pdfRangeKey =
+        config.systemSize === "80kW"
+          ? (defaultPdfPanelRangeKeyForNonDcr80KwPackage(panelBrand) ?? "")
+          : ""
       
       setFormData((prev) => ({
         ...prev,
@@ -778,6 +835,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         // NON-DCR systems should always have 0 subsidies
         centralSubsidy: 0,
         stateSubsidy: 0,
+        pdfPanelRangeKey: pdfRangeKey,
+        pdfUsePanelSizeRange: Boolean(pdfRangeKey),
+        systemPrice: config.price,
+        panelType: isRenewEnergyPackage ? "Renew Energy" : undefined,
+        renewEnergyPackage: isRenewEnergyPackage ? true : undefined,
+        renew_energy_package: isRenewEnergyPackage ? true : undefined,
       }))
       setHasSelectedNonDcrConfig(true)
     }

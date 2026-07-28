@@ -1023,6 +1023,41 @@ If omitted, frontend computes from `actions[]` using the same rules.
 
 ---
 
+## 7.1 Dealer Calling Data — backend-only history and single-count totals
+
+**Frontend:** `app/dashboard/calling-data/page.tsx` (analytics cards + tabs).
+
+### Problem
+
+The same call action was being counted twice when identical rows arrived from:
+- backend API action history
+- browser local cache fallback rows
+
+Frontend is now aligned to **backend source of truth** for calling action history/counts.
+
+### Backend requirement
+
+Make backend responses complete enough so UI never needs local history fallback for counts:
+
+1. `GET /api/dealers/me/calling-queue/next` and `/current` should return action arrays (`recentActions` / `actionHistory` / `dialledActions` / `connectedActions` / `notConnectedActions`) as needed for tabs + analytics.
+2. `GET /api/dealers/calling-actions` (or equivalent already used by dealer analytics) should return canonical rows for the logged-in dealer.
+3. Each action row must have a stable unique `id` plus `leadId`, `action`, `actionAt`, `callRemark` (and ideally `statusText` / `statusCategory`).
+4. Do not emit duplicate action rows for the same action event (same logical call submit).
+
+### Optional hardening (recommended)
+
+- Add an idempotency/uniqueness rule for action inserts (for example by `(lead_id, action, action_at)` or a backend-generated action UUID) to prevent double-write races.
+- If your write path can retry internally, ensure duplicate retries return existing row instead of creating a new one.
+
+### QA
+
+1. Submit one call outcome once from dealer Calling Data.
+2. Refresh page; counts should increase by exactly **1** in the relevant bucket.
+3. Open in second tab/device; same counts and no duplication.
+4. Calling actions GET should show one row for that submit.
+
+---
+
 ## 6. Account Management — Payment Management dealer filter
 
 **Frontend:** `app/dashboard/account-management/page.tsx` — **Payment Management** tab filters approved payment rows by dealer (dropdown **All Dealers** / specific dealer / **Unassigned**).
@@ -2272,13 +2307,48 @@ On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
 
 ---
 
+## 19. Non-DCR 80kW set — Renew Energy / Waaree / Adani (Vsole/Xwatt)
+
+**Frontend:** Non-DCR browse + PDF proposal  
+**Full handoff:** **`BACKEND_NON_DCR_80KW.md`**
+
+### Set prices (3-Phase, inverter 80kW Vsole/Xwatt)
+
+| Panel brand | Set price |
+|-------------|-----------|
+| **Renew Energy** | ₹25,10,000 |
+| **Waaree** | ₹25,90,000 |
+| **Adani** | ₹25,90,000 |
+
+### PDF panel ranges (persist `pdfPanelRangeKey`)
+
+| Brand | Key | Label |
+|-------|-----|-------|
+| Renew Energy | `renew_energy_600_630` | 600W - 630W |
+| Waaree | `waaree_580_630` | 580W - 630W |
+| Adani | `adani_600_630` | 600W - 630W |
+
+### Other
+
+- Allow brand **`Renew Energy`** (do not coerce to RenewSys / Adani).
+- ≥20kW PDF: CT / BT + “As per the set” is **frontend-only**; backend only needs products + range keys + pricing.
+- If serving `GET /quotations/pricing-tables`, include the three 80kW `nonDcr` rows + presets.
+
+### QA (short)
+
+1. Save 80kW Renew Energy → GET echoes brand + `renew_energy_600_630` + subtotal 2510000.
+2. Waaree / Adani same with their keys/prices.
+3. Empty range key clears on PATCH.
+
+---
+
 ## Related docs
 
 | Doc | Section |
 |-----|---------|
 | `BACKEND_CHANGES_REQUIRED.md` | §6.4–6.5 (installation workflow, uploads), **Installation release & planned date**, **§M** (final confirmation uploads + accounts release gate), §7.7–7.9, dealer queue (~2307), **§J** + **§J.1**, §X (PDF flags), **PATCH …/documents** (property PDF optional) |
 | `BACKEND_ADMIN_QUOTATION_STATUS.ts` | HR upload handlers + `computeHrUploadLeadCounts` + `patchDealerCallingQueueAction` |
-| `lib/quotation-pdf-display.ts` | PDF display helpers (frontend + spec for server) |
+| `lib/quotation-pdf-display.ts` | PDF panel range + inverter brand options (incl. 80kW Non-DCR ranges) |
 | `lib/calling-lead-assignee.ts` | Assignee normalization spec for backend field names |
 | `lib/calling-remark-payload.ts` | PATCH action body for remarks |
 | `lib/calling-report-date-range.ts` | HR **GET** `startDate` / `endDate` + `range` semantics |
@@ -2305,5 +2375,7 @@ On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |
 | **§18** (this file) | Document Submission — Property Documents PDF optional |
 | **`BACKEND_PROPERTY_DOCUMENT_OPTIONAL.md`** | **§18** stop requiring `propertyDocumentPdf` on PATCH …/documents |
+| **§19** (this file) | Non-DCR 80kW Renew Energy / Waaree / Adani + PDF ranges |
+| **`BACKEND_NON_DCR_80KW.md`** | **§19** full 80kW set prices, range keys, pricing-tables |
 | **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`** | Super-admin `/auth/login` + shared JWT for inventory |
 | **`BACKEND_INSTALLATION_RELEASE.md`** | **BLOCKER:** Installation tab — PATCH release + GET list fields + QA curls |
