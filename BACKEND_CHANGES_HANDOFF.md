@@ -2643,6 +2643,60 @@ Backend still validates / deducts `products.central_stock` and ignores `admin_id
 
 ---
 
+## 22. Inventory — Sale line items must persist & return qty / unit_price
+
+**Frontend:** Quotation Admin → Inventory → **Agent** → Sales History → **View items**  
+(also Approvals → Pending Sales → View items)
+
+**Symptom:** Expanded lines show `Qty 0.00 × ₹0 = ₹104` — line amount present, quantity and unit price missing/zero.
+
+### Root cause
+
+`POST /sales` body already sends:
+
+```json
+{
+  "items": [
+    { "product_id": "…", "quantity": 2, "unit_price": 100, "gst_rate": 18 }
+  ],
+  "subtotal": 200,
+  "tax_amount": 36,
+  "total_amount": 236
+}
+```
+
+Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sales` / `GET /sales/:id` omits them (only returns amount/subtotal / product_id).
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_SALES_LINE_ITEMS.ts`
+
+| Step | Action |
+|------|--------|
+| 1 | On `POST /sales`, for each `items[]` row persist **`quantity`**, **`unit_price`**, **`gst_rate`**, and line **`subtotal`** (`qty * unit_price`) |
+| 2 | Accept aliases: `qty`, `rate`/`price`, `gstRate`, `line_total`/`amount` |
+| 3 | Persist sale-level `subtotal`, `tax_amount`, `discount_amount`, `total_amount` (from body or recompute) |
+| 4 | `GET /sales` and `GET /sales/:id` return each item with `quantity`, `unit_price`, `gst_rate`, `subtotal`, plus `product: { id, name }` when joined |
+| 5 | Never insert/select lines as amount-only with qty/price left at DB default `0` |
+| 6 | Stock deduct (§21) must use the **same** persisted `quantity` |
+
+### Frontend already does
+
+- Sends real `quantity` / `unit_price` / `gst_rate` on create
+- Sends sale `subtotal` / `tax_amount` / `total_amount`
+- UI normalizes aliases and can infer `Qty 1 × amount` when API returns zeros — **display workaround only**; backend must still store real values
+
+### QA
+
+1. Create sale with qty 2 @ ₹100 → **201**
+2. `GET /sales/:id` → `items[0].quantity === 2`, `unit_price === 100`
+3. Sales History → View items → **not** `0.00 × ₹0`
+4. Multi-line / Tally import sales keep per-line qty and rate
+
+**Reference:** `BACKEND_SALES_LINE_ITEMS.ts`, `BACKEND_SALES_ADMIN_STOCK.ts`, `BACKEND_SALES_CREATED_BY.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2675,6 +2729,8 @@ Backend still validates / deducts `products.central_stock` and ignores `admin_id
 | **`BACKEND_SALES_CREATED_BY.ts`** | **§20** upsert JWT user for `sales.created_by` |
 | **§21** (this file) | Inventory Agent sale — deduct admin stock not central |
 | **`BACKEND_SALES_ADMIN_STOCK.ts`** | **§21** when `admin_id` present, use `admin_inventory` |
+| **§22** (this file) | Inventory sale lines — persist/return qty + unit_price |
+| **`BACKEND_SALES_LINE_ITEMS.ts`** | **§22** sale_items quantity/unit_price/subtotal serialize |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |

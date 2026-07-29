@@ -369,8 +369,43 @@ function getSaleDisplayAmount(sale: ISale | Record<string, unknown>): number {
 function pickFiniteNumber(...vals: unknown[]): number {
   for (const v of vals) {
     if (v === undefined || v === null || v === "") continue
+    if (typeof v === "object") {
+      // Tally-ish nested qty/rate objects: { amount: 2 } or { value: "100/PCS" }
+      const o = v as Record<string, unknown>
+      const nested = pickFiniteNumber(
+        o.amount,
+        o.value,
+        o.quantity,
+        o.qty,
+        o.rate,
+        o.price,
+        o.number,
+      )
+      if (Number.isFinite(nested)) return nested
+      continue
+    }
+    if (typeof v === "string") {
+      const cleaned = v.replace(/,/g, "").trim()
+      if (!cleaned) continue
+      // "2 Nos", "100/PCS", "₹1,200"
+      const m = cleaned.match(/-?[\d.]+/)
+      if (!m) continue
+      const n = Number(m[0])
+      if (Number.isFinite(n)) return n
+      continue
+    }
     const n = Number(v)
     if (Number.isFinite(n)) return n
+  }
+  return 0
+}
+
+/** First finite number that is > 0 (API often sends quantity/unit_price as 0 when only amount is stored). */
+function pickPositiveNumber(...vals: unknown[]): number {
+  for (const v of vals) {
+    if (v === undefined || v === null || v === "") continue
+    const n = pickFiniteNumber(v)
+    if (n > 0) return n
   }
   return 0
 }
@@ -392,24 +427,31 @@ function normalizeSaleLineItem(
   const product_id = String(
     raw.product_id || raw.productId || productObj?.id || "",
   ).trim()
+  const catalog = product_id ? productsById?.get(product_id) : undefined
   const productName =
     String(
       productObj?.name ||
         raw.product_name ||
         raw.productName ||
         raw.name ||
-        productsById?.get(product_id)?.name ||
+        catalog?.name ||
         "",
     ).trim() || product_id || "Product"
 
-  let quantity = pickFiniteNumber(
+  let quantity = pickPositiveNumber(
     raw.quantity,
     raw.qty,
     raw.Qty,
+    raw.billedqty,
+    raw.billed_qty,
+    raw.billedQty,
+    raw.actualqty,
+    raw.actual_qty,
+    raw.actualQty,
     raw.sale_quantity,
     raw.saleQuantity,
   )
-  let unit_price = pickFiniteNumber(
+  let unit_price = pickPositiveNumber(
     raw.unit_price,
     raw.unitPrice,
     raw.rate,
@@ -417,9 +459,11 @@ function normalizeSaleLineItem(
     raw.price,
     raw.selling_price,
     raw.sellingPrice,
+    productObj?.unit_price,
+    productObj?.unitPrice,
   )
-  const gst_rate = pickFiniteNumber(raw.gst_rate, raw.gstRate, raw.tax_rate, raw.taxRate)
-  let line_amount = pickFiniteNumber(
+  const gst_rate = pickPositiveNumber(raw.gst_rate, raw.gstRate, raw.tax_rate, raw.taxRate)
+  let line_amount = pickPositiveNumber(
     raw.subtotal,
     raw.line_total,
     raw.lineTotal,
@@ -430,12 +474,43 @@ function normalizeSaleLineItem(
     raw.lineAmount,
   )
 
-  // If API only returned line amount, recover qty/price when one side is missing.
+  // Recover missing qty/price from the other side + line amount.
   if (line_amount > 0 && quantity <= 0 && unit_price > 0) {
-    quantity = Math.round((line_amount / unit_price) * 100) / 100
+    const taxable =
+      gst_rate > 0 ? line_amount / (1 + gst_rate / 100) : line_amount
+    const qGross = Math.round((line_amount / unit_price) * 100) / 100
+    const qNet = Math.round((taxable / unit_price) * 100) / 100
+    // Prefer the qty that lands closer to a clean value when GST is present.
+    quantity =
+      gst_rate > 0 && Math.abs(qNet - Math.round(qNet)) < Math.abs(qGross - Math.round(qGross))
+        ? qNet
+        : qGross
   }
   if (line_amount > 0 && unit_price <= 0 && quantity > 0) {
-    unit_price = Math.round((line_amount / quantity) * 100) / 100
+    const taxable =
+      gst_rate > 0 ? line_amount / (1 + gst_rate / 100) : line_amount
+    unit_price = Math.round((taxable / quantity) * 100) / 100
+  }
+  // API often returns only line amount (qty/price both 0).
+  if (line_amount > 0 && quantity <= 0 && unit_price <= 0) {
+    const catalogPrice = pickPositiveNumber(catalog?.unit_price)
+    if (catalogPrice > 0) {
+      const taxable =
+        gst_rate > 0 ? line_amount / (1 + gst_rate / 100) : line_amount
+      const q = Math.round((taxable / catalogPrice) * 100) / 100
+      // Only trust catalog price when it yields a near-integer qty.
+      if (q > 0 && Math.abs(q - Math.round(q)) < 0.051) {
+        quantity = Math.max(1, Math.round(q))
+        unit_price = catalogPrice
+      }
+    }
+    if (quantity <= 0 || unit_price <= 0) {
+      quantity = 1
+      unit_price =
+        gst_rate > 0
+          ? Math.round((line_amount / (1 + gst_rate / 100)) * 100) / 100
+          : Math.round(line_amount * 100) / 100
+    }
   }
   if (line_amount <= 0 && quantity > 0 && unit_price >= 0) {
     const base = quantity * unit_price
@@ -3036,6 +3111,11 @@ export function SuperAdminInventoryPanel({
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
   }, [sales, salesTypeFilter, salesSearch])
 
+  const totalSalesAmount = useMemo(
+    () => filteredSales.reduce((acc, s) => acc + getSaleDisplayAmount(s), 0),
+    [filteredSales],
+  )
+
   const pendingSales = useMemo(
     () => sales.filter((s) => (s.approval_status || "pending") === "pending"),
     [sales]
@@ -3106,10 +3186,37 @@ export function SuperAdminInventoryPanel({
     [adminInventory]
   )
 
-  const totalSalesAmount = useMemo(
-    () => sales.reduce((acc, s) => acc + getSaleDisplayAmount(s), 0),
-    [sales]
-  )
+  const productsById = useMemo(() => {
+    const m = new Map<string, IProduct>()
+    for (const p of products) {
+      if (p?.id) m.set(p.id, p)
+    }
+    return m
+  }, [products])
+
+  const renderSaleItemsList = (sale: ISale) => {
+    const rows = (sale.items || []).map((it) =>
+      normalizeSaleLineItem(it as unknown as Record<string, unknown>, productsById),
+    )
+    if (rows.length === 0) {
+      return <p className="text-xs text-muted-foreground">No line items on this sale.</p>
+    }
+    return (
+      <div className="space-y-1.5">
+        {rows.map((it, idx) => (
+          <div
+            key={`${sale.id}-item-${idx}`}
+            className="flex flex-wrap items-center justify-between gap-2 text-xs"
+          >
+            <span className="text-foreground font-medium">{it.productName}</span>
+            <span className="text-muted-foreground">
+              Qty {fmtQty(it.quantity)} × {fmtCurrency(it.unit_price)} = {fmtCurrency(it.line_amount)}
+            </span>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   // ── Approval actions ──────────────────────────────────────
   const approveAgent = async (user: IUser) => {
@@ -3808,32 +3915,7 @@ export function SuperAdminInventoryPanel({
                           {expandedSaleId === sale.id ? (
                             <tr className="border-b border-border/50 bg-muted/20">
                               <td colSpan={5} className="px-4 py-3">
-                                {(sale.items || []).length === 0 ? (
-                                  <p className="text-xs text-muted-foreground">No line items on this sale.</p>
-                                ) : (
-                                  <div className="space-y-1.5">
-                                    {(sale.items || []).map((it, idx) => (
-                                      <div
-                                        key={`${sale.id}-item-${idx}`}
-                                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                                      >
-                                        <span className="text-foreground font-medium">
-                                          {it.product?.name || it.product_id}
-                                        </span>
-                                        <span className="text-muted-foreground">
-                                          Qty {fmtQty(it.quantity)} × {fmtCurrency(it.unit_price)} ={" "}
-                                          {fmtCurrency(
-                                            Number(it.subtotal) > 0
-                                              ? Number(it.subtotal)
-                                              : Number(it.quantity) *
-                                                  Number(it.unit_price) *
-                                                  (1 + Number(it.gst_rate || 0) / 100),
-                                          )}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                {renderSaleItemsList(sale)}
                               </td>
                             </tr>
                           ) : null}
@@ -4056,32 +4138,7 @@ export function SuperAdminInventoryPanel({
                           {expandedSaleId === sale.id ? (
                             <tr className="border-b border-border/50 bg-muted/20">
                               <td colSpan={5} className="px-4 py-3">
-                                {(sale.items || []).length === 0 ? (
-                                  <p className="text-xs text-muted-foreground">No line items on this sale.</p>
-                                ) : (
-                                  <div className="space-y-1.5">
-                                    {(sale.items || []).map((it, idx) => (
-                                      <div
-                                        key={`${sale.id}-hist-item-${idx}`}
-                                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
-                                      >
-                                        <span className="text-foreground font-medium">
-                                          {it.product?.name || it.product_id}
-                                        </span>
-                                        <span className="text-muted-foreground">
-                                          Qty {fmtQty(it.quantity)} × {fmtCurrency(it.unit_price)} ={" "}
-                                          {fmtCurrency(
-                                            Number(it.subtotal) > 0
-                                              ? Number(it.subtotal)
-                                              : Number(it.quantity) *
-                                                  Number(it.unit_price) *
-                                                  (1 + Number(it.gst_rate || 0) / 100),
-                                          )}
-                                        </span>
-                                      </div>
-                                    ))}
-                                  </div>
-                                )}
+                                {renderSaleItemsList(sale)}
                               </td>
                             </tr>
                           ) : null}
