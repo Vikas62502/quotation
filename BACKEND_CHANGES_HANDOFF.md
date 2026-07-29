@@ -1145,6 +1145,227 @@ Exact match on number of installment/phase rows (not “has installment 2”).
 
 ---
 
+## 7.2 Admin Overview — first-load optimization (instant cards)
+
+**Frontend issue observed:** On first open of Admin Panel, Overview cards briefly show `0`/`₹0.0L` while heavy quotation list APIs are still loading.  
+**Frontend mitigation shipped:** UI now shows loading placeholders and fetches `admin.statistics` earlier.  
+**Backend optimization needed:** make overview stats API fast and cache-friendly.
+
+### Required backend optimization
+
+1. Add/optimize a lightweight endpoint for overview cards (or optimize existing one):
+   - `GET /api/admin/statistics` (preferred existing path)
+   - Must return quickly without waiting for full quotation list serialization.
+2. Include pre-aggregated fields:
+   - `overview.totalQuotations`
+   - `overview.totalRevenue` (or equivalent absolute INR field)
+   - `thisMonth.quotations`
+   - `thisMonth.revenue`
+   - `thisMonth.approvedCustomers` (unique count)
+3. Ensure deterministic response envelope (`data.overview`, `data.thisMonth`) to avoid fallback parsing.
+
+### Performance targets (recommended)
+
+- p95 latency for stats endpoint: **< 300ms** (same region)
+- Avoid N+1 joins; use aggregate SQL/materialized summary where possible
+- Add indexes for date/status filters used by “this month”:
+  - `quotations(status, status_approved_at)`
+  - `quotations(created_at)`
+
+### Caching recommendations
+
+- Cache stats for short TTL (15-60s), per role/scope.
+- Invalidate cache on quotation create/update/approve/revert-settlement/payment updates.
+- Return `generatedAt` timestamp so UI can show freshness if needed.
+
+### QA
+
+1. Open `/dashboard/admin` with cold cache and 5k+ quotations.
+2. Overview cards should populate quickly from stats API (not wait for full list).
+3. Values should stay consistent after hard refresh and realtime mutations.
+
+---
+
+## 7.3 Admin Calling Reports — first-load optimization (instant counters)
+
+**Frontend:** `app/dashboard/admin/page.tsx` → **Calling Reports** tab (`Employee Calling Actions` cards).  
+**Observed UX issue:** on initial load, counters appear as `0` before calling-actions API finishes.
+
+### Backend optimization required
+
+1. Optimize `GET /api/admin/calling-actions` (or fallback paths in §4.8) for first paint:
+   - return the newest filtered rows quickly
+   - avoid expensive joins in the critical path when not needed for counters
+   - support low-latency first-page response when `limit` is present (frontend now requests this tab independently with `limit=1000`)
+2. Keep row payload stable and complete for classification:
+   - `id`, `leadId`, `dealerId`, `dealerName`, `action`, `actionAt`, `callRemark`
+   - recommended: `statusText`, `statusCategory`
+3. Support fast date/dealer filtering server-side (`dealerId`, `startDate`, `endDate`) so client does not process very large all-time datasets for first render.
+4. Default sort should be `actionAt DESC` (newest first) unless explicit sort is provided.
+
+### Optional fast-summary endpoint (recommended)
+
+If list endpoint is heavy, add:
+
+```
+GET /api/admin/calling-actions/summary?dealerId=&startDate=&endDate=
+```
+
+Example:
+
+```json
+{
+  "data": {
+    "totalCalls": 482,
+    "connected": 301,
+    "notConnected": 181,
+    "connectedInterested": 97,
+    "connectedFollowUp": 122,
+    "connectedNotInterested": 82,
+    "generatedAt": "2026-07-28T09:40:00Z"
+  }
+}
+```
+
+- Semantics must match frontend classifier in `lib/calling-action-summary.ts`.
+- Enables instant cards while full list continues loading.
+
+### Performance/caching targets
+
+- p95 list query latency (filtered month/dealer): **< 400ms**
+- p95 summary query latency: **< 200ms**
+- Short TTL cache (15-60s) acceptable for summary with mutation-based invalidation.
+- If list is huge, return paginated rows plus total/next cursor; frontend only needs first page for immediate render.
+
+### QA
+
+1. Open Admin → Calling Reports with cold browser tab.
+2. Counters should populate quickly from API (no long zero-state phase).
+3. Counts should match filtered action rows for same range/employee.
+4. Refresh and cross-device check should stay consistent.
+
+---
+
+## 7.4 Admin Quotations tab — first-load optimization (instant list)
+
+**Frontend:** `app/dashboard/admin/page.tsx` → **Quotations** tab.  
+**Observed issue:** first tab open waits too long before rows appear (heavy admin bootstrap path).
+
+### Backend optimization required
+
+1. Optimize `GET /api/admin/quotations` for fast first page:
+   - respond quickly for `page=1&limit=...`
+   - avoid unnecessary heavy joins/computed blobs on list path
+2. Keep lightweight list fields always present for immediate rendering:
+   - `id`, `createdAt`, `status`, `dealerId`/`dealer`, `customer`, `subtotal`/`pricing.subtotal`
+   - include minimal products/system metadata needed by current table
+3. Ensure pagination metadata is returned (`total`, `pagination.totalPages`, or equivalent) so client can render progressively.
+4. Default sort should be predictable (e.g. newest first) unless explicit sort is provided.
+
+### Recommended split (best UX)
+
+- `GET /api/admin/quotations` => lightweight list endpoint
+- Heavy details/media can remain on detail endpoint (`GET /api/admin/quotations/{id}`) or optional expanded fields
+
+This allows frontend to show first rows instantly, then hydrate deeper fields lazily.
+
+### Performance targets
+
+- p95 for first list page (`limit<=100`): **< 300ms**
+- p95 for paginated subsequent pages: **< 400ms**
+
+### QA
+
+1. Open Admin → Quotations with cold cache.
+2. First rows should appear quickly (without waiting for all pages/all enrichments).
+3. Scrolling/pagination should progressively load additional rows.
+4. Search and filters should remain responsive with large datasets.
+
+---
+
+## 7.5 Admin Installation tab — first-load optimization
+
+**Frontend:** `app/dashboard/admin/page.tsx` → **Installation** (Pending / Partial / Approved).  
+**Observed issue:** tab opens empty (“No installer records found”) for a long time because bootstrap waited serially on admin quotation pages, installer queues, payment-sent lists, then per-id detail fetches.
+
+### Frontend mitigations (already shipped)
+
+- Parallel fetch of `GET /admin/quotations` pages + installer queue + payment-sent rows
+- Stamp release/installer flags on early preview rows
+- Paint Installation list **before** slow `GET /admin/quotations/{id}` enrichment
+- Debounced search (same as Quotations)
+- Loading placeholder while bootstrap still empty
+
+### Backend optimization required
+
+1. **`GET /api/installer/queue`** (and status variants `pending_installer`, `approved`, etc.):
+   - Fast first page (`limit<=1000`) without heavy media blobs
+   - Include release flags + `installationStatus` / nested customer/dealer on each row
+2. **`GET /api/admin/quotations`** list rows must include installer-visibility fields so Admin Installation does not depend on N× detail calls:
+   - `installationReadyForInstaller` / `installation_ready_for_installer`
+   - `installationReleasedAt` / `installation_released_at`
+   - `installationStatus` / `installation_status`
+   - `installationScheduledAt`, `installationTeamId` when set
+3. Prefer a dedicated lightweight queue for admin ops if full quotation list remains heavy:
+   - e.g. `GET /api/admin/installation/quotations?status=pending_installer|partial|approved&page=&limit=&search=`
+4. Avoid requiring the client to call `GET /admin/quotations/{id}` just to show Installation rows.
+
+### Performance targets
+
+- p95 installer queue first page: **< 300ms**
+- Admin Installation first visible rows: without waiting for per-id detail fan-out
+
+### QA
+
+1. Cold-open Admin → Installation → Pending Installation — rows (or “Loading…”) appear quickly; not a long false empty state.
+2. Search by name/mobile/email/ID stays responsive.
+3. After full bootstrap, counts match Payment “Send to Installer” releases.
+
+---
+
+## 7.6 Admin Metering tab — flow / first-load optimization
+
+**Frontend:** `app/dashboard/admin/page.tsx` → **Metering** (WCC / Meter Pending / Discom / Meter Install / Bank / Pending payment / MCO).  
+**Observed issue:** switching to Metering feels slow because client re-filters the full quotation list and metering stage helpers on every tab change; list also waits on heavy admin bootstrap.
+
+### Frontend mitigations (already shipped)
+
+- Tab switches use `startTransition` so the tab UI updates before heavy list work
+- Quotation filter/buckets run only while Quotations workspace is active
+- Metering stage buckets computed only when `operationalTab === "metering"`
+- Debounced search + loading placeholders
+
+### Backend optimization required
+
+1. **List fields on `GET /api/admin/quotations`** (lightweight) must include metering workflow fields so Admin Metering does not need per-id hydration for queue membership:
+   - `installationStatus` / `installation_status`
+   - `meteringStatus` / `metering_status`
+   - `meteringApprovedAt` / `metering_approved_at`
+   - `mcoStatus` / `mcoAt` (or equivalents)
+   - `meteringWccAfterDiscom` / `metering_wcc_after_discom`
+   - Discom fields used by UI (`discomName`, `discomLocation`, remarks) when already known
+2. Prefer dedicated admin metering queue (best at scale):
+
+```
+GET /api/admin/metering/quotations?stage=wcc|processing|approved|meter_install|bank_process|pending_payment|mco&page=&limit=&search=
+```
+
+3. Keep completion media / heavy docs on detail endpoints only.
+4. Server-side `search` on name / mobile / quotation id for metering queue.
+
+### Performance targets
+
+- p95 metering queue first page: **< 300ms**
+- Tab switch should not require refetching the entire admin quotation corpus
+
+### QA
+
+1. Cold-open Admin → Metering → Meter Pending — rows or loading appear quickly.
+2. Switching Installation ↔ Metering ↔ Quotations feels responsive.
+3. Stage chips (WCC / Bank / MCO) counts match backend stage fields.
+
+---
+
 ## 7. Admin Overview — total kW (capacity) by dealer
 
 **Frontend:** `app/dashboard/admin/page.tsx` — **Overview → Dealers by Revenue** sums **system kW** from each dealer’s **approved** quotations (same approval-date + dealer filters as revenue). Example: Sunil with 12 approved quotations this month → **total kW = sum of all 12 system sizes**.
