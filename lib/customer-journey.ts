@@ -150,7 +150,7 @@ export function getJourneyHoldInfo(quotation: Quotation): JourneyHoldInfo {
     return { holder: "Metering", stageLabel: "Metering Approved" }
   }
   if (opsStatus === "mco") {
-    return { holder: "Metering", stageLabel: "MCO Docs Pending" }
+    return { holder: "Final Confirmation", stageLabel: "Pending Final Confirmation" }
   }
   if (opsStatus === "pending_baldev") {
     return { holder: "Baldev", stageLabel: "Pending Final Confirmation" }
@@ -234,17 +234,19 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
     installation = "completed"
   }
 
-  if (["pending_metering", "metering_in_progress", "mco"].includes(meteringStage)) {
+  if (["pending_metering", "metering_in_progress"].includes(meteringStage)) {
     metering = "in_progress"
   }
   if (
-    ["metering_approved", "pending_baldev", "baldev_approved", "completed"].includes(meteringStage) ||
+    ["metering_approved", "mco", "pending_baldev", "baldev_approved", "completed"].includes(meteringStage) ||
     ["pending_baldev", "baldev_approved", "completed"].includes(installStatus)
   ) {
     metering = "completed"
   }
 
-  if (installStatus === "pending_baldev" || meteringStage === "pending_baldev") {
+  if (installStatus === "mco" || meteringStage === "mco") {
+    finalConfirmation = "in_progress"
+  } else if (installStatus === "pending_baldev" || meteringStage === "pending_baldev") {
     finalConfirmation = "in_progress"
   }
   if (

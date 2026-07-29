@@ -2563,6 +2563,86 @@ On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
 
 ---
 
+## 20. Inventory — `sales_created_by_fkey` on POST /sales
+
+**Frontend:** Quotation Admin → Inventory → Agent → **New B2B / B2C Sale** → **Record Sale**  
+**Failing call:** `POST /api/sales` → **500**  
+**Live error:**
+`insert or update on table "sales" violates foreign key constraint "sales_created_by_fkey"`
+
+### Root cause
+
+Same as §14 / §16: Quotation Admin JWT `sub` is written to `sales.created_by`, but that id is **not** in inventory `users`.
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_SALES_CREATED_BY.ts`
+
+| Step | Action |
+|------|--------|
+| 1 | Reuse / copy `resolveInventoryCreatedBy` from §14 |
+| 2 | Honor body `created_by` / `createdBy` / `created_by_id` / `createdById` if valid inventory user |
+| 3 | Else upsert JWT user into inventory `users`, then set `sales.created_by` |
+| 4 | Never INSERT with a bare JWT id missing from `users` |
+| 5 | Return **400 INV_USER_MISSING** (not opaque SYS_001 / raw PG FK text) |
+
+### Frontend already does
+
+- Resolves inventory user via `resolveInventoryCreatedByForWrite()`
+- Sends `created_by`, `createdBy`, `created_by_id`, `createdById` on `POST /sales`
+- Retries once with a fallback inventory user id when response matches `sales_created_by_fkey`
+
+### QA
+
+1. Quotation Admin → Agent → New B2B Sale → Record Sale → **201**
+2. Row `created_by` exists in inventory `users`
+3. No `sales_created_by_fkey` in response
+4. Body `created_by` accepted when JWT user missing
+5. After first success, `SELECT * FROM users WHERE id = '<jwt-sub>';` → row exists (upsert path)
+
+**Reference:** `BACKEND_SALES_CREATED_BY.ts`, `BACKEND_PRODUCTS_CREATED_BY.ts`, `BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`
+
+---
+
+## 21. Inventory — Agent sale must deduct **admin** stock (not central)
+
+**Frontend:** Quotation Admin → Inventory → **Agent** → Sell from admin stock (e.g. CHAIRBORD HEAD OFFICE) → Record Sale  
+**Failing call:** `POST /api/sales` → **400/500**  
+**Live error:** `Insufficient central inventory for sale`
+
+### Root cause
+
+UI loads availability from `GET /admin-inventory/admin/:adminId` (admin has stock).  
+Backend still validates / deducts `products.central_stock` and ignores `admin_id` for the stock check.
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_SALES_ADMIN_STOCK.ts`
+
+| Step | Action |
+|------|--------|
+| 1 | If body has `admin_id` / `adminId` / `sell_from_admin_id` / `stock_admin_id` **or** `stock_source: "admin"` / `use_admin_stock: true` → **admin stock path** |
+| 2 | Validate qty against `admin_inventory` for `(admin_id, product_id)` |
+| 3 | Deduct from `admin_inventory.quantity` only |
+| 4 | Do **not** require or deduct `central_stock` on this path |
+| 5 | Persist `sale.admin_id` |
+| 6 | Only when **no** admin id → keep existing central stock check / message |
+
+### Frontend already does
+
+- Sends `admin_id`, `adminId`, `sell_from_admin_id`, `stock_admin_id`, `stock_source: "admin"`, `use_admin_stock: true`
+- Shows clearer error pointing at this section when API returns “Insufficient central…”
+
+### QA
+
+1. Admin stock Available 130, central 0 → Record Sale → **201**
+2. Admin inventory qty decreases; central unchanged
+3. Without `admin_id`, central insufficient still returns the central message
+
+**Reference:** `BACKEND_SALES_ADMIN_STOCK.ts`, `BACKEND_SALES_CREATED_BY.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2591,6 +2671,10 @@ On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
 | **`BACKEND_CALLING_QUEUE_CURRENT.ts`** | **§15** implement `/calling-queue/current` + `/next` (never SYS_001) |
 | **§16** (this file) | Inventory dispatch — `stock_requests_dispatched_by_id_fkey` |
 | **`BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`** | **§16** upsert JWT user for `dispatched_by_id` |
+| **§20** (this file) | Inventory Agent sale — `sales_created_by_fkey` |
+| **`BACKEND_SALES_CREATED_BY.ts`** | **§20** upsert JWT user for `sales.created_by` |
+| **§21** (this file) | Inventory Agent sale — deduct admin stock not central |
+| **`BACKEND_SALES_ADMIN_STOCK.ts`** | **§21** when `admin_id` present, use `admin_inventory` |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |

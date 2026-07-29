@@ -584,58 +584,93 @@ export const stockRequestsApi = {
       dispatched_by?: string
     }
   ): Promise<StockRequest> {
+    const { resolveInventoryCreatedByForWrite } = await import(
+      "@/inventory-sa/lib/resolve-inventory-created-by"
+    )
+
     let dispatchedBy =
       data?.dispatched_by_id || data?.dispatched_by || undefined
     if (!dispatchedBy) {
       try {
-        const { resolveInventoryCreatedByForWrite } = await import(
-          "@/inventory-sa/lib/resolve-inventory-created-by"
-        )
         dispatchedBy = (await resolveInventoryCreatedByForWrite()) || undefined
       } catch {
         dispatchedBy = undefined
       }
     }
 
-    if (data?.dispatch_image) {
+    const buildFormData = (actor?: string) => {
       const formData = new FormData()
-      if (data.rejection_reason) {
+      if (data?.rejection_reason) {
         formData.append("rejection_reason", data.rejection_reason)
       }
-      formData.append("dispatch_image", data.dispatch_image)
-      if (data.items?.length) {
+      if (data?.dispatch_image) {
+        formData.append("dispatch_image", data.dispatch_image)
+      }
+      if (data?.items?.length) {
         formData.append("items", JSON.stringify(data.items))
       }
-      if (data.serial_number_ranges) {
+      if (data?.serial_number_ranges) {
         formData.append("serial_number_ranges", JSON.stringify(data.serial_number_ranges))
       }
-      if (data.serial_numbers) {
+      if (data?.serial_numbers) {
         formData.append("serial_numbers", JSON.stringify(data.serial_numbers))
       }
-      if (dispatchedBy) {
-        formData.append("dispatched_by_id", dispatchedBy)
-        formData.append("dispatched_by", dispatchedBy)
+      if (actor) {
+        formData.append("dispatched_by_id", actor)
+        formData.append("dispatched_by", actor)
+        formData.append("dispatchedById", actor)
+        formData.append("dispatchedBy", actor)
       }
-      return apiClient.post<StockRequest>(`/stock-requests/${id}/dispatch`, formData, true)
+      return formData
     }
-    const body: any = {}
-    if (data?.rejection_reason) {
-      body.rejection_reason = data.rejection_reason
+
+    const buildJsonBody = (actor?: string) => {
+      const body: any = {}
+      if (data?.rejection_reason) {
+        body.rejection_reason = data.rejection_reason
+      }
+      if (data?.items?.length) {
+        body.items = data.items
+      }
+      if (data?.serial_number_ranges) {
+        body.serial_number_ranges = JSON.stringify(data.serial_number_ranges)
+      }
+      if (data?.serial_numbers) {
+        body.serial_numbers = data.serial_numbers
+      }
+      if (actor) {
+        body.dispatched_by_id = actor
+        body.dispatched_by = actor
+        body.dispatchedById = actor
+        body.dispatchedBy = actor
+      }
+      return body
     }
-    if (data?.items?.length) {
-      body.items = data.items
+
+    const postOnce = async (actor?: string) => {
+      if (data?.dispatch_image) {
+        return apiClient.post<StockRequest>(
+          `/stock-requests/${id}/dispatch`,
+          buildFormData(actor),
+          true,
+        )
+      }
+      return apiClient.post<StockRequest>(`/stock-requests/${id}/dispatch`, buildJsonBody(actor))
     }
-    if (data?.serial_number_ranges) {
-      body.serial_number_ranges = JSON.stringify(data.serial_number_ranges)
+
+    try {
+      return await postOnce(dispatchedBy)
+    } catch (error: any) {
+      const raw = String(error?.message || error?.details || error || "")
+      const isFk =
+        /dispatched_by_id_fkey|stock_requests_dispatched_by|INV_USER_MISSING/i.test(raw)
+      if (!isFk) throw error
+      const fallback = await resolveInventoryCreatedByForWrite({
+        excludeIds: dispatchedBy ? [dispatchedBy] : [],
+      })
+      if (!fallback || fallback === dispatchedBy) throw error
+      return await postOnce(fallback)
     }
-    if (data?.serial_numbers) {
-      body.serial_numbers = JSON.stringify(data.serial_numbers)
-    }
-    if (dispatchedBy) {
-      body.dispatched_by_id = dispatchedBy
-      body.dispatched_by = dispatchedBy
-    }
-    return apiClient.post<StockRequest>(`/stock-requests/${id}/dispatch`, body)
   },
 
   async confirm(id: string, confirmation_image?: File): Promise<StockRequest> {
@@ -805,8 +840,14 @@ export const salesApi = {
       customer_phone?: string
       notes?: string
       image?: File
-      /** When super-admin creates a sale against a specific admin's stock */
+      /** When super-admin / agent creates a sale against a specific admin's stock */
       admin_id?: string
+      adminId?: string
+      sell_from_admin_id?: string
+      stock_admin_id?: string
+      /** Explicit: deduct admin_inventory, not central_stock */
+      stock_source?: "admin" | "central"
+      use_admin_stock?: boolean
     }
   ): Promise<Sale> {
     if (sale.image) {

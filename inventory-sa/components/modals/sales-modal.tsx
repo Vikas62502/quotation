@@ -643,7 +643,16 @@ export default function SalesModal({ saleType, onClose, onSave, availableStock, 
         salesApi.create({
           ...baseSaleData,
           items: itemsPayload,
-          ...(adminId ? { admin_id: adminId } : {}),
+          ...(adminId
+            ? {
+                admin_id: adminId,
+                adminId,
+                sell_from_admin_id: adminId,
+                stock_admin_id: adminId,
+                stock_source: "admin",
+                use_admin_stock: true,
+              }
+            : {}),
         })
 
       // Prefer array payload, fallback to single object if backend expects it

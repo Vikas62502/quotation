@@ -329,7 +329,18 @@ export default function SuperAdminOpsPanels({
                         </span>
                       </td>
                       <td className="px-4 py-3 text-emerald-400 text-sm font-bold">
-                        ₹{(sale.total_amount || 0).toLocaleString()}
+                        ₹{(
+                          Number(sale.total_amount || (sale as any).totalAmount || 0) > 0
+                            ? Number(sale.total_amount || (sale as any).totalAmount || 0)
+                            : (sale.items || []).reduce((sum, it) => {
+                                const line = Number((it as any).subtotal || 0)
+                                if (line > 0) return sum + line
+                                const qty = Number(it.quantity || 0)
+                                const price = Number(it.unit_price || 0)
+                                const gst = Number(it.gst_rate || 0)
+                                return sum + qty * price * (1 + gst / 100)
+                              }, 0)
+                        ).toLocaleString()}
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-300">
                         {sale.approval_status || "pending"}

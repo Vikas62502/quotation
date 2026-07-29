@@ -16,62 +16,80 @@ function asUserList(raw: unknown): User[] {
   return []
 }
 
-/**
- * Quotation Admin JWT `sub` is often missing from inventory `users`, so
- * `POST /products` fails with:
- *   products_created_by_fkey
- *
- * Returns an inventory `users.id` the backend can use for `created_by`, or null
- * when the JWT user already exists in inventory (backend can use JWT sub).
- */
-export async function resolveInventoryCreatedByForWrite(): Promise<string | null> {
-  const me = authService.getUser()
-  if (!me?.id) return null
-
-  // JWT user already in inventory users → no override needed.
+async function loadInventoryUserCatalog(): Promise<User[]> {
   try {
-    await usersApi.getById(me.id)
-    return null
-  } catch {
-    // Expected for quotation-admin sessions that were never synced into inventory users.
-  }
-
-  let catalog: User[] = []
-  try {
-    catalog = asUserList(await usersApi.getAll())
+    return asUserList(await usersApi.getAll())
   } catch {
     try {
-      catalog = asUserList(await usersApi.getAll("super-admin"))
+      return asUserList(await usersApi.getAll("super-admin"))
     } catch {
       try {
-        catalog = asUserList(await usersApi.getAll("admin"))
+        return asUserList(await usersApi.getAll("admin"))
       } catch {
-        return null
+        return []
       }
     }
   }
+}
 
-  if (catalog.length === 0) return null
+function pickPreferredInventoryUser(catalog: User[], excludeIds: Set<string> = new Set()): User | null {
+  const usable = catalog.filter((u) => u?.id && !excludeIds.has(String(u.id)))
+  if (usable.length === 0) return null
 
-  const username = String(me.username || "")
-    .trim()
-    .toLowerCase()
-  if (username) {
-    const byUsername = catalog.find(
-      (u) => String(u.username || "").trim().toLowerCase() === username && u.id,
-    )
-    if (byUsername?.id) return String(byUsername.id)
-  }
-
-  const preferred = catalog.find((u) => {
+  const preferred = usable.find((u) => {
     const role = String(u.role || "")
       .toLowerCase()
       .replace(/_/g, "-")
     return (
-      (role === "super-admin" || role === "superadmin" || role === "admin") &&
-      u.is_active !== false &&
-      u.id
+      (role === "super-admin" ||
+        role === "superadmin" ||
+        role === "super-admin-manager" ||
+        role === "admin") &&
+      u.is_active !== false
     )
   })
+  return preferred || usable.find((u) => u.is_active !== false) || usable[0] || null
+}
+
+/**
+ * Quotation Admin JWT `sub` is often missing from inventory `users`, so writes fail with:
+ *   products_created_by_fkey / stock_requests_dispatched_by_id_fkey
+ *
+ * Always returns an inventory `users.id` when one can be resolved (never rely on
+ * "omit field → backend uses JWT" — many backends ignore body and still write JWT).
+ */
+export async function resolveInventoryCreatedByForWrite(
+  options?: { excludeIds?: string[] },
+): Promise<string | null> {
+  const excludeIds = new Set((options?.excludeIds || []).map((id) => String(id || "").trim()).filter(Boolean))
+  const me = authService.getUser()
+
+  // Prefer JWT user when they already exist in inventory users.
+  if (me?.id && !excludeIds.has(String(me.id))) {
+    try {
+      await usersApi.getById(me.id)
+      return String(me.id)
+    } catch {
+      // Expected for quotation-admin sessions that were never synced into inventory users.
+    }
+  }
+
+  const catalog = await loadInventoryUserCatalog()
+  if (catalog.length === 0) return null
+
+  const username = String(me?.username || "")
+    .trim()
+    .toLowerCase()
+  if (username) {
+    const byUsername = catalog.find(
+      (u) =>
+        String(u.username || "").trim().toLowerCase() === username &&
+        u.id &&
+        !excludeIds.has(String(u.id)),
+    )
+    if (byUsername?.id) return String(byUsername.id)
+  }
+
+  const preferred = pickPreferredInventoryUser(catalog, excludeIds)
   return preferred?.id ? String(preferred.id) : null
 }

@@ -2531,12 +2531,6 @@ export default function AccountManagementPage() {
                           <SelectItem value="installation:pending">Installation · Pending</SelectItem>
                           <SelectItem value="installation:in_progress">Installation · In Progress</SelectItem>
                           <SelectItem value="installation:completed">Installation · Completed</SelectItem>
-                          <SelectItem value="metering:pending">Metering · Pending</SelectItem>
-                          <SelectItem value="metering:in_progress">Metering · In Progress</SelectItem>
-                          <SelectItem value="metering:completed">Metering · Completed</SelectItem>
-                          <SelectItem value="final_confirmation:pending">Final confirmation · Pending</SelectItem>
-                          <SelectItem value="final_confirmation:in_progress">Final confirmation · In Progress</SelectItem>
-                          <SelectItem value="final_confirmation:completed">Final confirmation · Completed</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>

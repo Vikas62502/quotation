@@ -61,7 +61,7 @@
  */
 "use client"
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react"
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
@@ -96,7 +96,9 @@ import {
   FileJson,
 } from "lucide-react"
 import ProductModal from "@/inventory-sa/components/modals/product-modal"
+import TallyJsonImportModal from "@/inventory-sa/components/modals/tally-json-import-modal"
 import type { Product as InventoryProduct } from "@/inventory-sa/lib/api"
+import type { TallyImportPrefill } from "@/inventory-sa/lib/tally-json-import"
 
 // ─────────────────────────────────────────────
 // TYPES
@@ -343,6 +345,108 @@ function fmtCurrency(n: number | undefined | null): string {
     currency: "INR",
     maximumFractionDigits: 0,
   }).format(v)
+}
+
+/** Prefer API total; if 0/missing, derive from subtotal/tax or line items (products present). */
+function getSaleDisplayAmount(sale: ISale | Record<string, unknown>): number {
+  const r = sale as Record<string, unknown>
+  const direct = Number(r.total_amount ?? r.totalAmount ?? r.final_amount ?? r.finalAmount ?? 0)
+  if (Number.isFinite(direct) && direct > 0) return direct
+
+  const sub = Number(r.subtotal ?? r.sub_total ?? 0)
+  const tax = Number(r.tax_amount ?? r.taxAmount ?? 0)
+  const disc = Number(r.discount_amount ?? r.discountAmount ?? 0)
+  if (Number.isFinite(sub) && sub > 0) return Math.max(0, sub + tax - disc)
+
+  const items = Array.isArray(r.items) ? r.items : []
+  let fromItems = 0
+  for (const raw of items) {
+    fromItems += getSaleLineAmount(raw as Record<string, unknown>)
+  }
+  return Number.isFinite(fromItems) ? fromItems : 0
+}
+
+function pickFiniteNumber(...vals: unknown[]): number {
+  for (const v of vals) {
+    if (v === undefined || v === null || v === "") continue
+    const n = Number(v)
+    if (Number.isFinite(n)) return n
+  }
+  return 0
+}
+
+/** Normalize sale line from API (qty/rate/amount aliases often used instead of quantity/unit_price). */
+function normalizeSaleLineItem(
+  raw: Record<string, unknown>,
+  productsById?: Map<string, IProduct>,
+): {
+  product_id: string
+  productName: string
+  quantity: number
+  unit_price: number
+  gst_rate: number
+  line_amount: number
+} {
+  const productObj =
+    raw.product && typeof raw.product === "object" ? (raw.product as Record<string, unknown>) : null
+  const product_id = String(
+    raw.product_id || raw.productId || productObj?.id || "",
+  ).trim()
+  const productName =
+    String(
+      productObj?.name ||
+        raw.product_name ||
+        raw.productName ||
+        raw.name ||
+        productsById?.get(product_id)?.name ||
+        "",
+    ).trim() || product_id || "Product"
+
+  let quantity = pickFiniteNumber(
+    raw.quantity,
+    raw.qty,
+    raw.Qty,
+    raw.sale_quantity,
+    raw.saleQuantity,
+  )
+  let unit_price = pickFiniteNumber(
+    raw.unit_price,
+    raw.unitPrice,
+    raw.rate,
+    raw.Rate,
+    raw.price,
+    raw.selling_price,
+    raw.sellingPrice,
+  )
+  const gst_rate = pickFiniteNumber(raw.gst_rate, raw.gstRate, raw.tax_rate, raw.taxRate)
+  let line_amount = pickFiniteNumber(
+    raw.subtotal,
+    raw.line_total,
+    raw.lineTotal,
+    raw.amount,
+    raw.Amount,
+    raw.total,
+    raw.line_amount,
+    raw.lineAmount,
+  )
+
+  // If API only returned line amount, recover qty/price when one side is missing.
+  if (line_amount > 0 && quantity <= 0 && unit_price > 0) {
+    quantity = Math.round((line_amount / unit_price) * 100) / 100
+  }
+  if (line_amount > 0 && unit_price <= 0 && quantity > 0) {
+    unit_price = Math.round((line_amount / quantity) * 100) / 100
+  }
+  if (line_amount <= 0 && quantity > 0 && unit_price >= 0) {
+    const base = quantity * unit_price
+    line_amount = gst_rate > 0 ? base * (1 + gst_rate / 100) : base
+  }
+
+  return { product_id, productName, quantity, unit_price, gst_rate, line_amount }
+}
+
+function getSaleLineAmount(raw: Record<string, unknown>): number {
+  return normalizeSaleLineItem(raw).line_amount
 }
 
 function fmtDate(s: string | undefined): string {
@@ -1257,6 +1361,8 @@ interface SimpleSaleModalProps {
   adminName: string
   saleType: "B2B" | "B2C"
   adminInventory: IAdminInventory[]
+  prefill?: TallyImportPrefill | null
+  onImportTally?: () => void
   onClose: () => void
   onSuccess: () => void
   fetch: <T>(path: string, opts?: RequestInit) => Promise<T>
@@ -1267,20 +1373,55 @@ function SimpleSaleModal({
   adminName,
   saleType,
   adminInventory,
+  prefill = null,
+  onImportTally,
   onClose,
   onSuccess,
   fetch: apiFetch,
 }: SimpleSaleModalProps) {
-  const [customerName, setCustomerName] = useState("")
-  const [customerPhone, setCustomerPhone] = useState("")
-  const [companyName, setCompanyName] = useState("")
-  const [gstNumber, setGstNumber] = useState("")
-  const [notes, setNotes] = useState("")
+  const [customerName, setCustomerName] = useState(prefill?.customerName || "")
+  const [customerPhone, setCustomerPhone] = useState(prefill?.customerPhone || "")
+  const [companyName, setCompanyName] = useState(prefill?.companyName || "")
+  const [gstNumber, setGstNumber] = useState(prefill?.gstNumber || "")
+  const [notes, setNotes] = useState(
+    prefill?.notes ||
+      (prefill?.reference ? `Imported from Tally: ${prefill.reference}` : ""),
+  )
   const [lines, setLines] = useState<
     Array<{ product_id: string; quantity: string; unit_price: string }>
-  >([{ product_id: "", quantity: "", unit_price: "" }])
+  >(() => {
+    if (prefill?.items?.length) {
+      return prefill.items.map((item) => ({
+        product_id: item.product_id || "",
+        quantity: item.quantity > 0 ? String(item.quantity) : "",
+        unit_price: item.unit_price >= 0 ? String(item.unit_price) : "",
+      }))
+    }
+    return [{ product_id: "", quantity: "", unit_price: "" }]
+  })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!prefill) return
+    setCustomerName(prefill.customerName || "")
+    setCustomerPhone(prefill.customerPhone || "")
+    setCompanyName(prefill.companyName || "")
+    setGstNumber(prefill.gstNumber || "")
+    setNotes(
+      prefill.notes ||
+        (prefill.reference ? `Imported from Tally: ${prefill.reference}` : ""),
+    )
+    if (prefill.items?.length) {
+      setLines(
+        prefill.items.map((item) => ({
+          product_id: item.product_id || "",
+          quantity: item.quantity > 0 ? String(item.quantity) : "",
+          unit_price: item.unit_price >= 0 ? String(item.unit_price) : "",
+        })),
+      )
+    }
+  }, [prefill])
 
   const stockMap = useMemo(() => {
     const m: Record<string, number> = {}
@@ -1358,29 +1499,86 @@ function SimpleSaleModal({
         unit_price: Number(l.unit_price),
         gst_rate: saleType === "B2B" ? 18 : 0,
       }))
+      const itemsSubtotal = items.reduce((a, it) => a + it.quantity * it.unit_price, 0)
       const taxAmount =
         saleType === "B2B"
           ? items.reduce((a, it) => a + it.quantity * it.unit_price * 0.18, 0)
           : 0
-      await apiFetch("/sales", {
-        method: "POST",
-        body: JSON.stringify({
-          type: saleType,
-          customer_name: customerName.trim(),
-          customer_phone: customerPhone.trim() || undefined,
-          company_name: saleType === "B2B" ? companyName.trim() || undefined : undefined,
-          gst_number: saleType === "B2B" ? gstNumber.trim() || undefined : undefined,
-          items,
-          tax_amount: taxAmount,
-          discount_amount: 0,
-          notes: notes.trim() || undefined,
-          admin_id: adminId,
-        }),
-      })
+      const totalAmount = itemsSubtotal + taxAmount
+      const baseBody: Record<string, unknown> = {
+        type: saleType,
+        customer_name: customerName.trim(),
+        customer_phone: customerPhone.trim() || undefined,
+        company_name: saleType === "B2B" ? companyName.trim() || undefined : undefined,
+        gst_number: saleType === "B2B" ? gstNumber.trim() || undefined : undefined,
+        items,
+        subtotal: itemsSubtotal,
+        tax_amount: taxAmount,
+        discount_amount: 0,
+        total_amount: totalAmount,
+        totalAmount,
+        final_amount: totalAmount,
+        notes: notes.trim() || undefined,
+        // Agent tab sells from selected admin stock — NOT central warehouse.
+        admin_id: adminId,
+        adminId,
+        sell_from_admin_id: adminId,
+        stock_admin_id: adminId,
+        stock_source: "admin",
+        use_admin_stock: true,
+      }
+
+      const postSale = async (createdById: string | null) => {
+        const body: Record<string, unknown> = { ...baseBody }
+        if (createdById) {
+          body.created_by = createdById
+          body.createdBy = createdById
+          body.created_by_id = createdById
+          body.createdById = createdById
+        }
+        return apiFetch("/sales", {
+          method: "POST",
+          body: JSON.stringify(body),
+        })
+      }
+
+      let createdById: string | null = null
+      try {
+        const { resolveInventoryCreatedByForWrite } = await import(
+          "@/inventory-sa/lib/resolve-inventory-created-by"
+        )
+        createdById = (await resolveInventoryCreatedByForWrite()) || null
+      } catch {
+        createdById = null
+      }
+
+      try {
+        await postSale(createdById)
+      } catch (firstErr: any) {
+        const raw = String(firstErr?.message || firstErr?.details || "")
+        const isFk = /sales_created_by_fkey|violates foreign key constraint.*created_by/i.test(raw)
+        if (!isFk) throw firstErr
+
+        const { resolveInventoryCreatedByForWrite } = await import(
+          "@/inventory-sa/lib/resolve-inventory-created-by"
+        )
+        const fallbackId = await resolveInventoryCreatedByForWrite({
+          excludeIds: createdById ? [createdById] : [],
+        })
+        if (!fallbackId || fallbackId === createdById) throw firstErr
+        await postSale(fallbackId)
+      }
       onSuccess()
       onClose()
     } catch (err: any) {
-      setError(err?.message || "Failed to create sale")
+      const raw = String(err?.message || err?.details || "")
+      if (/insufficient central inventory/i.test(raw)) {
+        setError(
+          `Insufficient central inventory for sale — but this Agent sale must use admin stock (${adminName}). Backend must honor admin_id and deduct from admin_inventory, not central stock.`,
+        )
+      } else {
+        setError(err?.message || "Failed to create sale")
+      }
     } finally {
       setSubmitting(false)
     }
@@ -1400,9 +1598,23 @@ function SimpleSaleModal({
               Stock from admin: {adminName}
             </p>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onImportTally ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="border-amber-500/50 text-amber-800 hover:bg-amber-50"
+                onClick={onImportTally}
+              >
+                <FileJson className="w-3.5 h-3.5 mr-1.5" />
+                Upload from Tally
+              </Button>
+            ) : null}
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
           <div className="p-5 space-y-5">
@@ -1812,32 +2024,29 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
     const serialMap = buildSerialMap()
     setSubmitting("dispatch")
     try {
-      let dispatchedById: string | null = null
-      try {
-        const { resolveInventoryCreatedByForWrite } = await import(
-          "@/inventory-sa/lib/resolve-inventory-created-by"
-        )
-        dispatchedById = await resolveInventoryCreatedByForWrite()
-      } catch {
-        dispatchedById = null
-      }
+      const { resolveInventoryCreatedByForWrite } = await import(
+        "@/inventory-sa/lib/resolve-inventory-created-by"
+      )
 
-      if (dispatchImage) {
-        const fd = new FormData()
-        fd.append("dispatch_image", dispatchImage)
-        fd.append("items", JSON.stringify(items))
-        if (Object.keys(serialMap).length > 0) {
-          fd.append("serial_numbers", JSON.stringify(serialMap))
+      const postDispatch = async (dispatchedById: string | null) => {
+        if (dispatchImage) {
+          const fd = new FormData()
+          fd.append("dispatch_image", dispatchImage)
+          fd.append("items", JSON.stringify(items))
+          if (Object.keys(serialMap).length > 0) {
+            fd.append("serial_numbers", JSON.stringify(serialMap))
+          }
+          if (dispatchedById) {
+            fd.append("dispatched_by_id", dispatchedById)
+            fd.append("dispatched_by", dispatchedById)
+            fd.append("dispatchedById", dispatchedById)
+            fd.append("dispatchedBy", dispatchedById)
+          }
+          return apiFetch(`/stock-requests/${request.id}/dispatch`, {
+            method: "POST",
+            body: fd,
+          })
         }
-        if (dispatchedById) {
-          fd.append("dispatched_by_id", dispatchedById)
-          fd.append("dispatched_by", dispatchedById)
-        }
-        await apiFetch(`/stock-requests/${request.id}/dispatch`, {
-          method: "POST",
-          body: fd,
-        })
-      } else {
         const body: Record<string, unknown> = { items }
         if (Object.keys(serialMap).length > 0) {
           body.serial_numbers = JSON.stringify(serialMap)
@@ -1845,19 +2054,45 @@ function ApprovalModal({ request, products, onClose, onSuccess, fetch: apiFetch 
         if (dispatchedById) {
           body.dispatched_by_id = dispatchedById
           body.dispatched_by = dispatchedById
+          body.dispatchedById = dispatchedById
+          body.dispatchedBy = dispatchedById
         }
-        await apiFetch(`/stock-requests/${request.id}/dispatch`, {
+        return apiFetch(`/stock-requests/${request.id}/dispatch`, {
           method: "POST",
           body: JSON.stringify(body),
         })
       }
+
+      let dispatchedById: string | null = null
+      try {
+        dispatchedById = await resolveInventoryCreatedByForWrite()
+      } catch {
+        dispatchedById = null
+      }
+
+      try {
+        await postDispatch(dispatchedById)
+      } catch (firstErr: any) {
+        const raw = String(firstErr?.message || firstErr?.details || "")
+        const isFk =
+          /dispatched_by_id_fkey|stock_requests_dispatched_by|INV_USER_MISSING/i.test(raw)
+        if (!isFk) throw firstErr
+
+        // Backend ignored body / JWT missing from users — retry with another inventory actor.
+        const fallbackId = await resolveInventoryCreatedByForWrite({
+          excludeIds: dispatchedById ? [dispatchedById] : [],
+        })
+        if (!fallbackId || fallbackId === dispatchedById) throw firstErr
+        await postDispatch(fallbackId)
+      }
+
       onSuccess()
       onClose()
     } catch (err: any) {
       const raw = String(err?.message || err?.details || "")
-      if (/dispatched_by_id_fkey|stock_requests_dispatched_by/i.test(raw)) {
+      if (/dispatched_by_id_fkey|stock_requests_dispatched_by|INV_USER_MISSING/i.test(raw)) {
         setError(
-          "Dispatch failed: your login user is not in inventory users (dispatched_by_id FK). Backend must upsert JWT user or honor dispatched_by_id — see HANDOFF §16 / BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts",
+          "Dispatch failed: login user is missing from inventory users. Backend must honor dispatched_by_id or upsert the JWT user (HANDOFF §16). Try again after an inventory admin exists, or ask backend to apply BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts.",
         )
       } else {
         setError(err?.message || "Failed to dispatch request")
@@ -2418,6 +2653,8 @@ export function SuperAdminInventoryPanel({
   const [loadingSales, setLoadingSales] = useState(false)
   const [salesSearch, setSalesSearch] = useState("")
   const [salesTypeFilter, setSalesTypeFilter] = useState<"all" | "B2B" | "B2C">("all")
+  const [expandedSaleId, setExpandedSaleId] = useState<string | null>(null)
+  const [loadingSaleDetailId, setLoadingSaleDetailId] = useState<string | null>(null)
 
   // ── Products ──────────────────────────────────────────────
   const [products, setProducts] = useState<IProduct[]>([])
@@ -2452,6 +2689,8 @@ export function SuperAdminInventoryPanel({
   const [showStockRequest, setShowStockRequest] = useState(false)
   const [showSerials, setShowSerials] = useState<IProduct | null>(null)
   const [showSale, setShowSale] = useState<"B2B" | "B2C" | null>(null)
+  const [showTallyImportModal, setShowTallyImportModal] = useState<"b2b" | "b2c" | null>(null)
+  const [salePrefill, setSalePrefill] = useState<TallyImportPrefill | null>(null)
   const [productModal, setProductModal] = useState<{ product: IProduct | null } | null>(null)
   const [approvalRequest, setApprovalRequest] = useState<IStockRequest | null>(null)
   const [showCreateUser, setShowCreateUser] = useState(false)
@@ -2606,13 +2845,74 @@ export function SuperAdminInventoryPanel({
     setLoadingSales(true)
     try {
       const data = await apiFetch<unknown>("/sales")
-      setSales(asArrayList<ISale>(data))
+      const list = asArrayList<ISale>(data).map((sale) => {
+        const amount = getSaleDisplayAmount(sale)
+        return {
+          ...sale,
+          total_amount: amount > 0 ? amount : Number(sale.total_amount || 0),
+          subtotal: sale.subtotal ?? amount,
+        }
+      })
+      setSales(list)
+
+      // List API often returns total_amount=0 without items — hydrate from detail.
+      const needDetail = list.filter((s) => getSaleDisplayAmount(s) <= 0).slice(0, 40)
+      if (needDetail.length > 0) {
+        const updates = await Promise.all(
+          needDetail.map(async (s) => {
+            try {
+              const full = await apiFetch<ISale>(`/sales/${s.id}`)
+              const merged = { ...s, ...full } as ISale
+              const amount = getSaleDisplayAmount(merged)
+              return {
+                id: s.id,
+                sale: {
+                  ...merged,
+                  total_amount: amount > 0 ? amount : Number(merged.total_amount || 0),
+                },
+              }
+            } catch {
+              return null
+            }
+          }),
+        )
+        const byId = new Map(updates.filter(Boolean).map((u) => [u!.id, u!.sale] as const))
+        if (byId.size > 0) {
+          setSales((prev) => prev.map((s) => byId.get(s.id) || s))
+        }
+      }
     } catch {
       setSales([])
     } finally {
       setLoadingSales(false)
     }
   }, [apiFetch])
+
+  const toggleSaleItems = async (sale: ISale) => {
+    if (expandedSaleId === sale.id) {
+      setExpandedSaleId(null)
+      return
+    }
+    setExpandedSaleId(sale.id)
+    if (sale.items && sale.items.length > 0 && getSaleDisplayAmount(sale) > 0) return
+    setLoadingSaleDetailId(sale.id)
+    try {
+      const full = await apiFetch<ISale>(`/sales/${sale.id}`)
+      const merged = { ...sale, ...full } as ISale
+      const amount = getSaleDisplayAmount(merged)
+      setSales((prev) =>
+        prev.map((s) =>
+          s.id === sale.id
+            ? { ...merged, total_amount: amount > 0 ? amount : Number(merged.total_amount || 0) }
+            : s,
+        ),
+      )
+    } catch {
+      // keep expand open even if detail fails
+    } finally {
+      setLoadingSaleDetailId(null)
+    }
+  }
 
 
   // ── Load Products ─────────────────────────────────────────
@@ -2807,7 +3107,7 @@ export function SuperAdminInventoryPanel({
   )
 
   const totalSalesAmount = useMemo(
-    () => sales.reduce((acc, s) => acc + Number(s.total_amount || 0), 0),
+    () => sales.reduce((acc, s) => acc + getSaleDisplayAmount(s), 0),
     [sales]
   )
 
@@ -3445,51 +3745,99 @@ export function SuperAdminInventoryPanel({
                     </thead>
                     <tbody>
                       {filteredApprovalSales.map((sale) => (
-                        <tr
-                          key={sale.id}
-                          className="border-b border-border/50 hover:bg-muted/30 transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            <p className="text-foreground font-medium">{sale.customer_name}</p>
-                            {sale.created_by_name && (
-                              <p className="text-xs font-medium text-foreground/70">by {sale.created_by_name}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
-                                sale.type === "B2B"
-                                  ? "bg-blue-100 text-blue-900 border border-blue-300"
-                                  : "bg-sky-100 text-sky-900 border border-sky-300"
-                              }`}
-                            >
-                              {sale.type}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-foreground font-medium">
-                            {fmtCurrency(sale.total_amount)}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">
-                            {fmtDate(sale.created_at)}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <Button
-                              size="sm"
-                              onClick={() => approveSale(sale)}
-                              disabled={approvingSaleId === sale.id}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-foreground text-xs"
-                            >
-                              {approvingSaleId === sale.id ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <>
-                                  <Check className="w-3.5 h-3.5 mr-1" />
-                                  Approve
-                                </>
+                        <Fragment key={sale.id}>
+                          <tr className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                            <td className="px-4 py-3">
+                              <p className="text-foreground font-medium">{sale.customer_name}</p>
+                              {sale.created_by_name && (
+                                <p className="text-xs font-medium text-foreground/70">by {sale.created_by_name}</p>
                               )}
-                            </Button>
-                          </td>
-                        </tr>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${
+                                  sale.type === "B2B"
+                                    ? "bg-blue-100 text-blue-900 border border-blue-300"
+                                    : "bg-sky-100 text-sky-900 border border-sky-300"
+                                }`}
+                              >
+                                {sale.type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-foreground font-medium">
+                              {fmtCurrency(getSaleDisplayAmount(sale))}
+                            </td>
+                            <td className="px-4 py-3 text-muted-foreground text-xs whitespace-nowrap">
+                              {fmtDate(sale.created_at)}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              <div className="inline-flex items-center gap-1.5">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 text-xs"
+                                  onClick={() => void toggleSaleItems(sale)}
+                                >
+                                  {loadingSaleDetailId === sale.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Eye className="w-3.5 h-3.5 mr-1" />
+                                      {expandedSaleId === sale.id ? "Hide" : "View items"}
+                                    </>
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => approveSale(sale)}
+                                  disabled={approvingSaleId === sale.id}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-foreground text-xs"
+                                >
+                                  {approvingSaleId === sale.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <>
+                                      <Check className="w-3.5 h-3.5 mr-1" />
+                                      Approve
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedSaleId === sale.id ? (
+                            <tr className="border-b border-border/50 bg-muted/20">
+                              <td colSpan={5} className="px-4 py-3">
+                                {(sale.items || []).length === 0 ? (
+                                  <p className="text-xs text-muted-foreground">No line items on this sale.</p>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {(sale.items || []).map((it, idx) => (
+                                      <div
+                                        key={`${sale.id}-item-${idx}`}
+                                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                                      >
+                                        <span className="text-foreground font-medium">
+                                          {it.product?.name || it.product_id}
+                                        </span>
+                                        <span className="text-muted-foreground">
+                                          Qty {fmtQty(it.quantity)} × {fmtCurrency(it.unit_price)} ={" "}
+                                          {fmtCurrency(
+                                            Number(it.subtotal) > 0
+                                              ? Number(it.subtotal)
+                                              : Number(it.quantity) *
+                                                  Number(it.unit_price) *
+                                                  (1 + Number(it.gst_rate || 0) / 100),
+                                          )}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -3524,6 +3872,7 @@ export function SuperAdminInventoryPanel({
             <Button
               onClick={() => {
                 if (!selectedAdminId) return alert("Select an admin first")
+                setSalePrefill(null)
                 setShowSale("B2B")
               }}
               className="bg-primary hover:bg-primary/90 text-primary-foreground text-sm"
@@ -3535,6 +3884,7 @@ export function SuperAdminInventoryPanel({
             <Button
               onClick={() => {
                 if (!selectedAdminId) return alert("Select an admin first")
+                setSalePrefill(null)
                 setShowSale("B2C")
               }}
               className="bg-sky-600 hover:bg-sky-700 text-white text-sm"
@@ -3542,6 +3892,32 @@ export function SuperAdminInventoryPanel({
             >
               <Plus className="w-4 h-4 mr-1.5" />
               New B2C Sale
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!selectedAdminId) return alert("Select an admin first")
+                setShowTallyImportModal("b2b")
+              }}
+              className="border-amber-500/60 text-amber-800 hover:bg-amber-50 text-sm"
+              disabled={!selectedAdminId}
+            >
+              <FileJson className="w-4 h-4 mr-1.5" />
+              Upload B2B JSON
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!selectedAdminId) return alert("Select an admin first")
+                setShowTallyImportModal("b2c")
+              }}
+              className="border-cyan-500/60 text-cyan-800 hover:bg-cyan-50 text-sm"
+              disabled={!selectedAdminId}
+            >
+              <FileJson className="w-4 h-4 mr-1.5" />
+              Upload B2C JSON
             </Button>
             <div className="ml-auto flex items-center gap-2">
               <div className="relative">
@@ -3623,48 +3999,93 @@ export function SuperAdminInventoryPanel({
                     </thead>
                     <tbody>
                       {filteredSales.map((sale) => (
-                        <tr
-                          key={sale.id}
-                          className="border-b border-border/50 hover:bg-muted/30 transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            <p className="text-foreground font-medium">{sale.customer_name}</p>
-                            {sale.customer_phone && (
-                              <p className="text-xs font-medium text-foreground/70">{sale.customer_phone}</p>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`inline-block text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                                sale.type === "B2B"
-                                  ? "bg-blue-100 text-blue-900 border border-blue-300"
-                                  : "bg-sky-100 text-sky-900 border border-sky-300"
-                              }`}
-                            >
-                              {sale.type}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-right text-foreground font-semibold">
-                            {fmtCurrency(sale.total_amount)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span
-                              className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
-                                sale.payment_status === "completed"
-                                  ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
-                                  : "bg-amber-100 text-amber-900 border border-amber-300"
-                              }`}
-                            >
-                              {sale.payment_status === "completed" ? (
-                                <CheckCircle className="w-3 h-3" />
-                              ) : null}
-                              {sale.payment_status}
-                            </span>
-                          </td>
-                          <td className="px-4 py-3 text-foreground/80 text-xs font-medium whitespace-nowrap">
-                            {fmtDate(sale.created_at)}
-                          </td>
-                        </tr>
+                        <Fragment key={sale.id}>
+                          <tr className="border-b border-border/50 hover:bg-muted/30 transition-colors">
+                            <td className="px-4 py-3">
+                              <p className="text-foreground font-medium">{sale.customer_name}</p>
+                              {sale.customer_phone && (
+                                <p className="text-xs font-medium text-foreground/70">{sale.customer_phone}</p>
+                              )}
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-block text-xs px-2.5 py-0.5 rounded-full font-semibold ${
+                                  sale.type === "B2B"
+                                    ? "bg-blue-100 text-blue-900 border border-blue-300"
+                                    : "bg-sky-100 text-sky-900 border border-sky-300"
+                                }`}
+                              >
+                                {sale.type}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-right text-foreground font-semibold">
+                              <div className="flex flex-col items-end gap-1">
+                                <span>{fmtCurrency(getSaleDisplayAmount(sale))}</span>
+                                <button
+                                  type="button"
+                                  className="text-[11px] text-primary hover:underline inline-flex items-center gap-1"
+                                  onClick={() => void toggleSaleItems(sale)}
+                                >
+                                  {loadingSaleDetailId === sale.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                  ) : (
+                                    <Eye className="w-3 h-3" />
+                                  )}
+                                  {expandedSaleId === sale.id ? "Hide items" : "View items"}
+                                </button>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
+                                  sale.payment_status === "completed"
+                                    ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
+                                    : "bg-amber-100 text-amber-900 border border-amber-300"
+                                }`}
+                              >
+                                {sale.payment_status === "completed" ? (
+                                  <CheckCircle className="w-3 h-3" />
+                                ) : null}
+                                {sale.payment_status}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-foreground/80 text-xs font-medium whitespace-nowrap">
+                              {fmtDate(sale.created_at)}
+                            </td>
+                          </tr>
+                          {expandedSaleId === sale.id ? (
+                            <tr className="border-b border-border/50 bg-muted/20">
+                              <td colSpan={5} className="px-4 py-3">
+                                {(sale.items || []).length === 0 ? (
+                                  <p className="text-xs text-muted-foreground">No line items on this sale.</p>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    {(sale.items || []).map((it, idx) => (
+                                      <div
+                                        key={`${sale.id}-hist-item-${idx}`}
+                                        className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                                      >
+                                        <span className="text-foreground font-medium">
+                                          {it.product?.name || it.product_id}
+                                        </span>
+                                        <span className="text-muted-foreground">
+                                          Qty {fmtQty(it.quantity)} × {fmtCurrency(it.unit_price)} ={" "}
+                                          {fmtCurrency(
+                                            Number(it.subtotal) > 0
+                                              ? Number(it.subtotal)
+                                              : Number(it.quantity) *
+                                                  Number(it.unit_price) *
+                                                  (1 + Number(it.gst_rate || 0) / 100),
+                                          )}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          ) : null}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
@@ -4223,14 +4644,44 @@ export function SuperAdminInventoryPanel({
           fetch={apiFetch}
         />
       )}
+      {showTallyImportModal && (
+        <TallyJsonImportModal
+          forcedSaleType={showTallyImportModal}
+          onClose={() => setShowTallyImportModal(null)}
+          availableProductIds={
+            new Set(
+              adminInventory
+                .map((row) => row.product_id || row.product?.id || "")
+                .filter(Boolean),
+            )
+          }
+          onContinue={(prefill, type) => {
+            setShowTallyImportModal(null)
+            setSalePrefill(prefill)
+            setShowSale(type === "b2b" ? "B2B" : "B2C")
+          }}
+        />
+      )}
       {showSale && selectedAdminId && selectedAdmin && (
         <SimpleSaleModal
           adminId={selectedAdminId}
           adminName={selectedAdmin.name || selectedAdmin.username}
           saleType={showSale}
           adminInventory={adminInventory}
-          onClose={() => setShowSale(null)}
-          onSuccess={() => { loadSales(); loadInventory() }}
+          prefill={salePrefill}
+          onImportTally={() => {
+            setShowSale(null)
+            setShowTallyImportModal(showSale === "B2B" ? "b2b" : "b2c")
+          }}
+          onClose={() => {
+            setShowSale(null)
+            setSalePrefill(null)
+          }}
+          onSuccess={() => {
+            setSalePrefill(null)
+            loadSales()
+            loadInventory()
+          }}
           fetch={apiFetch}
         />
       )}

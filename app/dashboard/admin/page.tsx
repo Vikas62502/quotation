@@ -217,6 +217,21 @@ function getMeteringAssignedPersonName(q: Quotation | Record<string, unknown>): 
   ).trim()
 }
 
+function meteringStageBadgeTone(stage: "processing" | "approved" | "meter_install" | "mco" | null): string {
+  if (stage === "processing") return "border-amber-300/80 bg-amber-50 text-amber-800"
+  if (stage === "approved") return "border-sky-300/80 bg-sky-50 text-sky-800"
+  if (stage === "meter_install") return "border-violet-300/80 bg-violet-50 text-violet-800"
+  if (stage === "mco") return "border-emerald-300/80 bg-emerald-50 text-emerald-800"
+  return "border-border bg-muted/40 text-muted-foreground"
+}
+
+function installerStageBadgeTone(status: string): string {
+  if (status === "approved") return "border-green-300/80 bg-green-50 text-green-800"
+  if (status === "partial") return "border-violet-300/80 bg-violet-50 text-violet-800"
+  if (status === "inprogress") return "border-sky-300/80 bg-sky-50 text-sky-800"
+  return "border-amber-300/80 bg-amber-50 text-amber-800"
+}
+
 /** Prefer file-login payment type, then approval-time type / payment mode. */
 function getQuotationPaymentTypeRaw(q: Quotation | Record<string, unknown>): string {
   const r = q as Record<string, unknown>
@@ -4170,7 +4185,7 @@ export default function AdminPanelPage() {
 
   /**
    * Metering → WCC Pending:
-   * 1) Entry: Installation → Approved, not yet Send to Metering — until WCC saved → Meter Pending.
+   * 1) Entry: Installation → Approved, not yet in metering pipeline — until WCC saved → Meter Installation Pending.
    * 2) After Meter in Discom: server flag `meteringWccAfterDiscom`, then → Meter Installation Pending.
    * Send to Metering (`pending_metering`) with no Discom action → Meter Pending only.
    */
@@ -4401,7 +4416,7 @@ export default function AdminPanelPage() {
                 bankLocation: draft.bankLocation.trim(),
                 bankDocumentNames: docs.map((d) => d.name),
                 assignedPersonName: draft.assignedPersonName.trim() || (q as any).assignedPersonName,
-                remarks: draft.remarks.trim() || q.remarks,
+                remarks: draft.remarks.trim() || (q as any).remarks,
               } as Quotation)
             : q,
         ),
@@ -4648,7 +4663,7 @@ export default function AdminPanelPage() {
                         meter_document_name: localDoc.name,
                       }
                     : {}),
-                } as Quotation)
+                } as unknown as Quotation)
               : q,
           ),
         )
@@ -4685,7 +4700,7 @@ export default function AdminPanelPage() {
             : localDoc
               ? { meterDocumentName: localDoc.name, meter_document_name: localDoc.name }
               : {}),
-        } as Quotation
+        } as unknown as Quotation
         await setAdminMeteringStage(patched, "approved")
       } else {
         void loadData(++adminLoadRequestRef.current)
@@ -5100,7 +5115,6 @@ export default function AdminPanelPage() {
       })
       return
     }
-    const fromMeterInDiscom = isAdminMeteringPostDiscomWcc(quotation)
     try {
       setAdminWccSavingId(quotation.id)
       if (useApi) {
@@ -5113,58 +5127,24 @@ export default function AdminPanelPage() {
         try {
           await api.admin.quotations.updateOperationalStatus(
             quotation.id,
-            fromMeterInDiscom ? "meter_installation_pending" : "pending_metering",
+            "meter_installation_pending",
           )
         } catch {
           // Details saved; stage transition may be optional if already in metering.
         }
-      }
-      if (fromMeterInDiscom) {
-        applyMeteringWccAfterDiscomLocal(quotation.id, false)
-        applyAdminMeteringStageLocal(quotation.id, "meter_install")
-        setQuotations((prev) =>
-          prev.map((q) =>
-            q.id === quotation.id
-              ? ({
-                  ...withMeteringWccAfterDiscomFlag(q, false),
-                  discomName,
-                  discom_name: discomName,
-                  remarks,
-                  authorizedRepresentative: assignedPersonName,
-                  authorized_representative: assignedPersonName,
-                  assignedPersonName,
-                  assigned_person_name: assignedPersonName,
-                  discomLocation: discomLocation || undefined,
-                  discom_location: discomLocation || undefined,
-                } as Quotation)
-              : q,
-          ),
-        )
-        setAdminWccDraftByQuotation((prev) => {
-          const next = { ...prev }
-          delete next[quotation.id]
-          return next
-        })
         try {
-          await loadData()
+          await api.admin.quotations.setMeteringWccAfterDiscom(quotation.id, false)
         } catch {
-          // local optimistic update already applied
+          // Flag clear is best-effort when route is missing.
         }
-        applyAdminMeteringStageLocal(quotation.id, "meter_install")
-        toast({
-          title: "WCC details saved",
-          description: "Moved to Meter Installation Pending.",
-        })
-        setAdminWccModalQuotationId(null)
-        setOperationalTab("metering")
-        setOperationalProgressTab("meter_install")
-        return
       }
+      applyMeteringWccAfterDiscomLocal(quotation.id, false)
+      applyAdminMeteringStageLocal(quotation.id, "meter_install")
       setQuotations((prev) =>
         prev.map((q) =>
           q.id === quotation.id
             ? ({
-                ...q,
+                ...withMeteringWccAfterDiscomFlag(q, false),
                 discomName,
                 discom_name: discomName,
                 remarks,
@@ -5174,10 +5154,10 @@ export default function AdminPanelPage() {
                 assigned_person_name: assignedPersonName,
                 discomLocation: discomLocation || undefined,
                 discom_location: discomLocation || undefined,
-                installationStatus: "pending_metering",
-                installation_status: "pending_metering",
-                meteringStatus: "pending_metering",
-                metering_status: "pending_metering",
+                installationStatus: "meter_installation_pending",
+                installation_status: "meter_installation_pending",
+                meteringStatus: "meter_installation_pending",
+                metering_status: "meter_installation_pending",
               } as Quotation)
             : q,
         ),
@@ -5192,13 +5172,18 @@ export default function AdminPanelPage() {
       } catch {
         // local optimistic update already applied
       }
+      applyAdminMeteringStageLocal(quotation.id, "meter_install")
+      applyMeteringWccAfterDiscomLocal(quotation.id, false)
       toast({
         title: "WCC details saved",
-        description: "Moved out of WCC Pending into Meter Pending.",
+        description: "Moved to Meter Installation Pending.",
       })
       setAdminWccModalQuotationId(null)
+      setAdminInstallQuotation(null)
+      setAdminInstallMediaByField({})
+      setAdminInstallPiMedia([])
       setOperationalTab("metering")
-      setOperationalProgressTab("pending")
+      setOperationalProgressTab("meter_install")
     } catch (error) {
       toast({
         title: "Save failed",
@@ -7613,8 +7598,8 @@ export default function AdminPanelPage() {
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                           <p>No WCC pending records</p>
                           <p className="text-xs mt-1">
-                            Includes Installation → Approved (enter Meter Pending after save), and rows sent from
-                            Meter in Discom when installation is approved (then Meter Installation Pending).
+                            Installation-approved jobs and rows sent from Meter in Discom appear here. Saving WCC
+                            moves them to Meter Installation Pending.
                           </p>
                       </div>
                     ) : (
@@ -8048,6 +8033,225 @@ export default function AdminPanelPage() {
                       )
                     }
 
+                    if (operationalProgressTab === "mco") {
+                      return activeQuotationList.length === 0 ? (
+                        <div className="text-center py-12 text-muted-foreground">
+                          <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                          <p>No Final Step records</p>
+                          <p className="text-xs mt-1">
+                            Send rows here from Meter Installation Pending with To Final Step. Complete
+                            installation images, metering steps, and dealer details show on each card.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                          {visibleQuotationList.map((quotation) => {
+                            const qAny = quotation as unknown as Record<string, unknown>
+                            const nestedDealer = qAny.dealer as Record<string, unknown> | null | undefined
+                            const fromList = dealers.find((d) => d.id === quotation.dealerId)
+                            const dealerName =
+                              (nestedDealer && typeof nestedDealer === "object"
+                                ? formatPersonName(
+                                    String(nestedDealer.firstName || ""),
+                                    String(nestedDealer.lastName || ""),
+                                    String(nestedDealer.username || "").trim() || "Dealer",
+                                  )
+                                : "") ||
+                              (fromList
+                                ? formatPersonName(fromList.firstName, fromList.lastName, "Dealer")
+                                : "Unknown Dealer")
+                            const dealerMobile =
+                              (nestedDealer && typeof nestedDealer === "object"
+                                ? String(nestedDealer.mobile || nestedDealer.phone || "").trim()
+                                : "") ||
+                              fromList?.mobile ||
+                              "—"
+                            const discomName =
+                              String(qAny.discomName || qAny.discom_name || "").trim() || "—"
+                            const assignedPerson =
+                              getMeteringAssignedPersonName(qAny) ||
+                              getAdminMeterInstallDraft(quotation).assignedPersonName.trim() ||
+                              "—"
+                            const remarks =
+                              String(qAny.remarks || "").trim() ||
+                              getAdminMeterInstallDraft(quotation).remarks.trim() ||
+                              "—"
+                            const meterSlot = resolveMeterInstallPhotoSlot(quotation)
+                            const plantSlot = resolvePlantLivePhotoSlot(quotation)
+                            const allImages: string[] = []
+                            addDedupedUrl(allImages, 24, meterSlot.url)
+                            addDedupedUrl(allImages, 24, plantSlot.url)
+                            addDedupedUrl(
+                              allImages,
+                              24,
+                              String(
+                                qAny.meterDocumentPublicUrl ||
+                                  qAny.meter_document_public_url ||
+                                  qAny.meterDocumentUrl ||
+                                  qAny.meter_document_url ||
+                                  "",
+                              ),
+                            )
+                            addDedupedUrl(
+                              allImages,
+                              24,
+                              String(
+                                qAny.workCompleteReportImagePublicUrl ||
+                                  qAny.work_complete_report_image_public_url ||
+                                  qAny.workCompleteReportImageUrl ||
+                                  qAny.work_complete_report_image_url ||
+                                  qAny.workCompleteReportImage ||
+                                  "",
+                              ),
+                            )
+                            addDedupedUrl(
+                              allImages,
+                              24,
+                              String(
+                                qAny.meterInstalledPhotoPublicUrl ||
+                                  qAny.meter_installed_photo_public_url ||
+                                  qAny.meterInstalledPhotoUrl ||
+                                  qAny.meter_installed_photo_url ||
+                                  qAny.meterInstalledPhoto ||
+                                  "",
+                              ),
+                            )
+                            addDedupedUrl(
+                              allImages,
+                              24,
+                              String(
+                                qAny.completeDcrReportImagePublicUrl ||
+                                  qAny.complete_dcr_report_image_public_url ||
+                                  qAny.completeDcrReportImageUrl ||
+                                  qAny.complete_dcr_report_image_url ||
+                                  qAny.completeDcrReportImage ||
+                                  "",
+                              ),
+                            )
+                            const meteringSteps = [
+                              "Meter Pending",
+                              "Meter in Discom",
+                              "WCC Pending",
+                              "Meter Installation",
+                              "Final Step",
+                            ]
+                            return (
+                              <div
+                                key={quotation.id}
+                                className="rounded-xl border border-border/70 bg-card p-4 shadow-sm space-y-3"
+                              >
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <p className="text-sm font-semibold leading-tight truncate">
+                                        {formatPersonName(
+                                          quotation.customer.firstName,
+                                          quotation.customer.lastName,
+                                          "Unknown",
+                                        )}
+                                      </p>
+                                      <Badge
+                                        variant="outline"
+                                        className="text-[10px] border-emerald-300/80 bg-emerald-50 text-emerald-800"
+                                      >
+                                        Final Step
+                                      </Badge>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground truncate">
+                                      {quotation.customer.mobile || "No mobile"} • {quotation.id}
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                      Amount {getMeteringAmountDisplay(quotation).primaryLabel}
+                                      <span className="mx-1.5 text-border">|</span>
+                                      Discom {discomName}
+                                      <span className="mx-1.5 text-border">|</span>
+                                      Assigned {assignedPerson}
+                                    </p>
+                                    {remarks !== "—" ? (
+                                      <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-2">
+                                        Remarks: {remarks}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                  <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 min-w-[10rem] shrink-0">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-primary/90">
+                                      Dealer
+                                    </p>
+                                    <p className="text-xs font-medium leading-snug">{dealerName}</p>
+                                    <p className="text-[11px] text-muted-foreground">{dealerMobile}</p>
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                                  {meteringSteps.map((label, index) => (
+                                    <div
+                                      key={label}
+                                      className="rounded-md border border-emerald-200/80 bg-emerald-50/80 px-2 py-1.5 flex items-center gap-1.5"
+                                    >
+                                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                      <div className="min-w-0">
+                                        <p className="text-[9px] uppercase tracking-wide text-emerald-700/80">
+                                          Step {index + 1}
+                                        </p>
+                                        <p className="text-[11px] font-medium text-emerald-900 truncate">
+                                          {label}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+                                    Metering flow images ({allImages.length})
+                                  </p>
+                                  {allImages.length === 0 ? (
+                                    <p className="text-xs text-muted-foreground">
+                                      No metering flow images available on this quotation yet.
+                                    </p>
+                                  ) : (
+                                    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+                                      {allImages.map((url, idx) => (
+                                        <div
+                                          key={`${quotation.id}-img-${idx}`}
+                                          className="relative aspect-square overflow-hidden rounded-md border border-border/70 bg-muted/20"
+                                        >
+                                          <StoredMediaPreview
+                                            rawUrl={url}
+                                            quotationId={quotation.id}
+                                            fileName={`final-step-${idx + 1}`}
+                                            className="absolute inset-0 h-full w-full object-cover"
+                                          />
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="flex justify-end">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={() => openAdminMeteringDetails(quotation)}
+                                  >
+                                    Details
+                                  </Button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                          <IncrementalListSentinel
+                            sentinelRef={quotationListSentinelRef}
+                            visibleCount={visibleQuotationCount}
+                            totalCount={activeQuotationListTotal}
+                            hasMore={hasMoreQuotationList}
+                            onLoadMore={loadMoreQuotationList}
+                          />
+                        </div>
+                      )
+                    }
+
                     return activeQuotationList.length === 0 ? (
                       <div className="text-center py-12 text-muted-foreground">
                         <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -8056,20 +8260,13 @@ export default function AdminPanelPage() {
                             ? "Loading metering records..."
                             : filterInstallOverdue !== "all"
                             ? "No metering records match this overdue filter"
-                            : operationalProgressTab === "mco"
-                              ? "No Final Step records"
-                              : operationalProgressTab === "pending"
+                            : operationalProgressTab === "pending"
                                 ? "No Meter Pending records"
                                 : "No metering records found"}
                         </p>
                         {operationalProgressTab === "pending" && filterInstallOverdue === "all" ? (
                           <p className="text-xs mt-1">
                             Rows appear here after Send to Metering until you move them to Discom or complete WCC.
-                          </p>
-                        ) : null}
-                        {operationalProgressTab === "mco" && filterInstallOverdue === "all" ? (
-                          <p className="text-xs mt-1">
-                            Send rows here from Meter Installation Pending with To Final Step.
                           </p>
                         ) : null}
                         {filterInstallOverdue !== "all" ? (
@@ -8099,11 +8296,9 @@ export default function AdminPanelPage() {
                                 <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-                                {operationalProgressTab !== "mco" && (
-                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
-                                    Actions
-                                  </th>
-                                )}
+                                <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                  Actions
+                                </th>
                               </tr>
                             </thead>
                             <tbody>
@@ -8239,13 +8434,12 @@ export default function AdminPanelPage() {
                                         variant="outline"
                                         className={cn(
                                           "text-[10px] capitalize font-medium",
-                                          meteringStageBadgeClass(meteringStage),
+                                          meteringStageBadgeTone(meteringStage),
                                         )}
                                       >
                                         {String(statusLabel).replace(/_/g, " ")}
                                       </Badge>
                                     </td>
-                                    {operationalProgressTab !== "mco" && (
                                     <td
                                       className={cn(
                                         "px-3 py-2.5 align-middle text-right sticky right-0 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
@@ -8322,7 +8516,6 @@ export default function AdminPanelPage() {
                                     )}
                                   </div>
                                     </td>
-                                    )}
                                   </tr>
                                 )
                               })}
@@ -8900,7 +9093,7 @@ export default function AdminPanelPage() {
                                           variant="outline"
                                           className={cn(
                                             "text-[10px] capitalize font-medium",
-                                            installerBadgeClass(installerStatus),
+                                            installerStageBadgeTone(installerStatus),
                                           )}
                                         >
                                           {statusLabel}
@@ -13463,7 +13656,9 @@ export default function AdminPanelPage() {
                       disabled={adminWccSavingId === quotation.id}
                       onClick={() => void saveAdminWccMeteringDetails(quotation)}
                     >
-                      {adminWccSavingId === quotation.id ? "Saving..." : "Save & move to Meter Pending"}
+                      {adminWccSavingId === quotation.id
+                        ? "Saving..."
+                        : "Save & move to Meter Installation Pending"}
                     </Button>
                   </div>
                 </>
