@@ -34,6 +34,8 @@ interface Props {
   onBack: () => void
   onEditCustomer?: () => void
   onEditProducts?: () => void
+  /** When set, updates this quotation's system and stores previous for revert. */
+  reviseQuotationId?: string
 }
 
 // Company Information
@@ -141,7 +143,14 @@ const getSystemPrice = (products: ProductSelection): number => {
   return products.systemPrice || 0
 }
 
-export function QuotationConfirmation({ customer, products, onBack, onEditCustomer, onEditProducts }: Props) {
+export function QuotationConfirmation({
+  customer,
+  products,
+  onBack,
+  onEditCustomer,
+  onEditProducts,
+  reviseQuotationId,
+}: Props) {
   const router = useRouter()
   const { saveQuotation, clearCurrent } = useQuotation()
   const { dealer: authDealer } = useAuth()
@@ -467,9 +476,20 @@ export function QuotationConfirmation({ customer, products, onBack, onEditCustom
         subtotal: finalSubtotal,
         subtotalType: typeof finalSubtotal,
         isFinite: Number.isFinite(finalSubtotal),
-        isValid: finalSubtotal > 0
+        isValid: finalSubtotal > 0,
+        reviseQuotationId: reviseQuotationId || null,
       })
-      const quotation = await saveQuotation(sanitizedDiscountAmount, finalSubtotal)
+      // Revise = create a NEW quotation for the same customer; old quotation stays in the list.
+      const quotation = await saveQuotation(
+        sanitizedDiscountAmount,
+        finalSubtotal,
+        reviseQuotationId
+          ? {
+              allowAdditionalForCustomer: true,
+              sourceQuotationId: reviseQuotationId,
+            }
+          : undefined,
+      )
       setQuotationId(quotation.id)
       setSavedDateSource(mergeQuotationTimestampsFromApi(quotation, quotation))
 
@@ -774,8 +794,22 @@ const getStructureDetails = (products: ProductSelection) => {
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.mobile}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground">{customer.email}</p>
                 <p className="text-xs sm:text-sm text-muted-foreground mt-2">
-                  {customer.address?.street || ""}, {customer.address?.city || ""}, {customer.address?.state || ""} -{" "}
-                  {customer.address?.pincode || ""}
+                  {(() => {
+                    const street = customer.address?.street?.trim() || ""
+                    const city = customer.address?.city?.trim() || ""
+                    const state = customer.address?.state?.trim() || ""
+                    const pincode = customer.address?.pincode?.trim() || ""
+                    const line = [street, city, state].filter(Boolean).join(", ")
+                    if (!line && !pincode) {
+                      return <span className="text-muted-foreground">Address not available</span>
+                    }
+                    return (
+                      <>
+                        {line}
+                        {pincode ? `${line ? " - " : ""}${pincode}` : ""}
+                      </>
+                    )
+                  })()}
                 </p>
               </div>
             </div>
@@ -1059,10 +1093,13 @@ const getStructureDetails = (products: ProductSelection) => {
               <AlertCircle className="w-5 h-5 text-blue-600" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-blue-800 mb-1">Review Before Confirming</p>
+              <p className="font-semibold text-blue-800 mb-1">
+                {reviseQuotationId ? "Review New System Before Saving" : "Review Before Confirming"}
+              </p>
               <p className="text-sm text-blue-700">
-                Please review all the details above. You can edit customer information or product selection using the Edit buttons. 
-                Once you confirm and generate the quotation, it will be saved to your quotations list.
+                {reviseQuotationId
+                  ? "Customer stays the same. Saving creates a NEW quotation; the previous one (e.g. Adani) remains in your quotations list so you can open or use it again."
+                  : "Please review all the details above. You can edit customer information or product selection using the Edit buttons. Once you confirm and generate the quotation, it will be saved to your quotations list."}
               </p>
             </div>
           </div>
@@ -1084,12 +1121,14 @@ const getStructureDetails = (products: ProductSelection) => {
                 {isGenerating ? (
                   <>
                     <div className="w-4 h-4 mr-2 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Generating...
+                    {reviseQuotationId ? "Saving..." : "Generating..."}
                   </>
                 ) : (
                   <>
                     <Check className="w-4 h-4 mr-2" />
-                    Confirm & Generate Quotation
+                    {reviseQuotationId
+                      ? "Save New System Quotation"
+                      : "Confirm & Generate Quotation"}
                   </>
                 )}
               </Button>
@@ -1113,7 +1152,11 @@ const getStructureDetails = (products: ProductSelection) => {
               <Check className="w-6 h-6 text-green-600" />
             </div>
             <div className="flex-1">
-              <p className="font-semibold text-green-800">Quotation Generated Successfully!</p>
+              <p className="font-semibold text-green-800">
+                {reviseQuotationId
+                  ? "New quotation saved — previous quotation kept!"
+                  : "Quotation Generated Successfully!"}
+              </p>
               <p className="text-sm text-green-600">Quotation ID: {quotationId}</p>
               <p className="text-sm text-green-700 mt-1">Redirecting to quotations page... You can download the PDF from there.</p>
             </div>

@@ -16,9 +16,11 @@ import { indianStates } from "@/lib/quotation-data"
 interface Props {
   onSubmit: (customer: Customer) => void
   initialData?: Customer
+  /** When true, customer fields are read-only (revise existing quotation). */
+  locked?: boolean
 }
 
-export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
+export function CustomerDetailsForm({ onSubmit, initialData, locked = false }: Props) {
   const normalizeInitialCustomer = (data?: Customer): Customer => {
     if (!data) {
       return {
@@ -102,19 +104,21 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
       return
     }
 
-    if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
-      setError("Please enter a valid email address")
-      return
-    }
+    if (!locked) {
+      if (formData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+        setError("Please enter a valid email address")
+        return
+      }
 
-    if (!formData.address.street || !formData.address.city || !formData.address.state || !formData.address.pincode) {
-      setError("Please fill in complete address")
-      return
-    }
+      if (!formData.address.street || !formData.address.city || !formData.address.state || !formData.address.pincode) {
+        setError("Please fill in complete address")
+        return
+      }
 
-    if (!/^\d{6}$/.test(formData.address.pincode)) {
-      setError("Please enter a valid 6-digit pincode")
-      return
+      if (!/^\d{6}$/.test(formData.address.pincode)) {
+        setError("Please enter a valid 6-digit pincode")
+        return
+      }
     }
 
     onSubmit({
@@ -137,7 +141,11 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
     <Card>
       <CardHeader>
         <CardTitle className="text-lg sm:text-xl">Customer Details</CardTitle>
-        <CardDescription className="text-sm">Enter the customer information for the quotation</CardDescription>
+        <CardDescription className="text-sm">
+          {locked
+            ? "Customer is locked for this revise — only system selection will change"
+            : "Enter the customer information for the quotation"}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
@@ -155,6 +163,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                 value={formData.firstName}
                 onChange={(e) => updateFormData("firstName", e.target.value)}
                 placeholder="Enter first name"
+                disabled={locked}
+                readOnly={locked}
               />
             </div>
             <div>
@@ -164,6 +174,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                 value={formData.lastName}
                 onChange={(e) => updateFormData("lastName", e.target.value)}
                 placeholder="Enter last name"
+                disabled={locked}
+                readOnly={locked}
               />
             </div>
           </div>
@@ -178,6 +190,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                 onChange={(e) => updateFormData("mobile", e.target.value)}
                 placeholder="10-digit mobile number"
                 maxLength={10}
+                disabled={locked}
+                readOnly={locked}
               />
             </div>
             <div>
@@ -188,6 +202,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                 value={formData.email}
                 onChange={(e) => updateFormData("email", e.target.value)}
                 placeholder="Enter email address (optional)"
+                disabled={locked}
+                readOnly={locked}
               />
             </div>
           </div>
@@ -202,6 +218,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                   value={formData.address.street}
                   onChange={(e) => updateFormData("address.street", e.target.value)}
                   placeholder="Enter street address"
+                  disabled={locked}
+                  readOnly={locked}
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -212,11 +230,17 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                     value={formData.address.city}
                     onChange={(e) => updateFormData("address.city", e.target.value)}
                     placeholder="Enter city"
+                    disabled={locked}
+                    readOnly={locked}
                   />
                 </div>
                 <div>
                   <Label htmlFor="state">State *</Label>
-                  <Select value={formData.address.state} onValueChange={(v) => updateFormData("address.state", v)}>
+                  <Select
+                    value={formData.address.state}
+                    onValueChange={(v) => updateFormData("address.state", v)}
+                    disabled={locked}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder="Select state" />
                     </SelectTrigger>
@@ -237,6 +261,8 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
                     onChange={(e) => updateFormData("address.pincode", e.target.value)}
                     placeholder="6-digit pincode"
                     maxLength={6}
+                    disabled={locked}
+                    readOnly={locked}
                   />
                 </div>
               </div>
@@ -251,12 +277,14 @@ export function CustomerDetailsForm({ onSubmit, initialData }: Props) {
               onChange={(e) => updateFormData("remarks", e.target.value)}
               placeholder="Calling notes, customer preferences, etc."
               rows={3}
+              disabled={locked}
+              readOnly={locked}
             />
           </div>
 
           <div className="flex justify-end">
             <Button type="submit" className="w-full sm:w-auto h-11">
-              Continue to Product Selection
+              {locked ? "Continue to System Selection" : "Continue to Product Selection"}
               <ArrowRight className="w-4 h-4 ml-2" />
             </Button>
           </div>

@@ -15,7 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin, CreditCard } from "lucide-react"
+import { Download, X, User, Phone, Mail, Home, Calendar, FileText, IndianRupee, Edit, Save, Users, MapPin, CreditCard, Undo2 } from "lucide-react"
 import { savePdfForDevice } from "@/lib/mobile-pdf"
 import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
 import { formatPersonName } from "@/lib/name-display"
@@ -53,6 +53,13 @@ import {
 } from "@/lib/quotation-api-payload"
 import { writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
 import { getQuotationSystemKwFromProducts, getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
+import {
+  buildSystemSnapshotFromQuotation,
+  hasSystemHistory,
+  peekSystemHistory,
+  pushSystemHistory,
+  swapSystemHistory,
+} from "@/lib/quotation-system-history"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -193,6 +200,9 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
   const [isSavingPricing, setIsSavingPricing] = useState(false)
   const [systemConfigEditDialogOpen, setSystemConfigEditDialogOpen] = useState(false)
   const [isSavingSystemConfig, setIsSavingSystemConfig] = useState(false)
+  const [isRevertingSystem, setIsRevertingSystem] = useState(false)
+  const [canRevertSystem, setCanRevertSystem] = useState(false)
+  const [previousSystemLabel, setPreviousSystemLabel] = useState<string>("")
   const [paymentMode, setPaymentMode] = useState<string>("")
   const [isSavingPaymentMode, setIsSavingPaymentMode] = useState(false)
 
@@ -214,6 +224,22 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
     { value: "credit_card", label: "Credit Card" },
     { value: "debit_card", label: "Debit Card" },
   ]
+
+  const refreshSystemHistoryUi = useCallback((quotationId?: string) => {
+    if (!quotationId) {
+      setCanRevertSystem(false)
+      setPreviousSystemLabel("")
+      return
+    }
+    const peek = peekSystemHistory(quotationId)
+    setCanRevertSystem(Boolean(peek) || hasSystemHistory(quotationId))
+    setPreviousSystemLabel(peek?.label || "")
+  }, [])
+
+  useEffect(() => {
+    if (open && quotation?.id) refreshSystemHistoryUi(quotation.id)
+    else refreshSystemHistoryUi(undefined)
+  }, [open, quotation?.id, refreshSystemHistoryUi])
 
   // Fetch full quotation details when dialog opens
   // This API call (GET /api/quotations/{quotationId}) is made for both admin and dealer views
@@ -961,15 +987,131 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <FileText className="w-5 h-5 text-primary" />
                     System Configuration
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setSystemConfigEditDialogOpen(true)}
-                    className="h-8"
-                  >
-                    <Edit className="w-3 h-3 mr-1" />
-                    Edit
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {canRevertSystem ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={isRevertingSystem}
+                        onClick={async () => {
+                          if (!displayQuotation?.id) return
+                          const previousLabel = previousSystemLabel || "previous system"
+                          if (
+                            !window.confirm(
+                              `Revert system to ${previousLabel}? Current configuration will be kept so you can switch again.`,
+                            )
+                          ) {
+                            return
+                          }
+                          setIsRevertingSystem(true)
+                          try {
+                            const currentSnap = buildSystemSnapshotFromQuotation(displayQuotation)
+                            const previous = swapSystemHistory(displayQuotation.id, currentSnap)
+                            if (!previous) {
+                              toast({
+                                title: "Nothing to revert",
+                                description: "No previous system configuration is stored for this quotation.",
+                              })
+                              return
+                            }
+                            const restoredProducts = restoreDcrPackageDisplayForForm({
+                              ...previous.products,
+                              ...buildPdfDisplayFlagsPayload(previous.products),
+                            })
+                            if (useApi) {
+                              await persistQuotationProducts(
+                                (payload) =>
+                                  api.quotations.updateProducts(displayQuotation.id, payload),
+                                previous.products,
+                                { quotationId: displayQuotation.id },
+                              )
+                              const pricingResponse = await api.quotations.updatePricing(
+                                displayQuotation.id,
+                                {
+                                  subtotal: previous.pricing.subtotal,
+                                  stateSubsidy: previous.pricing.stateSubsidy,
+                                  centralSubsidy: previous.pricing.centralSubsidy,
+                                  discountAmount: previous.pricing.discountAmount,
+                                  totalAmount: previous.pricing.finalAmount,
+                                  finalAmount: previous.pricing.finalAmount,
+                                  ...(previous.pricing.pdfCommercialSet ||
+                                  isPdfCommercialSet(previous.products)
+                                    ? {
+                                        pdfCommercialSet: true,
+                                        pdf_commercial_set: true,
+                                        isCommercial: true,
+                                      }
+                                    : {}),
+                                },
+                              )
+                              setFullQuotation({
+                                ...displayQuotation,
+                                products: restoredProducts,
+                                discount: previous.pricing.discountAmount,
+                                totalAmount:
+                                  pricingResponse?.totalAmount ??
+                                  pricingResponse?.pricing?.totalAmount ??
+                                  previous.pricing.totalAmount,
+                                finalAmount:
+                                  pricingResponse?.finalAmount ??
+                                  pricingResponse?.pricing?.finalAmount ??
+                                  previous.pricing.finalAmount,
+                                pricing: pricingResponse?.pricing ?? displayQuotation.pricing,
+                                ...mergeQuotationTimestampsFromApi(
+                                  displayQuotation,
+                                  pricingResponse,
+                                ),
+                              })
+                            } else {
+                              writeLocalQuotationPdfFlags(displayQuotation.id, restoredProducts)
+                              setFullQuotation({
+                                ...displayQuotation,
+                                products: restoredProducts,
+                                discount: previous.pricing.discountAmount,
+                                totalAmount: previous.pricing.totalAmount,
+                                finalAmount: previous.pricing.finalAmount,
+                                ...mergeQuotationTimestampsFromApi(displayQuotation),
+                              })
+                            }
+                            refreshSystemHistoryUi(displayQuotation.id)
+                            toast({
+                              title: "Reverted",
+                              description: `Restored ${previous.label}.`,
+                            })
+                          } catch (error) {
+                            console.error("Error reverting system:", error)
+                            toast({
+                              title: "Error",
+                              description:
+                                error instanceof Error
+                                  ? error.message
+                                  : "Failed to revert system configuration",
+                              variant: "destructive",
+                            })
+                          } finally {
+                            setIsRevertingSystem(false)
+                          }
+                        }}
+                      >
+                        <Undo2 className="w-3 h-3 mr-1" />
+                        {isRevertingSystem
+                          ? "Reverting…"
+                          : previousSystemLabel
+                            ? `Revert to ${previousSystemLabel}`
+                            : "Revert"}
+                      </Button>
+                    ) : null}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setSystemConfigEditDialogOpen(true)}
+                      className="h-8"
+                    >
+                      <Edit className="w-3 h-3 mr-1" />
+                      Edit
+                    </Button>
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3 pt-4">
@@ -1794,6 +1936,11 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   })
                   
                   if (useApi) {
+                    // Keep older system (e.g. Adani) so user can revert after saving Waaree.
+                    pushSystemHistory(
+                      displayQuotation.id,
+                      buildSystemSnapshotFromQuotation(displayQuotation),
+                    )
                     const productsResponse = await persistQuotationProducts(
                       (payload) => api.quotations.updateProducts(displayQuotation.id, payload),
                       updatedProducts,
@@ -1836,6 +1983,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           title: "Success",
                           description: `System configuration updated! Subtotal automatically set to ₹${calculatedSubtotal.toLocaleString()}`,
                         })
+                        refreshSystemHistoryUi(displayQuotation.id)
                       } else {
                         // Products updated but pricing failed - still update local state
                         const updatedQuotation = {
@@ -1846,6 +1994,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                           ...mergeQuotationTimestampsFromApi(displayQuotation, productsResponse),
                         }
                         setFullQuotation(updatedQuotation)
+                        refreshSystemHistoryUi(displayQuotation.id)
                         
                         toast({
                           title: "Partial Success",
@@ -1858,6 +2007,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     }
                   } else {
                     // Fallback to local state update
+                    pushSystemHistory(
+                      displayQuotation.id,
+                      buildSystemSnapshotFromQuotation(displayQuotation),
+                    )
                     writeLocalQuotationPdfFlags(displayQuotation.id, displayProducts)
                     const updatedQuotation = {
                       ...displayQuotation,
@@ -1867,6 +2020,7 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                       ...mergeQuotationTimestampsFromApi(displayQuotation),
                     }
                     setFullQuotation(updatedQuotation)
+                    refreshSystemHistoryUi(displayQuotation.id)
                     
                     toast({
                       title: "Success",

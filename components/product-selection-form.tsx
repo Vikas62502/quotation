@@ -988,6 +988,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
     if (!effectiveSystemType) {
       setError("Please select a system type")
+      window.scrollTo({ top: 0, behavior: "smooth" })
       return
     }
 
@@ -1001,6 +1002,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         )
       ) {
         setError("Please complete DCR panel selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (
@@ -1012,27 +1014,33 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         )
       ) {
         setError("Please complete Non-DCR panel selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.inverterType || !isInverterInfoComplete(formData.inverterBrand, formData.inverterSize)) {
         setError("Please complete inverter selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       // Validate other required fields for BOTH system
       if (!formData.structureType || !formData.structureSize) {
         setError("Please complete structure selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.meterBrand) {
         setError("Please select a meter brand")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.acCableBrand || !formData.acCableSize || !formData.dcCableBrand || !formData.dcCableSize) {
         setError("Please complete cable selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.acdb || !formData.dcdb) {
         setError("Please select ACDB and DCDB")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
     } else {
@@ -1045,27 +1053,33 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         )
       ) {
         setError("Please complete panel selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.inverterType || !isInverterInfoComplete(formData.inverterBrand, formData.inverterSize)) {
         setError("Please complete inverter selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       // Validate other required fields for DCR/NON DCR systems
       if (!formData.structureType || !formData.structureSize) {
         setError("Please complete structure selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.meterBrand) {
         setError("Please select a meter brand")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.acCableBrand || !formData.acCableSize || !formData.dcCableBrand || !formData.dcCableSize) {
         setError("Please complete cable selection")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
       if (!formData.acdb || !formData.dcdb) {
         setError("Please select ACDB and DCDB")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
     }
@@ -1080,6 +1094,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       (!Number.isFinite(Number(formData.systemPrice)) || Number(formData.systemPrice) <= 0)
     ) {
       setError("Please select a pricing table configuration so system price is set correctly.")
+      window.scrollTo({ top: 0, behavior: "smooth" })
       return
     }
 
@@ -1090,6 +1105,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     ) {
       if (!formData.centralSubsidy || formData.centralSubsidy <= 0) {
         setError("Central subsidy is mandatory for DCR and BOTH systems. Please set a valid central subsidy amount.")
+        window.scrollTo({ top: 0, behavior: "smooth" })
         return
       }
     }
@@ -1105,6 +1121,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     )
 
     setFormData(normalizedProducts)
+    setError("")
     onSubmit(normalizedProducts)
   }
 

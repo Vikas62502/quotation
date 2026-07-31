@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
 import { api, ApiError } from "./api"
 import { useAuth } from "./auth-context"
 import { calculateSystemSize, determinePhase } from "./pricing-tables"
@@ -25,6 +25,11 @@ import {
 } from "./quotation-api-payload"
 import { isInverterInfoComplete, isPanelRowComplete, isPdfCommercialSet } from "./quotation-pdf-display"
 import { mergeQuotationTimestampsFromApi } from "@/lib/quotation-proposal-document"
+import {
+  buildSystemSnapshotFromQuotation,
+  pushSystemHistory,
+} from "@/lib/quotation-system-history"
+import { setCurrentQuotationForMobile } from "@/lib/quotation-current"
 
 export interface Customer {
   firstName: string
@@ -136,6 +141,13 @@ export interface Quotation {
   dealerId: string
   dealer?: DealerInfo | null // NEW: Dealer/admin information from backend
   status?: QuotationStatus
+  /** True when this is the active quotation for the customer (among revisions). */
+  isCurrent?: boolean
+  is_current?: boolean
+  /** Older quotation this was revised from (additional quotation flow). */
+  sourceQuotationId?: string
+  source_quotation_id?: string
+  previousQuotationId?: string
   paymentMode?: string
   /** Set when admin approves with loan / mix */
   bankName?: string
@@ -191,7 +203,21 @@ interface QuotationContextType {
   error: string | null
   setCurrentCustomer: (customer: Customer) => void
   setCurrentProducts: (products: ProductSelection) => void
-  saveQuotation: (discount: number, subtotalValue: number) => Promise<Quotation>
+  saveQuotation: (
+    discount: number,
+    subtotalValue: number,
+    options?: {
+      /** Create another quotation for same customer (revise flow). Keeps the old row. */
+      allowAdditionalForCustomer?: boolean
+      sourceQuotationId?: string
+    },
+  ) => Promise<Quotation>
+  /** @deprecated Prefer saveQuotation with allowAdditionalForCustomer — kept for in-place product replace. */
+  reviseQuotationSystem: (
+    quotationId: string,
+    discount: number,
+    subtotalValue: number,
+  ) => Promise<Quotation>
   loadQuotations: () => Promise<void>
   clearCurrent: () => void
 }
@@ -295,13 +321,13 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
     }
   }, [currentProducts, useApi])
 
-  const setCurrentCustomer = (customer: Customer) => {
+  const setCurrentCustomer = useCallback((customer: Customer) => {
     setCurrentCustomerState(customer)
-  }
+  }, [])
 
-  const setCurrentProducts = (products: ProductSelection) => {
+  const setCurrentProducts = useCallback((products: ProductSelection) => {
     setCurrentProductsState(products)
-  }
+  }, [])
 
   const loadQuotations = async () => {
     if (!dealer?.id) return
@@ -333,10 +359,20 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const saveQuotation = async (discount: number, subtotalValue: number): Promise<Quotation> => {
+  const saveQuotation = async (
+    discount: number,
+    subtotalValue: number,
+    options?: {
+      allowAdditionalForCustomer?: boolean
+      sourceQuotationId?: string
+    },
+  ): Promise<Quotation> => {
     if (!currentCustomer || !currentProducts || !dealer?.id) {
       throw new Error("Missing customer, products, or dealer information")
     }
+
+    const allowAdditional = Boolean(options?.allowAdditionalForCustomer || options?.sourceQuotationId)
+    const sourceQuotationId = String(options?.sourceQuotationId || "").trim()
 
     // CRITICAL: Validate subtotalValue before proceeding
     // Note: Parameter is named subtotalValue to avoid conflict with calculated totalAmount
@@ -351,6 +387,8 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
       isUndefined: subtotalValue === undefined,
       currentProductsSystemPrice: currentProducts.systemPrice,
       currentProductsSystemPriceType: typeof currentProducts.systemPrice,
+      allowAdditional,
+      sourceQuotationId: sourceQuotationId || null,
     })
     console.log("[saveQuotation] =======================")
 
@@ -473,44 +511,46 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           throw new Error(errorMessage)
         }
 
-        // Prevent duplicate fresh quotation generation for the same customer mobile.
-        try {
-          const existingQuotationsResponse = await api.quotations.getAll({
-            search: currentCustomer.mobile,
-            page: 1,
-            limit: 1000,
-          })
-          const list = normalizeQuotationsListResponse(existingQuotationsResponse)
-          const hasSameMobileQuotation = list.some((row) => {
-            const rowMobile = normalizeMobile(
-              String(
-                (row as any)?.customer?.mobile ||
-                  row?.mobile ||
-                  row?.customerMobile ||
-                  row?.customer_mobile ||
-                  "",
-              ),
+        // Prevent duplicate fresh quotation for same mobile — unless revising (keep old + create new).
+        if (!allowAdditional) {
+          try {
+            const existingQuotationsResponse = await api.quotations.getAll({
+              search: currentCustomer.mobile,
+              page: 1,
+              limit: 1000,
+            })
+            const list = normalizeQuotationsListResponse(existingQuotationsResponse)
+            const hasSameMobileQuotation = list.some((row) => {
+              const rowMobile = normalizeMobile(
+                String(
+                  (row as any)?.customer?.mobile ||
+                    row?.mobile ||
+                    row?.customerMobile ||
+                    row?.customer_mobile ||
+                    "",
+                ),
+              )
+              return rowMobile && rowMobile === currentMobileNormalized
+            })
+            if (hasSameMobileQuotation) {
+              throwDuplicateQuotationError(list, currentCustomer.mobile)
+            }
+          } catch (dupErr) {
+            if (dupErr instanceof Error && dupErr.message.includes("assigned to")) {
+              throw dupErr
+            }
+            // If duplicate-check endpoint behavior is unavailable, fail-safe with loaded dealer quotations.
+            const duplicateInLoaded = quotations.find(
+              (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
             )
-            return rowMobile && rowMobile === currentMobileNormalized
-          })
-          if (hasSameMobileQuotation) {
-            throwDuplicateQuotationError(list, currentCustomer.mobile)
-          }
-        } catch (dupErr) {
-          if (dupErr instanceof Error && dupErr.message.includes("assigned to")) {
-            throw dupErr
-          }
-          // If duplicate-check endpoint behavior is unavailable, fail-safe with loaded dealer quotations.
-          const duplicateInLoaded = quotations.find(
-            (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
-          )
-          if (duplicateInLoaded) {
-            const dealerName = duplicateInLoaded.dealer
-              ? `${duplicateInLoaded.dealer.firstName || ""} ${duplicateInLoaded.dealer.lastName || ""}`.trim() ||
-                duplicateInLoaded.dealer.username ||
-                "Unknown Dealer"
-              : "Unknown Dealer"
-            throw new Error(formatDuplicateQuotationError(dealerName))
+            if (duplicateInLoaded) {
+              const dealerName = duplicateInLoaded.dealer
+                ? `${duplicateInLoaded.dealer.firstName || ""} ${duplicateInLoaded.dealer.lastName || ""}`.trim() ||
+                  duplicateInLoaded.dealer.username ||
+                  "Unknown Dealer"
+                : "Unknown Dealer"
+              throw new Error(formatDuplicateQuotationError(dealerName))
+            }
           }
         }
 
@@ -779,6 +819,24 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           ...(isCommercialSet
             ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
             : {}),
+          // Revise flow: create NEW quotation; keep source (old) quotation unchanged.
+          ...(allowAdditional
+            ? {
+                allowAdditionalQuotation: true,
+                allow_additional_quotation: true,
+                allowDuplicateMobile: true,
+                isCurrent: true,
+                is_current: true,
+                setAsCurrent: true,
+                sourceQuotationId: sourceQuotationId || undefined,
+                source_quotation_id: sourceQuotationId || undefined,
+                previousQuotationId: sourceQuotationId || undefined,
+                previous_quotation_id: sourceQuotationId || undefined,
+                notes: sourceQuotationId
+                  ? `Additional quotation revised from ${sourceQuotationId}`
+                  : "Additional quotation for existing customer",
+              }
+            : {}),
         }
         
         // Final validation - ensure all required fields are present and valid
@@ -856,6 +914,8 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }
+          // New / revised quotation becomes current for this customer (old stays listed).
+          setCurrentQuotationForMobile(currentCustomer.mobile, quotation.id)
         }
 
         const withTimestamps = mergeQuotationTimestampsFromApi(quotation, lastApiResponse)
@@ -896,18 +956,20 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         const normalizeMobile = normalizeMobileForMatch
         const currentMobileNormalized = normalizeMobile(currentCustomer.mobile)
         const existingAllQuotations: Quotation[] = JSON.parse(localStorage.getItem("quotations") || "[]")
-        const duplicateQuotation = existingAllQuotations.find(
-          (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
-        )
-        if (duplicateQuotation) {
-          const dealerName = duplicateQuotation.dealer
-            ? `${duplicateQuotation.dealer.firstName || ""} ${duplicateQuotation.dealer.lastName || ""}`.trim() ||
-              duplicateQuotation.dealer.username ||
-              "Unknown Dealer"
-            : duplicateQuotation.dealerId === dealer.id
-              ? `${dealer.firstName || ""} ${dealer.lastName || ""}`.trim() || dealer.username || "Unknown Dealer"
-              : "Unknown Dealer"
-          throw new Error(formatDuplicateQuotationError(dealerName))
+        if (!allowAdditional) {
+          const duplicateQuotation = existingAllQuotations.find(
+            (q) => normalizeMobile(q.customer?.mobile || "") === currentMobileNormalized,
+          )
+          if (duplicateQuotation) {
+            const dealerName = duplicateQuotation.dealer
+              ? `${duplicateQuotation.dealer.firstName || ""} ${duplicateQuotation.dealer.lastName || ""}`.trim() ||
+                duplicateQuotation.dealer.username ||
+                "Unknown Dealer"
+              : duplicateQuotation.dealerId === dealer.id
+                ? `${dealer.firstName || ""} ${dealer.lastName || ""}`.trim() || dealer.username || "Unknown Dealer"
+                : "Unknown Dealer"
+            throw new Error(formatDuplicateQuotationError(dealerName))
+          }
         }
 
         // totalAmount is now subtotal (total project cost)
@@ -935,17 +997,140 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           updatedAt: now,
           dealerId: dealer.id,
           status: "pending",
-        }
+          ...(sourceQuotationId
+            ? ({ sourceQuotationId, previousQuotationId: sourceQuotationId } as Partial<Quotation>)
+            : {}),
+        } as Quotation
 
         const existing = existingAllQuotations
         existing.push(quotation)
         localStorage.setItem("quotations", JSON.stringify(existing))
+        setCurrentQuotationForMobile(currentCustomer.mobile, quotation.id)
         setQuotations(existing.filter((q: Quotation) => q.dealerId === dealer.id))
         return quotation
       }
     } catch (err) {
       console.error("Error saving quotation:", err)
       const errorMessage = err instanceof ApiError ? err.message : "Failed to save quotation"
+      setError(errorMessage)
+      throw err
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const reviseQuotationSystem = async (
+    quotationId: string,
+    discount: number,
+    subtotalValue: number,
+  ): Promise<Quotation> => {
+    if (!dealer) throw new Error("Not authenticated")
+    if (!currentCustomer || !currentProducts) {
+      throw new Error("Customer and products required")
+    }
+    if (!quotationId) throw new Error("Quotation id is required to revise system")
+
+    const validatedSubtotalValue = Number(subtotalValue)
+    if (!Number.isFinite(validatedSubtotalValue) || validatedSubtotalValue <= 0) {
+      throw new Error("Subtotal must be greater than 0")
+    }
+
+    setIsLoading(true)
+    setError(null)
+    try {
+      const isCommercialSet = isPdfCommercialSet(currentProducts)
+      const stateSubsidy = isCommercialSet ? 0 : Number(currentProducts.stateSubsidy || 0)
+      const centralSubsidy = isCommercialSet ? 0 : Number(currentProducts.centralSubsidy || 0)
+      const totalSubsidy = stateSubsidy + centralSubsidy
+      const amountAfterSubsidy = validatedSubtotalValue - totalSubsidy
+      const requestedDiscount = Math.max(0, Number(discount) || 0)
+      const discountAmount = Math.min(requestedDiscount, Math.max(0, amountAfterSubsidy))
+      const finalAmount = Math.max(0, amountAfterSubsidy - discountAmount)
+
+      let existingRaw: unknown = null
+      if (useApi) {
+        existingRaw = await api.quotations.getById(quotationId)
+      } else {
+        const all: Quotation[] = JSON.parse(localStorage.getItem("quotations") || "[]")
+        existingRaw = all.find((q) => q.id === quotationId) || null
+      }
+      if (!existingRaw) throw new Error("Quotation not found")
+
+      // Store older system (e.g. Adani) before applying new (e.g. Waaree).
+      pushSystemHistory(quotationId, buildSystemSnapshotFromQuotation(existingRaw))
+
+      const productsForApi = {
+        ...currentProducts,
+        systemPrice: validatedSubtotalValue,
+        stateSubsidy,
+        centralSubsidy,
+      }
+      const displayProducts = restoreDcrPackageDisplayForForm({
+        ...productsForApi,
+        ...buildPdfDisplayFlagsPayload(productsForApi),
+      })
+
+      if (useApi) {
+        await persistQuotationProducts(
+          (payload) => api.quotations.updateProducts(quotationId, payload),
+          productsForApi,
+          { quotationId },
+        )
+        const pricingResponse = await api.quotations.updatePricing(quotationId, {
+          subtotal: validatedSubtotalValue,
+          stateSubsidy,
+          centralSubsidy,
+          discountAmount,
+          totalAmount: finalAmount,
+          finalAmount,
+          ...(isCommercialSet
+            ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
+            : {}),
+        })
+        await loadQuotations()
+        const refreshed = await api.quotations.getById(quotationId).catch(() => pricingResponse)
+        const withTimestamps = mergeQuotationTimestampsFromApi(
+          existingRaw as Quotation,
+          refreshed ?? pricingResponse,
+        )
+        return {
+          id: quotationId,
+          customer: currentCustomer,
+          products: displayProducts,
+          discount: discountAmount,
+          totalAmount:
+            Number((refreshed as any)?.pricing?.totalAmount ?? (refreshed as any)?.totalAmount) ||
+            finalAmount,
+          finalAmount:
+            Number((refreshed as any)?.pricing?.finalAmount ?? (refreshed as any)?.finalAmount) ||
+            finalAmount,
+          createdAt: withTimestamps.createdAt || (existingRaw as Quotation).createdAt,
+          updatedAt: withTimestamps.updatedAt,
+          dealerId: (existingRaw as Quotation).dealerId || dealer.id,
+          status: (existingRaw as Quotation).status || "pending",
+        }
+      }
+
+      const all: Quotation[] = JSON.parse(localStorage.getItem("quotations") || "[]")
+      const idx = all.findIndex((q) => q.id === quotationId)
+      if (idx < 0) throw new Error("Quotation not found")
+      const updated: Quotation = {
+        ...all[idx]!,
+        customer: currentCustomer,
+        products: displayProducts,
+        discount: discountAmount,
+        subtotal: validatedSubtotalValue,
+        totalAmount: finalAmount,
+        finalAmount,
+        updatedAt: new Date().toISOString(),
+      }
+      all[idx] = updated
+      localStorage.setItem("quotations", JSON.stringify(all))
+      setQuotations(all.filter((q) => q.dealerId === dealer.id))
+      return updated
+    } catch (err) {
+      console.error("Error revising quotation system:", err)
+      const errorMessage = err instanceof ApiError ? err.message : "Failed to revise quotation"
       setError(errorMessage)
       throw err
     } finally {
@@ -980,6 +1165,7 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         setCurrentCustomer,
         setCurrentProducts,
         saveQuotation,
+        reviseQuotationSystem,
         loadQuotations,
         clearCurrent,
       }}

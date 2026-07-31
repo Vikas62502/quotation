@@ -2697,6 +2697,71 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 
 ---
 
+## 23. Quotations — Additional quotation + restore current (same customer)
+
+**Frontend:** Quotations → Actions → **Create another quotation** opens New Quotation with customer locked; save creates a **new** row; old stays.  
+**List UI:** One visible row per customer (current); **History** dialog lists older versions and **Restore**.
+
+### Root cause / gap
+
+`POST /quotations` rejects a second quotation for the same mobile. No `is_current` / restore API, so old vs new cannot be managed server-side.
+
+### Backend deliverable (required)
+
+**File:** `BACKEND_QUOTATION_SYSTEM_HISTORY.ts`
+
+| Step | Action |
+|------|--------|
+| 1 | Migration: `is_current BOOLEAN DEFAULT true`, optional `source_quotation_id` |
+| 2 | If body has `allowAdditionalQuotation` / `sourceQuotationId` → **skip** duplicate-mobile block |
+| 3 | Create **new** row with `is_current=true`; set other same-customer rows `is_current=false` |
+| 4 | Do **not** update/delete the old quotation’s products |
+| 5 | `POST /quotations/:id/restore-current` → that id `is_current=true`, others for customer `false` |
+| 6 | `GET /quotations` returns `isCurrent` / `is_current` on each row |
+
+### Body frontend sends on revise save
+
+```json
+{
+  "allowAdditionalQuotation": true,
+  "allowDuplicateMobile": true,
+  "isCurrent": true,
+  "setAsCurrent": true,
+  "sourceQuotationId": "QT-OLD",
+  "customer": { "mobile": "98xxxxxxxx" },
+  "products": { "panelBrand": "Waaree" },
+  "subtotal": 392000,
+  "totalAmount": 314000,
+  "finalAmount": 314000
+}
+```
+
+### Routes
+
+| Method | Path | Behavior |
+|--------|------|----------|
+| `POST` | `/quotations` | New row when flags present; mark current; demote siblings |
+| `POST` | `/quotations/:id/restore-current` | Restore this id as current |
+| `GET` | `/quotations` | Both old + new; include `isCurrent` |
+
+### Frontend already does
+
+- **Create another quotation** → `/dashboard/new-quotation?reviseQuotationId=…&lockCustomer=1` (customer locked; system editable)
+- Saves with `allowAdditionalForCustomer` + `sourceQuotationId` (skips client duplicate-mobile check)
+- Groups list to **one row per customer**; History + Restore for older ids
+- Calls `POST /quotations/:id/restore-current` (fallback `set-current` / PATCH `isCurrent`)
+
+### QA
+
+1. Create another quotation for same customer (new system) → new id; old kept  
+2. List API returns both; new has `isCurrent=true`  
+3. Restore old → old `isCurrent=true`, new false  
+4. Same mobile **without** flags → still duplicate error  
+
+**Reference:** `BACKEND_QUOTATION_SYSTEM_HISTORY.ts`, `lib/quotation-current.ts`, `lib/api.ts` (`restoreAsCurrent`)
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2731,6 +2796,8 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 | **`BACKEND_SALES_ADMIN_STOCK.ts`** | **§21** when `admin_id` present, use `admin_inventory` |
 | **§22** (this file) | Inventory sale lines — persist/return qty + unit_price |
 | **`BACKEND_SALES_LINE_ITEMS.ts`** | **§22** sale_items quantity/unit_price/subtotal serialize |
+| **§23** (this file) | Quotations — additional quotation + restore current |
+| **`BACKEND_QUOTATION_SYSTEM_HISTORY.ts`** | **§23** allow additional create + `restore-current` + `is_current` |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |

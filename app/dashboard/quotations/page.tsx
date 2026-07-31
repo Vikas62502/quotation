@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, Eye, FileText, Calendar, Download } from "lucide-react"
+import { Search, Eye, FileText, Calendar, Download, FilePlus2, RotateCcw, History } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
@@ -22,6 +22,13 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
+import {
+  annotateQuotationsWithCurrent,
+  getCustomerMobileFromQuotation,
+  groupQuotationsByCustomerCurrentFirst,
+  setCurrentQuotationForMobile,
+} from "@/lib/quotation-current"
+import { buildReviseQuotationHref } from "@/lib/quotation-system-history"
 
 const ADMIN_USERNAME = "admin"
 
@@ -42,6 +49,14 @@ export default function QuotationsPage() {
   const [documentsFormById, setDocumentsFormById] = useState<Record<string, any>>({})
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
   const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
+  const [restoringQuotationId, setRestoringQuotationId] = useState<string | null>(null)
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false)
+  const [historyGroup, setHistoryGroup] = useState<{
+    current: Quotation
+    history: Quotation[]
+    all: Quotation[]
+  } | null>(null)
+  const [openingReviseId, setOpeningReviseId] = useState<string | null>(null)
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -218,7 +233,7 @@ export default function QuotationsPage() {
             dealerId: q.dealerId || dealer.id,
             status: q.status || "pending",
           }))
-        setQuotations(dealerQuotations)
+        setQuotations(annotateQuotationsWithCurrent(dealerQuotations))
         // Load visits for all quotations
         await loadVisitsForQuotations(dealerQuotations)
       } else {
@@ -231,7 +246,7 @@ export default function QuotationsPage() {
             status: q.status || "pending",
             subtotal: q.subtotal ?? (q as any).pricing?.subtotal ?? q.totalAmount ?? 0,
           }))
-        setQuotations(dealerQuotations)
+        setQuotations(annotateQuotationsWithCurrent(dealerQuotations))
         // Load visits for all quotations
         await loadVisitsForQuotations(dealerQuotations)
       }
@@ -354,6 +369,159 @@ export default function QuotationsPage() {
 
   const sortedQuotations = [...filteredQuotations].sort(
     (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+  )
+
+  // One row per customer (current quotation); older versions via History.
+  const customerQuotationRows = groupQuotationsByCustomerCurrentFirst(sortedQuotations)
+
+  const openQuotationHistory = (group: {
+    current: Quotation
+    history: Quotation[]
+    all: Quotation[]
+  }) => {
+    setHistoryGroup(group)
+    setHistoryDialogOpen(true)
+  }
+
+  const restoreQuotationAsCurrent = async (quotation: Quotation) => {
+    if (quotation.isCurrent) {
+      toast({
+        title: "Already current",
+        description: "This quotation is already the current one for this customer.",
+      })
+      return
+    }
+    const mobile = getCustomerMobileFromQuotation(quotation)
+    const name = getCustomerDisplayName(quotation.customer)
+    if (
+      !window.confirm(
+        `Restore ${quotation.id} as the current quotation for ${name}?\n\nThe list will show this version; older ones stay in History.`,
+      )
+    ) {
+      return
+    }
+    setRestoringQuotationId(quotation.id)
+    try {
+      if (useApi) {
+        try {
+          await api.quotations.restoreAsCurrent(quotation.id)
+        } catch (apiErr) {
+          console.warn("[quotations] restoreAsCurrent API unavailable:", apiErr)
+        }
+      }
+      if (mobile) setCurrentQuotationForMobile(mobile, quotation.id)
+      setQuotations((prev) =>
+        annotateQuotationsWithCurrent(
+          prev.map((q) => {
+            const sameCustomer = getCustomerMobileFromQuotation(q) === mobile
+            if (!sameCustomer) return q
+            return {
+              ...q,
+              isCurrent: q.id === quotation.id,
+              is_current: q.id === quotation.id,
+            }
+          }),
+        ),
+      )
+      setHistoryDialogOpen(false)
+      setHistoryGroup(null)
+      toast({
+        title: "Restored as current",
+        description: `${quotation.id} is now shown for ${name}.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Restore failed",
+        description: apiErrorToUserMessage(error) || "Could not restore quotation",
+        variant: "destructive",
+      })
+    } finally {
+      setRestoringQuotationId(null)
+    }
+  }
+
+  const openCreateAnotherQuotation = async (quotation: Quotation) => {
+    setOpeningReviseId(quotation.id)
+    try {
+      let source: Quotation | Record<string, unknown> = quotation
+      if (useApi) {
+        try {
+          const full = await api.quotations.getById(quotation.id)
+          if (full && typeof full === "object") {
+            source = {
+              ...quotation,
+              ...full,
+              customer: (full as any).customer || quotation.customer,
+            }
+          }
+        } catch {
+          // fall back to list row
+        }
+      }
+      router.push(buildReviseQuotationHref({ id: quotation.id, ...(source as Record<string, any>) }))
+    } finally {
+      setOpeningReviseId(null)
+    }
+  }
+
+  const renderQuotationActions = (
+    quotation: Quotation,
+    history: Quotation[],
+    group: { current: Quotation; history: Quotation[]; all: Quotation[] },
+  ) => (
+    <div className="flex items-center gap-1 justify-end">
+      <Button
+        variant="ghost"
+        size="icon"
+        disabled={openingReviseId === quotation.id}
+        onClick={() => void openCreateAnotherQuotation(quotation)}
+        title="Create another quotation for this customer"
+      >
+        <FilePlus2 className={`w-4 h-4 ${openingReviseId === quotation.id ? "animate-pulse" : ""}`} />
+      </Button>
+      {history.length > 0 ? (
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => openQuotationHistory(group)}
+          title={`History (${history.length} older version${history.length === 1 ? "" : "s"})`}
+        >
+          <History className="w-4 h-4" />
+        </Button>
+      ) : null}
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => {
+          setVisitQuotation(quotation)
+          setVisitDialogOpen(true)
+        }}
+        title="Visit Management"
+      >
+        <Calendar className="w-4 h-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => {
+          openDocumentsDialogForQuotation(quotation)
+        }}
+        title="Document Submission"
+      >
+        <FileText className="w-4 h-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={() => {
+          setSelectedQuotation(quotation)
+          setDialogOpen(true)
+        }}
+        title="View Details"
+      >
+        <Eye className="w-4 h-4" />
+      </Button>
+    </div>
   )
 
   const getStatusColor = (status?: string) => {
@@ -533,7 +701,7 @@ export default function QuotationsPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {sortedQuotations.length === 0 ? (
+            {customerQuotationRows.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
                 <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No quotations found</p>
@@ -556,8 +724,10 @@ export default function QuotationsPage() {
             ) : (
               <>
                 <div className="space-y-3 md:hidden">
-                {sortedQuotations.map((quotation) => (
-                  <div key={quotation.id} className={`rounded-lg border p-3 ${getStatusColor(quotation.status)}`}>
+                {customerQuotationRows.map((group) => {
+                  const quotation = group.current as Quotation
+                  return (
+                  <div key={group.key} className={`rounded-lg border p-3 ${getStatusColor(quotation.status)}`}>
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="text-[11px] font-mono text-muted-foreground break-all">{quotation.id}</p>
@@ -565,6 +735,11 @@ export default function QuotationsPage() {
                           {getCustomerDisplayName(quotation.customer)}
                         </p>
                         <p className="text-xs text-muted-foreground">{quotation.customer?.mobile || ""}</p>
+                        {group.history.length > 0 ? (
+                          <Badge variant="outline" className="mt-1 text-[10px]">
+                            {group.history.length} older version{group.history.length === 1 ? "" : "s"}
+                          </Badge>
+                        ) : null}
                       </div>
                       <Badge className={`text-[10px] ${getStatusBadgeColor(quotation.status)}`}>
                         {(quotation.status || "pending").charAt(0).toUpperCase() + (quotation.status || "pending").slice(1)}
@@ -578,43 +753,19 @@ export default function QuotationsPage() {
                       <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
                         {getVisitStatus(quotation)}
                       </Badge>
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            setVisitQuotation(quotation)
-                            setVisitDialogOpen(true)
-                          }}
-                          title="Visit Management"
-                        >
-                          <Calendar className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            openDocumentsDialogForQuotation(quotation)
-                          }}
-                          title="Document Submission"
-                        >
-                          <FileText className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            setSelectedQuotation(quotation)
-                            setDialogOpen(true)
-                          }}
-                          title="View Details"
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                      </div>
+                      {renderQuotationActions(
+                        quotation,
+                        group.history as Quotation[],
+                        {
+                          current: quotation,
+                          history: group.history as Quotation[],
+                          all: group.all as Quotation[],
+                        },
+                      )}
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
 
                 <div className="hidden md:block overflow-x-auto">
@@ -636,13 +787,22 @@ export default function QuotationsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedQuotations.map((quotation) => (
+                    {customerQuotationRows.map((group) => {
+                      const quotation = group.current as Quotation
+                      return (
                       <tr
-                        key={quotation.id}
+                        key={group.key}
                         className={`border-b border-border last:border-0 ${getStatusColor(quotation.status)}`}
                       >
                         <td className="py-3 px-2">
-                          <span className="text-sm font-mono">{quotation.id}</span>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-sm font-mono">{quotation.id}</span>
+                            {group.history.length > 0 ? (
+                              <Badge variant="outline" className="w-fit text-[10px]">
+                                {group.history.length} older
+                              </Badge>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="py-3 px-2">
                           <div>
@@ -680,43 +840,19 @@ export default function QuotationsPage() {
                           {new Date(quotation.createdAt).toLocaleDateString()}
                         </td>
                         <td className="py-3 px-2 text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                setVisitQuotation(quotation)
-                                setVisitDialogOpen(true)
-                              }}
-                              title="Visit Management"
-                            >
-                              <Calendar className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                openDocumentsDialogForQuotation(quotation)
-                              }}
-                              title="Document Submission"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                setSelectedQuotation(quotation)
-                                setDialogOpen(true)
-                              }}
-                              title="View Details"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                          </div>
+                          {renderQuotationActions(
+                            quotation,
+                            group.history as Quotation[],
+                            {
+                              current: quotation,
+                              history: group.history as Quotation[],
+                              all: group.all as Quotation[],
+                            },
+                          )}
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
                 </div>
@@ -732,6 +868,107 @@ export default function QuotationsPage() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
       />
+
+      <Dialog
+        open={historyDialogOpen}
+        onOpenChange={(open) => {
+          setHistoryDialogOpen(open)
+          if (!open) setHistoryGroup(null)
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Quotation history</DialogTitle>
+            <DialogDescription>
+              {historyGroup
+                ? `${getCustomerDisplayName(historyGroup.current.customer)} — restore an older version as current.`
+                : "Older quotations for this customer."}
+            </DialogDescription>
+          </DialogHeader>
+          {historyGroup ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-emerald-800">Current</p>
+                    <p className="text-sm font-mono">{historyGroup.current.id}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {getSystemSize(historyGroup.current)} · ₹
+                      {Math.abs(
+                        historyGroup.current.subtotal ??
+                          historyGroup.current.totalAmount ??
+                          historyGroup.current.finalAmount ??
+                          0,
+                      ).toLocaleString()}{" "}
+                      · {new Date(historyGroup.current.createdAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      setSelectedQuotation(historyGroup.current)
+                      setDialogOpen(true)
+                    }}
+                    title="View details"
+                  >
+                    <Eye className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+              {historyGroup.history.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No older versions.</p>
+              ) : (
+                historyGroup.history.map((older) => (
+                  <div key={older.id} className="rounded-lg border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-xs text-muted-foreground">Previous</p>
+                        <p className="text-sm font-mono">{older.id}</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {getSystemSize(older)} · ₹
+                          {Math.abs(
+                            older.subtotal ?? older.totalAmount ?? older.finalAmount ?? 0,
+                          ).toLocaleString()}{" "}
+                          · {new Date(older.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            setSelectedQuotation(older)
+                            setDialogOpen(true)
+                          }}
+                          title="View details"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-1"
+                          disabled={restoringQuotationId === older.id}
+                          onClick={() => void restoreQuotationAsCurrent(older)}
+                          title="Restore as current"
+                        >
+                          <RotateCcw
+                            className={`w-3.5 h-3.5 ${
+                              restoringQuotationId === older.id ? "animate-spin" : ""
+                            }`}
+                          />
+                          Restore
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       {/* Visit Management Dialog */}
       <VisitManagementDialog

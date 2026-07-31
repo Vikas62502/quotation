@@ -1052,6 +1052,39 @@ export const api = {
       return apiRequest(`/quotations/${quotationId}`)
     },
 
+    /**
+     * Mark this quotation as the current one for its customer.
+     * Other quotations for the same customer become previous (is_current=false).
+     * Backend: POST /quotations/:id/restore-current (see §23).
+     */
+    restoreAsCurrent: async (quotationId: string) => {
+      const attempts = [
+        { method: "POST" as const, path: `/quotations/${quotationId}/restore-current` },
+        { method: "POST" as const, path: `/quotations/${quotationId}/set-current` },
+        {
+          method: "PATCH" as const,
+          path: `/quotations/${quotationId}`,
+          body: { isCurrent: true, is_current: true },
+        },
+      ]
+      let lastError: unknown
+      for (const attempt of attempts) {
+        try {
+          return await apiRequest(attempt.path, {
+            method: attempt.method,
+            ...(attempt.body ? { body: attempt.body } : {}),
+          })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!retryable) throw error
+        }
+      }
+      throw lastError
+    },
+
     updateDiscount: async (quotationId: string, discount: number | string) => {
       return apiRequest(`/quotations/${quotationId}/discount`, {
         method: "PATCH",

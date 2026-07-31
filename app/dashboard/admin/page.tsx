@@ -107,6 +107,12 @@ import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
 import {
+  annotateQuotationsWithCurrent,
+  getCustomerMobileFromQuotation,
+  groupQuotationsByCustomerCurrentFirst,
+  setCurrentQuotationForMobile,
+} from "@/lib/quotation-current"
+import {
   getInstallationWorkflowStatus,
   getMeteringWorkflowRaw,
   isAwaitingManualMeteringHandoff,
@@ -1236,15 +1242,19 @@ function getOperationalStageForQuotation(quotation: Quotation): AdminOperational
 function AdminQuotationRowActions({
   quotation,
   sendingToMeteringId,
+  olderCount = 0,
   onSendToMetering,
   onTimeline,
+  onQuotationHistory,
   onDocuments,
   onView,
 }: {
   quotation: Quotation
   sendingToMeteringId: string | null
+  olderCount?: number
   onSendToMetering: (quotation: Quotation) => void
   onTimeline: (quotation: Quotation) => void
+  onQuotationHistory?: (quotation: Quotation) => void
   onDocuments: (quotation: Quotation) => void
   onView: (quotation: Quotation) => void
 }) {
@@ -1253,8 +1263,19 @@ function AdminQuotationRowActions({
 
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1">
+        {olderCount > 0 && onQuotationHistory ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            onClick={() => onQuotationHistory(quotation)}
+            title={`Quotation history (${olderCount} older)`}
+          >
+            <History className="w-4 h-4" />
+          </Button>
+        ) : null}
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onTimeline(quotation)} title="Status timeline">
-          <History className="w-4 h-4" />
+          <Clock3 className="w-4 h-4" />
         </Button>
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onDocuments(quotation)} title="Document Submission">
           <FileText className="w-4 h-4" />
@@ -1499,6 +1520,13 @@ export default function AdminPanelPage() {
   const [optimisticFileLoginSelect, setOptimisticFileLoginSelect] = useState<Record<string, string>>({})
   const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
   const [statusHistoryQuotation, setStatusHistoryQuotation] = useState<Quotation | null>(null)
+  const [quotationVersionHistoryOpen, setQuotationVersionHistoryOpen] = useState(false)
+  const [quotationVersionHistoryGroup, setQuotationVersionHistoryGroup] = useState<{
+    current: Quotation
+    history: Quotation[]
+    all: Quotation[]
+  } | null>(null)
+  const [restoringQuotationId, setRestoringQuotationId] = useState<string | null>(null)
   const [isLoadingQuotationDetails, setIsLoadingQuotationDetails] = useState(false)
   const [visitorSearchTerm, setVisitorSearchTerm] = useState("")
   const [visitorDialogOpen, setVisitorDialogOpen] = useState(false)
@@ -3545,9 +3573,93 @@ export default function AdminPanelPage() {
     return new Date(quotation.createdAt || 0).getTime()
   }
 
-  const sortedQuotations = [...filteredQuotations].sort(
+  const sortedQuotations = annotateQuotationsWithCurrent([...filteredQuotations]).sort(
     (a, b) => getApprovedSortTime(b) - getApprovedSortTime(a),
   )
+
+  // Full unfiltered groups (for History / Restore) — prefer API is_current, else newest.
+  const adminCustomerQuotationGroups = useMemo(
+    () => groupQuotationsByCustomerCurrentFirst(quotations),
+    [quotations],
+  )
+
+  const adminOlderCountByMobile = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const group of adminCustomerQuotationGroups) {
+      map.set(group.key, group.history.length)
+    }
+    return map
+  }, [adminCustomerQuotationGroups])
+
+  const getAdminOlderCount = (quotation: Quotation) => {
+    const mobile = getCustomerMobileFromQuotation(quotation)
+    if (mobile) return adminOlderCountByMobile.get(mobile) || 0
+    return adminOlderCountByMobile.get(`__id:${quotation.id}`) || 0
+  }
+
+  const openAdminQuotationHistory = (quotation: Quotation) => {
+    const mobile = getCustomerMobileFromQuotation(quotation)
+    const group =
+      adminCustomerQuotationGroups.find((g) => g.key === mobile || g.key === `__id:${quotation.id}`) ||
+      groupQuotationsByCustomerCurrentFirst(
+        quotations.filter((q) => getCustomerMobileFromQuotation(q) === mobile || q.id === quotation.id),
+      )[0]
+    if (!group) return
+    setQuotationVersionHistoryGroup({
+      current: group.current as Quotation,
+      history: group.history as Quotation[],
+      all: group.all as Quotation[],
+    })
+    setQuotationVersionHistoryOpen(true)
+  }
+
+  const restoreAdminQuotationAsCurrent = async (quotation: Quotation) => {
+    const mobile = getCustomerMobileFromQuotation(quotation)
+    const name = formatPersonName(quotation.customer?.firstName, quotation.customer?.lastName, quotation.id)
+    if (
+      !window.confirm(
+        `Restore ${quotation.id} as the current quotation for ${name}?\n\nAdmin list will show this version; older ones stay in History.`,
+      )
+    ) {
+      return
+    }
+    setRestoringQuotationId(quotation.id)
+    try {
+      try {
+        await api.quotations.restoreAsCurrent(quotation.id)
+      } catch (apiErr) {
+        console.warn("[admin] restoreAsCurrent API unavailable:", apiErr)
+      }
+      if (mobile) setCurrentQuotationForMobile(mobile, quotation.id)
+      setQuotations((prev) =>
+        annotateQuotationsWithCurrent(
+          prev.map((q) => {
+            const sameCustomer = getCustomerMobileFromQuotation(q) === mobile
+            if (!sameCustomer) return q
+            return {
+              ...q,
+              isCurrent: q.id === quotation.id,
+              is_current: q.id === quotation.id,
+            }
+          }),
+        ),
+      )
+      setQuotationVersionHistoryOpen(false)
+      setQuotationVersionHistoryGroup(null)
+      toast({
+        title: "Restored as current",
+        description: `${quotation.id} is now shown for ${name} in Admin.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Restore failed",
+        description: apiErrorToUserMessage(error) || "Could not restore quotation",
+        variant: "destructive",
+      })
+    } finally {
+      setRestoringQuotationId(null)
+    }
+  }
   // Only build the buckets needed for the active ops tab — Metering/Installation switches stay light.
   const installationPendingQuotations =
     operationalTab === "installation"
@@ -3644,7 +3756,10 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "done") list = confirmationFinalQuotations
       else list = sortedQuotations
     } else {
-      list = sortedQuotations
+      // Main Quotations tab: one row per customer (current version only).
+      list = groupQuotationsByCustomerCurrentFirst(sortedQuotations).map(
+        (g) => g.current as Quotation,
+      )
     }
 
     // Re-apply overdue chips against the active sub-tab list (All / Pending / etc.)
@@ -3827,10 +3942,7 @@ export default function AdminPanelPage() {
   }
 
   const downloadFilteredQuotationsCsv = () => {
-    const exportList =
-      operationalTab === "metering" || operationalTab === "installation"
-        ? activeQuotationList
-        : sortedQuotations
+    const exportList = activeQuotationList
     if (exportList.length === 0) {
       toast({
         title: "No data to download",
@@ -7408,17 +7520,11 @@ export default function AdminPanelPage() {
                     variant="outline"
                     className="w-full sm:w-auto"
                     onClick={downloadFilteredQuotationsCsv}
-                    disabled={
-                      (operationalTab === "metering" || operationalTab === "installation"
-                        ? activeQuotationList.length
-                        : sortedQuotations.length) === 0
-                    }
+                    disabled={activeQuotationList.length === 0}
                   >
                     <Download className="w-4 h-4 mr-2" />
                     Download (
-                    {operationalTab === "metering" || operationalTab === "installation"
-                      ? activeQuotationList.length
-                      : sortedQuotations.length}
+                    {activeQuotationList.length}
                     )
                   </Button>
                   {operationalTab === "installation" ? (
@@ -9435,6 +9541,11 @@ export default function AdminPanelPage() {
                           <div className="flex justify-between items-start mb-3">
                             <div className="flex-1">
                               <p className="text-xs font-mono text-muted-foreground mb-1">{quotation.id}</p>
+                              {getAdminOlderCount(quotation) > 0 ? (
+                                <Badge variant="outline" className="mb-1 text-[10px]">
+                                  {getAdminOlderCount(quotation)} older
+                                </Badge>
+                              ) : null}
                               <p className="font-semibold text-sm">
                                 {formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")}
                               </p>
@@ -9522,6 +9633,18 @@ export default function AdminPanelPage() {
                             </p>
 
                             <div className="flex gap-2 flex-wrap">
+                              {getAdminOlderCount(quotation) > 0 ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openAdminQuotationHistory(quotation)}
+                                  className="flex-1"
+                                  title="Quotation history"
+                                >
+                                  <History className="w-3 h-3 mr-1" />
+                                  History
+                                </Button>
+                              ) : null}
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -9564,7 +9687,7 @@ export default function AdminPanelPage() {
                                 className="flex-1"
                                 title="Status timeline"
                               >
-                                <History className="w-3 h-3 mr-1" />
+                                <Clock3 className="w-3 h-3 mr-1" />
                                 Timeline
                               </Button>
                               {(() => {
@@ -9644,7 +9767,14 @@ export default function AdminPanelPage() {
                               )}
                             >
                               <td className="py-2 px-2 align-middle whitespace-nowrap">
-                                <span className="text-xs font-mono font-medium">{quotation.id}</span>
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="text-xs font-mono font-medium">{quotation.id}</span>
+                                  {getAdminOlderCount(quotation) > 0 ? (
+                                    <Badge variant="outline" className="w-fit text-[10px]">
+                                      {getAdminOlderCount(quotation)} older
+                                    </Badge>
+                                  ) : null}
+                                </div>
                               </td>
                               <td className="py-2 px-2 align-middle">
                                 <div className="min-w-[9rem] max-w-[12rem]">
@@ -9746,8 +9876,10 @@ export default function AdminPanelPage() {
                                 <AdminQuotationRowActions
                                   quotation={quotation}
                                   sendingToMeteringId={sendingToMeteringId}
+                                  olderCount={getAdminOlderCount(quotation)}
                                   onSendToMetering={(q) => void handleSendToMetering(q)}
                                   onTimeline={setStatusHistoryQuotation}
+                                  onQuotationHistory={openAdminQuotationHistory}
                                   onDocuments={openDocumentsDialog}
                                   onView={(q) => {
                                     setSelectedQuotation(q)
@@ -14452,6 +14584,111 @@ export default function AdminPanelPage() {
                 Close
               </Button>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={quotationVersionHistoryOpen}
+          onOpenChange={(open) => {
+            setQuotationVersionHistoryOpen(open)
+            if (!open) setQuotationVersionHistoryGroup(null)
+          }}
+        >
+          <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Quotation history</DialogTitle>
+              <DialogDescription>
+                {quotationVersionHistoryGroup
+                  ? `${formatPersonName(
+                      quotationVersionHistoryGroup.current.customer?.firstName,
+                      quotationVersionHistoryGroup.current.customer?.lastName,
+                      "Customer",
+                    )} — restore an older version as current for Admin.`
+                  : "Older quotations for this customer."}
+              </DialogDescription>
+            </DialogHeader>
+            {quotationVersionHistoryGroup ? (
+              <div className="space-y-3">
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-emerald-800">Current</p>
+                      <p className="text-sm font-mono">{quotationVersionHistoryGroup.current.id}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        ₹
+                        {Math.abs(
+                          (quotationVersionHistoryGroup.current as any).pricing?.subtotal ??
+                            quotationVersionHistoryGroup.current.subtotal ??
+                            quotationVersionHistoryGroup.current.totalAmount ??
+                            0,
+                        ).toLocaleString()}{" "}
+                        · {new Date(quotationVersionHistoryGroup.current.createdAt).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        setSelectedQuotation(quotationVersionHistoryGroup.current)
+                        setDialogOpen(true)
+                      }}
+                      title="View details"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+                {quotationVersionHistoryGroup.history.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">No older versions.</p>
+                ) : (
+                  quotationVersionHistoryGroup.history.map((older) => (
+                    <div key={older.id} className="rounded-lg border p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">Previous</p>
+                          <p className="text-sm font-mono">{older.id}</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            ₹
+                            {Math.abs(
+                              (older as any).pricing?.subtotal ?? older.subtotal ?? older.totalAmount ?? 0,
+                            ).toLocaleString()}{" "}
+                            · {new Date(older.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => {
+                              setSelectedQuotation(older)
+                              setDialogOpen(true)
+                            }}
+                            title="View details"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            disabled={restoringQuotationId === older.id}
+                            onClick={() => void restoreAdminQuotationAsCurrent(older)}
+                            title="Restore as current"
+                          >
+                            <RotateCcw
+                              className={`w-3.5 h-3.5 ${
+                                restoringQuotationId === older.id ? "animate-spin" : ""
+                              }`}
+                            />
+                            Restore
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 
