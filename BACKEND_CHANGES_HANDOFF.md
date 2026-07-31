@@ -1108,7 +1108,20 @@ Each row **must** include:
 
 **Critical:** `GET /api/quotations?status=approved` must return **`installationStatus`** and metering workflow fields on every row. If missing, Excel shows **Workflow Pending** for all rows after refresh.
 
-**Full spec:** **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** (reference helpers + QA).
+### Metering FILE STATUS mapping (Jul 2026)
+
+Payment Management **FILE STATUS → Metering** (and dealer journey panel) must match Admin → Metering tabs:
+
+| Admin tab | Backend field / value | UI label |
+|-----------|----------------------|----------|
+| Meter Pending | `pending_metering` | Pending |
+| Meter in Discom | `metering_approved` | In Progress |
+| WCC Pending | `meteringWccAfterDiscom: true` | In Progress |
+| Meter Installation Pending | `meter_installation_pending` | In Progress |
+| Final Step | `mco` | **Completed** |
+| Not in metering | (empty) | Pending |
+
+**Full spec:** **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**, frontend `lib/customer-journey.ts` → `resolveMeteringJourneyStatus`.
 
 ### Optional — server-side dealer filter (performance)
 
@@ -1139,6 +1152,8 @@ Exact match on number of installment/phase rows (not “has installment 2”).
 - [ ] `phases: []` clears all installments
 - [ ] Approve / file-login timestamps exposed for date-range filters
 - [ ] `installationStatus` + metering fields on approved list (Payment Excel §AC)
+- [ ] Metering FILE STATUS: Final Step=`mco`→Completed; Meter Pending→Pending; Discom/WCC/Meter Install→In Progress
+- [ ] Return `meteringWccAfterDiscom` on approved / admin / metering list GETs
 - [ ] (Optional) `dealerId` query param on approved list for account-management role
 
 **Reference:** `BACKEND_CHANGES_REQUIRED.md` §6.5, §7.9, **§AB**, **§AC**; `BACKEND_INSTALLMENT_REPLACE.ts`, `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`; `BACKEND_ADMIN_QUOTATION_STATUS.ts`.
@@ -2762,6 +2777,43 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 
 ---
 
+## 24. Metering FILE STATUS (Payment Management + dashboards)
+
+**Frontend:** Account → Payment Management **FILE STATUS → Metering**; same helper on dealer journey panel.  
+**File:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `lib/customer-journey.ts` → `resolveMeteringJourneyStatus`
+
+### Mapping (must match Admin → Metering tabs)
+
+| Admin Metering tab | Persist / return on GET | UI label |
+|--------------------|-------------------------|----------|
+| Meter Pending | `meteringStatus` / `installationStatus` = `pending_metering` | **Pending** |
+| Meter in Discom | `metering_approved` | **In Progress** |
+| WCC Pending | `meteringWccAfterDiscom: true` (+ snake_case) | **In Progress** |
+| Meter Installation Pending | `meter_installation_pending` | **In Progress** |
+| Final Step | `mco` | **Completed** |
+| After Final Step | `pending_baldev` / `baldev_approved` / `completed` | **Completed** |
+| Not in metering | empty / unset | **Pending** |
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | On each metering stage PATCH, persist the canonical status above |
+| 2 | Persist `metering_wcc_after_discom` boolean when moving to WCC Pending |
+| 3 | Return these fields on `GET /quotations?status=approved`, `GET /admin/quotations`, `GET /metering/quotations` |
+| 4 | (Optional) pre-compute `journeyStageProgress.metering` on list rows using the same mapping |
+
+### QA
+
+1. File in Meter Pending → Payment Management shows Metering **Pending**  
+2. File in Meter in Discom / WCC / Meter Installation → **In Progress**  
+3. File in Final Step → **Completed**  
+4. Refresh on another device — labels still correct (fields from API, not localStorage only)
+
+**Reference:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`, `lib/customer-journey.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2798,6 +2850,8 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 | **`BACKEND_SALES_LINE_ITEMS.ts`** | **§22** sale_items quantity/unit_price/subtotal serialize |
 | **§23** (this file) | Quotations — additional quotation + restore current |
 | **`BACKEND_QUOTATION_SYSTEM_HISTORY.ts`** | **§23** allow additional create + `restore-current` + `is_current` |
+| **§24** (this file) | Metering FILE STATUS — Final Step Completed / Meter Pending Pending / rest In Progress |
+| **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |

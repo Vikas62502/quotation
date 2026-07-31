@@ -3,6 +3,7 @@ import { getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-da
 import {
   getInstallationWorkflowStatus,
   getMeteringWorkflowRaw,
+  getMeteringWorkflowStage,
   isInstallationCompleteForMetering,
 } from "@/lib/operational-install-queue"
 
@@ -211,6 +212,67 @@ export function paymentMatchesFileStatusFilter(
   return true
 }
 
+function isMeteringWccAfterDiscomFlag(q: Record<string, unknown>): boolean {
+  const v = q.meteringWccAfterDiscom ?? q.metering_wcc_after_discom
+  return v === true || v === 1 || v === "true" || v === "1"
+}
+
+/**
+ * Payment Management / dashboard FILE STATUS → Metering column.
+ * Aligns with Admin Metering tabs:
+ * - Final Step → Completed
+ * - Meter Pending → Pending
+ * - Meter in Discom / WCC Pending / Meter Installation Pending → In Progress
+ */
+export function resolveMeteringJourneyStatus(quotation: Quotation): JourneyStageStatus {
+  const q = quotation as unknown as Record<string, unknown>
+  const install = getInstallationWorkflowStatus(q)
+  const meteringRaw = getMeteringWorkflowRaw(q)
+  const combined = (meteringRaw || install || "").toLowerCase()
+
+  // After Final Step (moved to Baldev / fully done)
+  if (
+    ["pending_baldev", "baldev_approved", "completed"].includes(install) ||
+    ["pending_baldev", "baldev_approved", "completed"].includes(meteringRaw)
+  ) {
+    return "completed"
+  }
+
+  const stage = getMeteringWorkflowStage(q)
+
+  // Final Step → Complete
+  if (stage === "mco" || combined === "mco" || combined.includes("mco")) {
+    return "completed"
+  }
+
+  // WCC Pending → In Progress
+  if (isMeteringWccAfterDiscomFlag(q)) {
+    return "in_progress"
+  }
+
+  // Meter in Discom / Meter Installation Pending → In Progress
+  if (stage === "approved" || stage === "meter_install") {
+    return "in_progress"
+  }
+  if (
+    combined === "metering_approved" ||
+    combined === "metering_in_progress" ||
+    combined === "meter_installation_pending" ||
+    combined === "meter_install_pending" ||
+    combined.includes("meter_install")
+  ) {
+    return "in_progress"
+  }
+
+  // Meter Pending → Pending
+  if (stage === "processing" || combined === "pending_metering") {
+    return "pending"
+  }
+
+  // Not in metering yet → Pending
+  return "pending"
+}
+
 export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgress {
   const approvalStatus = String(quotation.status || "pending").toLowerCase()
   const installStatus = getInstallationWorkflowStatus(quotation as Record<string, unknown>)
@@ -224,7 +286,6 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
   const adminApproval: JourneyStageStatus = approvalStatus === "approved" ? "completed" : "pending"
 
   let installation: JourneyStageStatus = "pending"
-  let metering: JourneyStageStatus = "pending"
   let finalConfirmation: JourneyStageStatus = "pending"
 
   if (installStatus === "installer_in_progress") {
@@ -235,17 +296,7 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
     installation = "completed"
   }
 
-  // Metering progress only after installation is actually done (or metering is past install).
-  const installDone = installation === "completed"
-  if (installDone && ["pending_metering", "metering_in_progress"].includes(meteringStage)) {
-    metering = "in_progress"
-  }
-  if (
-    ["metering_approved", "mco", "pending_baldev", "baldev_approved", "completed"].includes(meteringStage) ||
-    ["pending_baldev", "baldev_approved", "completed"].includes(installStatus)
-  ) {
-    metering = "completed"
-  }
+  const metering = resolveMeteringJourneyStatus(quotation)
 
   if (installStatus === "mco" || meteringStage === "mco") {
     finalConfirmation = "in_progress"
