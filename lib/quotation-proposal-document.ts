@@ -111,9 +111,9 @@ export function mergeQuotationTimestampsFromApi(
 /** Payment terms shown in PDF Terms & Conditions (page 3). */
 export const PROPOSAL_PAYMENT_TERMS_DETAIL = [
   "Token Money (Cash/UPI/Netbanking): 10–20% of total system cost to secure the contract and cover initial costs (design, permits, equipment ordering).",
-  "For Cash: 75–85% of the system cost must be cleared in cash when material reaches the customer's home/site (on delivery), before installation work starts.",
+  "For Cash: 75–85% of the system cost must be cleared in cash before material dispatch, before installation work starts.",
   "For Loan: 70% of the system cost must be cleared before installation work starts, with the remaining 30% payable after installation.",
-  "Material Delivery: Once 70% is paid (loan) or 75–85% is paid (cash on delivery), equipment is dispatched to the site and installation must start within 7–10 days.",
+  "Material Delivery: Once 70% is paid (loan) or 75–85% is paid (cash, before material dispatch), equipment is dispatched to the site and installation must start within 7–10 days.",
   "Metering & Closure: After successful installation, only 5% remains and the rest of the amount must be cleared before metering work and commissioning finalize.",
 ].join("\n")
 
@@ -665,8 +665,8 @@ export function buildPaymentRows(subtotal: number): PaymentRow[] {
       highlight: true,
     },
     {
-      stage: "Material Delivery (Cash)",
-      when: "When Material Reaches Customer Home",
+      stage: "Before Dispatch(Cash)",
+      when: "Before when Material Dispatch",
       percentage: "75–85%",
       amount: "As per T&C",
     },

@@ -32,6 +32,7 @@ import { resolveApiBaseUrl } from "@/lib/resolve-api-base-url"
 import { api, apiErrorToUserMessage, getAuthToken, sendQuotationToMetering, ApiError } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import { formatPersonName } from "@/lib/name-display"
+import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import {
   InstallationCompletionPanel,
   type InstallationUploadedFile,
@@ -536,7 +537,7 @@ export default function InstallerDashboardPage() {
   const normalizedSearch = searchTerm.trim().toLowerCase()
 
   const sortedQuotations = useMemo(() => {
-    return [...quotations]
+    const filtered = [...quotations]
       .filter((q) => {
         if (!normalizedSearch) return true
         const fullName = formatPersonName(q.customer?.firstName, q.customer?.lastName, "").toLowerCase()
@@ -547,6 +548,8 @@ export default function InstallerDashboardPage() {
         )
       })
       .sort((a, b) => toTimestamp(getAdminApprovedDate(a)) - toTimestamp(getAdminApprovedDate(b)))
+    // One row per customer — same as dealer Quotations (current version only).
+    return keepCurrentQuotationsOnly(filtered, quotations)
   }, [quotations, normalizedSearch])
 
   const pendingQuotations = useMemo(

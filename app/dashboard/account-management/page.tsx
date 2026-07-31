@@ -39,6 +39,11 @@ import { api, ApiError } from "@/lib/api"
 import { calculateSystemSize } from "@/lib/pricing-tables"
 import { formatPersonName } from "@/lib/name-display"
 import {
+  getCurrentQuotationIds,
+  groupQuotationsByCustomerCurrentFirst,
+  keepCurrentQuotationsOnly,
+} from "@/lib/quotation-current"
+import {
   formatJourneyStageStatusLabel,
   getJourneyFileStatusStages,
   getJourneyHoldInfo,
@@ -1170,9 +1175,21 @@ export default function AccountManagementPage() {
       (q.id || "").toLowerCase().includes(searchTerm.toLowerCase()),
   )
 
-  const sortedQuotations = [...filteredQuotations].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  // One row per customer — same as dealer Quotations (current version only).
+  const sortedQuotations = keepCurrentQuotationsOnly(
+    [...filteredQuotations].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    ),
+    quotations,
   )
+
+  const accountOlderCountById = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const group of groupQuotationsByCustomerCurrentFirst(quotations)) {
+      map.set(group.current.id, group.history.length)
+    }
+    return map
+  }, [quotations])
 
   const totalApprovedValue = quotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || q.totalAmount || 0), 0)
 
@@ -1222,9 +1239,22 @@ export default function AccountManagementPage() {
     return true
   }
 
+  const currentQuotationIdsForPayments = useMemo(
+    () => getCurrentQuotationIds(quotations),
+    [quotations],
+  )
+
   const filteredCustomerPayments = useMemo(
     () =>
       customerPayments.filter((payment) => {
+        // Same as dealer Quotations: only the current quotation per customer.
+        if (
+          currentQuotationIdsForPayments.size > 0 &&
+          payment.quotationId &&
+          !currentQuotationIdsForPayments.has(payment.quotationId)
+        ) {
+          return false
+        }
         const matchesSearch =
           payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
           payment.customerMobile.includes(paymentSearchTerm) ||
@@ -1261,6 +1291,7 @@ export default function AccountManagementPage() {
       }),
     [
       customerPayments,
+      currentQuotationIdsForPayments,
       paymentSearchTerm,
       paymentTypeFilter,
       paymentStatusFilter,
@@ -2368,7 +2399,16 @@ export default function AccountManagementPage() {
                             key={quotation.id}
                             className="border-b border-border last:border-0 hover:bg-green-50 dark:hover:bg-green-950/20 transition-colors bg-green-50/50 dark:bg-green-950/10"
                           >
-                            <td className="py-4 px-3 text-sm font-mono text-muted-foreground font-semibold">{quotation.id || "N/A"}</td>
+                            <td className="py-4 px-3 text-sm font-mono text-muted-foreground font-semibold">
+                              <div className="flex flex-col gap-1">
+                                <span>{quotation.id || "N/A"}</span>
+                                {(accountOlderCountById.get(quotation.id) || 0) > 0 ? (
+                                  <Badge variant="outline" className="w-fit text-[10px]">
+                                    {accountOlderCountById.get(quotation.id)} older
+                                  </Badge>
+                                ) : null}
+                              </div>
+                            </td>
                             <td className="py-4 px-3">
                               <div>
                                 <p className="text-sm font-semibold text-foreground">

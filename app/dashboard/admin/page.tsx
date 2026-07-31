@@ -110,6 +110,7 @@ import {
   annotateQuotationsWithCurrent,
   getCustomerMobileFromQuotation,
   groupQuotationsByCustomerCurrentFirst,
+  keepCurrentQuotationsOnly,
   setCurrentQuotationForMobile,
 } from "@/lib/quotation-current"
 import {
@@ -3742,6 +3743,8 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "partial") list = installationPartialQuotations
       else if (operationalProgressTab === "done") list = installationApprovedQuotations
       else list = sortedQuotations
+      // Same as personal Installation: one current quotation per customer.
+      list = keepCurrentQuotationsOnly(list, quotations)
     } else if (operationalTab === "metering") {
       if (operationalProgressTab === "wcc") list = meteringWccPendingQuotations
       else if (operationalProgressTab === "meter_install") list = meteringMeterInstallQuotations
@@ -3750,11 +3753,14 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "bank_process") list = meteringBankProcessQuotations
       else if (operationalProgressTab === "pending_payment") list = meteringPendingPaymentQuotations
       else list = meteringProcessingQuotations // Meter Pending (default; no All tab)
+      // Same as personal Metering: one current quotation per customer.
+      list = keepCurrentQuotationsOnly(list, quotations)
     } else if (operationalTab === "confirmation") {
       if (operationalProgressTab === "dcr") list = confirmationDcrQuotations
       else if (operationalProgressTab === "pending") list = confirmationFinalProcessQuotations
       else if (operationalProgressTab === "done") list = confirmationFinalQuotations
       else list = sortedQuotations
+      list = keepCurrentQuotationsOnly(list, quotations)
     } else {
       // Main Quotations tab: one row per customer (current version only).
       list = groupQuotationsByCustomerCurrentFirst(sortedQuotations).map(
@@ -3803,6 +3809,7 @@ export default function AdminPanelPage() {
     operationalProgressTab,
     filterInstallOverdue,
     sortedQuotations,
+    quotations,
     installationPendingQuotations,
     installationPartialQuotations,
     installationApprovedQuotations,

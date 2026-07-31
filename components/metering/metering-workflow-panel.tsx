@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { formatPersonName } from "@/lib/name-display"
 import { cn } from "@/lib/utils"
+import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import {
   extractQuotationListFromApiResponse,
   getInstallationWorkflowStatus,
@@ -908,74 +909,91 @@ export function MeteringWorkflowPanel({
       )
     })
 
+  /** One row per customer (current quotation) — same as dealer Quotations. */
+  const onlyCurrent = (list: MeteringQuotation[]) => keepCurrentQuotationsOnly(list, quotations)
+
   const processingList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "processing" && !isWccPending(q)),
-        searchByTab.processing,
-      ).sort((a, b) => toTimestamp(getAdminApprovedDate(a)) - toTimestamp(getAdminApprovedDate(b))),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => getMeteringStage(q) === "processing" && !isWccPending(q)),
+          searchByTab.processing,
+        ).sort((a, b) => toTimestamp(getAdminApprovedDate(a)) - toTimestamp(getAdminApprovedDate(b))),
+      ),
     [quotations, searchByTab.processing],
   )
 
   const approvedList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "approved" && !isWccPending(q)),
-        searchByTab.approved,
-      ).sort((a, b) => {
-        const aDate = (a as any).meteringApprovedAt || (a as any).metering_approved_at || getAdminApprovedDate(a)
-        const bDate = (b as any).meteringApprovedAt || (b as any).metering_approved_at || getAdminApprovedDate(b)
-        return toTimestamp(bDate) - toTimestamp(aDate)
-      }),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => getMeteringStage(q) === "approved" && !isWccPending(q)),
+          searchByTab.approved,
+        ).sort((a, b) => {
+          const aDate = (a as any).meteringApprovedAt || (a as any).metering_approved_at || getAdminApprovedDate(a)
+          const bDate = (b as any).meteringApprovedAt || (b as any).metering_approved_at || getAdminApprovedDate(b)
+          return toTimestamp(bDate) - toTimestamp(aDate)
+        }),
+      ),
     [quotations, searchByTab.approved],
   )
 
   const wccList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => isWccPending(q)),
-        searchByTab.wcc,
-      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => isWccPending(q)),
+          searchByTab.wcc,
+        ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      ),
     [quotations, searchByTab.wcc],
   )
 
   const meterInstallList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "meter_install"),
-        searchByTab.meter_install,
-      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => getMeteringStage(q) === "meter_install"),
+          searchByTab.meter_install,
+        ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      ),
     [quotations, searchByTab.meter_install],
   )
 
   const mcoList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => getMeteringStage(q) === "mco"),
-        searchByTab.mco,
-      ).sort((a, b) => {
-        const aDate = (a as any).mcoAt || (a as any).mco_at || getAdminApprovedDate(a)
-        const bDate = (b as any).mcoAt || (b as any).mco_at || getAdminApprovedDate(b)
-        return toTimestamp(bDate) - toTimestamp(aDate)
-      }),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => getMeteringStage(q) === "mco"),
+          searchByTab.mco,
+        ).sort((a, b) => {
+          const aDate = (a as any).mcoAt || (a as any).mco_at || getAdminApprovedDate(a)
+          const bDate = (b as any).mcoAt || (b as any).mco_at || getAdminApprovedDate(b)
+          return toTimestamp(bDate) - toTimestamp(aDate)
+        }),
+      ),
     [quotations, searchByTab.mco],
   )
 
   const bankProcessList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && !isBankProcessDone(q)),
-        searchByTab.bank_process,
-      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && !isBankProcessDone(q)),
+          searchByTab.bank_process,
+        ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      ),
     [quotations, searchByTab.bank_process],
   )
 
   const pendingPaymentList = useMemo(
     () =>
-      filterSearch(
-        quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && isBankProcessDone(q)),
-        searchByTab.pending_payment,
-      ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      onlyCurrent(
+        filterSearch(
+          quotations.filter((q) => isInMeterPipeline(q) && isBankProcessEligible(q) && isBankProcessDone(q)),
+          searchByTab.pending_payment,
+        ).sort((a, b) => toTimestamp(getAdminApprovedDate(b)) - toTimestamp(getAdminApprovedDate(a))),
+      ),
     [quotations, searchByTab.pending_payment],
   )
 

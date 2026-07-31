@@ -171,3 +171,36 @@ export function groupQuotationsByCustomerCurrentFirst<
   return groups
 }
 
+/** Ids of the current quotation for each customer in `list`. */
+export function getCurrentQuotationIds<
+  T extends {
+    id: string
+    createdAt?: string
+    isCurrent?: boolean
+    is_current?: boolean
+    customer?: { mobile?: string } | null
+    mobile?: string
+  },
+>(list: T[]): Set<string> {
+  return new Set(groupQuotationsByCustomerCurrentFirst(list).map((g) => g.current.id))
+}
+
+/**
+ * Keep only the current quotation per customer.
+ * When `universe` is provided, "current" is decided from that full list
+ * (so a stage subset does not promote an older row to current).
+ */
+export function keepCurrentQuotationsOnly<
+  T extends {
+    id: string
+    createdAt?: string
+    isCurrent?: boolean
+    is_current?: boolean
+    customer?: { mobile?: string } | null
+    mobile?: string
+  },
+>(list: T[], universe?: T[]): T[] {
+  const ids = getCurrentQuotationIds(universe && universe.length > 0 ? universe : list)
+  return list.filter((q) => ids.has(q.id))
+}
+
