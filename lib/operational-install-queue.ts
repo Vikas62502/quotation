@@ -288,15 +288,9 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
   return null
 }
 
-/** Workflow stages after installation photos are uploaded / approved. */
+/** Workflow stages that mean installation photos/work were finished (not metering alone). */
 export const INSTALLATION_UPLOAD_COMPLETE_STATUSES = new Set([
   "installer_approved",
-  "pending_metering",
-  "metering_in_progress",
-  "metering_approved",
-  "meter_installation_pending",
-  "meter_install_pending",
-  "mco",
   "pending_baldev",
   "baldev_approved",
   "completed",
@@ -313,7 +307,10 @@ export function isInstallationApprovedForAdminTab(
 ): boolean {
   // Partial uploads stay in Partial Approved — never the Approved Installation tab.
   if (isInstallationPartialApproved(q)) return false
+  // Real installer completion (do not treat pending_metering alone as installed —
+  // Account → Send to Installer with no action must stay in Pending Installation).
   if (isInstallationUploadCompleteByStatus(q)) return true
+  if (isInstallationCompleteForMetering(q)) return true
   if (Boolean(q.installerApprovedAt || q.installer_approved_at)) return true
   if ((opts?.imageUrlCount ?? 0) > 0) return true
   if (opts?.inInstallerApprovedQueue) return true
@@ -343,35 +340,25 @@ function isTruthyReleaseFlag(value: unknown): boolean {
   return value === true || value === 1 || value === "true" || value === "1"
 }
 
-/** Sent row should leave Admin Installation only after real metering handoff (not wrong backend status on release). */
-export function shouldHideSentQuotationFromAdminInstallationTab(q: OperationalQuotationRecord): boolean {
-  const install = getInstallationWorkflowStatus(q)
-  const metering = getMeteringWorkflowRaw(q)
-
-  if (
-    metering === "pending_metering" ||
-    metering === "metering_in_progress" ||
-    metering === "metering_approved" ||
-    metering === "mco" ||
-    install === "pending_metering" ||
-    install === "metering_in_progress" ||
-    install === "metering_approved" ||
-    install === "mco"
-  ) {
-    return true
-  }
-
+/**
+ * Previously hid Installation rows after Send to Metering.
+ * Product rule (Jul 2026): Account → Send to Installer rows must stay visible in
+ * Installation (Admin + installer dashboard) even after metering handoff.
+ */
+export function shouldHideSentQuotationFromAdminInstallationTab(
+  _q: OperationalQuotationRecord,
+): boolean {
   return false
 }
 
-/** Strict gate: only Payment Management “Send to Installer” rows belong on Admin → Installation. */
+/** Strict gate: only Payment Management “Send to Installer” rows belong on Installation. */
 export function shouldShowInAdminInstallationTab(
   q: OperationalQuotationRecord,
   releaseMap?: Record<string, any>,
 ): boolean {
   const map = releaseMap ?? readInstallerReleaseMap()
   if (!isQuotationSentToInstaller(q, map)) return false
-  if (shouldHideSentQuotationFromAdminInstallationTab(q)) return false
+  // Do not hide after pending_metering / metering_* — keep history in Installation.
   return true
 }
 

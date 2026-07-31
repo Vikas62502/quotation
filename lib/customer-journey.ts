@@ -227,14 +227,17 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
   let metering: JourneyStageStatus = "pending"
   let finalConfirmation: JourneyStageStatus = "pending"
 
-  if (installStatus === "installer_in_progress" || installStatus === "pending_installer") {
+  if (installStatus === "installer_in_progress") {
     installation = "in_progress"
   }
+  // pending_installer = Account sent to installer, no install action yet → still Pending
   if (isInstallationCompleteForMetering(quotation as Record<string, unknown>)) {
     installation = "completed"
   }
 
-  if (["pending_metering", "metering_in_progress"].includes(meteringStage)) {
+  // Metering progress only after installation is actually done (or metering is past install).
+  const installDone = installation === "completed"
+  if (installDone && ["pending_metering", "metering_in_progress"].includes(meteringStage)) {
     metering = "in_progress"
   }
   if (

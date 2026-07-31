@@ -2,7 +2,12 @@
 import { API_CONFIG } from "./api-config"
 import { buildFinalConfirmationDocumentsFormData } from "./final-confirmation-documents"
 import { parseQuotationDocumentUploadUrl } from "./quotation-documents-form"
-import { extractQuotationListFromApiResponse } from "./operational-install-queue"
+import {
+  extractQuotationListFromApiResponse,
+  flattenQuotationListRow,
+  isQuotationSentToInstaller,
+  readInstallerReleaseMap,
+} from "./operational-install-queue"
 
 const getApiBaseUrl = () => API_CONFIG.baseURL
 
@@ -654,21 +659,30 @@ export async function forceAdvanceQuotationToMco(quotationId: string): Promise<b
 /** Load rows sent from Payment Management — tries account + admin list endpoints. */
 export async function fetchSentToInstallerQuotationRows(): Promise<any[]> {
   const queryAttempts = [
-    "/quotations?status=approved&limit=1000",
-    "/admin/quotations?limit=1000&status=approved",
     "/admin/quotations?limit=1000&installationReadyForInstaller=true",
+    "/admin/quotations?limit=1000&status=approved",
+    "/quotations?status=approved&limit=1000",
     "/admin/quotations?limit=1000",
   ]
+  let best: any[] = []
   for (const path of queryAttempts) {
     try {
       const response = await apiRequest(path, { suppressErrorLog: true })
       const rows = extractQuotationListFromApiResponse(response)
-      if (rows.length > 0) return rows
+      if (rows.length === 0) continue
+      const releaseMap = readInstallerReleaseMap()
+      const sent = rows.filter((row) => {
+        const flat = flattenQuotationListRow(row)
+        return isQuotationSentToInstaller(flat, releaseMap)
+      })
+      if (sent.length > 0) return sent
+      if (rows.length > best.length) best = rows
     } catch {
       // try next endpoint
     }
   }
-  return []
+  // Fallback: full list — caller filters with release map
+  return best
 }
 
 // API Service Methods
@@ -1812,23 +1826,45 @@ export const api = {
      */
     releaseForInstallation: async (
       quotationId: string,
-      payload: { installationReadyForInstaller: boolean; installationReleasedAt?: string },
+      payload: {
+        installationReadyForInstaller: boolean
+        installationReleasedAt?: string
+        installationStatus?: string
+        installation_status?: string
+      },
     ) => {
+      const body = {
+        installationReadyForInstaller: payload.installationReadyForInstaller,
+        installation_ready_for_installer: payload.installationReadyForInstaller,
+        installationReleasedAt: payload.installationReleasedAt,
+        installation_released_at: payload.installationReleasedAt,
+        installationStatus: payload.installationStatus || "pending_installer",
+        installation_status: payload.installation_status || payload.installationStatus || "pending_installer",
+      }
       const attempts: Array<{ endpoint: string; method: "PATCH"; body: Record<string, any> }> = [
         {
           endpoint: `/quotations/${quotationId}/installation-release`,
           method: "PATCH",
-          body: payload,
+          body,
         },
         {
           endpoint: `/quotations/${quotationId}/installation/ready`,
           method: "PATCH",
-          body: payload,
+          body,
         },
         {
           endpoint: `/quotations/${quotationId}/payment-details`,
           method: "PATCH",
-          body: payload,
+          body,
+        },
+        {
+          endpoint: `/admin/quotations/${quotationId}/installation-status`,
+          method: "PATCH",
+          body: {
+            status: "pending_installer",
+            installationReadyForInstaller: body.installationReadyForInstaller,
+            installationReleasedAt: body.installationReleasedAt,
+          },
         },
       ]
 

@@ -106,6 +106,7 @@ import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merg
 import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { cn } from "@/lib/utils"
+import { confirmSave } from "@/lib/confirm-save"
 import {
   annotateQuotationsWithCurrent,
   getCustomerMobileFromQuotation,
@@ -3743,8 +3744,8 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "partial") list = installationPartialQuotations
       else if (operationalProgressTab === "done") list = installationApprovedQuotations
       else list = sortedQuotations
-      // Same as personal Installation: one current quotation per customer.
-      list = keepCurrentQuotationsOnly(list, quotations)
+      // Keep every Account → Send to Installer row (including after metering).
+      // Do not collapse to "current quotation only" here.
     } else if (operationalTab === "metering") {
       if (operationalProgressTab === "wcc") list = meteringWccPendingQuotations
       else if (operationalProgressTab === "meter_install") list = meteringMeterInstallQuotations
@@ -5555,6 +5556,8 @@ export default function AdminPanelPage() {
       })
       return
     }
+
+    if (!confirmSave(`Send ${quotation.id} to Metering and save?`)) return
 
     setSendingToMeteringId(quotation.id)
     try {

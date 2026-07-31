@@ -2033,7 +2033,7 @@ After PATCH, **`GET /api/admin/quotations`** (and **`GET /api/metering/quotation
 
 **Metering queue:** Row must appear in `GET /api/metering/quotations?status=processing` (or equivalent filter for `pending_metering` / `metering_in_progress`).
 
-**Installation tab:** Row must **not** be treated as Pending/Approved Installation once `pending_metering`+ — frontend hides it; backend should not require installation queue APIs to still list it.
+**Installation tab:** Row **stays visible** after `pending_metering`+ (Account → Send to Installer history). It moves to **Approved Installation** when upload is complete; Metering also shows the same row. Backend should keep returning `installationReadyForInstaller` / `installationReleasedAt` on GET.
 
 ### Business rules (recommended)
 

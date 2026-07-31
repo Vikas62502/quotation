@@ -43,6 +43,7 @@ import {
   groupQuotationsByCustomerCurrentFirst,
   keepCurrentQuotationsOnly,
 } from "@/lib/quotation-current"
+import { confirmSave } from "@/lib/confirm-save"
 import {
   formatJourneyStageStatusLabel,
   getJourneyFileStatusStages,
@@ -1528,6 +1529,7 @@ export default function AccountManagementPage() {
       })
       return
     }
+    if (!confirmSave("Add this subsidy cheque and save?")) return
     const id =
       typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
@@ -1552,6 +1554,7 @@ export default function AccountManagementPage() {
     if (!activePayment) return
     const ch = activePayment.subsidyCheques.find((c) => c.id === chequeId)
     if (!ch || ch.status !== "pending") return
+    if (!confirmSave(`Apply subsidy cheque of ₹${ch.amount.toLocaleString("en-IN")} to paid and save?`)) return
     const amt = Math.round(Number(ch.amount) || 0)
     if (amt <= 0) return
 
@@ -1649,6 +1652,14 @@ export default function AccountManagementPage() {
         description: "Final settlement has already been applied for this customer.",
         variant: "destructive",
       })
+      return
+    }
+
+    if (
+      !confirmSave(
+        `Apply final settlement of ₹${settlementDiscount.toLocaleString("en-IN")} and save?`,
+      )
+    ) {
       return
     }
 
@@ -1946,6 +1957,7 @@ export default function AccountManagementPage() {
       })
       return
     }
+    if (!confirmSave("Save installment / payment details?")) return
     const paymentStatus: CustomerPayment["paymentStatus"] =
       totalPaid <= 0
         ? "pending"
@@ -2073,6 +2085,14 @@ export default function AccountManagementPage() {
       return
     }
 
+    if (
+      !confirmSave(
+        `Send ${quotation.id} to Installation?\n\nIt will appear under Pending Installation.`,
+      )
+    ) {
+      return
+    }
+
     const releasedAt = new Date().toISOString()
     setReleasingInstallationId(quotation.id)
     const applyReleaseLocally = () => {
@@ -2083,6 +2103,8 @@ export default function AccountManagementPage() {
                 ...q,
                 installationReadyForInstaller: true,
                 installationReleasedAt: releasedAt,
+                installationStatus: "pending_installer",
+                installation_status: "pending_installer",
               }
             : q,
         ),
@@ -2096,6 +2118,8 @@ export default function AccountManagementPage() {
                   ...payment.quotation,
                   installationReadyForInstaller: true,
                   installationReleasedAt: releasedAt,
+                  installationStatus: "pending_installer",
+                  installation_status: "pending_installer",
                 },
               }
             : payment,
@@ -2112,6 +2136,8 @@ export default function AccountManagementPage() {
                     ...q,
                     installationReadyForInstaller: true,
                     installationReleasedAt: releasedAt,
+                    installationStatus: "pending_installer",
+                    installation_status: "pending_installer",
                   }
                 : q,
             )
@@ -2139,13 +2165,15 @@ export default function AccountManagementPage() {
         await api.quotations.releaseForInstallation(quotation.id, {
           installationReadyForInstaller: true,
           installationReleasedAt: releasedAt,
-        })
+          installationStatus: "pending_installer",
+          installation_status: "pending_installer",
+        } as any)
       }
       applyReleaseLocally()
 
       toast({
         title: "Sent to installer",
-        description: "Quotation is now visible in Installer dashboard.",
+        description: "Quotation is now in Installation → Pending Installation.",
       })
     } catch (error) {
       const errorText = (error instanceof ApiError ? error.message : String(error || "")).toLowerCase()

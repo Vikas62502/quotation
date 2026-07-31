@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Image as ImageIcon, Plus, Trash2, Upload, X } from "lucide-react"
+import { confirmSave } from "@/lib/confirm-save"
 
 export type InstallationImageField = {
   readonly key: string
@@ -528,13 +529,23 @@ export function InstallationCompletionPanel({
           <Button
             variant="secondary"
             size="sm"
-            onClick={onSecondarySave}
+            onClick={() => {
+              if (!confirmSave(`Save as "${secondarySaveLabel}"?`)) return
+              onSecondarySave()
+            }}
             disabled={saving || Boolean(uploadingKey)}
           >
             {saving ? "Saving..." : uploadingKey ? "Uploading..." : secondarySaveLabel}
           </Button>
         ) : null}
-        <Button size="sm" onClick={onSave} disabled={saving || Boolean(uploadingKey)}>
+        <Button
+          size="sm"
+          onClick={() => {
+            if (!confirmSave(`Save as "${saveLabel}"?`)) return
+            onSave()
+          }}
+          disabled={saving || Boolean(uploadingKey)}
+        >
           {saving ? "Saving..." : uploadingKey ? "Uploading..." : saveLabel}
         </Button>
       </div>

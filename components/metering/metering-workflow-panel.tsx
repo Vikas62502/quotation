@@ -21,6 +21,7 @@ import {
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
+import { confirmSave } from "@/lib/confirm-save"
 
 /** Meter process (left) + Bank process (right) tabs — same order as Admin Metering. */
 export type MeteringStage =
@@ -407,6 +408,7 @@ export function MeteringWorkflowPanel({
   }
 
   const moveToWccPending = async (id: string) => {
+    if (!confirmSave("Move this file to WCC Pending and save?")) return
     try {
       await api.admin.quotations.setMeteringWccAfterDiscom(id, true)
     } catch {
@@ -427,6 +429,7 @@ export function MeteringWorkflowPanel({
   }
 
   const markBankProcessDone = (id: string) => {
+    if (!confirmSave("Mark bank process done and save?")) return
     setQuotations((prev) =>
       prev.map((q) =>
         q.id === id ? { ...q, bankProcessDone: true, bank_process_done: true } : q,
@@ -444,6 +447,7 @@ export function MeteringWorkflowPanel({
     stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">,
   ) => {
     if (!useApi) return
+    if (!confirmSave(`Move this file to the next stage (${stage.replaceAll("_", " ")}) and save?`)) return
 
     if (stage === "mco") {
       applyLocalMeteringStage(id, "mco")
@@ -578,6 +582,7 @@ export function MeteringWorkflowPanel({
 
   const saveMeteringDetails = async () => {
     if (!detailsQuotationId) return
+    if (!confirmSave("Save metering details?")) return
 
     const patch: Partial<MeteringWorkflowItem> = {
       discomName: detailsDraft.discomName.trim(),
@@ -752,6 +757,7 @@ export function MeteringWorkflowPanel({
       })
       return
     }
+    if (!confirmSave("Save MCO documents?")) return
 
     try {
       setSavingMcoDocs(true)
@@ -840,6 +846,7 @@ export function MeteringWorkflowPanel({
       })
       return
     }
+    if (!confirmSave("Move to Baldev / final confirmation and save?")) return
     try {
       await api.metering.updateStatus(quotationId, "mark_completed")
       setQuotations((prev) =>

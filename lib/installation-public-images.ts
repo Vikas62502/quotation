@@ -181,6 +181,8 @@ export const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
   "pending_metering",
   "metering_in_progress",
   "metering_approved",
+  "meter_installation_pending",
+  "meter_install_pending",
   "mco",
   "pending_baldev",
   "baldev_approved",
