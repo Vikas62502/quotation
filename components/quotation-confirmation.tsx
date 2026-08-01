@@ -96,7 +96,14 @@ const getSystemPrice = (products: ProductSelection): number => {
       return products.systemPrice || 0
     }
     const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
-    const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    const price = getDcrPrice(
+      systemSize,
+      phase,
+      products.inverterSize,
+      products.panelBrand,
+      undefined,
+      products.panelType,
+    )
     if (price !== null) return price
     // Fallback to stored systemPrice if price lookup fails
     return products.systemPrice || 0

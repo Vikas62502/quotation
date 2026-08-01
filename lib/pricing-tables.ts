@@ -356,9 +356,15 @@ export const defaultPanelPricing: PanelPricing[] = [
   { brand: "INA", size: "580W", price: 31000 },
   { brand: "INA", size: "590W", price: 31400 },
   { brand: "INA", size: "600W", price: 31800 },
+
+  // Premier Energy panels used by DCR “Crompton set” (600W–610W)
+  { brand: "Premier Energy", size: "600W", price: 32800 },
+  { brand: "Premier Energy", size: "605W", price: 33000 },
+  { brand: "Premier Energy", size: "610W", price: 33200 },
 ]
 
 export const defaultInverterPricing: InverterPricing[] = [
+  { brand: "Crompton", size: "3.6kW", price: 42000 },
   { brand: "Growatt", size: "3kW", price: 35000 },
   { brand: "Growatt", size: "5kW", price: 58000 },
   { brand: "Growatt", size: "6kW", price: 70000 },
@@ -420,11 +426,13 @@ export const defaultACDBPricing: ACDBPricing[] = [
   { brand: "L&T", phase: "1-Phase", price: 2800 },
   { brand: "Polycab", phase: "1-Phase", price: 2300 },
   { brand: "HPL", phase: "1-Phase", price: 2400 },
+  { brand: "Crompton", phase: "1-Phase", price: 2500 },
   // 3-Phase ACDB
   { brand: "Havells", phase: "3-Phase", price: 5000 },
   { brand: "L&T", phase: "3-Phase", price: 5500 },
   { brand: "Polycab", phase: "3-Phase", price: 4800 },
   { brand: "HPL", phase: "3-Phase", price: 4900 },
+  { brand: "Crompton", phase: "3-Phase", price: 5000 },
 ]
 
 export const defaultDCDBPricing: DCDBPricing[] = [
@@ -433,11 +441,13 @@ export const defaultDCDBPricing: DCDBPricing[] = [
   { brand: "L&T", phase: "1-Phase", price: 2800 },
   { brand: "Polycab", phase: "1-Phase", price: 2300 },
   { brand: "HPL", phase: "1-Phase", price: 2400 },
+  { brand: "Crompton", phase: "1-Phase", price: 2500 },
   // 3-Phase DCDB
   { brand: "Havells", phase: "3-Phase", price: 5000 },
   { brand: "L&T", phase: "3-Phase", price: 5500 },
   { brand: "Polycab", phase: "3-Phase", price: 4800 },
   { brand: "HPL", phase: "3-Phase", price: 4900 },
+  { brand: "Crompton", phase: "3-Phase", price: 5000 },
 ]
 
 // Helper function to get available panel sizes from pricing tables
@@ -503,6 +513,10 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "dcr", systemSize: "3.1kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "5.1kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (1-Phase)", dcdb: "Havells (1-Phase)", centralSubsidy: 78000 },
+
+  // Crompton set (DCR, 1-Phase) — Premier Energy 600–610W panels, Crompton 3.6kW inverter + ACDB/DCDB
+  { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Crompton set", panelSize: "610W", inverterBrand: "Crompton", inverterSize: "3.6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Crompton (1-Phase)", dcdb: "Crompton (1-Phase)", centralSubsidy: 78000 },
+  { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Crompton set", panelSize: "610W", inverterBrand: "Crompton", inverterSize: "3.6kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Crompton (1-Phase)", dcdb: "Crompton (1-Phase)", centralSubsidy: 78000 },
   
   // ========== DCR SYSTEMS (3-Phase) ==========
   // Adani DCR 3-Phase
@@ -662,7 +676,11 @@ export function mergeSystemConfigsWithDefaults(
       if (canonicalSize !== DCR_AS_PER_THE_SET) {
         merged.panelSize = canonicalSize
       }
-      merged.panelBrand = dcrFormPanelBrandForPricingType(pricingType)
+      // Keep Crompton set as the preset key; form maps to Premier Energy on select.
+      merged.panelBrand =
+        pricingType === CROMPTON_DCR_SET_NAME
+          ? CROMPTON_DCR_SET_NAME
+          : dcrFormPanelBrandForPricingType(pricingType)
     }
     byKey.set(key, merged)
   }
@@ -717,13 +735,19 @@ export function getSystemConfiguration(
   const configs = mergeSystemConfigsWithDefaults(data.systemConfigs)
 
   const rawBrand = panelBrand.trim()
+  const pricingType = systemType === "dcr" ? resolveDcrPricingPanelType(rawBrand) : ""
   // DCR packages map browse columns → form brands; Non-DCR keeps catalog brands (e.g. Renew Energy).
   const brandKey =
     systemType === "dcr"
-      ? dcrFormPanelBrandForPricingType(resolveDcrPricingPanelType(rawBrand))
+      ? dcrFormPanelBrandForPricingType(pricingType)
       : rawBrand.toLowerCase().includes("renew")
         ? "Renew Energy"
         : rawBrand
+  // Crompton presets stay keyed as "Crompton set"; form brand is Premier Energy.
+  const lookupBrand =
+    systemType === "dcr" && pricingType === CROMPTON_DCR_SET_NAME
+      ? CROMPTON_DCR_SET_NAME
+      : brandKey
 
   // Exact match — include phase when provided (e.g. 6kW Tata 1-Phase vs 3-Phase)
   let config: SystemConfigurationPreset | undefined
@@ -732,13 +756,13 @@ export function getSystemConfiguration(
       (c) =>
         c.systemType === systemType &&
         c.systemSize === systemSize &&
-        c.panelBrand === brandKey &&
+        c.panelBrand === lookupBrand &&
         c.phase === phase,
     )
   }
   if (!config) {
     config = configs.find(
-      (c) => c.systemType === systemType && c.systemSize === systemSize && c.panelBrand === brandKey,
+      (c) => c.systemType === systemType && c.systemSize === systemSize && c.panelBrand === lookupBrand,
     )
   }
 
@@ -755,7 +779,6 @@ export function getSystemConfiguration(
   if (!config) return null
 
   if (systemType === "dcr") {
-    const pricingType = resolveDcrPricingPanelType(panelBrand.trim())
     const canonicalSize = dcrPanelSizeForPricingType(pricingType)
     return {
       ...config,
@@ -879,12 +902,19 @@ export const DCR_PRICING_PANEL_TYPES = [
   "Premier Energies",
   "INA",
   "Tata",
+  "Crompton set",
 ] as const
 
 /** INA DCR packages: auto-pick panel size within 500W–600W per nominal kW slab. */
 export const INA_DCR_PANEL_SIZES_WATTS = [
   600, 590, 580, 570, 560, 550, 540, 530, 520, 510, 500,
 ] as const
+
+/** Crompton set (DCR): Premier Energy panels within 600W–610W. */
+export const CROMPTON_SET_PANEL_SIZES_WATTS = [610, 605, 600] as const
+
+/** Display / package name for the Crompton DCR column. */
+export const CROMPTON_DCR_SET_NAME = "Crompton set"
 
 function dcrInverterSizeForPackage(systemSize: string, phase: "1-Phase" | "3-Phase"): string {
   const kw = Number.parseFloat(systemSize.replace(/kW/i, ""))
@@ -914,6 +944,16 @@ const DCR_TATA_PRICING_ROWS: { systemSize: string; phase: "1-Phase" | "3-Phase";
   { systemSize: "6kW", phase: "3-Phase", tata: 380000 },
   { systemSize: "8kW", phase: "3-Phase", tata: 470000 },
   { systemSize: "10kW", phase: "3-Phase", tata: 550000 },
+]
+
+/** Crompton set — DCR 1-Phase only (Premier Energy 600–610W + Crompton 3.6kW). */
+const DCR_CROMPTON_SET_PRICING_ROWS: {
+  systemSize: string
+  phase: "1-Phase"
+  price: number
+}[] = [
+  { systemSize: "3kW", phase: "1-Phase", price: 210000 },
+  { systemSize: "5kW", phase: "1-Phase", price: 295000 },
 ]
 
 const DCR_PRICING_MATRIX: DcrPricingMatrixRow[] = [
@@ -961,16 +1001,32 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
       price: row.tata,
     })
   }
+  for (const row of DCR_CROMPTON_SET_PRICING_ROWS) {
+    out.push({
+      systemSize: row.systemSize,
+      phase: row.phase,
+      inverterSize: "3.6kW",
+      panelType: CROMPTON_DCR_SET_NAME,
+      price: row.price,
+      notes: "Premier Energy 600W–610W panels; Crompton 3.6kW inverter + ACDB/DCDB",
+    })
+  }
   return out
 }
 
-// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, INA, Tata (Jun 2026)
+// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, INA, Tata, Crompton set
 export const dcrPricing: SystemPricing[] = buildDcrPricingFromMatrix()
 
 /** Map form/catalog panel brand to DCR pricing table `panelType`. */
-export function resolveDcrPricingPanelType(panelBrand: string): string {
+export function resolveDcrPricingPanelType(panelBrand: string, panelTypeHint?: string): string {
+  const hint = String(panelTypeHint || "")
+    .trim()
+    .toLowerCase()
+  if (hint.includes("crompton")) return CROMPTON_DCR_SET_NAME
+
   const brand = panelBrand.trim()
   if (!brand) return "Adani"
+  if (brand.toLowerCase().includes("crompton")) return CROMPTON_DCR_SET_NAME
   if (brand === "Premier" || brand.startsWith("Premier")) return "Premier Energies"
   if (brand === "INA" || brand.toUpperCase() === "INA") return "INA"
   if (brand === "Adani Topcon") return "Adani Topcon"
@@ -993,6 +1049,9 @@ export function dcrPanelSizeForPricingType(panelType: string): string {
     case "Premier Energies":
     case "Premier":
       return "610W"
+    case CROMPTON_DCR_SET_NAME:
+    case "Crompton":
+      return "610W"
     case "INA":
       return "550W"
     case "Tata":
@@ -1007,6 +1066,8 @@ export function dcrFormPanelBrandForPricingType(panelType: string): string {
   if (panelType === "Adani Topcon") return "Adani"
   if (panelType === "Premier Energies" || panelType === "Premier") return "Premier Energies"
   if (panelType === "INA") return "INA"
+  // Crompton set uses Premier Energy panels; package identity stays in `panelType`.
+  if (panelType === CROMPTON_DCR_SET_NAME || panelType === "Crompton") return "Premier Energy"
   return panelType
 }
 
@@ -1020,6 +1081,8 @@ export function dcrPanelPackageForPricingRow(config: SystemPricing): {
   const pricingPanelType = (config.panelType || "Adani").trim()
   const isTata = pricingPanelType === "Tata"
   const isIna = pricingPanelType === "INA"
+  const isCromptonSet =
+    pricingPanelType === CROMPTON_DCR_SET_NAME || pricingPanelType.toLowerCase().includes("crompton")
   const systemKw = Number.parseFloat(config.systemSize.replace(/kW/i, ""))
 
   if (isIna && Number.isFinite(systemKw) && systemKw > 0) {
@@ -1027,6 +1090,19 @@ export function dcrPanelPackageForPricingRow(config: SystemPricing): {
     return {
       pricingPanelType,
       panelBrand: "INA",
+      panelSize: `${best.panelSizeW}W`,
+      panelQuantity: best.quantity,
+    }
+  }
+
+  if (isCromptonSet && Number.isFinite(systemKw) && systemKw > 0) {
+    const best = bestPanelConfigWithinSystemKw(systemKw, {
+      panelSizesToTry: CROMPTON_SET_PANEL_SIZES_WATTS,
+      preferredPanelSize: "610W",
+    })
+    return {
+      pricingPanelType: CROMPTON_DCR_SET_NAME,
+      panelBrand: "Premier Energy",
       panelSize: `${best.panelSizeW}W`,
       panelQuantity: best.quantity,
     }
@@ -1154,12 +1230,13 @@ export function getDcrPrice(
   phase: string,
   inverterSize: string,
   panelBrand: string,
-  pricingData?: PricingTablesData
+  pricingData?: PricingTablesData,
+  panelTypeHint?: string,
 ): number | null {
   // Use provided pricing data, API data, or fallback to hardcoded
   const data = pricingData || getPricingData()
   const pricingTable = data.dcr || dcrPricing
-  const panelType = resolveDcrPricingPanelType(panelBrand)
+  const panelType = resolveDcrPricingPanelType(panelBrand, panelTypeHint)
 
   let pricing = pricingTable.find(
     (p) =>
@@ -1172,6 +1249,15 @@ export function getDcrPrice(
   if (!pricing && panelType === "Tata") {
     pricing = pricingTable.find(
       (p) => p.systemSize === systemSize && p.phase === phase && p.panelType === "Tata",
+    )
+  }
+
+  if (!pricing && panelType === CROMPTON_DCR_SET_NAME) {
+    pricing = pricingTable.find(
+      (p) =>
+        p.systemSize === systemSize &&
+        p.phase === phase &&
+        p.panelType === CROMPTON_DCR_SET_NAME,
     )
   }
 

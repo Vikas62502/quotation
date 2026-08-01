@@ -1053,13 +1053,13 @@ function StockRequestModal({
               <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500 text-white shadow-sm">
                 <Package className="h-4 w-4" />
               </span>
-              <div>
+          <div>
                 <h2 className="text-lg font-semibold text-foreground">Request Stock</h2>
                 <p className="text-xs text-muted-foreground">
                   From Super Admin catalog · On behalf of{" "}
                   <span className="font-medium text-foreground">{adminName}</span>
                 </p>
-              </div>
+          </div>
             </div>
           </div>
           <button
@@ -1074,12 +1074,12 @@ function StockRequestModal({
 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="space-y-4 overflow-y-auto p-5">
-            {error && (
+          {error && (
               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>{error}</span>
-              </div>
-            )}
+            </div>
+          )}
 
             {/* JSON upload — fills product lines from file */}
             <div className="rounded-xl border border-dashed border-orange-300/80 bg-orange-50/40 p-4 space-y-2">
@@ -1152,7 +1152,7 @@ function StockRequestModal({
               ) : null}
             </div>
 
-            {loadingProducts ? (
+          {loadingProducts ? (
               <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
                 <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
                 Loading Super Admin products…
@@ -1164,9 +1164,9 @@ function StockRequestModal({
                 <p className="mt-1 text-xs text-muted-foreground">
                   Add products in Overview / catalog first, then request stock here.
                 </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
+            </div>
+          ) : (
+            <div className="space-y-3">
                 <div className="flex flex-wrap items-end justify-between gap-2">
                   <div>
                     <Label className="text-sm font-medium text-foreground">Products to request</Label>
@@ -1205,14 +1205,14 @@ function StockRequestModal({
                             <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
                               Product {i + 1}
                             </Label>
-                            <select
-                              value={item.product_id}
-                              onChange={(e) => updateLine(i, "product_id", e.target.value)}
+                  <select
+                    value={item.product_id}
+                    onChange={(e) => updateLine(i, "product_id", e.target.value)}
                               className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-orange-400/40"
-                            >
+                  >
                               <option value="">Select Super Admin product…</option>
                               {options.map((p) => (
-                                <option key={p.id} value={p.id}>
+                      <option key={p.id} value={p.id}>
                                   {productLabel(p)}
                                   {p.category ? ` · ${p.category}` : ""}
                                   {` · stock ${productStockQty(p).toLocaleString("en-IN", {
@@ -1220,9 +1220,9 @@ function StockRequestModal({
                                     maximumFractionDigits: 2,
                                   })}`}
                                   {p.unit ? ` ${p.unit}` : ""}
-                                </option>
-                              ))}
-                            </select>
+                      </option>
+                    ))}
+                  </select>
                             {selected ? (
                               <p className="text-[11px] text-muted-foreground">
                                 {selected.category || "Uncategorized"}
@@ -1241,26 +1241,26 @@ function StockRequestModal({
                               <Label className="text-[11px] uppercase tracking-wide text-muted-foreground">
                                 Qty
                               </Label>
-                              <Input
-                                type="number"
-                                min="0.01"
-                                step="0.01"
-                                value={item.quantity}
-                                onChange={(e) => updateLine(i, "quantity", e.target.value)}
+                  <Input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={item.quantity}
+                    onChange={(e) => updateLine(i, "quantity", e.target.value)}
                                 placeholder="0"
                                 className="h-10 bg-background"
-                              />
+                  />
                             </div>
-                            <button
-                              type="button"
-                              onClick={() => removeLine(i)}
-                              disabled={items.length === 1}
+                  <button
+                    type="button"
+                    onClick={() => removeLine(i)}
+                    disabled={items.length === 1}
                               className="mb-0.5 rounded-lg p-2 text-muted-foreground transition hover:bg-red-50 hover:text-red-600 disabled:opacity-40"
                               aria-label="Remove line"
-                            >
+                  >
                               <X className="h-4 w-4" />
-                            </button>
-                          </div>
+                  </button>
+                </div>
                         </div>
                       </div>
                     )
@@ -1272,54 +1272,54 @@ function StockRequestModal({
                     </p>
                   ) : null}
 
-                  <Button
-                    type="button"
-                    variant="outline"
+              <Button
+                type="button"
+                variant="outline"
                     size="sm"
-                    onClick={addLine}
+                onClick={addLine}
                     className="mt-1 border-dashed border-border text-muted-foreground hover:bg-background hover:text-foreground"
-                  >
+              >
                     <Plus className="mr-1.5 h-3.5 w-3.5" />
                     Add another product
-                  </Button>
+              </Button>
                 </div>
-              </div>
-            )}
+            </div>
+          )}
 
-            <div className="space-y-1.5">
+          <div className="space-y-1.5">
               <Label className="text-sm font-medium text-foreground">Notes (optional)</Label>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={2}
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
                 placeholder="Delivery note, urgency, or reference…"
                 className="w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-orange-400/40"
-              />
-            </div>
+            />
+          </div>
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border bg-muted/20 px-5 py-4">
             <Button type="button" variant="outline" onClick={onClose} className="min-w-[96px]">
-              Cancel
-            </Button>
-            <Button
+            Cancel
+          </Button>
+          <Button
               type="submit"
               disabled={submitting || loadingProducts || products.length === 0}
               className="min-w-[140px] bg-emerald-600 text-white hover:bg-emerald-700"
-            >
-              {submitting ? (
-                <>
+          >
+            {submitting ? (
+              <>
                   <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-                  Submitting…
-                </>
-              ) : (
-                <>
+                Submitting…
+              </>
+            ) : (
+              <>
                   <Package className="mr-1.5 h-4 w-4" />
-                  Submit Request
-                </>
-              )}
-            </Button>
-          </div>
+                Submit Request
+              </>
+            )}
+          </Button>
+        </div>
         </form>
       </div>
     </div>
@@ -1581,21 +1581,21 @@ function SimpleSaleModal({
           : 0
       const totalAmount = itemsSubtotal + taxAmount
       const baseBody: Record<string, unknown> = {
-        type: saleType,
-        customer_name: customerName.trim(),
-        customer_phone: customerPhone.trim() || undefined,
-        company_name: saleType === "B2B" ? companyName.trim() || undefined : undefined,
-        gst_number: saleType === "B2B" ? gstNumber.trim() || undefined : undefined,
-        items,
+          type: saleType,
+          customer_name: customerName.trim(),
+          customer_phone: customerPhone.trim() || undefined,
+          company_name: saleType === "B2B" ? companyName.trim() || undefined : undefined,
+          gst_number: saleType === "B2B" ? gstNumber.trim() || undefined : undefined,
+          items,
         subtotal: itemsSubtotal,
-        tax_amount: taxAmount,
-        discount_amount: 0,
+          tax_amount: taxAmount,
+          discount_amount: 0,
         total_amount: totalAmount,
         totalAmount,
         final_amount: totalAmount,
-        notes: notes.trim() || undefined,
+          notes: notes.trim() || undefined,
         // Agent tab sells from selected admin stock — NOT central warehouse.
-        admin_id: adminId,
+          admin_id: adminId,
         adminId,
         sell_from_admin_id: adminId,
         stock_admin_id: adminId,
@@ -1652,7 +1652,7 @@ function SimpleSaleModal({
           `Insufficient central inventory for sale — but this Agent sale must use admin stock (${adminName}). Backend must honor admin_id and deduct from admin_inventory, not central stock.`,
         )
       } else {
-        setError(err?.message || "Failed to create sale")
+      setError(err?.message || "Failed to create sale")
       }
     } finally {
       setSubmitting(false)
@@ -1686,9 +1686,9 @@ function SimpleSaleModal({
                 Upload from Tally
               </Button>
             ) : null}
-            <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-              <X className="w-5 h-5" />
-            </button>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
           </div>
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
@@ -3363,7 +3363,7 @@ export function SuperAdminInventoryPanel({
           <RefreshCw className="w-3.5 h-3.5" />
           Refresh
         </Button>
-      </div>
+                </div>
 
       {/* ── Key Metrics ── */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
@@ -3515,7 +3515,7 @@ export function SuperAdminInventoryPanel({
                       className="pl-8 pr-3 py-1.5 bg-muted border border-border rounded-lg text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary w-44"
                     />
                   </div>
-                  <select
+                <select
                     value={productCategoryFilter}
                     onChange={(e) => setProductCategoryFilter(e.target.value)}
                     className="px-3 py-1.5 bg-muted border border-border rounded-lg text-foreground text-sm focus:outline-none focus:border-primary"
@@ -3524,9 +3524,9 @@ export function SuperAdminInventoryPanel({
                     {productCategories.map((c) => (
                       <option key={c} value={c}>
                         {c}
-                      </option>
-                    ))}
-                  </select>
+                    </option>
+                  ))}
+                </select>
                   <Button
                     onClick={() => setProductModal({ product: null })}
                     className="bg-primary hover:bg-primary/90 text-primary-foreground text-sm"
@@ -3535,7 +3535,7 @@ export function SuperAdminInventoryPanel({
                     <Plus className="w-4 h-4 mr-1.5" />
                     Add Product
                   </Button>
-                </div>
+            </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -3593,9 +3593,9 @@ export function SuperAdminInventoryPanel({
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-center gap-1.5">
-                              <Button
-                                variant="outline"
-                                size="sm"
+            <Button
+              variant="outline"
+              size="sm"
                                 onClick={() => setProductModal({ product: p })}
                                 className="border-border text-muted-foreground hover:bg-muted text-xs px-2 py-1 h-auto"
                               >
@@ -3608,8 +3608,8 @@ export function SuperAdminInventoryPanel({
                                 className="border-red-500/30 text-red-600 hover:bg-red-500/10 text-xs px-2 py-1 h-auto"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
+            </Button>
+          </div>
                           </td>
                         </tr>
                       ))}
@@ -3617,8 +3617,8 @@ export function SuperAdminInventoryPanel({
                   </table>
                 </div>
               )}
-            </CardContent>
-          </Card>
+        </CardContent>
+      </Card>
         </TabsContent>
 
         {/* ════════════════ STOCK REQUESTS TAB ════════════════ */}
@@ -4083,23 +4083,23 @@ export function SuperAdminInventoryPanel({
                       {filteredSales.map((sale) => (
                         <Fragment key={sale.id}>
                           <tr className="border-b border-border/50 hover:bg-muted/30 transition-colors">
-                            <td className="px-4 py-3">
-                              <p className="text-foreground font-medium">{sale.customer_name}</p>
-                              {sale.customer_phone && (
+                          <td className="px-4 py-3">
+                            <p className="text-foreground font-medium">{sale.customer_name}</p>
+                            {sale.customer_phone && (
                                 <p className="text-xs font-medium text-foreground/70">{sale.customer_phone}</p>
-                              )}
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
+                            )}
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
                                 className={`inline-block text-xs px-2.5 py-0.5 rounded-full font-semibold ${
-                                  sale.type === "B2B"
+                                sale.type === "B2B"
                                     ? "bg-blue-100 text-blue-900 border border-blue-300"
                                     : "bg-sky-100 text-sky-900 border border-sky-300"
-                                }`}
-                              >
-                                {sale.type}
-                              </span>
-                            </td>
+                              }`}
+                            >
+                              {sale.type}
+                            </span>
+                          </td>
                             <td className="px-4 py-3 text-right text-foreground font-semibold">
                               <div className="flex flex-col items-end gap-1">
                                 <span>{fmtCurrency(getSaleDisplayAmount(sale))}</span>
@@ -4116,25 +4116,25 @@ export function SuperAdminInventoryPanel({
                                   {expandedSaleId === sale.id ? "Hide items" : "View items"}
                                 </button>
                               </div>
-                            </td>
-                            <td className="px-4 py-3">
-                              <span
+                          </td>
+                          <td className="px-4 py-3">
+                            <span
                                 className={`inline-flex items-center gap-1 text-xs px-2.5 py-0.5 rounded-full font-semibold capitalize ${
-                                  sale.payment_status === "completed"
+                                sale.payment_status === "completed"
                                     ? "bg-emerald-100 text-emerald-900 border border-emerald-300"
                                     : "bg-amber-100 text-amber-900 border border-amber-300"
-                                }`}
-                              >
-                                {sale.payment_status === "completed" ? (
-                                  <CheckCircle className="w-3 h-3" />
-                                ) : null}
-                                {sale.payment_status}
-                              </span>
-                            </td>
+                              }`}
+                            >
+                              {sale.payment_status === "completed" ? (
+                                <CheckCircle className="w-3 h-3" />
+                              ) : null}
+                              {sale.payment_status}
+                            </span>
+                          </td>
                             <td className="px-4 py-3 text-foreground/80 text-xs font-medium whitespace-nowrap">
-                              {fmtDate(sale.created_at)}
-                            </td>
-                          </tr>
+                            {fmtDate(sale.created_at)}
+                          </td>
+                        </tr>
                           {expandedSaleId === sale.id ? (
                             <tr className="border-b border-border/50 bg-muted/20">
                               <td colSpan={5} className="px-4 py-3">
@@ -4183,46 +4183,46 @@ export function SuperAdminInventoryPanel({
                   </span>
                 )}
               </h2>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => {
-                    if (!selectedAdminId) return alert("Select an admin first")
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                if (!selectedAdminId) return alert("Select an admin first")
                     void loadProducts()
-                    setShowStockRequest(true)
-                  }}
+                setShowStockRequest(true)
+              }}
                   className="bg-amber-600 hover:bg-amber-700 text-foreground text-xs sm:text-sm"
-                  disabled={!selectedAdminId}
-                >
+              disabled={!selectedAdminId}
+            >
                   <TrendingUp className="w-4 h-4 mr-1.5" />
                   Request Stock from Super Admin
-                </Button>
-                <Button
-                  onClick={() => {
-                    if (!selectedAdminId) return alert("Select an admin first")
-                    setShowCreateAgent(true)
-                  }}
+            </Button>
+            <Button
+              onClick={() => {
+                if (!selectedAdminId) return alert("Select an admin first")
+                setShowCreateAgent(true)
+              }}
                   className="bg-purple-600 hover:bg-purple-700 text-foreground text-xs sm:text-sm"
-                  disabled={!selectedAdminId}
-                >
-                  <UserPlus className="w-4 h-4 mr-1.5" />
+              disabled={!selectedAdminId}
+            >
+              <UserPlus className="w-4 h-4 mr-1.5" />
                   Create Agent for Admin
-                </Button>
+            </Button>
               </div>
-            </div>
+          </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <Card className="bg-muted border-border p-4">
                 <p className="text-muted-foreground text-sm mb-1">Stock lines</p>
                 <p className="text-2xl font-bold text-green-400">{filteredInventory.length}</p>
-              </Card>
+            </Card>
               <Card className="bg-muted border-border p-4">
                 <p className="text-muted-foreground text-sm mb-1">Agents under admin</p>
                 <p className="text-2xl font-bold text-violet-700">{agentsForAdmin.length}</p>
-              </Card>
+            </Card>
               <Card className="bg-muted border-border p-4">
                 <p className="text-muted-foreground text-sm mb-1">Total units</p>
                 <p className="text-2xl font-bold text-sky-700">{fmtQty(totalStockQty)}</p>
-              </Card>
+            </Card>
             </div>
           </div>
 

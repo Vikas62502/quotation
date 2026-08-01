@@ -479,6 +479,86 @@ function cloneFormData(formData: FormData): FormData {
   return next
 }
 
+const INSTALLATION_COMPLETION_PER_FIELD_KEYS = new Set([
+  "homeFrontPhoto",
+  "homeWithPersonPhoto",
+  "inverterWithCustomerPhoto",
+  "plantWithCustomerPhoto",
+  "inverterSerialNumberPhoto",
+  "panelSerialNumberPhoto",
+  "geoTagPlantPhoto",
+  "otherImages",
+  "piUpload",
+])
+
+/**
+ * Some backends only allow per-field Multer names (`homeFrontPhoto`, …) and reject
+ * aggregate `installerCompletionImages` with "Unexpected or too many file fields".
+ * Rebuild: map aggregate files via installerCompletionImageFieldOrderJson → field keys.
+ */
+function rebuildInstallationCompletionFormDataAsPerField(source: FormData): FormData {
+  const next = new FormData()
+  const aggregateFiles: File[] = []
+  let order: string[] = []
+
+  const orderRaw = source.get("installerCompletionImageFieldOrderJson")
+  if (typeof orderRaw === "string" && orderRaw.trim()) {
+    try {
+      const parsed = JSON.parse(orderRaw)
+      if (Array.isArray(parsed)) order = parsed.map((v) => String(v || "").trim()).filter(Boolean)
+    } catch {
+      order = []
+    }
+  }
+
+  for (const [key, value] of source.entries()) {
+    if (key === "installerCompletionImages" && value instanceof File) {
+      aggregateFiles.push(value)
+      continue
+    }
+    if (key === "installerCompletionImageFieldOrderJson") continue
+    next.append(key, value)
+  }
+
+  aggregateFiles.forEach((file, index) => {
+    const fieldKey = order[index] || "otherImages"
+    next.append(fieldKey, file)
+  })
+
+  return next
+}
+
+/** Drop file parts that are not in the strict Multer allow-list (keep text + allowed files). */
+function rebuildInstallationCompletionFormDataStrictAllowed(source: FormData): FormData {
+  const next = new FormData()
+  for (const [key, value] of source.entries()) {
+    if (value instanceof File) {
+      if (INSTALLATION_COMPLETION_PER_FIELD_KEYS.has(key) || key === "installerCompletionImages") {
+        next.append(key, value)
+      }
+      continue
+    }
+    next.append(key, value)
+  }
+  return next
+}
+
+function isMulterUnexpectedFileError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  const msg = String(error.message || "").toLowerCase()
+  const code = String(error.code || "").toUpperCase()
+  return (
+    code === "LIMIT_UNEXPECTED_FILE" ||
+    code === "LIMIT_FILE_COUNT" ||
+    msg.includes("unexpected field") ||
+    msg.includes("unexpected or too many file") ||
+    msg.includes("too many file") ||
+    (msg.includes("unexpected") && msg.includes("file")) ||
+    (code.includes("400") &&
+      (msg.includes("file field") || msg.includes("multer") || msg.includes("too many")))
+  )
+}
+
 // Multipart helper for file uploads through backend
 async function multipartRequest<T = any>(endpoint: string, method: "POST" | "PATCH", formData: FormData): Promise<T> {
   const token = getAuthToken()
@@ -2499,21 +2579,6 @@ export const api = {
       options?: { caller?: "installer" | "admin" },
     ) => {
       const tried: string[] = []
-      const isMulterFieldMismatch = (error: unknown) => {
-        if (!(error instanceof ApiError)) return false
-        const msg = String(error.message || "").toLowerCase()
-        const code = String(error.code || "").toUpperCase()
-        return (
-          code === "LIMIT_UNEXPECTED_FILE" ||
-          code === "LIMIT_FILE_COUNT" ||
-          msg.includes("unexpected field") ||
-          msg.includes("unexpected or too many file") ||
-          msg.includes("too many file") ||
-          (msg.includes("unexpected") && msg.includes("file")) ||
-          (code === "HTTP_400" &&
-            (msg.includes("file field") || msg.includes("multer") || msg.includes("too many")))
-        )
-      }
       const tryNextEndpoint = (error: unknown) =>
         error instanceof ApiError &&
         (error.code === "HTTP_404" ||
@@ -2521,15 +2586,14 @@ export const api = {
           error.code === "HTTP_501" ||
           error.code === "HTTP_403" ||
           error.code === "AUTH_004" ||
-          // Generic `/quotations/.../documents` often uses customer-doc Multer fields and
-          // returns 400 "Unexpected or too many file fields" for installerCompletionImages.
-          isMulterFieldMismatch(error))
+          // Wrong documents route / Multer field allow-list mismatch
+          isMulterUnexpectedFileError(error))
 
       const installerPath = `/installer/quotations/${quotationId}/documents`
       const quotationsPath = `/quotations/${quotationId}/documents`
 
       // Prefer installer-completion routes. Generic quotation documents routes often reject
-      // `installerCompletionImages` / `piUpload` with Multer LIMIT_UNEXPECTED_FILE.
+      // installer completion fields with Multer LIMIT_UNEXPECTED_FILE.
       const adminScoped: string[] =
         options?.caller === "admin"
           ? [
@@ -2540,22 +2604,88 @@ export const api = {
             ]
           : []
 
-      const primaryPair =
-        options?.caller === "admin" ? [installerPath, quotationsPath] : [installerPath, quotationsPath]
-
       const endpoints =
         options?.caller === "admin"
           ? [...adminScoped, quotationsPath].filter((path, index, all) => all.indexOf(path) === index)
-          : primaryPair
+          : [installerPath, quotationsPath]
+
+      // Shape A: aggregate installerCompletionImages (preferred / documented).
+      // Shape B: per-field homeFrontPhoto… (older Multer allow-lists).
+      // Shape C: strip any unexpected file keys then retry A/B logic via B.
+      const formShapes: { label: string; body: FormData }[] = [
+        { label: "aggregate", body: formData },
+        { label: "per-field", body: rebuildInstallationCompletionFormDataAsPerField(formData) },
+        {
+          label: "strict-allowed",
+          body: rebuildInstallationCompletionFormDataStrictAllowed(
+            rebuildInstallationCompletionFormDataAsPerField(formData),
+          ),
+        },
+      ]
 
       let lastError: unknown = null
-      for (const endpoint of endpoints) {
+      let sawMulterMismatch = false
+
+      for (const shape of formShapes) {
+        for (const endpoint of endpoints) {
+          try {
+            tried.push(`POST ${endpoint} [${shape.label}]`)
+            return await multipartRequest(endpoint, "POST", cloneFormData(shape.body))
+          } catch (error) {
+            lastError = error
+            if (isMulterUnexpectedFileError(error)) sawMulterMismatch = true
+            if (!tryNextEndpoint(error)) throw error
+          }
+        }
+        // Only continue to the next FormData shape after Multer field mismatches.
+        if (!sawMulterMismatch) break
+      }
+
+      // Last resort (admin): upload each file via single-file endpoint, then POST text-only status body.
+      if (options?.caller === "admin" && sawMulterMismatch) {
         try {
-          tried.push(`POST ${endpoint}`)
-          return await multipartRequest(endpoint, "POST", cloneFormData(formData))
+          const orderRaw = formData.get("installerCompletionImageFieldOrderJson")
+          let order: string[] = []
+          if (typeof orderRaw === "string" && orderRaw.trim()) {
+            try {
+              const parsed = JSON.parse(orderRaw)
+              if (Array.isArray(parsed)) order = parsed.map((v) => String(v || "").trim()).filter(Boolean)
+            } catch {
+              order = []
+            }
+          }
+          const aggregateFiles: File[] = []
+          for (const [key, value] of formData.entries()) {
+            if (key === "installerCompletionImages" && value instanceof File) aggregateFiles.push(value)
+          }
+          for (let i = 0; i < aggregateFiles.length; i++) {
+            const fieldKey = order[i] || "otherImages"
+            tried.push(`POST uploadCompletionAsset:${fieldKey}`)
+            await api.installer.uploadCompletionAsset(quotationId, fieldKey, aggregateFiles[i])
+          }
+          for (const [key, value] of formData.entries()) {
+            if (key === "piUpload" && value instanceof File) {
+              tried.push("POST uploadCompletionAsset:piUpload")
+              await api.installer.uploadCompletionAsset(quotationId, "piUpload", value)
+            }
+          }
+          const textOnly = new FormData()
+          for (const [key, value] of formData.entries()) {
+            if (value instanceof File) continue
+            if (key === "installerCompletionImageFieldOrderJson") continue
+            textOnly.append(key, value)
+          }
+          for (const endpoint of endpoints) {
+            try {
+              tried.push(`POST ${endpoint} [text-only-after-assets]`)
+              return await multipartRequest(endpoint, "POST", cloneFormData(textOnly))
+            } catch (error) {
+              lastError = error
+              if (!tryNextEndpoint(error)) throw error
+            }
+          }
         } catch (error) {
           lastError = error
-          if (!tryNextEndpoint(error)) throw error
         }
       }
 
@@ -2563,7 +2693,7 @@ export const api = {
       throw new ApiError(
         `Installer completion upload is not available on this API (tried: ${tried.join(
           " → ",
-        )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents (installer) or POST /api/admin/quotations/{quotationId}/documents with the same multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
+        )}). Deploy a dedicated route, e.g. POST /api/installer/quotations/{quotationId}/documents (installer) or POST /api/admin/quotations/{quotationId}/installer-documents with the same multipart fields documented in BACKEND_CHANGES_REQUIRED.md (section 6.4.C). Avoid using PATCH /api/quotations/{quotationId}/documents for this flow — it expects a different document shape and often returns 500 (SYS_001).`,
         "HTTP_404",
       )
     },

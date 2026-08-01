@@ -137,7 +137,14 @@ const getSystemPrice = (products: any): number => {
     const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
     if (systemSize === "0kW") return 0
     const phase = (products.phase as "1-Phase" | "3-Phase") || determinePhase(systemSize, products.inverterSize)
-    const price = getDcrPrice(systemSize, phase, products.inverterSize, products.panelBrand)
+    const price = getDcrPrice(
+      systemSize,
+      phase,
+      products.inverterSize,
+      products.panelBrand,
+      undefined,
+      products.panelType,
+    )
     if (price !== null) return price
   } else if (products.systemType === "non-dcr") {
     if (!products.panelSize || !products.panelQuantity) return 0

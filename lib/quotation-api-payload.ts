@@ -375,6 +375,58 @@ export function restoreInaPanelBrandForForm(products: ProductSelection): Product
   }
 }
 
+const CROMPTON_PDF_PANEL_RANGE_KEY = "premier_energy_600_610"
+
+function isCromptonPanelPackage(products: ProductSelection): boolean {
+  const record = products as ProductSelection & Record<string, unknown>
+  const panelType = String(record.panelType || record.panel_type || "")
+    .trim()
+    .toLowerCase()
+  const brand = String(products.panelBrand || products.dcrPanelBrand || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+  const inverter = String(products.inverterBrand || "")
+    .trim()
+    .toLowerCase()
+  const range = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  return (
+    panelType.includes("crompton") ||
+    brand === "crompton set" ||
+    range === CROMPTON_PDF_PANEL_RANGE_KEY ||
+    (brand === "premier energy" && inverter === "crompton")
+  )
+}
+
+/** Restore Crompton set display: Premier Energy panels + Crompton inverter/ACDB/DCDB + PDF range. */
+export function restoreCromptonSetForForm(products: ProductSelection): ProductSelection {
+  if (!isCromptonPanelPackage(products)) return products
+
+  const record = products as ProductSelection & Record<string, unknown>
+  const range = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const phase =
+    products.phase === "3-Phase" || products.phase === "1-Phase" ? products.phase : "1-Phase"
+  const acdbBrand = String(products.acdb || "").toLowerCase().includes("crompton")
+    ? products.acdb
+    : `Crompton (${phase})`
+  const dcdbBrand = String(products.dcdb || "").toLowerCase().includes("crompton")
+    ? products.dcdb
+    : `Crompton (${phase})`
+
+  return {
+    ...products,
+    panelBrand: "Premier Energy",
+    dcrPanelBrand: "Premier Energy",
+    panelType: "Crompton set",
+    inverterBrand: products.inverterBrand?.trim() || "Crompton",
+    inverterSize: products.inverterSize?.trim() || "3.6kW",
+    acdb: acdbBrand || `Crompton (${phase})`,
+    dcdb: dcdbBrand || `Crompton (${phase})`,
+    pdfPanelRangeKey: range || CROMPTON_PDF_PANEL_RANGE_KEY,
+    pdfUsePanelSizeRange: true,
+  }
+}
+
 function hasExplicitPdfCommercialUnset(products: ProductSelection): boolean {
   const raw = products as ProductSelection & Record<string, unknown>
   return raw.pdfCommercialSet === false || raw.pdf_commercial_set === false
@@ -644,14 +696,15 @@ export function syncDcrPanelFieldsFromPrimary(products: ProductSelection): Produ
 export function restoreDcrPackageDisplayForForm(products: ProductSelection): ProductSelection {
   const withIna = restoreInaPanelBrandForForm(products)
   const withRenew = restoreRenewEnergyPanelBrandForForm(withIna)
+  const withCrompton = restoreCromptonSetForForm(withRenew)
 
-  if (String(withRenew.systemType || "").toLowerCase() !== "dcr") {
-    return applyDefaultPdfPanelRanges(withRenew)
+  if (String(withCrompton.systemType || "").toLowerCase() !== "dcr") {
+    return applyDefaultPdfPanelRanges(withCrompton)
   }
 
-  const record = withRenew as ProductSelection & Record<string, unknown>
-  const brand = (withRenew.panelBrand || withRenew.dcrPanelBrand || "").trim().toLowerCase()
-  const existingRange = String(withRenew.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  const record = withCrompton as ProductSelection & Record<string, unknown>
+  const brand = (withCrompton.panelBrand || withCrompton.dcrPanelBrand || "").trim().toLowerCase()
+  const existingRange = String(withCrompton.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
   const pdfPanelRangeKey = existingRange
 
   const isTataDcrPackage =
@@ -660,23 +713,23 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
     String(record.tata_dcr_panel_range || "").trim() === "true"
 
   const asPerSetPackage =
-    isAsPerTheSetLabel(withRenew.panelSize) ||
-    isAsPerTheSetLabel(withRenew.dcrPanelSize) ||
-    isAsPerTheSetLabel(withRenew.inverterSize) ||
-    isAsPerTheSetLabel(withRenew.inverterBrand) ||
+    isAsPerTheSetLabel(withCrompton.panelSize) ||
+    isAsPerTheSetLabel(withCrompton.dcrPanelSize) ||
+    isAsPerTheSetLabel(withCrompton.inverterSize) ||
+    isAsPerTheSetLabel(withCrompton.inverterBrand) ||
     isTataDcrPackage
 
-  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(withRenew)
+  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(withCrompton)
 
-  const panelBrand = withRenew.panelBrand || withRenew.dcrPanelBrand || ""
+  const panelBrand = withCrompton.panelBrand || withCrompton.dcrPanelBrand || ""
 
   return applyDefaultPdfPanelRanges({
-    ...withRenew,
+    ...withCrompton,
     panelBrand,
-    pdfPanelRangeKey: pdfPanelRangeKey || withRenew.pdfPanelRangeKey,
+    pdfPanelRangeKey: pdfPanelRangeKey || withCrompton.pdfPanelRangeKey,
     panelSize: DCR_AS_PER_THE_SET,
     panelQuantity: 0,
-    dcrPanelBrand: withRenew.dcrPanelBrand || panelBrand,
+    dcrPanelBrand: withCrompton.dcrPanelBrand || panelBrand,
     dcrPanelSize: DCR_AS_PER_THE_SET,
     dcrPanelQuantity: 0,
     inverterBrand: DCR_AS_PER_THE_SET,
@@ -709,6 +762,20 @@ export function productsForApiUpdate(products: ProductSelection): ProductSelecti
     } as ProductSelection
   }
   if (!isInaPanelPackage(withQty)) {
+    if (isCromptonPanelPackage(withQty)) {
+      return {
+        ...catalogSafe,
+        ...flags,
+        panelBrand: "Premier Energy",
+        dcrPanelBrand: "Premier Energy",
+        panelType: "Crompton set",
+        panel_type: "Crompton set",
+        pdfPanelRangeKey:
+          String(flags.pdfPanelRangeKey || withQty.pdfPanelRangeKey || CROMPTON_PDF_PANEL_RANGE_KEY),
+        pdf_panel_range_key:
+          String(flags.pdfPanelRangeKey || withQty.pdfPanelRangeKey || CROMPTON_PDF_PANEL_RANGE_KEY),
+      } as ProductSelection
+    }
     return { ...catalogSafe, ...flags } as ProductSelection
   }
   return {

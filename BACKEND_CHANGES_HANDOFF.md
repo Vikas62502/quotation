@@ -113,7 +113,7 @@ Proposal PDF is **client-generated**; backend stores/returns `products` and opti
 | `pdfDcrPanelRangeKey` | `both` — DCR |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 package).
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 package), **`premier_energy_600_610`** (Crompton DCR set — Premier Energy 600W–610W).
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
@@ -131,7 +131,7 @@ When a range key is set, PDF shows panel spec as **“As per the set”** and in
 
 | Field | Extra values |
 |-------|----------------|
-| `inverterBrand` | `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`, catalog brands (GoodWe, Polycab, …), **`As per the set`** (Tata DCR only) |
+| `inverterBrand` | `Vsole/Xwatt/Saatvik`, `Vsole/Xwatt`, catalog brands (GoodWe, Polycab, …), **`Crompton`** (Crompton DCR set), **`As per the set`** (Tata DCR only) |
 | `meterBrand` | `L&T/HPL/Genus/Secure` |
 
 ### 2.3 DCR inverter brand — Tata vs all other packages (Jun 2026)
@@ -141,7 +141,8 @@ When a range key is set, PDF shows panel spec as **“As per the set”** and in
 | Package | UI | `inverterBrand` on POST/PATCH | `inverterSize` |
 |---------|-----|------------------------------|----------------|
 | **Tata DCR** (`panelBrand` = `Tata`) | Read-only **As per the set** | **`As per the set`** | **`As per the set`** |
-| **Other DCR** (Adani, Waaree, Premier, …) | Dropdown; **default** `Vsole/Xwatt`; dealer may pick another catalog brand | User’s choice (default `Vsole/Xwatt` if empty) | Concrete kW e.g. `5kW`, `10kW` |
+| **Crompton set** (`panelType` = `Crompton set`, form brand `Premier Energy`) | Fixed **Crompton** | **`Crompton`** | **`3.6kW`** |
+| **Other DCR** (Adani, Waaree, Premier Energies, …) | Dropdown; **default** `Vsole/Xwatt`; dealer may pick another catalog brand | User’s choice (default `Vsole/Xwatt` if empty) | Concrete kW e.g. `5kW`, `10kW` |
 
 **Tata DCR also sends:**
 
@@ -2879,6 +2880,118 @@ Admin **Pending Installation** showed ~27 rows, but Account **Installation · Pe
 
 ---
 
+## 26. Installation completion upload — Multer “Unexpected or too many file fields”
+
+**Frontend:** Admin / Installer → **Complete & Mark as Approved** / **Partial Approved**  
+**Toast:** `Upload failed — Unexpected or too many file fields`  
+**File:** `BACKEND_INSTALLATION_COMPLETION_MULTER.ts`, `lib/api.ts` → `uploadCompletionDocuments`
+
+### Cause
+
+Installer-completion `POST …/documents` uses a Multer allow-list that does **not** include the client’s file field names, or `maxCount` / `files` limit is too low (`LIMIT_UNEXPECTED_FILE` / `LIMIT_FILE_COUNT`).  
+Often the KYC documents Multer config (aadhaar/PAN/…) was reused on this route.
+
+### What the client sends (preferred)
+
+| Part | Type | Notes |
+|------|------|--------|
+| `installerCompletionImages` | file × N | All site photos under one key |
+| `installerCompletionImageFieldOrderJson` | text | JSON array mapping file index → logical key |
+| `piUpload` | file × N | Optional PI docs |
+| `existingInstallationImageUrlsJson` | text | Retained S3 URLs when re-editing |
+| `installationStatus` | text | `installer_approved` or `installer_partial_approved` |
+| legs / expenses / remarks | text | See §6.4.C |
+
+**Fallback shape** (if aggregate is rejected): same text fields + files under  
+`homeFrontPhoto`, `homeWithPersonPhoto`, `inverterWithCustomerPhoto`, `plantWithCustomerPhoto`,  
+`inverterSerialNumberPhoto`, `panelSerialNumberPhoto`, `geoTagPlantPhoto`, `otherImages`.
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | On installer-completion routes only, use Multer `.fields([...])` with **both** aggregate + per-field + `piUpload`, **or** `.any()` with `limits.files ≥ 40` |
+| 2 | Set `installerCompletionImages` **maxCount ≥ 20** (panel serials / otherImages can be many) |
+| 3 | Set `piUpload` **maxCount ≥ 10** |
+| 4 | Allow **admin** JWT on `POST /api/installer/quotations/:id/documents` **or** provide `POST /api/admin/quotations/:id/installer-documents` with the same handler |
+| 5 | Parse `installerCompletionImageFieldOrderJson` to store per-column URLs |
+| 6 | Persist `installation_status` + `installer_approved_at` / partial flags; return media on GET |
+| 7 | Never route this multipart through KYC `PATCH /api/quotations/:id/documents` |
+
+### Example Multer fields
+
+```js
+upload.fields([
+  { name: "installerCompletionImages", maxCount: 30 },
+  { name: "piUpload", maxCount: 10 },
+  { name: "homeFrontPhoto", maxCount: 5 },
+  { name: "homeWithPersonPhoto", maxCount: 5 },
+  { name: "inverterWithCustomerPhoto", maxCount: 5 },
+  { name: "plantWithCustomerPhoto", maxCount: 5 },
+  { name: "inverterSerialNumberPhoto", maxCount: 5 },
+  { name: "panelSerialNumberPhoto", maxCount: 20 },
+  { name: "geoTagPlantPhoto", maxCount: 5 },
+  { name: "otherImages", maxCount: 20 },
+])
+```
+
+### QA
+
+1. Admin uploads 1+ photos → **Complete & Mark as Approved** → **200**, no Multer toast  
+2. **Partial Approved** with one photo → **200**, status `installer_partial_approved`  
+3. Re-open Edit, keep existing URLs, add one new photo → still **200**  
+4. Installer JWT same payload on `/installer/quotations/:id/documents` → **200**  
+5. Refresh Admin → row in **Approved Installation** / **Partial Approved** with photos
+
+**Reference:** `BACKEND_INSTALLATION_COMPLETION_MULTER.ts`, `BACKEND_CHANGES_REQUIRED.md` §6.4.C, `BACKEND_INSTALLATION_PARTIAL_AND_METERING.md`
+
+---
+
+## 27. Crompton DCR set — Premier Energy 600–610W + Crompton 3.6kW (1-Phase)
+
+**Frontend:** DCR Browse → **Crompton set**  
+**Full handoff:** **`BACKEND_CROMPTON_DCR_SET.md`**  
+**Helpers:** **`BACKEND_CROMPTON_DCR_SET.ts`**
+
+### Set prices (DCR, 1-Phase only)
+
+| System | Inverter | Set price |
+|--------|----------|-----------|
+| **3kW** | Crompton **3.6kW** | **₹2,10,000** |
+| **5kW** | Crompton **3.6kW** | **₹2,95,000** |
+
+### Package identity (persist + echo — do not coerce)
+
+| Field | Value |
+|-------|--------|
+| `panelBrand` / `dcrPanelBrand` | **`Premier Energy`** |
+| `panelType` (package marker) | **`Crompton set`** |
+| Panels (PDF) | Premier Energy **600W–610W Topcon Bifacial** via `pdfPanelRangeKey` **`premier_energy_600_610`** |
+| `inverterBrand` | **`Crompton`** |
+| `inverterSize` | **`3.6kW`** |
+| `acdb` / `dcdb` | **`Crompton (1-Phase)`** |
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | Allowlist **`Premier Energy`**, **`panelType: Crompton set`**, **`Crompton`**, **`3.6kW`**, **`premier_energy_600_610`** |
+| 2 | Persist both `panelBrand: "Premier Energy"` **and** `panelType: "Crompton set"` — do not drop the marker |
+| 3 | Set-price when `panelType === "Crompton set"`: 3kW→210000, 5kW→295000 (do **not** use Premier Energies matrix) |
+| 4 | If `GET /quotations/pricing-tables` is live: add two `dcr` rows + two system presets (see md / `.ts`) |
+| 5 | Keep existing Premier Energies Topcon column separate (`premier_600_625_bifacial_topcon`) |
+
+### QA (short)
+
+1. Save Crompton set 3kW → GET echoes `panelBrand: "Premier Energy"`, `panelType: "Crompton set"`, Crompton inverter/ACDB/DCDB, `premier_energy_600_610`, subtotal **210000**.
+2. 5kW → subtotal **295000**.
+3. Reload form: Panel Brand **Premier Energy**, PDF range **600W - 610W Topcon Bifacial** checked.
+4. Premier Energies / Tata / INA packages unchanged.
+
+**Reference:** `BACKEND_CROMPTON_DCR_SET.md`, `BACKEND_CROMPTON_DCR_SET.ts`, `lib/pricing-tables.ts`, `lib/quotation-api-payload.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2917,6 +3030,11 @@ Admin **Pending Installation** showed ~27 rows, but Account **Installation · Pe
 | **`BACKEND_QUOTATION_SYSTEM_HISTORY.ts`** | **§23** allow additional create + `restore-current` + `is_current` |
 | **§24** (this file) | Metering FILE STATUS — Final Step Completed / Meter Pending Pending / rest In Progress |
 | **§25** (this file) | Installation FILE STATUS — Pending / In Progress / Approved = Admin Installation tabs |
+| **§26** (this file) | Installation completion Multer — Unexpected or too many file fields |
+| **`BACKEND_INSTALLATION_COMPLETION_MULTER.ts`** | **§26** Multer field allow-list + maxCount + routes |
+| **§27** (this file) | Crompton DCR set — Premier Energy 600–610W + Crompton 3.6kW |
+| **`BACKEND_CROMPTON_DCR_SET.md`** | **§27** full Crompton set prices, range key, pricing-tables |
+| **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** allowlist helpers + pricing/preset merge |
 | **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24–§25** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |

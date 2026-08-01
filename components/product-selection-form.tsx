@@ -168,9 +168,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const [hasSelectedDcrConfig, setHasSelectedDcrConfig] = useState(false)
   const [hasSelectedNonDcrConfig, setHasSelectedNonDcrConfig] = useState(false)
   const [hasSelectedBothConfig, setHasSelectedBothConfig] = useState(false)
-  
-  // Use catalog data from API only (no dummy data fallback)
-  const panelBrandsList = catalog?.panels?.brands || []
+
   // Get panel sizes from pricing tables instead of catalog
   const panelSizesList = getAvailablePanelSizes(pricingTables || undefined)
   const inverterTypesList = catalog?.inverters?.types || []
@@ -221,6 +219,29 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const [formData, setFormData] = useState<ProductSelection>(() =>
     initialData ? restoreDcrPackageDisplayForForm(initialData) : emptyProductDefaults,
   )
+
+  // Use catalog brands + current form brands (Premier Energy for Crompton set)
+  const panelBrandsList = useMemo(() => {
+    const brands = [...(catalog?.panels?.brands || [])]
+    for (const brand of [
+      formData.panelBrand,
+      formData.dcrPanelBrand,
+      formData.nonDcrPanelBrand,
+      "Premier Energy",
+    ]) {
+      const trimmed = String(brand || "").trim()
+      if (!trimmed) continue
+      if (!brands.some((b) => String(b).trim().toLowerCase() === trimmed.toLowerCase())) {
+        brands.push(trimmed)
+      }
+    }
+    return brands
+  }, [
+    catalog?.panels?.brands,
+    formData.panelBrand,
+    formData.dcrPanelBrand,
+    formData.nonDcrPanelBrand,
+  ])
 
   /** Stable key so parent re-creating `initialData` each render does not wipe in-progress edits. */
   const initialDataSyncKey = useMemo(() => {
@@ -864,7 +885,11 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       panelPackage
     const isTataPackage = pricingPanelType === "Tata"
     const isInaPackage = pricingPanelType === "INA"
+    const isCromptonSet =
+      pricingPanelType === "Crompton set" ||
+      pricingPanelType.toLowerCase().includes("crompton")
     const inaMarkers = isInaPackage ? { panelType: "INA" as const, inaDcrPackage: true as const } : {}
+    const cromptonMarkers = isCromptonSet ? { panelType: "Crompton set" as const } : {}
 
     const systemConfig = getSystemConfiguration(
       "dcr",
@@ -879,10 +904,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const preFilledData = configToProductSelection(systemConfig)
       const inverterBrandToSet = isTataPackage
         ? DCR_AS_PER_THE_SET
-        : systemConfig.inverterBrand || preFilledData.inverterBrand || "Vsole/Xwatt"
+        : isCromptonSet
+          ? "Crompton"
+          : systemConfig.inverterBrand || preFilledData.inverterBrand || "Vsole/Xwatt"
       const inverterSizeToSet = isTataPackage
         ? DCR_AS_PER_THE_SET
-        : config.inverterSize || systemConfig.inverterSize || preFilledData.inverterSize || ""
+        : isCromptonSet
+          ? "3.6kW"
+          : config.inverterSize || systemConfig.inverterSize || preFilledData.inverterSize || ""
 
       const effPhase: "1-Phase" | "3-Phase" =
         packagePhase ||
@@ -891,20 +920,24 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           : "1-Phase")
       const { acdb: acdbForPhase, dcdb: dcdbForPhase } = acdbDcdbLabelsForPhase(
         effPhase,
-        systemConfig.acdb || preFilledData.acdb,
-        systemConfig.dcdb || preFilledData.dcdb,
+        systemConfig.acdb || preFilledData.acdb || (isCromptonSet ? "Crompton (1-Phase)" : undefined),
+        systemConfig.dcdb || preFilledData.dcdb || (isCromptonSet ? "Crompton (1-Phase)" : undefined),
+        isCromptonSet ? "Crompton" : "Havells",
       )
       const pdfRangeKey = isTataPackage
         ? TATA_DCR_PANEL_RANGE_KEY
-        : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
-          defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
-          "")
+        : isCromptonSet
+          ? "premier_energy_600_610"
+          : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
+            defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
+            "")
 
       setFormData((prev) => {
         const updated = {
           ...prev,
           ...preFilledData,
           ...inaMarkers,
+          ...cromptonMarkers,
           phase: effPhase,
           inverterBrand: inverterBrandToSet,
           inverterSize: inverterSizeToSet,
@@ -950,13 +983,19 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const { acdb: defaultAcdb, dcdb: defaultDcdb } = acdbDcdbLabelsForPhase(fallbackPhase)
       const pdfRangeKey = isTataPackage
         ? TATA_DCR_PANEL_RANGE_KEY
-        : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
-          defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
-          "")
+        : isCromptonSet
+          ? "premier_energy_600_610"
+          : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
+            defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
+            "")
+      const { acdb: cromptonAcdb, dcdb: cromptonDcdb } = isCromptonSet
+        ? acdbDcdbLabelsForPhase(fallbackPhase, undefined, undefined, "Crompton")
+        : { acdb: defaultAcdb, dcdb: defaultDcdb }
 
       setFormData((prev) => ({
         ...prev,
         ...inaMarkers,
+        ...cromptonMarkers,
         phase: fallbackPhase,
         dcrPanelBrand: selectedPanelBrand,
         dcrPanelSize: panelSizeToSet,
@@ -965,12 +1004,20 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         panelSize: panelSizeToSet,
         panelQuantity: panelQuantityToSet,
         inverterType: "String Inverter",
-        inverterBrand: isTataPackage ? DCR_AS_PER_THE_SET : "Vsole/Xwatt",
-        inverterSize: isTataPackage ? DCR_AS_PER_THE_SET : config.inverterSize,
+        inverterBrand: isTataPackage
+          ? DCR_AS_PER_THE_SET
+          : isCromptonSet
+            ? "Crompton"
+            : "Vsole/Xwatt",
+        inverterSize: isTataPackage
+          ? DCR_AS_PER_THE_SET
+          : isCromptonSet
+            ? "3.6kW"
+            : config.inverterSize,
         structureType: "GI Structure",
         structureSize: config.systemSize,
-        acdb: defaultAcdb,
-        dcdb: defaultDcdb,
+        acdb: cromptonAcdb,
+        dcdb: cromptonDcdb,
         systemPrice: config.price,
         centralSubsidy: prev.pdfCommercialSet
           ? 0

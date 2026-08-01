@@ -33,6 +33,9 @@ export function dcrCatalogPanelRangeLabel(panelType?: string): string {
   if (normalized === "premier energies" || normalized === "premier") {
     return getPanelPdfRangeLabel("premier_600_625_bifacial_topcon") ?? "600-625W Bifacial Topcon"
   }
+  if (normalized.includes("crompton")) {
+    return getPanelPdfRangeLabel("premier_energy_600_610") ?? "600W - 610W Topcon Bifacial"
+  }
   return QUOTATION_AS_PER_THE_SET_LABEL
 }
 

@@ -109,15 +109,27 @@ export function useProductCatalog() {
           if (!panelBrands.some((b) => String(b).trim().toLowerCase() === "renew energy")) {
             panelBrands.push("Renew Energy")
           }
+          if (!panelBrands.some((b) => String(b).trim().toLowerCase() === "premier energy")) {
+            panelBrands.push("Premier Energy")
+          }
           const panelSizes = Array.isArray(catalogData.panels?.sizes) ? [...catalogData.panels.sizes] : []
           for (const size of inaPanelSizes) {
+            if (!panelSizes.includes(size)) panelSizes.push(size)
+          }
+          for (const size of ["600W", "605W", "610W"]) {
             if (!panelSizes.includes(size)) panelSizes.push(size)
           }
           const inverterSizes = Array.isArray(catalogData.inverters?.sizes)
             ? [...catalogData.inverters.sizes]
             : []
-          for (const size of ["50kW", "80kW", "100kW"]) {
+          for (const size of ["3.6kW", "50kW", "80kW", "100kW"]) {
             if (!inverterSizes.includes(size)) inverterSizes.push(size)
+          }
+          const inverterBrands = Array.isArray(catalogData.inverters?.brands)
+            ? [...catalogData.inverters.brands]
+            : []
+          if (!inverterBrands.some((b) => String(b).trim().toLowerCase() === "crompton")) {
+            inverterBrands.push("Crompton")
           }
           const structureSizes = Array.isArray(catalogData.structures?.sizes)
             ? [...catalogData.structures.sizes]
@@ -132,7 +144,7 @@ export function useProductCatalog() {
             },
             inverters: {
               types: Array.isArray(catalogData.inverters?.types) ? catalogData.inverters.types : [],
-              brands: Array.isArray(catalogData.inverters?.brands) ? catalogData.inverters.brands : [],
+              brands: inverterBrands,
               sizes: inverterSizes,
             },
             structures: {

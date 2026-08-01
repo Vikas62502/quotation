@@ -27,7 +27,7 @@ export function isInverterInfoComplete(inverterBrand?: string, inverterSize?: st
 }
 
 /** Extra combined inverter labels appended after catalog brands in the dropdown. */
-export const QUOTATION_EXTRA_INVERTER_BRAND_OPTIONS = ["Vsole/Xwatt"] as const
+export const QUOTATION_EXTRA_INVERTER_BRAND_OPTIONS = ["Vsole/Xwatt", "Crompton"] as const
 
 /** Map retired Saatvik labels to the current combined brand for display. */
 export function normalizeInverterBrandForDisplay(brand?: string): string {
@@ -98,6 +98,7 @@ export type PdfPanelRangeKey =
   | "adani_610_625_bifacial_topcon"
   | "adani_600_630"
   | "premier_600_625_bifacial_topcon"
+  | "premier_energy_600_610"
   | "ina_500_600_bifacial"
   | "tata_530_570"
   | "renewsys_540_580"
@@ -131,11 +132,13 @@ export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): Pdf
   // Optional brands (Waaree / Adani / Premier): leave unchecked — PDF uses entered W × qty for size + system kW.
   if (normalized === "ina") return INA_DCR_PANEL_RANGE_KEY
   if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
+  if (normalized.includes("crompton")) return "premier_energy_600_610"
   return null
 }
 
 export function isTopconPdfPanelRangeKey(key?: string | null): boolean {
-  return String(key ?? "").toLowerCase().includes("topcon")
+  const normalized = String(key ?? "").toLowerCase()
+  return normalized.includes("topcon") || normalized === "premier_energy_600_610"
 }
 
 /** True when stored PDF range keys indicate a TOPCon package (Adani Topcon, Premier, Waaree 580+, etc.). */
@@ -192,6 +195,11 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     pdfSpecification: "600-625W Bifacial Topcon",
   },
   {
+    key: "premier_energy_600_610",
+    label: "600W - 610W Topcon Bifacial",
+    pdfSpecification: "600W - 610W Topcon Bifacial",
+  },
+  {
     key: "ina_500_600_bifacial",
     label: "500-600W Bifacial",
     pdfSpecification: "500W - 600W",
@@ -221,8 +229,9 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
   waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon", "waaree_580_630"],
   adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon", "adani_600_630"],
-  premierenergies: ["premier_600_625_bifacial_topcon"],
-  premier: ["premier_600_625_bifacial_topcon"],
+  premierenergies: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
+  premier: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
+  premierenergy: ["premier_energy_600_610", "premier_600_625_bifacial_topcon"],
   ina: ["ina_500_600_bifacial"],
   tata: [TATA_DCR_PANEL_RANGE_KEY],
   // Optional on PDF — do not auto-select; exact entered size (e.g. 545W) until user checks a range.
@@ -253,7 +262,8 @@ export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPa
     brandKey === "waaree" ||
     brandKey === "adani" ||
     brandKey === "premier" ||
-    brandKey === "premierenergies"
+    brandKey === "premierenergies" ||
+    brandKey === "premierenergy"
   ) {
     return ""
   }
