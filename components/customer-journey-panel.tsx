@@ -12,6 +12,7 @@ import { Search } from "lucide-react"
 import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { formatPersonName } from "@/lib/name-display"
 import {
+  formatJourneyStageStatusLabel,
   getJourneyFileLoginLabel,
   getJourneyFilterDate,
   getJourneyHoldInfo,
@@ -27,12 +28,6 @@ function statusBadgeClass(status: JourneyStageStatus) {
   if (status === "completed") return "bg-green-600 text-white"
   if (status === "in_progress") return "bg-amber-500 text-white"
   return "bg-muted text-muted-foreground"
-}
-
-function statusLabel(status: JourneyStageStatus) {
-  if (status === "completed") return "Completed"
-  if (status === "in_progress") return "In Progress"
-  return "Pending"
 }
 
 type CustomerJourneyPanelProps = {
@@ -200,10 +195,10 @@ export function CustomerJourneyPanel({
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
                     {[
-                      { label: "Admin Approval", status: progress.adminApproval },
-                      { label: "Installation", status: progress.installation },
-                      { label: "Metering", status: progress.metering },
-                      { label: "Final Confirmation", status: progress.finalConfirmation },
+                      { label: "Admin Approval", status: progress.adminApproval, stage: "adminApproval" as const },
+                      { label: "Installation", status: progress.installation, stage: "installation" as const },
+                      { label: "Metering", status: progress.metering, stage: "metering" as const },
+                      { label: "Final Confirmation", status: progress.finalConfirmation, stage: "finalConfirmation" as const },
                     ].map((item) => (
                       <div
                         key={item.label}
@@ -211,7 +206,7 @@ export function CustomerJourneyPanel({
                       >
                         <span className="text-[11px] text-muted-foreground">{item.label}</span>
                         <Badge className={`text-[10px] ${statusBadgeClass(item.status)}`}>
-                          {statusLabel(item.status)}
+                          {formatJourneyStageStatusLabel(item.status, item.stage)}
                         </Badge>
                       </div>
                     ))}

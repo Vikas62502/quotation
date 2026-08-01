@@ -18,9 +18,11 @@ import {
   Eye,
   IndianRupee,
   Calendar as CalendarIcon,
+  ChevronDown,
   Send,
   Users,
 } from "lucide-react"
+import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
 import { useToast } from "@/hooks/use-toast"
 import { useIncrementalList } from "@/hooks/use-incremental-list"
@@ -54,13 +56,17 @@ import {
   type FileStatusFilter,
 } from "@/lib/customer-journey"
 import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
   INSTALLER_RELEASE_MAP_KEY,
+  extractQuotationListFromApiResponse,
+  flattenWrappedQuotationRow,
   isQuotationSentToInstaller,
+  mergeInstallationMediaSources,
   mergeInstallerReleaseOntoQuotation,
   readInstallerReleaseMap,
 } from "@/lib/operational-install-queue"
@@ -320,6 +326,28 @@ function formatInstallmentShortLabel(phase: PaymentPhase): string {
 }
 
 type PaymentInstallmentFilter = "all" | "1" | "2" | "3" | "4" | "5"
+
+type PaymentTypeFilterValue = "loan" | "cash" | "mix" | "unknown"
+
+const PAYMENT_TYPE_FILTER_OPTIONS: { value: PaymentTypeFilterValue; label: string }[] = [
+  { value: "loan", label: "Loan" },
+  { value: "cash", label: "Cash" },
+  { value: "mix", label: "Cash + loan" },
+  { value: "unknown", label: "Not Set" },
+]
+
+function getPaymentTypeFilterTriggerLabel(selected: PaymentTypeFilterValue[]): string {
+  if (selected.length === 0 || selected.length === PAYMENT_TYPE_FILTER_OPTIONS.length) {
+    return "All Payment Types"
+  }
+  if (selected.length === 1) {
+    return PAYMENT_TYPE_FILTER_OPTIONS.find((o) => o.value === selected[0])?.label ?? "1 type"
+  }
+  const labels = selected
+    .map((v) => PAYMENT_TYPE_FILTER_OPTIONS.find((o) => o.value === v)?.label)
+    .filter(Boolean)
+  return labels.join(", ")
+}
 
 function paymentMatchesInstallmentFilter(
   payment: CustomerPayment,
@@ -724,7 +752,7 @@ export default function AccountManagementPage() {
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
-  const [paymentTypeFilter, setPaymentTypeFilter] = useState<"all" | "loan" | "cash" | "mix" | "unknown">("all")
+  const [paymentTypeFilter, setPaymentTypeFilter] = useState<PaymentTypeFilterValue[]>([])
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
   const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
   const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>("all")
@@ -906,12 +934,85 @@ export default function AccountManagementPage() {
                   ? fileLoginStatusRaw
                   : undefined,
               installationStatus: (flat.installationStatus ?? flat.installation_status) as string | undefined,
+              installation_status: (flat.installationStatus ?? flat.installation_status) as string | undefined,
               meteringStage: (flat.meteringStage ?? flat.metering_stage) as string | undefined,
               meteringStatus: (flat.meteringStatus ?? flat.metering_status) as string | undefined,
               mcoStatus: (flat.mcoStatus ?? flat.mco_status) as string | undefined,
+              meteringWccAfterDiscom: (flat.meteringWccAfterDiscom ?? flat.metering_wcc_after_discom) as
+                | boolean
+                | undefined,
+              installerApprovedAt: (flat.installerApprovedAt ?? flat.installer_approved_at) as string | undefined,
+              installer_approved_at: (flat.installerApprovedAt ?? flat.installer_approved_at) as string | undefined,
+              installationPartialApproved: (flat.installationPartialApproved ??
+                flat.installation_partial_approved) as boolean | undefined,
+              documents: flat.documents ?? flat.document,
+              document: flat.documents ?? flat.document,
+              installation: flat.installation,
+              installerInstallation: flat.installerInstallation,
+              installationCompletion: flat.installationCompletion,
+              installerCompletion: flat.installerCompletion,
+              homeFrontPhoto: flat.homeFrontPhoto ?? flat.home_front_photo,
+              homeWithPersonPhoto: flat.homeWithPersonPhoto ?? flat.home_with_person_photo,
+              inverterWithCustomerPhoto: flat.inverterWithCustomerPhoto ?? flat.inverter_with_customer_photo,
+              plantWithCustomerPhoto: flat.plantWithCustomerPhoto ?? flat.plant_with_customer_photo,
+              inverterSerialNumberPhoto: flat.inverterSerialNumberPhoto ?? flat.inverter_serial_number_photo,
+              panelSerialNumberPhoto: flat.panelSerialNumberPhoto ?? flat.panel_serial_number_photo,
+              geoTagPlantPhoto: flat.geoTagPlantPhoto ?? flat.geo_tag_plant_photo,
+              otherImages: flat.otherImages ?? flat.other_images,
+              installationImageUrls: flat.installationImageUrls ?? flat.installation_image_urls,
+              siteCompletionImages: flat.siteCompletionImages ?? flat.site_completion_images,
             }
             return mergeInstallerReleaseOntoQuotation(mapped, readInstallerReleaseMap()) as typeof mapped
           })
+
+        // Align FILE STATUS with Admin Approved Installation: merge installer-queue
+        // approved rows (status + photos) when Account role can read the queue.
+        try {
+          const approvedQueueRows = extractQuotationListFromApiResponse(
+            await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
+          )
+          const queueById = new Map<string, Record<string, unknown>>()
+          for (const row of approvedQueueRows) {
+            const flat = flattenWrappedQuotationRow(row) as Record<string, unknown>
+            const id = String(flat.id || "").trim()
+            if (!id) continue
+            queueById.set(id, mergeInstallationMediaSources(queueById.get(id) || {}, flat))
+          }
+          if (queueById.size > 0) {
+            for (let i = 0; i < approvedQuotations.length; i++) {
+              const q = approvedQuotations[i] as Record<string, unknown>
+              const id = String(q.id || "").trim()
+              const queueRow = queueById.get(id)
+              if (!queueRow) continue
+              approvedQuotations[i] = mergeInstallationMediaSources(
+                {
+                  ...q,
+                  installationStatus:
+                    q.installationStatus ||
+                    q.installation_status ||
+                    queueRow.installationStatus ||
+                    queueRow.installation_status ||
+                    "installer_approved",
+                  installation_status:
+                    q.installation_status ||
+                    q.installationStatus ||
+                    queueRow.installation_status ||
+                    queueRow.installationStatus ||
+                    "installer_approved",
+                  installerApprovedAt:
+                    q.installerApprovedAt ||
+                    q.installer_approved_at ||
+                    queueRow.installerApprovedAt ||
+                    queueRow.installer_approved_at,
+                } as Record<string, unknown>,
+                queueRow,
+              ) as (typeof approvedQuotations)[number]
+            }
+          }
+        } catch {
+          // Account role may not have installer queue access — status fields above still apply.
+        }
+
         setQuotations(approvedQuotations as Quotation[])
       } else {
         // Fallback to localStorage for development
@@ -1245,16 +1346,22 @@ export default function AccountManagementPage() {
     [quotations],
   )
 
+  const installerReleaseMapForPayments = useMemo(() => readInstallerReleaseMap(), [customerPayments, quotations])
+
   const filteredCustomerPayments = useMemo(
     () =>
       customerPayments.filter((payment) => {
-        // Same as dealer Quotations: only the current quotation per customer.
+        // One row per customer for normal payments — but keep every Send-to-Installer
+        // row so Account FILE STATUS matches Admin Installation counts (e.g. Pending 27).
         if (
           currentQuotationIdsForPayments.size > 0 &&
           payment.quotationId &&
           !currentQuotationIdsForPayments.has(payment.quotationId)
         ) {
-          return false
+          const q = payment.quotation as unknown as Record<string, unknown>
+          if (!isQuotationSentToInstaller(q, installerReleaseMapForPayments)) {
+            return false
+          }
         }
         const matchesSearch =
           payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
@@ -1262,8 +1369,11 @@ export default function AccountManagementPage() {
           payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
         const paymentTypeValue = getPaymentTypeValue(payment)
         const matchesPaymentType =
-          paymentTypeFilter === "all" ||
-          (paymentTypeFilter === "unknown" ? !paymentTypeValue : paymentTypeValue === paymentTypeFilter)
+          paymentTypeFilter.length === 0 ||
+          paymentTypeFilter.length === PAYMENT_TYPE_FILTER_OPTIONS.length ||
+          paymentTypeFilter.some((selected) =>
+            selected === "unknown" ? !paymentTypeValue : paymentTypeValue === selected,
+          )
         const paymentStatusValue = getEffectivePaymentStatus(payment)
         const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
         const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
@@ -1293,6 +1403,7 @@ export default function AccountManagementPage() {
     [
       customerPayments,
       currentQuotationIdsForPayments,
+      installerReleaseMapForPayments,
       paymentSearchTerm,
       paymentTypeFilter,
       paymentStatusFilter,
@@ -1322,7 +1433,7 @@ export default function AccountManagementPage() {
 
   const paymentListResetKey = [
     paymentSearchTerm,
-    paymentTypeFilter,
+    paymentTypeFilter.slice().sort().join(","),
     paymentStatusFilter,
     paymentInstallmentFilter,
     fileStatusFilter,
@@ -1436,10 +1547,10 @@ export default function AccountManagementPage() {
         paidAmount,
         remainingAmount,
         payment.phases.length,
-        formatJourneyStageStatusLabel(journey.adminApproval),
-        formatJourneyStageStatusLabel(journey.installation),
-        formatJourneyStageStatusLabel(journey.metering),
-        formatJourneyStageStatusLabel(journey.finalConfirmation),
+        formatJourneyStageStatusLabel(journey.adminApproval, "adminApproval"),
+        formatJourneyStageStatusLabel(journey.installation, "installation"),
+        formatJourneyStageStatusLabel(journey.metering, "metering"),
+        formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation"),
         fileStatus,
       ]
     })
@@ -2542,18 +2653,59 @@ export default function AccountManagementPage() {
                 <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-1.5 w-full lg:flex-1">
                     <div className="w-full sm:min-w-30">
-                      <Select value={paymentTypeFilter} onValueChange={(value) => setPaymentTypeFilter(value as typeof paymentTypeFilter)}>
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="Filter payment type" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Payment Types</SelectItem>
-                          <SelectItem value="loan">Loan</SelectItem>
-                          <SelectItem value="cash">Cash</SelectItem>
-                          <SelectItem value="mix">Cash + loan</SelectItem>
-                          <SelectItem value="unknown">Not Set</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="h-9 w-full justify-between px-3 text-sm font-normal"
+                          >
+                            <span className="truncate">{getPaymentTypeFilterTriggerLabel(paymentTypeFilter)}</span>
+                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-48 p-2" align="start">
+                          <div className="flex flex-col gap-1">
+                            <button
+                              type="button"
+                              className={cn(
+                                "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
+                                paymentTypeFilter.length === 0 && "bg-accent",
+                              )}
+                              onClick={() => setPaymentTypeFilter([])}
+                            >
+                              All Payment Types
+                            </button>
+                            {PAYMENT_TYPE_FILTER_OPTIONS.map((option) => {
+                              const checked = paymentTypeFilter.includes(option.value)
+                              return (
+                                <label
+                                  key={option.value}
+                                  className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                                >
+                                  <Checkbox
+                                    checked={checked}
+                                    onCheckedChange={(next) => {
+                                      setPaymentTypeFilter((prev) => {
+                                        if (next === true) {
+                                          const merged = prev.includes(option.value)
+                                            ? prev
+                                            : [...prev, option.value]
+                                          return merged.length === PAYMENT_TYPE_FILTER_OPTIONS.length
+                                            ? []
+                                            : merged
+                                        }
+                                        return prev.filter((v) => v !== option.value)
+                                      })
+                                    }}
+                                  />
+                                  <span>{option.label}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                     <div className="w-full sm:min-w-36">
                       <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as typeof paymentStatusFilter)}>
@@ -2596,9 +2748,9 @@ export default function AccountManagementPage() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">All file statuses</SelectItem>
-                          <SelectItem value="installation:pending">Installation · Pending</SelectItem>
+                          <SelectItem value="installation:completed">Installation · Approved</SelectItem>
                           <SelectItem value="installation:in_progress">Installation · In Progress</SelectItem>
-                          <SelectItem value="installation:completed">Installation · Completed</SelectItem>
+                          <SelectItem value="installation:pending">Installation · Pending</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -2898,7 +3050,7 @@ export default function AccountManagementPage() {
                                         variant="outline"
                                         className={`text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium ${journeyStageStatusBadgeClass(item.status)}`}
                                       >
-                                        {formatJourneyStageStatusLabel(item.status)}
+                                        {item.statusLabel}
                                       </Badge>
                                     </div>
                                   ))}
@@ -3103,7 +3255,7 @@ export default function AccountManagementPage() {
                     <span>
                       <span className="font-medium text-foreground/80">File status: </span>
                       {getJourneyFileStatusStages(activePayment.quotation)
-                        .map((item) => `${item.label} ${formatJourneyStageStatusLabel(item.status)}`)
+                        .map((item) => `${item.label} ${item.statusLabel}`)
                         .join(" · ")}
                     </span>
                   </div>

@@ -36,6 +36,8 @@ export type InstallationInfoSection = {
 export type InstallationUploadedFile = {
   name: string
   url: string
+  /** Present when the file is still local and must be sent on final submit. */
+  localFile?: File
 }
 
 type Props = {

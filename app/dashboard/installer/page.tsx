@@ -834,6 +834,7 @@ export default function InstallerDashboardPage() {
   const toLocalUploadedFile = (file: File): InstallationUploadedFile => ({
     name: file.name,
     url: URL.createObjectURL(file),
+    localFile: file,
   })
 
   const uploadInstallerFieldFiles = async (
@@ -852,60 +853,23 @@ export default function InstallerDashboardPage() {
       return
     }
 
-    const targetKey = `${quotationId}:${fieldKey}`
-    setUploadingAssetKey(targetKey)
-    try {
-      const uploadedFiles: InstallationUploadedFile[] = []
-      for (const file of files) {
-        const url = useApi
-          ? await api.installer.uploadCompletionAsset(quotationId, fieldKey, file)
-          : toLocalUploadedFile(file).url
-        uploadedFiles.push({ name: file.name, url })
-      }
-      setUploadFilesByQuotation((prev) => ({
-        ...prev,
-        [quotationId]: {
-          ...(prev[quotationId] || {}),
-          [fieldKey]: uploadedFiles,
-        },
-      }))
-    } catch (error) {
-      toast({
-        title: "Upload failed",
-        description: apiErrorToUserMessage(error),
-        variant: "destructive",
-      })
-    } finally {
-      setUploadingAssetKey((current) => (current === targetKey ? null : current))
-    }
+    // Keep files local until Complete/Submit — per-field immediate upload hits Multer
+    // "Unexpected or too many file fields" on backends that only allow installerCompletionImages + piUpload.
+    setUploadFilesByQuotation((prev) => ({
+      ...prev,
+      [quotationId]: {
+        ...(prev[quotationId] || {}),
+        [fieldKey]: files.map(toLocalUploadedFile),
+      },
+    }))
   }
 
   const uploadInstallerPiFiles = async (quotationId: string, files: File[]) => {
     if (!files.length) return
-
-    const targetKey = `${quotationId}:piUpload`
-    setUploadingAssetKey(targetKey)
-    try {
-      const uploaded: InstallationUploadedFile[] = []
-      for (const file of files) {
-        const url = useApi
-          ? await api.installer.uploadCompletionAsset(quotationId, "piUpload", file)
-          : toLocalUploadedFile(file).url
-        uploaded.push({ name: file.name, url })
-      }
-      setPiUploadByQuotation((prev) => ({
-        ...prev,
-        [quotationId]: [...(prev[quotationId] || []), ...uploaded],
-      }))
-    } catch (error) {
-      toast({
-        title: "PI upload failed",
-        description: apiErrorToUserMessage(error),
-        variant: "destructive",
-      })
-    } finally {
-      setUploadingAssetKey((current) => (current === targetKey ? null : current))
-    }
+    setPiUploadByQuotation((prev) => ({
+      ...prev,
+      [quotationId]: [...(prev[quotationId] || []), ...files.map(toLocalUploadedFile)],
+    }))
   }
 
   const handleApproveInstallation = async (quotation: InstallerQuotation) => {
@@ -993,21 +957,39 @@ export default function InstallerDashboardPage() {
     try {
       if (useApi) {
         const formData = new FormData()
+        // Backends that only allow `installerCompletionImages` + `piUpload` reject per-field
+        // keys (`homeFrontPhoto`, …) with "Unexpected or too many file fields".
+        const fieldOrder: string[] = []
+        const retainedUrls: Record<string, string[]> = {}
         INSTALLATION_IMAGE_FIELDS.forEach((field) => {
           const fieldFiles = filesByField[field.key] || []
+          const kept: string[] = []
           fieldFiles.forEach((file) => {
-            formData.append("installerCompletionImages", file.url)
-            formData.append(field.key, file.url)
+            if (file.localFile) {
+              formData.append("installerCompletionImages", file.localFile)
+              fieldOrder.push(field.key)
+            } else if (file.url && !file.url.startsWith("blob:")) {
+              kept.push(file.url)
+            }
           })
+          if (kept.length) retainedUrls[field.key] = kept
         })
-        for (const pi of piUploads) {
-          if (pi?.url) formData.append("piUpload", pi.url)
+        if (Object.keys(retainedUrls).length > 0) {
+          formData.append("existingInstallationImageUrlsJson", JSON.stringify(retainedUrls))
         }
-        if (piUploads.length > 0) {
-          formData.append(
-            "existingPiUploadUrlsJson",
-            JSON.stringify(piUploads.map((p) => p.url).filter(Boolean)),
-          )
+        if (fieldOrder.length > 0) {
+          formData.append("installerCompletionImageFieldOrderJson", JSON.stringify(fieldOrder))
+        }
+        const existingPiUrls: string[] = []
+        for (const pi of piUploads) {
+          if (pi?.localFile) formData.append("piUpload", pi.localFile)
+          else if (pi?.url && !pi.url.startsWith("blob:")) existingPiUrls.push(pi.url)
+        }
+        if (existingPiUrls.length === 1) {
+          formData.append("existingPiUploadUrl", existingPiUrls[0])
+        }
+        if (existingPiUrls.length > 0) {
+          formData.append("existingPiUploadUrlsJson", JSON.stringify(existingPiUrls))
         }
         if (expenseLines.length > 0) {
           const payload = expenseLines.map(({ description, amount }) => ({
@@ -1472,12 +1454,21 @@ export default function InstallerDashboardPage() {
                         )}
                       </div>
                       <div className="min-w-0">
-                        <Badge variant="outline" className="text-xs capitalize">
+                        <Badge
+                          variant="outline"
+                          className={
+                            installerStatus === "approved"
+                              ? "text-xs font-medium border-green-300/80 bg-green-50 text-green-800"
+                              : installerStatus === "inprogress"
+                                ? "text-xs font-medium border-sky-300/80 bg-sky-50 text-sky-800"
+                                : "text-xs font-medium border-amber-300/80 bg-amber-50 text-amber-800"
+                          }
+                        >
                           {installerStatus === "approved"
-                            ? "Approved Installation"
+                            ? "Approved"
                             : installerStatus === "inprogress"
-                              ? "Installer In Progress"
-                              : "Pending Installation"}
+                              ? "In Progress"
+                              : "Pending"}
                         </Badge>
                       </div>
                       <div className="flex flex-wrap items-center justify-start gap-2 lg:ml-auto lg:justify-end">

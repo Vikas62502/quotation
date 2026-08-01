@@ -1,11 +1,15 @@
 import type { Quotation } from "@/lib/quotation-context"
 import { getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
 import {
+  getInstallationAdminTabProgress,
   getInstallationWorkflowStatus,
   getMeteringWorkflowRaw,
   getMeteringWorkflowStage,
-  isInstallationCompleteForMetering,
+  isQuotationSentToInstaller,
+  readInstallerReleaseMap,
 } from "@/lib/operational-install-queue"
+import { isInstallationUploadCompleteWithMedia } from "@/lib/installation-public-images"
+
 
 export type JourneyStageStatus = "completed" | "pending" | "in_progress"
 
@@ -162,8 +166,15 @@ export function getJourneyHoldInfo(quotation: Quotation): JourneyHoldInfo {
   return { holder: "Operations", stageLabel: "Workflow Pending" }
 }
 
-export function formatJourneyStageStatusLabel(status: JourneyStageStatus): string {
-  if (status === "completed") return "Completed"
+export function formatJourneyStageStatusLabel(
+  status: JourneyStageStatus,
+  stage?: "adminApproval" | "installation" | "metering" | "finalConfirmation",
+): string {
+  if (status === "completed") {
+    // Match Admin Installation tabs: Approved Installation → "Approved"
+    if (stage === "installation") return "Approved"
+    return "Completed"
+  }
   if (status === "in_progress") return "In Progress"
   return "Pending"
 }
@@ -178,9 +189,21 @@ export function journeyStageStatusBadgeClass(status: JourneyStageStatus): string
 export function getJourneyFileStatusStages(quotation: Quotation) {
   const progress = getJourneyStageProgress(quotation)
   return [
-    { label: "Installation", status: progress.installation },
-    { label: "Metering", status: progress.metering },
-    { label: "Final confirmation", status: progress.finalConfirmation },
+    {
+      label: "Installation",
+      status: progress.installation,
+      statusLabel: formatJourneyStageStatusLabel(progress.installation, "installation"),
+    },
+    {
+      label: "Metering",
+      status: progress.metering,
+      statusLabel: formatJourneyStageStatusLabel(progress.metering, "metering"),
+    },
+    {
+      label: "Final confirmation",
+      status: progress.finalConfirmation,
+      statusLabel: formatJourneyStageStatusLabel(progress.finalConfirmation, "finalConfirmation"),
+    },
   ] as const
 }
 
@@ -205,8 +228,13 @@ export function paymentMatchesFileStatusFilter(
     "installation" | "metering" | "final_confirmation",
     JourneyStageStatus,
   ]
+  if (stage === "installation") {
+    const q = quotation as unknown as Record<string, unknown>
+    // Same population as Admin → Installation (Send to Installer only).
+    if (!isQuotationSentToInstaller(q, readInstallerReleaseMap())) return false
+    return resolveInstallationJourneyStatus(quotation) === status
+  }
   const progress = getJourneyStageProgress(quotation)
-  if (stage === "installation") return progress.installation === status
   if (stage === "metering") return progress.metering === status
   if (stage === "final_confirmation") return progress.finalConfirmation === status
   return true
@@ -215,6 +243,24 @@ export function paymentMatchesFileStatusFilter(
 function isMeteringWccAfterDiscomFlag(q: Record<string, unknown>): boolean {
   const v = q.meteringWccAfterDiscom ?? q.metering_wcc_after_discom
   return v === true || v === 1 || v === "true" || v === "1"
+}
+
+/**
+ * Payment Management FILE STATUS → Installation column.
+ * Same buckets as Admin → Installation tabs:
+ * - Pending Installation → Pending
+ * - Partial Approved → In Progress
+ * - Approved Installation → Approved (completed)
+ */
+export function resolveInstallationJourneyStatus(quotation: Quotation): JourneyStageStatus {
+  const q = quotation as unknown as Record<string, unknown>
+  const tab = getInstallationAdminTabProgress(
+    q,
+    isInstallationUploadCompleteWithMedia(q),
+  )
+  if (tab === "partial") return "in_progress"
+  if (tab === "done") return "completed"
+  return "pending"
 }
 
 /**
@@ -285,16 +331,10 @@ export function getJourneyStageProgress(quotation: Quotation): JourneyStageProgr
 
   const adminApproval: JourneyStageStatus = approvalStatus === "approved" ? "completed" : "pending"
 
-  let installation: JourneyStageStatus = "pending"
   let finalConfirmation: JourneyStageStatus = "pending"
 
-  if (installStatus === "installer_in_progress") {
-    installation = "in_progress"
-  }
-  // pending_installer = Account sent to installer, no install action yet → still Pending
-  if (isInstallationCompleteForMetering(quotation as Record<string, unknown>)) {
-    installation = "completed"
-  }
+  // Match Admin Approved Installation (not payment remaining / Paid status).
+  const installation = resolveInstallationJourneyStatus(quotation)
 
   const metering = resolveMeteringJourneyStatus(quotation)
 

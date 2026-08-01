@@ -2499,32 +2499,54 @@ export const api = {
       options?: { caller?: "installer" | "admin" },
     ) => {
       const tried: string[] = []
+      const isMulterFieldMismatch = (error: unknown) => {
+        if (!(error instanceof ApiError)) return false
+        const msg = String(error.message || "").toLowerCase()
+        const code = String(error.code || "").toUpperCase()
+        return (
+          code === "LIMIT_UNEXPECTED_FILE" ||
+          code === "LIMIT_FILE_COUNT" ||
+          msg.includes("unexpected field") ||
+          msg.includes("unexpected or too many file") ||
+          msg.includes("too many file") ||
+          (msg.includes("unexpected") && msg.includes("file")) ||
+          (code === "HTTP_400" &&
+            (msg.includes("file field") || msg.includes("multer") || msg.includes("too many")))
+        )
+      }
       const tryNextEndpoint = (error: unknown) =>
         error instanceof ApiError &&
         (error.code === "HTTP_404" ||
           error.code === "HTTP_405" ||
           error.code === "HTTP_501" ||
           error.code === "HTTP_403" ||
-          error.code === "AUTH_004")
+          error.code === "AUTH_004" ||
+          // Generic `/quotations/.../documents` often uses customer-doc Multer fields and
+          // returns 400 "Unexpected or too many file fields" for installerCompletionImages.
+          isMulterFieldMismatch(error))
 
       const installerPath = `/installer/quotations/${quotationId}/documents`
       const quotationsPath = `/quotations/${quotationId}/documents`
 
+      // Prefer installer-completion routes. Generic quotation documents routes often reject
+      // `installerCompletionImages` / `piUpload` with Multer LIMIT_UNEXPECTED_FILE.
       const adminScoped: string[] =
         options?.caller === "admin"
           ? [
-              `/admin/quotations/${quotationId}/documents`,
               `/admin/quotations/${quotationId}/installer-documents`,
               `/admin/installer/quotations/${quotationId}/documents`,
+              installerPath,
+              `/admin/quotations/${quotationId}/documents`,
             ]
           : []
 
-      // Installers: same shape as today (installer route first). Admins: try generic POST
-      // /quotations/... before installer-only URL so a single admin-allowed route fixes 403.
       const primaryPair =
-        options?.caller === "admin" ? [quotationsPath, installerPath] : [installerPath, quotationsPath]
+        options?.caller === "admin" ? [installerPath, quotationsPath] : [installerPath, quotationsPath]
 
-      const endpoints = [...adminScoped, ...primaryPair]
+      const endpoints =
+        options?.caller === "admin"
+          ? [...adminScoped, quotationsPath].filter((path, index, all) => all.indexOf(path) === index)
+          : primaryPair
 
       let lastError: unknown = null
       for (const endpoint of endpoints) {

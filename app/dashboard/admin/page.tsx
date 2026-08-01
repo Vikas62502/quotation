@@ -235,9 +235,19 @@ function meteringStageBadgeTone(stage: "processing" | "approved" | "meter_instal
 
 function installerStageBadgeTone(status: string): string {
   if (status === "approved") return "border-green-300/80 bg-green-50 text-green-800"
-  if (status === "partial") return "border-violet-300/80 bg-violet-50 text-violet-800"
-  if (status === "inprogress") return "border-sky-300/80 bg-sky-50 text-sky-800"
+  // Partial Approved tab → show as In Progress
+  if (status === "partial" || status === "inprogress") return "border-sky-300/80 bg-sky-50 text-sky-800"
   return "border-amber-300/80 bg-amber-50 text-amber-800"
+}
+
+/** STATUS column labels aligned with Installation sub-tabs. */
+function installerQueueStatusDisplayLabel(
+  status: "pending" | "inprogress" | "partial" | "approved",
+): string {
+  if (status === "approved") return "Approved"
+  if (status === "partial") return "In Progress"
+  // Pending Installation tab (includes started / in-progress uploads not yet partial)
+  return "Pending"
 }
 
 /** Prefer file-login payment type, then approval-time type / payment mode. */
@@ -9069,14 +9079,7 @@ export default function AdminPanelPage() {
                                     : "") ||
                                   fromList?.mobile ||
                                   "—"
-                                const statusLabel =
-                                  installerStatus === "approved"
-                                    ? "Approved Installation"
-                                    : installerStatus === "partial"
-                                      ? "Partial Approved"
-                                      : installerStatus === "inprogress"
-                                        ? "Installer In Progress"
-                                        : "Pending Installation"
+                                const statusLabel = installerQueueStatusDisplayLabel(installerStatus)
                                 const showExpanded =
                                   adminInstallExpandedId === quotation.id &&
                                   adminInstallQuotation?.id === quotation.id

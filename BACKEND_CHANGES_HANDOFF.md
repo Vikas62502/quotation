@@ -1108,6 +1108,20 @@ Each row **must** include:
 
 **Critical:** `GET /api/quotations?status=approved` must return **`installationStatus`** and metering workflow fields on every row. If missing, Excel shows **Workflow Pending** for all rows after refresh.
 
+### Installation FILE STATUS mapping (Aug 2026)
+
+Payment Management **FILE STATUS → Installation** (and dealer journey) must match Admin → Installation tabs:
+
+| Admin Installation tab | Persist / return on GET | UI label |
+|------------------------|-------------------------|----------|
+| Pending Installation | `pending_installer` or `installer_in_progress` (+ release flags) | **Pending** |
+| Partial Approved | `installer_partial_approved` / `installationPartialApproved: true` | **In Progress** |
+| Approved Installation | `installer_approved` (+ `installerApprovedAt` / photos) | **Approved** |
+
+**Do not** map `installer_in_progress` → In Progress for this column — that row stays in **Pending Installation**.
+
+Account filter **Installation · Pending** must include the same Send-to-Installer set as Admin Pending Installation (counts should match). Requires release flags on list GET — see **§25**.
+
 ### Metering FILE STATUS mapping (Jul 2026)
 
 Payment Management **FILE STATUS → Metering** (and dealer journey panel) must match Admin → Metering tabs:
@@ -2814,6 +2828,57 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 
 ---
 
+## 25. Installation FILE STATUS + Account filter = Admin Installation tabs
+
+**Frontend:** Account → Payment Management **FILE STATUS → Installation** + filter  
+`installation:pending` / `installation:in_progress` / `installation:completed`  
+**Also:** dealer Dashboard journey panel, Excel Installation Status column.  
+**Files:** `lib/customer-journey.ts` (`resolveInstallationJourneyStatus`, `paymentMatchesFileStatusFilter`), `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `BACKEND_INSTALLATION_RELEASE.md`
+
+### Problem
+
+Admin **Pending Installation** showed ~27 rows, but Account **Installation · Pending** showed ~2. Causes:
+
+1. List GET omitted `installation_ready_for_installer` / `installation_released_at` / `installation_status` → frontend could not classify the same set  
+2. Status mapping treated `installer_in_progress` as In Progress instead of Pending (Admin tab bucket)
+
+### Mapping (must match Admin → Installation)
+
+| Admin tab | Backend status / flags | FILE STATUS label |
+|-----------|------------------------|-------------------|
+| **Pending Installation** | Released to installer AND not partial AND not fully approved. Typical: `installation_status` ∈ `pending_installer`, `installer_in_progress`, empty; flags `installationReadyForInstaller` / `installationReleasedAt` set | **Pending** |
+| **Partial Approved** | `installer_partial_approved` **or** `installation_partial_approved = true` | **In Progress** |
+| **Approved Installation** | `installer_approved` **or** `installer_approved_at` set (photos uploaded / Complete & Mark as Approved) | **Approved** |
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | **Send to Installer** (`PATCH …/installation-release`): set `installation_ready_for_installer=true`, `installation_released_at=now()`, prefer `installation_status=pending_installer` |
+| 2 | **Partial Approved** upload: persist `installation_status=installer_partial_approved` and/or `installation_partial_approved=true` |
+| 3 | **Complete & Mark as Approved**: set `installation_status=installer_approved`, `installer_approved_at=now()`, clear partial flags |
+| 4 | Return on **`GET /quotations?status=approved`** (and admin/installer lists): `installationStatus`, `installationReadyForInstaller`, `installationReleasedAt`, `installationPartialApproved`, `installerApprovedAt` (+ snake_case) |
+| 5 | Do **not** clear release flags when moving to metering — Installation history stays queryable |
+| 6 | (Optional) `GET …?fileStatus=installation:pending` server filter using the same rules for large lists |
+
+### Account filter contract
+
+- Filter **Installation · Pending** = rows with release flags **and** Pending bucket (not partial, not approved).  
+- Count should match Admin **Pending Installation** for the same org data.  
+- Frontend also keeps non-current quotations that are released to installer so history rows are not dropped.
+
+### QA
+
+1. Send 27 files to installer → Admin Pending Installation = 27  
+2. Account → Installation · Pending → **27** (same ids)  
+3. Mark one Partial Approved → leaves Pending filter; appears under Installation · In Progress  
+4. Complete & Approve one → Installation FILE STATUS **Approved**; Pending count decreases by 1  
+5. Refresh / other device — counts unchanged (DB fields, not localStorage)
+
+**Reference:** `BACKEND_INSTALLATION_RELEASE.md`, `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `lib/operational-install-queue.ts`, `lib/customer-journey.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -2851,7 +2916,8 @@ Backend either does not write `sale_items.quantity` / `unit_price`, or `GET /sal
 | **§23** (this file) | Quotations — additional quotation + restore current |
 | **`BACKEND_QUOTATION_SYSTEM_HISTORY.ts`** | **§23** allow additional create + `restore-current` + `is_current` |
 | **§24** (this file) | Metering FILE STATUS — Final Step Completed / Meter Pending Pending / rest In Progress |
-| **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24** journey helpers + required GET fields |
+| **§25** (this file) | Installation FILE STATUS — Pending / In Progress / Approved = Admin Installation tabs |
+| **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24–§25** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
 | **`BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`** | Meter Pending → Discom → WCC → Meter Install → Final Step |
