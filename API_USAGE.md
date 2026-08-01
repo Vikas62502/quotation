@@ -1,4 +1,4 @@
-# API Usage Guide
+# API Usage Guide Doc
 
 This guide shows how to migrate from localStorage to API calls.
 
