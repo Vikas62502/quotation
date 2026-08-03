@@ -2992,6 +2992,68 @@ upload.fields([
 
 ---
 
+## 28. Cash + loan amounts & installment payment modes (Account / Approve)
+
+**Frontend:** Admin Approve + Approved list; Account Payment Management + Excel  
+**Full handoff:** **`BACKEND_CASH_LOAN_AMOUNTS.md`**  
+**Helpers:** **`BACKEND_CASH_LOAN_AMOUNTS.ts`**  
+**Also touch:** `BACKEND_ADMIN_QUOTATION_STATUS.ts` (approve + GET serialize), `BACKEND_INSTALLMENT_REPLACE.ts` (phases)
+
+**Live bug (Aug 2026):** Approve Cash + loan as loan **₹2,00,000** + cash **₹70,000** (total ₹2,70,000) → Admin still showed **Loan ₹2,70,000**. Backend was not persisting / echoing the split (or overwrote with subtotal).
+
+### Rules
+
+| `paymentType` | Persist amounts | Phase `paymentMode` |
+|---------------|-----------------|---------------------|
+| **loan** | `loanAmount` | `loan` only |
+| **cash** | clear loan/cash amounts | `cash` / `upi` / `cheque` (no loan) |
+| **mix** (Cash + loan) | `loanAmount` + `cashAmount` (= subtotal) | loan **and** cash/upi/cheque |
+
+### DB
+
+```sql
+ALTER TABLE quotations ADD COLUMN IF NOT EXISTS loan_amount NUMERIC(14,2);
+ALTER TABLE quotations ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(14,2);
+```
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | On `PATCH /admin/quotations/:id/status` approve, save `loanAmount` / `cashAmount` (and `loan_amount` / `cash_amount`) |
+| 2 | `mix`: **400** if loan+cash ≠ quotation subtotal; never store full subtotal as loan alone |
+| 3 | Set `paymentType` = `paymentMode` = body type; sync `filePaymentType` to same |
+| 4 | Echo amounts + `paymentType` on PATCH response and every GET list/detail (admin + account) |
+| 5 | Installment replace: persist each phase’s `paymentMode`; do not wipe loan/cash amounts |
+| 6 | Optional validate phase mode against payment type allowlist |
+
+### Approve body example
+
+```json
+{
+  "status": "approved",
+  "paymentType": "mix",
+  "paymentMode": "mix",
+  "loanAmount": 200000,
+  "cashAmount": 70000,
+  "bankName": "Bank of Baroda",
+  "bankIfsc": "BARB0KALWAR"
+}
+```
+
+### QA (short)
+
+1. Approve mix 200000+70000 on 270000 → GET shows both amounts, **not** Loan ₹270000.  
+2. Account loan installment → loan remaining drops only.  
+3. Cash/UPI installment → cash remaining drops only.  
+4. Excel has Loan/Cash amount + paid + remaining columns.  
+5. Loan-only / Cash-only modes enforced in Manage UI (backend should not coerce).  
+6. Re-approve a wrong row with correct split → GET updates.
+
+**Reference:** `BACKEND_CASH_LOAN_AMOUNTS.md`, `BACKEND_CASH_LOAN_AMOUNTS.ts`, `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`resolveApproveLoanCashAmounts` in approve handler)
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -3035,6 +3097,9 @@ upload.fields([
 | **§27** (this file) | Crompton DCR set — Premier Energy 600–610W + Crompton 3.6kW |
 | **`BACKEND_CROMPTON_DCR_SET.md`** | **§27** full Crompton set prices, range key, pricing-tables |
 | **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** allowlist helpers + pricing/preset merge |
+| **§28** (this file) | Cash + loan amounts + installment payment modes |
+| **`BACKEND_CASH_LOAN_AMOUNTS.md`** | **§28** approve/GET/installment + Excel fields |
+| **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
 | **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24–§25** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |

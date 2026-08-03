@@ -64,6 +64,13 @@
  *   "subsidyCheques": [ optional audit array ]
  * }
  *
+ * Phase paymentMode by quotation paymentType (Cash + loan split — Aug 2026):
+ *   - loan  → phase paymentMode "loan" only
+ *   - cash  → cash / upi / cheque (not loan)
+ *   - mix   → both loan and cash/upi/cheque
+ * Persist loanAmount / cashAmount on the quotation; do not clear them on installment replace.
+ * See BACKEND_CASH_LOAN_AMOUNTS.md / BACKEND_CASH_LOAN_AMOUNTS.ts
+ *
  * PUT /installments:
  * {
  *   "replace": true,

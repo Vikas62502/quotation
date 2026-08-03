@@ -15,6 +15,10 @@
  *   Body when approving:
  *     { status: "approved", paymentType, paymentMode, bankName?, bankIfsc?, subsidyChequeDetails? }
  *   - paymentType and paymentMode are the same value: "loan" | "cash" | "mix" (UI label for mix: "Cash + loan")
+ *   - For mix: also persist loanAmount + cashAmount (must sum to quotation subtotal) — see BACKEND_CASH_LOAN_AMOUNTS.md
+ *   - For loan: persist loanAmount; clear cashAmount
+ *   - For cash: clear loanAmount / cashAmount
+ *   - Echo loanAmount / cashAmount / paymentType on GET list + detail
  *   - For "loan" or "mix", frontend requires bankName + bankIfsc (11-char IFSC)
  *   - Optional subsidyChequeDetails (text) when payment is "cash" or "mix"
  *
@@ -92,6 +96,44 @@ function normalizePaymentType(raw) {
   return PAYMENT_TYPES.includes(v) ? v : null
 }
 
+function parseApproveInrAmount(raw) {
+  if (raw === undefined || raw === null || raw === "") return null
+  const n = typeof raw === "number" ? raw : Number(String(raw).replace(/[₹,\s]/g, ""))
+  if (!Number.isFinite(n) || n < 0) return null
+  return Math.round(n)
+}
+
+/** Resolve loan/cash amounts on approve — see BACKEND_CASH_LOAN_AMOUNTS.ts */
+function resolveApproveLoanCashAmounts({ paymentType, loanAmountRaw, cashAmountRaw, quotationSubtotal }) {
+  const loan = parseApproveInrAmount(loanAmountRaw)
+  const cash = parseApproveInrAmount(cashAmountRaw)
+  const S = Math.max(0, Math.round(Number(quotationSubtotal) || 0))
+
+  if (paymentType === "cash") {
+    return { ok: true, loanAmount: null, cashAmount: null }
+  }
+  if (paymentType === "loan") {
+    if (loan == null || loan <= 0) {
+      return { ok: false, code: "VAL_LOAN_AMT", message: "loanAmount required for loan approval" }
+    }
+    return { ok: true, loanAmount: loan, cashAmount: null }
+  }
+  if (loan == null || loan <= 0) {
+    return { ok: false, code: "VAL_LOAN_AMT", message: "loanAmount required for Cash + loan" }
+  }
+  if (cash == null || cash <= 0) {
+    return { ok: false, code: "VAL_CASH_AMT", message: "cashAmount required for Cash + loan" }
+  }
+  if (S > 0 && loan + cash !== S) {
+    return {
+      ok: false,
+      code: "VAL_AMT_SUM",
+      message: `loanAmount + cashAmount must equal quotation total (${S})`,
+    }
+  }
+  return { ok: true, loanAmount: loan, cashAmount: cash }
+}
+
 function normalizeIfsc(raw) {
   if (typeof raw !== "string") return null
   const v = raw.trim().toUpperCase().replace(/\s/g, "")
@@ -137,6 +179,8 @@ function normalizeFileLoginStatus(raw) {
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS status_history JSONB DEFAULT '[]'::jsonb;
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS subsidy_cheques JSONB DEFAULT '[]'::jsonb;
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS remaining_amount NUMERIC(14,2);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS loan_amount NUMERIC(14,2);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(14,2);
  *   -- Or compute `remaining` in API from subtotal − sum(phases.paidAmount) if you do not store it.
  *   -- payment_mode often already exists; ensure it can store loan|cash|mix
  *
@@ -154,11 +198,15 @@ function normalizeFileLoginStatus(raw) {
  *   ALTER TABLE quotations ADD COLUMN status_history JSON NULL;
  *   ALTER TABLE quotations ADD COLUMN subsidy_cheques JSON NULL;
  *   ALTER TABLE quotations ADD COLUMN remaining_amount DECIMAL(14,2) NULL;
+ *   ALTER TABLE quotations ADD COLUMN loan_amount DECIMAL(14,2) NULL;
+ *   ALTER TABLE quotations ADD COLUMN cash_amount DECIMAL(14,2) NULL;
  *
  * Sequelize model (example):
  *   bankName: { type: DataTypes.STRING(255), allowNull: true, field: 'bank_name' },
  *   bankIfsc: { type: DataTypes.STRING(11), allowNull: true, field: 'bank_ifsc' },
  *   paymentMode: { type: DataTypes.STRING(20), allowNull: true, field: 'payment_mode' },
+ *   loanAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'loan_amount' },
+ *   cashAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'cash_amount' },
  *   subsidyChequeDetails: { type: DataTypes.TEXT, allowNull: true, field: 'subsidy_cheque_details' },
  *   fileLoginStatus: { type: DataTypes.STRING(32), allowNull: true, field: 'file_login_status' },
  *   filePaymentType: { type: DataTypes.STRING(16), allowNull: true, field: 'file_payment_type' },
@@ -227,7 +275,28 @@ export async function patchAdminQuotationStatus(req, res) {
         return
       }
       updates.paymentMode = paymentType
+      updates.paymentType = paymentType
       updates.statusApprovedAt = at
+
+      // Persist loan / cash split (Cash + loan). See BACKEND_CASH_LOAN_AMOUNTS.ts §28.
+      const quotationSubtotal = pickQuotationSubtotalForPayments(quotation)
+      const amountResult = resolveApproveLoanCashAmounts({
+        paymentType,
+        loanAmountRaw: body.loanAmount ?? body.loan_amount,
+        cashAmountRaw: body.cashAmount ?? body.cash_amount,
+        quotationSubtotal,
+      })
+      if (!amountResult.ok) {
+        res.status(400).json({
+          success: false,
+          error: { code: amountResult.code, message: amountResult.message },
+        })
+        return
+      }
+      updates.loanAmount = amountResult.loanAmount
+      updates.cashAmount = amountResult.cashAmount
+      // Keep file-login type in sync so list UIs that still read filePaymentType stay correct.
+      updates.filePaymentType = paymentType
 
       if (paymentType === "loan" || paymentType === "mix") {
         const bankName = typeof body.bankName === "string" ? body.bankName.trim() : ""
@@ -268,6 +337,9 @@ export async function patchAdminQuotationStatus(req, res) {
       updates.bankName = null
       updates.bankIfsc = null
       updates.paymentMode = null
+      updates.paymentType = null
+      updates.loanAmount = null
+      updates.cashAmount = null
       updates.subsidyChequeDetails = null
     }
 
@@ -280,6 +352,9 @@ export async function patchAdminQuotationStatus(req, res) {
         id: quotationId,
         status: quotation.status,
         paymentMode: quotation.paymentMode,
+        paymentType: quotation.paymentType ?? quotation.paymentMode,
+        loanAmount: quotation.loanAmount ?? quotation.loan_amount ?? null,
+        cashAmount: quotation.cashAmount ?? quotation.cash_amount ?? null,
         bankName: quotation.bankName,
         bankIfsc: quotation.bankIfsc,
         subsidyChequeDetails: quotation.subsidyChequeDetails ?? quotation.subsidy_cheque_details ?? null,
@@ -473,6 +548,10 @@ export function quotationToApiJson(row) {
     ...q,
     paymentMode: q.paymentMode ?? q.payment_mode ?? null,
     paymentType: q.paymentType ?? q.payment_type ?? q.paymentMode ?? q.payment_mode ?? null,
+    loanAmount: q.loanAmount ?? q.loan_amount ?? null,
+    cashAmount: q.cashAmount ?? q.cash_amount ?? null,
+    loan_amount: q.loanAmount ?? q.loan_amount ?? null,
+    cash_amount: q.cashAmount ?? q.cash_amount ?? null,
     bankName: q.bankName ?? q.bank_name ?? null,
     bankIfsc: q.bankIfsc ?? q.bank_ifsc ?? null,
     subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details ?? null,

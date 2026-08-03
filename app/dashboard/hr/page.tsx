@@ -1140,9 +1140,14 @@ export default function HrDashboardPage() {
           : error instanceof Error
             ? error.message
             : "Failed to assign unassigned leads."
+      const missingEndpoint =
+        error instanceof ApiError &&
+        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
       toast({
         title: "Assign unassigned failed",
-        description: `${message} Backend must implement POST …/assign-unassigned (HANDOFF §15).`,
+        description: missingEndpoint
+          ? `${message} Backend must implement POST …/assign-unassigned (HANDOFF §15).`
+          : message,
         variant: "destructive",
       })
       return { ok: false, assigned: 0, remaining: batch.unassignedCount }
@@ -1179,7 +1184,7 @@ export default function HrDashboardPage() {
       toast({
         title: failed ? "Stopped on backend error" : "Unassigned drain started",
         description: failed
-          ? `Assigned ${totalAssigned} lead(s) then failed. Implement POST …/assign-unassigned (HANDOFF §15).`
+          ? `Assigned ${totalAssigned} lead(s) then failed on a later batch. Retry Assign unassigned on the remaining files.`
           : `Processed ${pending.length} batch(es) oldest-first. Assigned ~${totalAssigned} lead(s). Refresh badges should show Unassigned → 0.`,
         variant: failed ? "destructive" : "default",
       })

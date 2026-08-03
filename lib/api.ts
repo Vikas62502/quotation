@@ -3282,12 +3282,17 @@ export const api = {
         `/admin/leads/uploads/${safeBatchId}/assign-unassigned`,
       ]
 
+      // Pass a plain object — apiRequest already JSON.stringify's the body.
+      // Double-stringify made the backend body parser fail with:
+      // "Unexpected token \" in JSON at position 0"
+      const requestBody = { assignmentMode: "round_robin_all" as const }
+
       let lastError: unknown = null
       for (const endpoint of endpoints) {
         try {
           return await apiRequest<Record<string, unknown>>(endpoint, {
             method: "POST",
-            body: JSON.stringify({ assignmentMode: "round_robin_all" }),
+            body: requestBody,
           })
         } catch (error) {
           lastError = error

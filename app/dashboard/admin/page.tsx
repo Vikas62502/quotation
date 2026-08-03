@@ -250,18 +250,18 @@ function installerQueueStatusDisplayLabel(
   return "Pending"
 }
 
-/** Prefer file-login payment type, then approval-time type / payment mode. */
+/**
+ * Prefer approval-time payment type / mode over file-login draft.
+ * File login is only a preliminary choice — after approve, paymentMode/paymentType is source of truth.
+ * (Preferring filePaymentType made Cash+loan rows still render as full "Loan ₹total".)
+ */
 function getQuotationPaymentTypeRaw(q: Quotation | Record<string, unknown>): string {
   const r = q as Record<string, unknown>
-  return String(
-    r.filePaymentType ||
-      r.file_payment_type ||
-      r.paymentType ||
-      r.payment_type ||
-      r.paymentMode ||
-      r.payment_mode ||
-      "",
-  )
+  const approved = String(r.paymentType || r.payment_type || r.paymentMode || r.payment_mode || "")
+    .trim()
+    .toLowerCase()
+  if (approved === "loan" || approved === "cash" || approved === "mix") return approved
+  return String(r.filePaymentType || r.file_payment_type || "")
     .trim()
     .toLowerCase()
 }
@@ -321,7 +321,8 @@ function isMeteringBankProcessEligible(q: Quotation | Record<string, unknown>): 
 
 /**
  * Metering amount cell:
- * - Loan / Cash+loan: primary = loan amount only; I2 amount + bank under it (no cash line).
+ * - Loan: primary = loan amount; I2 + bank under it.
+ * - Cash + loan: primary = total; Loan + Cash lines under it; I2 + bank.
  * - Other types: quotation subtotal only.
  */
 function getMeteringAmountDisplay(quotation: Quotation | Record<string, unknown>): {
@@ -334,22 +335,33 @@ function getMeteringAmountDisplay(quotation: Quotation | Record<string, unknown>
   cashLabel?: string
 } {
   const paymentType = getQuotationPaymentTypeRaw(quotation)
-  const { loan } = readQuotationLoanCashAmounts(quotation)
+  const { loan, cash } = readQuotationLoanCashAmounts(quotation)
   const subtotalLabel = formatQuotationAmountInr(quotation as Quotation)
-  const isLoanOrMix = paymentType === "loan" || paymentType === "mix"
+  const bankLabel = getMeteringBankDetailsLabel(quotation) || undefined
+  const i2 = getSecondInstallmentAmount(quotation)
 
-  if (isLoanOrMix) {
-    const primaryLabel =
-      loan != null ? `₹${loan.toLocaleString("en-IN")}` : subtotalLabel
-    const i2 = getSecondInstallmentAmount(quotation)
-    const bankLabel = getMeteringBankDetailsLabel(quotation) || undefined
+  if (paymentType === "loan") {
+    const primaryLabel = loan != null ? `₹${loan.toLocaleString("en-IN")}` : subtotalLabel
     return {
       primaryLabel,
       totalLabel: primaryLabel,
-      secondInstallmentLabel:
-        i2 != null ? `I2 ₹${i2.toLocaleString("en-IN")}` : "I2 —",
+      secondInstallmentLabel: i2 != null ? `I2 ₹${i2.toLocaleString("en-IN")}` : "I2 —",
       bankLabel,
       loanLabel: loan != null ? `Loan ₹${loan.toLocaleString("en-IN")}` : undefined,
+    }
+  }
+
+  if (paymentType === "mix") {
+    const subtotal = getQuotationSubtotalValue(quotation as Quotation)
+    // Incomplete split (loan == full total, cash missing) — don't label full amount as loan.
+    const showLoan = loan != null && (cash != null || loan < subtotal)
+    return {
+      primaryLabel: subtotalLabel,
+      totalLabel: subtotalLabel,
+      secondInstallmentLabel: i2 != null ? `I2 ₹${i2.toLocaleString("en-IN")}` : "I2 —",
+      bankLabel,
+      loanLabel: showLoan ? `Loan ₹${loan!.toLocaleString("en-IN")}` : undefined,
+      cashLabel: cash != null ? `Cash ₹${cash.toLocaleString("en-IN")}` : undefined,
     }
   }
 
@@ -369,6 +381,8 @@ function MeteringAmountCell({
   return (
     <div>
       <p className={primaryClassName}>{amt.primaryLabel}</p>
+      {amt.loanLabel ? <p className={secondaryClassName}>{amt.loanLabel}</p> : null}
+      {amt.cashLabel ? <p className={secondaryClassName}>{amt.cashLabel}</p> : null}
       {amt.secondInstallmentLabel ? (
         <p className={secondaryClassName}>{amt.secondInstallmentLabel}</p>
       ) : null}
@@ -379,6 +393,23 @@ function MeteringAmountCell({
       ) : null}
     </div>
   )
+}
+
+/** Approved quotations list / CSV — show loan & cash separately for Cash + loan. */
+function QuotationApprovedAmountLines(quotation: Quotation | Record<string, unknown>): {
+  total: number
+  paymentType: string
+  loan?: number
+  cash?: number
+} {
+  const paymentType = getQuotationPaymentTypeRaw(quotation)
+  let { loan, cash } = readQuotationLoanCashAmounts(quotation)
+  const total = getQuotationSubtotalValue(quotation as Quotation)
+  // Incomplete mix split (cash missing, loan == full total) — hide misleading "Loan ₹total".
+  if (paymentType === "mix" && cash == null && loan != null && total > 0 && loan >= total) {
+    loan = undefined
+  }
+  return { total, paymentType, loan, cash }
 }
 
 function formatOverviewRevenueLakh(amount: number): string {
@@ -1521,6 +1552,40 @@ export default function AdminPanelPage() {
   const [approvalLoanAmount, setApprovalLoanAmount] = useState("")
   const [approvalCashAmount, setApprovalCashAmount] = useState("")
   const [approvalAtInput, setApprovalAtInput] = useState("")
+  /** Keeps approve-time loan/cash split when GET list omits or overwrites with full subtotal. */
+  const approvalLoanCashOverlayRef = useRef<
+    Record<
+      string,
+      {
+        paymentType: ApprovalPaymentType
+        loanAmount?: number
+        cashAmount?: number
+      }
+    >
+  >(
+    (() => {
+      if (typeof window === "undefined") return {}
+      try {
+        const raw = sessionStorage.getItem("adminApprovalLoanCashOverlay")
+        if (!raw) return {}
+        const parsed = JSON.parse(raw)
+        return parsed && typeof parsed === "object" ? parsed : {}
+      } catch {
+        return {}
+      }
+    })(),
+  )
+  const persistApprovalLoanCashOverlay = () => {
+    if (typeof window === "undefined") return
+    try {
+      sessionStorage.setItem(
+        "adminApprovalLoanCashOverlay",
+        JSON.stringify(approvalLoanCashOverlayRef.current),
+      )
+    } catch {
+      /* ignore */
+    }
+  }
   const [fileLoginDialogOpen, setFileLoginDialogOpen] = useState(false)
   const [fileLoginQuotationId, setFileLoginQuotationId] = useState<string | null>(null)
   const [fileLoginStatusChoice, setFileLoginStatusChoice] = useState<FileLoginStatus>("login_now")
@@ -2627,21 +2692,39 @@ export default function AdminPanelPage() {
             dealerId: q.dealer?.id || q.dealerId,
             dealer: q.dealer || null,
             status: (q.status || "pending") as QuotationStatus,
-            paymentMode: q.paymentMode ?? q.payment_mode,
+            paymentMode: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              return overlay?.paymentType ?? q.paymentMode ?? q.payment_mode
+            })(),
             bankName: q.bankName ?? q.bank_name,
             bankIfsc: q.bankIfsc ?? q.bank_ifsc,
             loanAmount: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              if (overlay?.loanAmount != null && overlay.loanAmount > 0) return overlay.loanAmount
               const n = Number(q.loanAmount ?? q.loan_amount)
               return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
             })(),
             cashAmount: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              if (overlay?.cashAmount != null && overlay.cashAmount > 0) return overlay.cashAmount
               const n = Number(q.cashAmount ?? q.cash_amount)
               return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
             })(),
             paymentPhases: readQuotationPaymentPhases(q),
             subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details,
             fileLoginStatus: fileLoginStatusNorm as FileLoginStatus | undefined,
-            filePaymentType: (q.filePaymentType ?? q.file_payment_type) as ApprovalPaymentType | undefined,
+            filePaymentType: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              const fromApi = (q.filePaymentType ?? q.file_payment_type) as ApprovalPaymentType | undefined
+              return overlay?.paymentType || fromApi
+            })(),
+            paymentType: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              const fromApi = (q.paymentType ?? q.payment_type ?? q.paymentMode ?? q.payment_mode) as
+                | ApprovalPaymentType
+                | undefined
+              return overlay?.paymentType || fromApi
+            })(),
             fileBankName: q.fileBankName ?? q.file_bank_name,
             fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc,
             fileSubsidyChequeDetails: q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details,
@@ -3977,6 +4060,8 @@ export default function AdminPanelPage() {
       "Dealer Name",
       "Dealer Contact",
       "Amount",
+      "Loan Amount",
+      "Cash Amount",
       "Status",
       "File Login",
       "Payment Type",
@@ -3988,6 +4073,7 @@ export default function AdminPanelPage() {
 
     const rows = exportList.map((quotation) => {
       const customerName = formatPersonName(quotation.customer.firstName, quotation.customer.lastName, "Unknown")
+      const amt = QuotationApprovedAmountLines(quotation)
       return [
         quotation.id,
         customerName,
@@ -3995,7 +4081,9 @@ export default function AdminPanelPage() {
         quotation.customer.email || "",
         getDealerName(quotation.dealerId),
         getDealerMobile(quotation.dealerId),
-        Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0),
+        amt.total,
+        amt.loan ?? "",
+        amt.cash ?? "",
         quotation.status || "pending",
         fileLoginRowSummary(quotation),
         getQuotationPaymentTypeLabel(quotation),
@@ -4214,6 +4302,18 @@ export default function AdminPanelPage() {
       if (useApi) {
         if (status === "approved" && approval) {
           await api.admin.quotations.updateStatus(quotationId, status, approval)
+          if (approval.loanAmount != null || approval.cashAmount != null || approval.paymentType) {
+            approvalLoanCashOverlayRef.current[quotationId] = {
+              paymentType: approval.paymentType,
+              ...(approval.loanAmount != null && approval.loanAmount > 0
+                ? { loanAmount: approval.loanAmount }
+                : {}),
+              ...(approval.cashAmount != null && approval.cashAmount > 0
+                ? { cashAmount: approval.cashAmount }
+                : {}),
+            }
+            persistApprovalLoanCashOverlay()
+          }
         } else {
           await api.admin.quotations.updateStatus(quotationId, status)
         }
@@ -4235,14 +4335,15 @@ export default function AdminPanelPage() {
             ...(approval
               ? {
                   paymentMode: approval.paymentType,
+                  paymentType: approval.paymentType,
                   bankName: approval.bankName,
                   bankIfsc: approval.bankIfsc,
                   ...(approval.loanAmount != null && approval.loanAmount > 0
                     ? { loanAmount: approval.loanAmount }
-                    : {}),
+                    : { loanAmount: undefined }),
                   ...(approval.cashAmount != null && approval.cashAmount > 0
                     ? { cashAmount: approval.cashAmount }
-                    : {}),
+                    : { cashAmount: undefined }),
                   ...(approval.subsidyChequeDetails?.trim()
                     ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
                     : {}),
@@ -7739,7 +7840,7 @@ export default function AdminPanelPage() {
                                   <th className="px-3 py-2.5 whitespace-nowrap">Install approved</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Discom name</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
-                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                  <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                     Actions
                                   </th>
                                 </tr>
@@ -7824,7 +7925,7 @@ export default function AdminPanelPage() {
                                           )}
                                         </p>
                                       </td>
-                                      <td className="px-3 py-2.5 align-middle text-right sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                      <td className="px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:bg-card md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                         <Button
                                           size="sm"
                                           className="h-8 shrink-0"
@@ -7870,7 +7971,7 @@ export default function AdminPanelPage() {
                                   <th className="px-3 py-2.5 whitespace-nowrap">Location</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
-                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                  <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                     Actions
                                   </th>
                                 </tr>
@@ -7921,7 +8022,7 @@ export default function AdminPanelPage() {
                                           )}
                                         </p>
                                       </td>
-                                      <td className="px-3 py-2.5 align-middle text-right sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                      <td className="px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:bg-card md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                         <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                                           <Button
                                             variant="outline"
@@ -7990,7 +8091,7 @@ export default function AdminPanelPage() {
                                   <th className="px-3 py-2.5 whitespace-nowrap">Bank</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Stage</th>
                                   <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
-                                  <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                  <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                     Actions
                                   </th>
                                 </tr>
@@ -8119,7 +8220,7 @@ export default function AdminPanelPage() {
                                           {bankRemarksDraft}
                                         </p>
                                       </td>
-                                      <td className="px-3 py-2.5 align-middle text-right sticky right-0 bg-card z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                      <td className="px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:bg-card md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                         <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
                                           <Button
                                             variant="outline"
@@ -8422,7 +8523,7 @@ export default function AdminPanelPage() {
                                 <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Assigned person</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-                                <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                   Actions
                                 </th>
                               </tr>
@@ -8568,7 +8669,7 @@ export default function AdminPanelPage() {
                                     </td>
                                     <td
                                       className={cn(
-                                        "px-3 py-2.5 align-middle text-right sticky right-0 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
+                                        "px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
                                         overdueUi.sticky,
                                       )}
                                     >
@@ -9027,7 +9128,7 @@ export default function AdminPanelPage() {
                                 <th className="px-3 py-2.5 whitespace-nowrap">Install date</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Team</th>
                                 <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-                                <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                                <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                   Actions
                                 </th>
                               </tr>
@@ -9220,7 +9321,7 @@ export default function AdminPanelPage() {
                                       </td>
                                       <td
                                         className={cn(
-                                          "px-3 py-2.5 align-middle text-right sticky right-0 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
+                                          "px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
                                           overdueUi.sticky,
                                         )}
                                       >
@@ -9577,7 +9678,29 @@ export default function AdminPanelPage() {
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">Amount:</span>
-                              <span className="font-semibold">₹{Math.abs((quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0).toLocaleString()}</span>
+                              {(() => {
+                                const amt = QuotationApprovedAmountLines(quotation)
+                                return (
+                                  <span className="text-right font-semibold">
+                                    <span className="block">₹{amt.total.toLocaleString("en-IN")}</span>
+                                    {amt.paymentType === "mix" && amt.loan != null ? (
+                                      <span className="block text-[10px] font-normal text-muted-foreground">
+                                        Loan ₹{amt.loan.toLocaleString("en-IN")}
+                                      </span>
+                                    ) : null}
+                                    {amt.paymentType === "mix" && amt.cash != null ? (
+                                      <span className="block text-[10px] font-normal text-muted-foreground">
+                                        Cash ₹{amt.cash.toLocaleString("en-IN")}
+                                      </span>
+                                    ) : null}
+                                    {amt.paymentType === "loan" && amt.loan != null ? (
+                                      <span className="block text-[10px] font-normal text-muted-foreground">
+                                        Loan ₹{amt.loan.toLocaleString("en-IN")}
+                                      </span>
+                                    ) : null}
+                                  </span>
+                                )
+                              })()}
                             </div>
                             <div className="flex justify-between text-sm">
                               <span className="text-muted-foreground">System:</span>
@@ -9740,7 +9863,7 @@ export default function AdminPanelPage() {
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Payment</th>
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Bank</th>
                             <th className="text-right py-2.5 px-2 whitespace-nowrap">Created</th>
-                            <th className="text-right py-2.5 px-2 whitespace-nowrap sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                            <th className="text-right py-2.5 px-2 whitespace-nowrap md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                               Actions
                             </th>
                           </tr>
@@ -9756,9 +9879,7 @@ export default function AdminPanelPage() {
                             const dealerMobile = getDealerMobile(quotation.dealerId, quotation)
                             const opsLabel = getQuotationOpsStageLabel(quotation)
                             const fileLoginSummary = fileLoginRowSummary(quotation)
-                            const amount = Math.abs(
-                              (quotation as any).pricing?.subtotal ?? quotation.subtotal ?? 0,
-                            )
+                            const amountLines = QuotationApprovedAmountLines(quotation)
                             const createdLabel = new Date(quotation.createdAt).toLocaleDateString("en-IN")
                             const datesTitle = [
                               `Created ${new Date(quotation.createdAt).toLocaleString("en-IN")}`,
@@ -9813,7 +9934,24 @@ export default function AdminPanelPage() {
                                 </div>
                               </td>
                               <td className="py-2 px-2 text-right align-middle whitespace-nowrap">
-                                <p className="text-sm font-semibold">₹{amount.toLocaleString()}</p>
+                                <p className="text-sm font-semibold">
+                                  ₹{amountLines.total.toLocaleString("en-IN")}
+                                </p>
+                                {amountLines.paymentType === "mix" && amountLines.loan != null ? (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Loan ₹{amountLines.loan.toLocaleString("en-IN")}
+                                  </p>
+                                ) : null}
+                                {amountLines.paymentType === "mix" && amountLines.cash != null ? (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Cash ₹{amountLines.cash.toLocaleString("en-IN")}
+                                  </p>
+                                ) : null}
+                                {amountLines.paymentType === "loan" && amountLines.loan != null ? (
+                                  <p className="text-[10px] text-muted-foreground">
+                                    Loan ₹{amountLines.loan.toLocaleString("en-IN")}
+                                  </p>
+                                ) : null}
                               </td>
                               <td className="py-2 px-2 align-middle">
                                   <Select
@@ -9885,7 +10023,7 @@ export default function AdminPanelPage() {
                                   {createdLabel}
                                 </p>
                               </td>
-                              <td className="py-2 px-2 text-right align-middle sticky right-0 bg-inherit z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                              <td className="py-2 px-2 text-right align-middle md:sticky md:right-0 md:bg-inherit md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                                 <AdminQuotationRowActions
                                   quotation={quotation}
                                   sendingToMeteringId={sendingToMeteringId}
@@ -14046,7 +14184,7 @@ export default function AdminPanelPage() {
                 const paymentType = getQuotationPaymentTypeRaw(quotation)
                 const paymentLabel =
                   paymentType === "mix" ? "Cash + loan" : paymentType === "loan" ? "Loan" : "—"
-                const { loan } = readQuotationLoanCashAmounts(quotation)
+                const { loan, cash } = readQuotationLoanCashAmounts(quotation)
                 const bankLabel = getMeteringBankDetailsLabel(quotation) || "—"
                 const customerLocation = formatQuotationCustomerLocation(quotation) || "—"
                 const isPendingAlready = isAdminBankProcessDone(quotation)
@@ -14079,6 +14217,9 @@ export default function AdminPanelPage() {
                         <p className="text-[11px] text-muted-foreground mt-1">
                           {paymentLabel}
                           {loan != null ? ` · Loan ₹${loan.toLocaleString("en-IN")}` : ""}
+                          {paymentType === "mix" && cash != null
+                            ? ` · Cash ₹${cash.toLocaleString("en-IN")}`
+                            : ""}
                         </p>
                         <p className="text-[11px] text-muted-foreground truncate" title={bankLabel}>
                           {bankLabel}

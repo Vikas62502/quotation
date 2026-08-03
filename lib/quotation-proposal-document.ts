@@ -415,7 +415,18 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   const dcrRange = resolvePdfPanelRangeKey(p, "dcr")
   const nonDcrRange = resolvePdfPanelRangeKey(p, "nonDcr")
 
-  const buildPanelSpecText = (size: string, grade: string, rangeKey: PdfPanelRangeKey | null) => {
+  const buildPanelSpecText = (
+    size: string,
+    grade: string,
+    rangeKey: PdfPanelRangeKey | null,
+    brand?: string,
+  ) => {
+    const brandLower = String(brand || "").trim().toLowerCase()
+    const panelWatts = Number.parseFloat(String(size || "").replace(/[^0-9.]/g, "")) || 0
+    // Waaree above 580W → fixed Topcon Bifacial label on PDF (not 580–630 range)
+    if (brandLower.includes("waaree") && panelWatts > 580) {
+      return `615W Topcon Bifacial, ${grade}`
+    }
     if (rangeKey) {
       const rangeLabel = getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
       return `${rangeLabel}, ${grade}`
@@ -429,8 +440,8 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     return quantity ? `${quantity} Pcs` : "As Per BOM"
   }
 
-  const panelSpec = buildPanelSpecText(primary.size || "", gradeLabel, primaryRange)
   const panelBrand = primary.brand || "—"
+  const panelSpec = buildPanelSpecText(primary.size || "", gradeLabel, primaryRange, panelBrand)
   const panelQty = buildPanelQty(primary.quantity, primaryRange)
 
   const invSizeForSpec = isAsPerTheSetLabel(p.inverterSize)
@@ -457,6 +468,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
               p.dcrPanelSize || "",
               "DCR Grade",
               dcrRange,
+              dcrBrandForBoth,
             ),
             brandModel: dcrBrandForBoth,
             qty: buildPanelQty(p.dcrPanelQuantity || 0, dcrRange),
@@ -469,6 +481,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
                     p.nonDcrPanelSize || "",
                     "Non-DCR Grade",
                     nonDcrRange,
+                    pickNonEmpty(p.nonDcrPanelBrand, (p as Record<string, unknown>).non_dcr_panel_brand),
                   ),
                   brandModel: pickNonEmpty(p.nonDcrPanelBrand, (p as Record<string, unknown>).non_dcr_panel_brand),
                   qty: buildPanelQty(p.nonDcrPanelQuantity || 0, nonDcrRange),
@@ -619,12 +632,12 @@ export function buildPricingRows(
 ): PricingRow[] {
   const kwNum = Number.parseFloat(systemKwLabel.replace(/[^0-9.]/g, "")) || 0
   const watts = Math.round(kwNum * 1000)
-  const ratePerWatt = watts > 0 ? Math.round(subtotal / watts) : 0
+  const ratePerWatt = watts > 0 ? subtotal / watts : 0
   const { central } = resolveActualSubsidyForPricing(products)
   const rows: PricingRow[] = [
     {
       description: `${systemKwLabel.replace(/\s*kW/i, " KW")} Solar System`,
-      rate: ratePerWatt > 0 ? `${ratePerWatt} per Watt` : "As quoted",
+      rate: ratePerWatt > 0 ? `${ratePerWatt.toFixed(2)} per Watt` : "As quoted",
       capacity: watts > 0 ? `${watts} W` : "—",
       amount: formatInr(subtotal),
       highlight: true,
