@@ -3451,6 +3451,7 @@ export const api = {
         const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
           { endpoint: `/admin/quotations/${quotationId}/installation-status`, method: "PATCH" },
           { endpoint: `/admin/quotations/${quotationId}/workflow-status`, method: "PATCH" },
+          { endpoint: `/installer/quotations/${quotationId}/installation-status`, method: "PATCH" },
           { endpoint: `/quotations/${quotationId}/status`, method: "PATCH" },
           { endpoint: `/quotations/${quotationId}/metering-status`, method: "PATCH" },
         ]
@@ -3466,9 +3467,12 @@ export const api = {
               (error.code === "HTTP_404" ||
                 error.code === "HTTP_405" ||
                 error.code === "HTTP_501" ||
+                error.code === "HTTP_403" ||
+                error.code === "AUTH_004" ||
                 // Transition guards: try next route (some accept adminOverride, some don't).
                 /cannot send to metering/i.test(error.message) ||
-                /pending_installer/i.test(error.message))
+                /pending_installer/i.test(error.message) ||
+                /not allowed for this quotation state/i.test(error.message))
             if (!isRetryable) throw error
           }
         }

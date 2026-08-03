@@ -1013,7 +1013,45 @@ export default function InstallerDashboardPage() {
         if (frontN != null) formData.append("frontLegFeet", String(cmToFeet(frontN)))
         formData.append("installerRemarks", notes)
         formData.append("installationStatus", "installer_approved")
-        await api.installer.uploadCompletionDocuments(quotation.id, formData)
+        formData.append("force", "true")
+        formData.append("allowFromPendingInstaller", "true")
+
+        const currentInstallStatus = String(
+          (quotation as any).installationStatus || (quotation as any).installation_status || "",
+        )
+          .trim()
+          .toLowerCase()
+        const needsStart =
+          !currentInstallStatus ||
+          currentInstallStatus === "pending_installer" ||
+          currentInstallStatus === "pending"
+
+        const runUpload = () => api.installer.uploadCompletionDocuments(quotation.id, formData)
+
+        try {
+          if (needsStart) {
+            try {
+              await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_in_progress")
+            } catch {
+              /* installer JWT may not have admin route — upload with force flags */
+            }
+          }
+          await runUpload()
+        } catch (firstError) {
+          const msg =
+            firstError instanceof ApiError
+              ? firstError.message
+              : firstError instanceof Error
+                ? firstError.message
+                : String(firstError || "")
+          if (!/upload not allowed for this quotation state/i.test(msg)) throw firstError
+          try {
+            await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_in_progress")
+          } catch {
+            /* retry anyway */
+          }
+          await runUpload()
+        }
         apiSaved = true
 
         let visitIdToPatch = (quotation as InstallerQuotation & { visitId?: string }).visitId

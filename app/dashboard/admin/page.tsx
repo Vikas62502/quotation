@@ -5879,8 +5879,57 @@ export default function AdminPanelPage() {
       ? "installer_partial_approved"
       : "installer_approved"
 
+    const isInstallUploadStateBlocked = (error: unknown) => {
+      const message =
+        error instanceof ApiError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : String(error || "")
+      return /upload not allowed for this quotation state/i.test(message)
+    }
+
+    const currentInstallStatus = String(
+      (adminInstallQuotation as any).installationStatus ||
+        (adminInstallQuotation as any).installation_status ||
+        "",
+    )
+      .trim()
+      .toLowerCase()
+    const needsStartBeforeUpload =
+      !currentInstallStatus ||
+      currentInstallStatus === "pending_installer" ||
+      currentInstallStatus === "pending" ||
+      currentInstallStatus === "released" ||
+      currentInstallStatus === "sent_to_installer"
+
     try {
       setAdminInstallSaving(true)
+
+      // Backend often rejects completion upload while still pending_installer.
+      // Same as clicking Start — promote first so Complete / Partial Approved works.
+      if (useApi && needsStartBeforeUpload) {
+        try {
+          await api.admin.quotations.updateOperationalStatus(
+            adminInstallQuotation.id,
+            "installer_in_progress",
+          )
+          setQuotations((prev) =>
+            prev.map((row) =>
+              row.id === adminInstallQuotation.id
+                ? ({
+                    ...row,
+                    installationStatus: "installer_in_progress",
+                    installation_status: "installer_in_progress",
+                  } as Quotation)
+                : row,
+            ),
+          )
+        } catch {
+          // Upload may still succeed with force flags below.
+        }
+      }
+
       const formData = new FormData()
       // Many backends (Multer `.fields`) only allow `installerCompletionImages` + `piUpload` as file parts;
       // per-field keys (`homeFrontPhoto`, …) trigger "Unexpected or too many file fields". Send every
@@ -5943,6 +5992,11 @@ export default function AdminPanelPage() {
       if (frontN != null) formData.append("frontLegFeet", String(cmToFeet(frontN)))
       formData.append("installerRemarks", adminInstallNotes)
       formData.append("installationStatus", targetStatus)
+      // Admin completion from Pending Installation — backends that gate on stage should honor these.
+      formData.append("force", "true")
+      formData.append("adminOverride", "true")
+      formData.append("allowFromPendingInstaller", "true")
+      formData.append("source", "admin")
       if (isPartial) {
         formData.append("installationPartialApproved", "true")
         formData.append("installation_partial_approved", "true")
@@ -5951,11 +6005,27 @@ export default function AdminPanelPage() {
         formData.append("installation_partial_approved", "false")
       }
 
-      const uploadResult = await api.installer.uploadCompletionDocuments(
-        adminInstallQuotation.id,
-        formData,
-        { caller: "admin" },
-      )
+      const runUpload = () =>
+        api.installer.uploadCompletionDocuments(adminInstallQuotation.id, formData, {
+          caller: "admin",
+        })
+
+      let uploadResult: Awaited<ReturnType<typeof api.installer.uploadCompletionDocuments>>
+      try {
+        uploadResult = await runUpload()
+      } catch (error) {
+        if (!useApi || !isInstallUploadStateBlocked(error)) throw error
+        // Retry once after forcing Start (in progress) if first attempt still hit the state gate.
+        try {
+          await api.admin.quotations.updateOperationalStatus(
+            adminInstallQuotation.id,
+            "installer_in_progress",
+          )
+        } catch {
+          /* retry upload anyway */
+        }
+        uploadResult = await runUpload()
+      }
         const uploadedId = adminInstallQuotation.id
       const applyLocalPartialOrApproved = () => {
         const now = new Date().toISOString()

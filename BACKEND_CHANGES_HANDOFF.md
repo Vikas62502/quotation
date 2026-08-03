@@ -3054,6 +3054,51 @@ ALTER TABLE quotations ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(14,2);
 
 ---
 
+## 29. Installation completion upload — “not allowed for this quotation state”
+
+**Frontend:** Admin / Installer → **Complete & Mark as Approved** / **Partial Approved** (from **Pending**)  
+**Toast:** `Upload failed — Installation upload not allowed for this quotation state`  
+**File:** **`BACKEND_INSTALLATION_UPLOAD_STATE.ts`** (also §26 Multer)
+
+### Cause
+
+`POST …/documents` (installer completion) rejects when `installation_status` is still **`pending_installer`** (Pending tab). Product allows Complete / Partial from Pending without a separate Start click.
+
+### Frontend already
+
+1. Auto-PATCH `installer_in_progress` before upload  
+2. Sends `force` / `adminOverride` / `allowFromPendingInstaller` on multipart  
+3. Retries once if the state error returns  
+
+Backend should still fix the gate so upload works even if Start PATCH fails.
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | On completion `POST …/documents`, **allow** upload from `pending_installer` / empty / `installer_in_progress` / `installer_partial_approved` (and admin re-edit of `installer_approved`) |
+| 2 | Honor `force` / `adminOverride` / `allowFromPendingInstaller` **or** admin JWT → do not 409 on pending |
+| 3 | On success, persist body `installationStatus` = `installer_approved` or `installer_partial_approved` (no requirement that status was already in_progress) |
+| 4 | Optional: if still pending and no target status, set `installer_in_progress` |
+| 5 | Keep Multer allow-list from §26 |
+
+### Allowed → blocked (summary)
+
+| Allow upload from | Block (unless admin force) |
+|-------------------|----------------------------|
+| `pending_installer`, empty, `installer_in_progress`, `installer_partial_approved`, `installer_approved` (re-edit) | `pending_metering`, `mco`, `pending_baldev`, `completed`, … |
+
+### QA
+
+1. Pending row (`pending_installer`) → Admin Complete → **200**, not state toast.  
+2. GET → `installer_approved` (or partial).  
+3. Installer JWT from pending → **200**.  
+4. Already in metering without force → may still 409.
+
+**Reference:** `BACKEND_INSTALLATION_UPLOAD_STATE.ts`, `BACKEND_INSTALLATION_COMPLETION_MULTER.ts`
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -3100,6 +3145,8 @@ ALTER TABLE quotations ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(14,2);
 | **§28** (this file) | Cash + loan amounts + installment payment modes |
 | **`BACKEND_CASH_LOAN_AMOUNTS.md`** | **§28** approve/GET/installment + Excel fields |
 | **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
+| **§29** (this file) | Installation upload — not allowed for this quotation state |
+| **`BACKEND_INSTALLATION_UPLOAD_STATE.ts`** | **§29** allow `pending_installer` completion upload + gate helper |
 | **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24–§25** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |
