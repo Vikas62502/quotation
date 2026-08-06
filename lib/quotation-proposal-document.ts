@@ -549,8 +549,8 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     },
     {
       component: "Lightning Arrestor & Earthing",
-      specification: "Lightning Protection, Green Earthing Wire",
-      brandModel: "2-3 Meter LA & JMP Green Earthing Wire",
+      specification: "Copper-bonded lightning protection with green earthing wire",
+      brandModel: "JMP Green Earthing Wire",
       qty: "1 Set",
     },
     {
