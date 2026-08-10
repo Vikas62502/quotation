@@ -544,13 +544,14 @@ function persistSubsidyChequesForQuotation(quotationId: string, cheques: Subsidy
   saveSubsidyChequesMap(map)
 }
 
-/** Profit for a payment row: subtotal (net of settlement) − site cost. */
+/** Profit for a payment row: subtotal − site cost; 0 when site cost is unset/0. */
 function getPaymentSiteProfit(payment: CustomerPayment, siteCostOverride?: number): number {
-  const subtotal = getPaymentEffectiveCap(payment)
   const siteCost = Math.max(
     0,
     Math.round(Number(siteCostOverride != null ? siteCostOverride : payment.siteCost) || 0),
   )
+  if (siteCost <= 0) return 0
+  const subtotal = getPaymentEffectiveCap(payment)
   return Math.round(subtotal - siteCost)
 }
 
@@ -3080,7 +3081,7 @@ export default function AccountManagementPage() {
                             ₹{paymentDashboardStats.totalProfit.toLocaleString()}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            Sum of (subtotal − cost of site)
+                            Sum of (subtotal − cost of site); 0 if cost unset
                           </p>
                         </div>
                       </CardContent>
@@ -3152,7 +3153,7 @@ export default function AccountManagementPage() {
                                     : "border-l-border bg-card",
                             )}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-[minmax(10rem,1.15fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,auto)_minmax(6rem,auto)_minmax(6.75rem,7.25rem)] gap-x-2 gap-y-2 items-center">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-[minmax(10rem,1.15fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,auto)_minmax(6rem,auto)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)] gap-x-2 gap-y-2 items-center">
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
                                 <p className="text-sm font-semibold leading-tight break-words">
                                   {payment.customerName}
@@ -3183,29 +3184,6 @@ export default function AccountManagementPage() {
                                     ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
                                   </p>
                                 )}
-                              </div>
-
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                  Cost of site
-                                </p>
-                                <p className="text-sm font-semibold tabular-nums">
-                                  ₹{Math.max(0, Math.round(Number(payment.siteCost) || 0)).toLocaleString("en-IN")}
-                                </p>
-                              </div>
-
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
-                                <p
-                                  className={cn(
-                                    "text-sm font-semibold tabular-nums",
-                                    getPaymentSiteProfit(payment) >= 0
-                                      ? "text-emerald-700"
-                                      : "text-rose-700",
-                                  )}
-                                >
-                                  ₹{getPaymentSiteProfit(payment).toLocaleString("en-IN")}
-                                </p>
                               </div>
 
                               <div className="min-w-0">
@@ -3386,6 +3364,29 @@ export default function AccountManagementPage() {
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
                                 <p className="text-[10px] font-medium leading-snug break-words text-muted-foreground">
                                   {getFinancingBankDisplay(payment)}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  Cost of site
+                                </p>
+                                <p className="text-sm font-semibold tabular-nums">
+                                  ₹{Math.max(0, Math.round(Number(payment.siteCost) || 0)).toLocaleString("en-IN")}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+                                <p
+                                  className={cn(
+                                    "text-sm font-semibold tabular-nums",
+                                    getPaymentSiteProfit(payment) >= 0
+                                      ? "text-emerald-700"
+                                      : "text-rose-700",
+                                  )}
+                                >
+                                  ₹{getPaymentSiteProfit(payment).toLocaleString("en-IN")}
                                 </p>
                               </div>
 
@@ -3650,69 +3651,22 @@ export default function AccountManagementPage() {
         }}
       >
         <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader>
+          <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
             <DialogTitle>Payment management</DialogTitle>
+            {activePayment ? (
+              <Button
+                type="button"
+                size="sm"
+                className="shrink-0"
+                onClick={submitInstallments}
+                disabled={isSavingInstallments || isSavingFinalSettlement || isRevertingFinalSettlement}
+              >
+                {isSavingInstallments ? "Submitting..." : "Submit"}
+              </Button>
+            ) : null}
           </DialogHeader>
           {activePayment && (
             <div className="space-y-4">
-              {isFinalSettlementEligible(activePayment) &&
-                getDisplayRemaining(activePayment) > 0 &&
-                !isFinalSettlementApplied(activePayment) && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold">Final settlement</p>
-                      <p className="text-xs text-muted-foreground">
-                        Write off the current remaining as discount `d` and mark payment as completed.
-                      </p>
-                      <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
-                        Settlement amount (d): ₹{Math.round(getDisplayRemaining(activePayment)).toLocaleString("en-IN")}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="default"
-                      className="shrink-0"
-                      onClick={submitFinalSettlement}
-                      disabled={isSavingFinalSettlement || isRevertingFinalSettlement || isSavingInstallments}
-                    >
-                      {isSavingFinalSettlement ? "Applying..." : "Submit final settlement"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {(getPaymentDiscountAmount(activePayment) > 0 ||
-                isFinalSettlementApplied(activePayment) ||
-                getSettlementDiscountAmount(activePayment) > 0) && (
-                <div className="rounded-lg border border-rose-200/80 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20 px-4 py-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold">Revert settlement</p>
-                      <p className="text-xs text-muted-foreground">
-                        Undo a settlement discount applied by mistake. Restores the payable subtotal and remaining.
-                      </p>
-                      <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
-                        Discount to remove (d): ₹
-                        {(
-                          Math.round(getSettlementDiscountAmount(activePayment)) ||
-                          Math.round(getPaymentDiscountAmount(activePayment))
-                        ).toLocaleString("en-IN")}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      className="shrink-0"
-                      onClick={() => void revertFinalSettlement()}
-                      disabled={
-                        isRevertingFinalSettlement || isSavingFinalSettlement || isSavingInstallments
-                      }
-                    >
-                      {isRevertingFinalSettlement ? "Reverting..." : "Revert settlement"}
-                    </Button>
-                  </div>
-                </div>
-              )}
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
                 <div>
                   <p className="text-sm font-semibold">{activePayment.customerName}</p>
@@ -3802,12 +3756,6 @@ export default function AccountManagementPage() {
                       </>
                     )}
                   </div>
-                  {getPaymentTypeValue(activePayment) === "mix" && (
-                    <p className="text-xs text-muted-foreground">
-                      Cash + loan: record <strong>Loan</strong> installments against the loan amount; record{" "}
-                      <strong>Cash / UPI / Cheque</strong> against the cash amount. Deductions apply to that side.
-                    </p>
-                  )}
                 </div>
               )}
 
@@ -3847,13 +3795,6 @@ export default function AccountManagementPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="text-sm font-medium">Installments</p>
-                      {getPaymentTypeValue(activePayment) === "mix" ? (
-                        <p className="text-xs text-muted-foreground">
-                          One Add for all — set Payment Mode to Loan or Cash / UPI / Cheque. Loan rem. ₹
-                          {getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")} · Cash rem. ₹
-                          {getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
-                        </p>
-                      ) : null}
                     </div>
                     <Button
                       type="button"
@@ -4136,11 +4077,6 @@ export default function AccountManagementPage() {
                 <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-4 py-3 space-y-3">
                   <div>
                     <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Subsidy cheques</p>
-                    <p className="text-xs text-amber-900/80 dark:text-amber-200/80">
-                      Example: subtotal ₹2,99,000 with loan ₹2,00,000 and subsidy by cheque ₹78,000 — record each
-                      cheque here. When it clears, use &quot;Apply to paid&quot; so the amount is spread across
-                      installments and Remaining drops. Then Submit to sync.
-                    </p>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
@@ -4277,7 +4213,7 @@ export default function AccountManagementPage() {
                             ₹{liveProfit.toLocaleString("en-IN")}
                           </p>
                           <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Subtotal − cost of site
+                            Subtotal − cost of site (₹0 when cost is unset)
                           </p>
                         </>
                       )
@@ -4285,31 +4221,59 @@ export default function AccountManagementPage() {
                   </div>
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
-                <Button
-                  type="button"
-                  variant="outline"
-                    onClick={() => {
-                      const id = activePayment.quotationId
-                      const draft = siteCostDrafts[id]
-                      if (draft !== undefined) {
-                        void updatePaymentSiteCost(id, draft)
+
+              {isFinalSettlementEligible(activePayment) &&
+                getDisplayRemaining(activePayment) > 0 &&
+                !isFinalSettlementApplied(activePayment) && (
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold">Final settlement</p>
+                      <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                        Settlement amount (d): ₹{Math.round(getDisplayRemaining(activePayment)).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="default"
+                      className="shrink-0"
+                      onClick={submitFinalSettlement}
+                      disabled={isSavingFinalSettlement || isRevertingFinalSettlement || isSavingInstallments}
+                    >
+                      {isSavingFinalSettlement ? "Applying..." : "Submit final settlement"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {(getPaymentDiscountAmount(activePayment) > 0 ||
+                isFinalSettlementApplied(activePayment) ||
+                getSettlementDiscountAmount(activePayment) > 0) && (
+                <div className="rounded-lg border border-rose-200/80 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20 px-4 py-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold">Revert settlement</p>
+                      <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">
+                        Discount to remove (d): ₹
+                        {(
+                          Math.round(getSettlementDiscountAmount(activePayment)) ||
+                          Math.round(getPaymentDiscountAmount(activePayment))
+                        ).toLocaleString("en-IN")}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="shrink-0"
+                      onClick={() => void revertFinalSettlement()}
+                      disabled={
+                        isRevertingFinalSettlement || isSavingFinalSettlement || isSavingInstallments
                       }
-                      setInstallmentDialogOpen(false)
-                      setActivePaymentId(null)
-                    }}
-                  disabled={isSavingInstallments || isSavingFinalSettlement}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  onClick={submitInstallments}
-                  disabled={isSavingInstallments || isSavingFinalSettlement}
-                >
-                  {isSavingInstallments ? "Submitting..." : "Submit"}
-                </Button>
-              </div>
+                    >
+                      {isRevertingFinalSettlement ? "Reverting..." : "Revert settlement"}
+                    </Button>
+                  </div>
+                </div>
+              )}
                   </div>
                 )}
         </DialogContent>
