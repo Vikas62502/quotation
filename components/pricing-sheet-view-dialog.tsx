@@ -110,9 +110,9 @@ export function PricingSheetViewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 gap-0">
-        <div className="bg-slate-800 text-white px-5 py-4 flex items-center justify-between gap-3">
-          <DialogHeader className="space-y-0 text-left">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0 gap-0 [&_[data-slot=dialog-close]]:text-white [&_[data-slot=dialog-close]]:opacity-100 [&_[data-slot=dialog-close]]:hover:opacity-100 [&_[data-slot=dialog-close]]:hover:bg-white/15 [&_[data-slot=dialog-close]]:focus:ring-white/40 [&_[data-slot=dialog-close]]:right-3 [&_[data-slot=dialog-close]]:top-3.5">
+        <div className="bg-slate-800 text-white pl-5 pr-14 sm:pr-16 py-4 flex items-center justify-between gap-3">
+          <DialogHeader className="space-y-0 text-left min-w-0">
             <DialogTitle className="text-white text-lg sm:text-xl font-bold tracking-wide">
               {scopeTitle(scope)}
             </DialogTitle>
