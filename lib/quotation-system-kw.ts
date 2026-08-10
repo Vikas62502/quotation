@@ -1,6 +1,6 @@
 import type { Quotation } from "@/lib/quotation-context"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
-import { isAsPerTheSetLabel, resolvePdfPanelRangeKey } from "@/lib/quotation-pdf-display"
+import { isAsPerTheSetLabel } from "@/lib/quotation-pdf-display"
 import { calculateSystemSize, getPricingData, type QuotationProductsPhaseInput } from "@/lib/pricing-tables"
 
 type QuotationRow = Record<string, unknown>
@@ -202,26 +202,19 @@ function formatKwLabelFromSizeField(size: string | null | undefined): string | n
   return trimmed.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
 }
 
-/** kW label for PDF header — exact panel×qty when no PDF range; else package/set size. */
+/** kW label for PDF header — prefer panel size × quantity (actual DC capacity).
+ * PDF panel-range checkboxes only change panel row text/qty; they must not switch
+ * system size to structureSize (structure can be oversized vs the panel set). */
 export function getQuotationSystemKwLabelForPdf(
   products: QuotationProductsPhaseInput | null | undefined,
 ): string {
   const source = products as QuotationProductsPhaseInput & Record<string, unknown>
   const systemType = String(products?.systemType || source.system_type || "").toLowerCase()
 
-  // Only the range that drives the visible panel row(s) blocks exact W×qty.
-  // Stale pdfDcrPanelRangeKey must not force structure kW while primary shows 625W × 8.
-  const rangeBlocksPanelCalc =
-    systemType === "both"
-      ? resolvePdfPanelRangeKey(source, "dcr") != null ||
-        resolvePdfPanelRangeKey(source, "nonDcr") != null
-      : resolvePdfPanelRangeKey(source, "primary") != null
+  const panelKw = panelKwFromEditableProducts(products)
+  if (panelKw > 0) return formatPanelKwLabel(panelKw)
 
-  if (!rangeBlocksPanelCalc) {
-    const panelKw = panelKwFromEditableProducts(products)
-    if (panelKw > 0) return formatPanelKwLabel(panelKw)
-  }
-
+  // No usable panel × qty (e.g. "As per the set") — fall back to package / structure size.
   if (systemType !== "both") {
     const fromStructure = formatKwLabelFromSizeField(products?.structureSize)
     if (fromStructure) return fromStructure
@@ -352,5 +345,5 @@ export function formatOverviewKw(kw: number): string {
 }
 
 export function sumQuotationsSystemKw(quotations: unknown[]): number {
-  return quotations.reduce((sum, q) => sum + getQuotationSystemKw(q), 0)
+  return quotations.reduce<number>((sum, q) => sum + getQuotationSystemKw(q), 0)
 }

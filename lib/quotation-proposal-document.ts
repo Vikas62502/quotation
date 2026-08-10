@@ -325,16 +325,14 @@ export function getSystemKwLabel(products: ProductSelection): string {
   const source = products as ProductSelection & Record<string, unknown>
   const systemType = String(products.systemType || source.system_type || "").toLowerCase()
 
-  // Match the PDF panel table: when exact size × qty are shown (no primary range), system size is W×qty.
+  // Prefer panel W × qty for system size even when a PDF panel range is selected.
+  // Range only affects panel row display; structureSize must not override DC capacity.
   if (systemType !== "both") {
-    const primaryRange = resolvePdfPanelRangeKey(source, "primary")
-    if (!primaryRange) {
-      const primary = resolvePrimaryPanelFields(products as ProductsLike)
-      if (primary.size && primary.quantity > 0 && !isAsPerTheSetLabel(primary.size)) {
-        const fromPanels = calculateSystemSize(primary.size, primary.quantity)
-        if (fromPanels && fromPanels !== "0kW") {
-          return fromPanels.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
-        }
+    const primary = resolvePrimaryPanelFields(products as ProductsLike)
+    if (primary.size && primary.quantity > 0 && !isAsPerTheSetLabel(primary.size)) {
+      const fromPanels = calculateSystemSize(primary.size, primary.quantity)
+      if (fromPanels && fromPanels !== "0kW") {
+        return fromPanels.replace(/kW/i, " kW").replace(/\s+/g, " ").trim()
       }
     }
   }
