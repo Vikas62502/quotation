@@ -327,6 +327,42 @@ function getRemainingForSide(payment: CustomerPayment, side: "loan" | "cash"): n
   return Math.max(0, bucket - paid)
 }
 
+function paymentTypeOf(payment: CustomerPayment): string {
+  return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+}
+
+/** Remaining on the relevant bucket before this installment (mix uses loan vs cash by payment mode). */
+function getRemainingBeforeInstallment(payment: CustomerPayment, phase: PaymentPhase): number {
+  if (paymentTypeOf(payment) === "mix") {
+    const side: "loan" | "cash" = isLoanSidePaymentMode(phase.paymentMode) ? "loan" : "cash"
+    const sideCap = side === "loan" ? getMixLoanCap(payment) : getMixCashCap(payment)
+    const paidBefore = payment.phases
+      .filter((p) => {
+        if (p.phaseNumber >= phase.phaseNumber) return false
+        const loan = isLoanSidePaymentMode(p.paymentMode)
+        return side === "loan" ? loan : !loan
+      })
+      .reduce((sum, p) => sum + (Number(p.paidAmount) || 0), 0)
+    return Math.max(sideCap - paidBefore, 0)
+  }
+  const paidBefore = payment.phases
+    .filter((p) => p.phaseNumber < phase.phaseNumber)
+    .reduce((sum, p) => sum + (Number(p.paidAmount) || 0), 0)
+  return Math.max(getPaymentEffectiveCap(payment) - paidBefore, 0)
+}
+
+function defaultInstallmentPaymentMode(payment: CustomerPayment): PaymentModeSelectValue {
+  const t = paymentTypeOf(payment)
+  if (t === "loan") return "loan"
+  if (t === "mix") {
+    // Prefer the side that still has remaining balance
+    if (getRemainingForSide(payment, "loan") > 0 && getRemainingForSide(payment, "cash") <= 0) return "loan"
+    if (getRemainingForSide(payment, "cash") > 0) return "cash"
+    return "loan"
+  }
+  return "cash"
+}
+
 function paymentModeOptionsForSide(
   paymentType: string,
   side?: "loan" | "cash",
@@ -3779,55 +3815,51 @@ export default function AccountManagementPage() {
                 <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-muted/10 py-8">
                   <p className="text-sm text-muted-foreground">No installments created yet.</p>
                   {getPaymentTypeValue(activePayment) === "mix" ? (
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      <Button
-                        type="button"
-                        onClick={() => {
-                          const updated = customerPayments.map((p) =>
-                            p.quotationId === activePayment.quotationId
-                              ? {
-                                  ...p,
-                                  phases: appendInstallmentWithMode(
-                                    p.phases,
-                                    getPaymentEffectiveCap(p),
-                                    "loan",
-                                  ),
-                                }
-                              : p,
-                          )
-                          setCustomerPayments(updated)
-                        }}
-                      >
-                        Add loan installment
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => {
-                          const updated = customerPayments.map((p) =>
-                            p.quotationId === activePayment.quotationId
-                              ? {
-                                  ...p,
-                                  phases: appendInstallmentWithMode(
-                                    p.phases,
-                                    getPaymentEffectiveCap(p),
-                                    "cash",
-                                  ),
-                                }
-                              : p,
-                          )
-                          setCustomerPayments(updated)
-                        }}
-                      >
-                        Add cash installment
-                      </Button>
+                    <p className="text-xs text-muted-foreground text-center max-w-md px-4">
+                      Add one installment at a time. Choose <strong>Loan</strong> or{" "}
+                      <strong>Cash / UPI / Cheque</strong> as the payment mode — that decides which amount it
+                      deducts from.
+                    </p>
+                  ) : null}
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const updated = customerPayments.map((p) =>
+                        p.quotationId === activePayment.quotationId
+                          ? {
+                              ...p,
+                              phases: appendInstallmentWithMode(
+                                p.phases,
+                                getPaymentEffectiveCap(p),
+                                defaultInstallmentPaymentMode(p),
+                              ),
+                            }
+                          : p,
+                      )
+                      setCustomerPayments(updated)
+                    }}
+                  >
+                    Create Installment
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Installments</p>
+                      {getPaymentTypeValue(activePayment) === "mix" ? (
+                        <p className="text-xs text-muted-foreground">
+                          One Add for all — set Payment Mode to Loan or Cash / UPI / Cheque. Loan rem. ₹
+                          {getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")} · Cash rem. ₹
+                          {getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
+                        </p>
+                      ) : null}
                     </div>
-                  ) : (
                     <Button
                       type="button"
+                      variant="outline"
+                      size="sm"
                       onClick={() => {
-                        const defaultMode: PaymentModeSelectValue =
-                          getPaymentTypeValue(activePayment) === "loan" ? "loan" : "cash"
                         const updated = customerPayments.map((p) =>
                           p.quotationId === activePayment.quotationId
                             ? {
@@ -3835,7 +3867,7 @@ export default function AccountManagementPage() {
                                 phases: appendInstallmentWithMode(
                                   p.phases,
                                   getPaymentEffectiveCap(p),
-                                  defaultMode,
+                                  defaultInstallmentPaymentMode(p),
                                 ),
                               }
                             : p,
@@ -3843,383 +3875,9 @@ export default function AccountManagementPage() {
                         setCustomerPayments(updated)
                       }}
                     >
-                      Create Installment
+                      Add
                     </Button>
-                  )}
-                </div>
-              ) : (
-                <>
-                  {getPaymentTypeValue(activePayment) === "mix" ? (
-                    <div className="space-y-5">
-                      {(
-                        [
-                          {
-                            side: "loan" as const,
-                            title: "Loan installments",
-                            hint: "Payment mode is Loan — paid amounts deduct from the loan amount.",
-                            modes: LOAN_SIDE_PAYMENT_MODE_OPTIONS,
-                            defaultMode: "loan" as PaymentModeSelectValue,
-                            phases: activePayment.phases.filter((ph) =>
-                              isLoanSidePaymentMode(ph.paymentMode),
-                            ),
-                          },
-                          {
-                            side: "cash" as const,
-                            title: "Cash installments",
-                            hint: "Use Cash, UPI, or Cheque — paid amounts deduct from the cash amount.",
-                            modes: CASH_SIDE_PAYMENT_MODE_OPTIONS,
-                            defaultMode: "cash" as PaymentModeSelectValue,
-                            phases: activePayment.phases.filter(
-                              (ph) => !isLoanSidePaymentMode(ph.paymentMode),
-                            ),
-                          },
-                        ] as const
-                      ).map((section) => (
-                        <div key={section.side} className="space-y-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <div>
-                              <p className="text-sm font-medium">{section.title}</p>
-                              <p className="text-xs text-muted-foreground">{section.hint}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                Remaining: ₹
-                                {getRemainingForSide(activePayment, section.side).toLocaleString("en-IN")}
-                              </p>
-                            </div>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                const updated = customerPayments.map((p) =>
-                                  p.quotationId === activePayment.quotationId
-                                    ? {
-                                        ...p,
-                                        phases: appendInstallmentWithMode(
-                                          p.phases,
-                                          getPaymentEffectiveCap(p),
-                                          section.defaultMode,
-                                        ),
-                                      }
-                                    : p,
-                                )
-                                setCustomerPayments(updated)
-                              }}
-                            >
-                              Add
-                            </Button>
-                          </div>
-                          {section.phases.length === 0 ? (
-                            <p className="text-xs text-muted-foreground rounded-md border border-dashed px-3 py-4 text-center">
-                              No {section.side} installments yet.
-                            </p>
-                          ) : (
-                            <div className="space-y-3">
-                              {[...section.phases]
-                                .sort((a, b) => b.phaseNumber - a.phaseNumber)
-                                .map((phase) => {
-                                  const isCompleted = phase.status === "completed"
-                                  const isPartial = phase.status === "partial"
-                                  const paidBefore = activePayment.phases
-                                    .filter((p) => {
-                                      if (p.phaseNumber >= phase.phaseNumber) return false
-                                      const loan = isLoanSidePaymentMode(p.paymentMode)
-                                      return section.side === "loan" ? loan : !loan
-                                    })
-                                    .reduce((sum, p) => sum + (Number(p.paidAmount) || 0), 0)
-                                  const sideCap =
-                                    section.side === "loan"
-                                      ? getMixLoanCap(activePayment)
-                                      : getMixCashCap(activePayment)
-                                  const remainingBefore = Math.max(sideCap - paidBefore, 0)
-                                  const modeOptions = section.modes
-
-                                  return (
-                                    <div
-                                      key={`${section.side}-${phase.phaseNumber}`}
-                                      className={`rounded-lg border px-4 py-3 ${
-                                        isCompleted
-                                          ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
-                                          : isPartial
-                                            ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
-                                            : "bg-gray-50 dark:bg-gray-950/20 border-border"
-                                      }`}
-                                    >
-                                      <div className="flex items-center justify-between mb-3">
-                                        <div className="flex items-center gap-2">
-                                          <div
-                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                              isCompleted
-                                                ? "bg-green-500 text-white"
-                                                : isPartial
-                                                  ? "bg-amber-500 text-white"
-                                                  : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
-                                            }`}
-                                          >
-                                            {phase.phaseNumber}
-                                          </div>
-                                          <div>
-                                            <p className="text-sm font-semibold">{phase.phaseName}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                              {section.side === "loan" ? "Loan" : "Cash"} remaining before
-                                              this installment: ₹{remainingBefore.toLocaleString()}
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <Badge
-                                          className={
-                                            isCompleted
-                                              ? "bg-green-600 text-white"
-                                              : isPartial
-                                                ? "bg-amber-600 text-white"
-                                                : "bg-gray-500 text-white"
-                                          }
-                                        >
-                                          {isCompleted ? (
-                                            <>
-                                              <CheckCircle2 className="w-3 h-3 mr-1" /> Completed
-                                            </>
-                                          ) : isPartial ? (
-                                            <>
-                                              <Clock className="w-3 h-3 mr-1" /> Partial
-                                            </>
-                                          ) : (
-                                            <>
-                                              <AlertCircle className="w-3 h-3 mr-1" /> Pending
-                                            </>
-                                          )}
-                                        </Badge>
-                                      </div>
-
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Paid Amount</Label>
-                                          <Input
-                                            type="number"
-                                            value={phase.paidAmount}
-                                            onChange={(e) => {
-                                              const paid = Number.parseFloat(e.target.value) || 0
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: coercePhasesPaymentModes(
-                                                        p.phases.map((ph) =>
-                                                          ph.phaseNumber === phase.phaseNumber
-                                                            ? (() => {
-                                                                const nextStatus: PaymentPhase["status"] =
-                                                                  paid >= ph.amount
-                                                                    ? "completed"
-                                                                    : paid > 0
-                                                                      ? "partial"
-                                                                      : "pending"
-                                                                return {
-                                                                  ...ph,
-                                                                  paidAmount: paid,
-                                                                  status: nextStatus,
-                                                                  paymentDate:
-                                                                    paid > 0
-                                                                      ? new Date().toISOString()
-                                                                      : undefined,
-                                                                  paymentMode:
-                                                                    ph.paymentMode || section.defaultMode,
-                                                                }
-                                                              })()
-                                                            : ph,
-                                                        ),
-                                                      ),
-                                                    }
-                                                  : p,
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                            placeholder="0"
-                                          />
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Due Date</Label>
-                                          <Input
-                                            type="date"
-                                            value={
-                                              phase.dueDate
-                                                ? new Date(phase.dueDate).toISOString().split("T")[0]
-                                                : ""
-                                            }
-                                            onChange={(e) => {
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? { ...ph, dueDate: e.target.value }
-                                                          : ph,
-                                                      ),
-                                                    }
-                                                  : p,
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                          />
-                                        </div>
-                                      </div>
-
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Payment Mode</Label>
-                                          <Select
-                                            value={
-                                              normalizePaymentMode(phase.paymentMode) ||
-                                              section.defaultMode
-                                            }
-                                            onValueChange={(value) => {
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? { ...ph, paymentMode: value }
-                                                          : ph,
-                                                      ),
-                                                    }
-                                                  : p,
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                          >
-                                            <SelectTrigger className="mt-1">
-                                              <SelectValue placeholder="Select payment mode" />
-                                            </SelectTrigger>
-                                            <SelectContent>
-                                              {modeOptions.map((opt) => (
-                                                <SelectItem key={opt.value} value={opt.value}>
-                                                  {opt.label}
-                                                </SelectItem>
-                                              ))}
-                                            </SelectContent>
-                                          </Select>
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Notes</Label>
-                                          <Input
-                                            value={phase.note || ""}
-                                            onChange={(e) => {
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? { ...ph, note: e.target.value }
-                                                          : ph,
-                                                      ),
-                                                    }
-                                                  : p,
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                            placeholder="Installment notes (optional)"
-                                          />
-                                        </div>
-                                      </div>
-
-                                      <div className="mt-3">
-                                        <Label className="text-xs text-muted-foreground">Transaction ID</Label>
-                                        <Textarea
-                                          value={phase.transactionId || ""}
-                                          onChange={(e) => {
-                                            const updated = customerPayments.map((p) =>
-                                              p.quotationId === activePayment.quotationId
-                                                ? {
-                                                    ...p,
-                                                    phases: p.phases.map((ph) =>
-                                                      ph.phaseNumber === phase.phaseNumber
-                                                        ? { ...ph, transactionId: e.target.value }
-                                                        : ph,
-                                                    ),
-                                                  }
-                                                : p,
-                                            )
-                                            setCustomerPayments(updated)
-                                          }}
-                                          className="mt-1 resize-y min-h-[64px]"
-                                          rows={2}
-                                          placeholder="Optional"
-                                        />
-                                      </div>
-
-                                      <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
-                                        <p className="text-xs text-muted-foreground">
-                                          {section.side === "loan" ? "Loan" : "Cash"} remaining after this
-                                          installment: ₹
-                                          {Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
-                                        </p>
-                                        <Button
-                                          type="button"
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => {
-                                            const updated = customerPayments.map((p) =>
-                                              p.quotationId === activePayment.quotationId
-                                                ? {
-                                                    ...p,
-                                                    phases: removePaymentPhase(
-                                                      p.phases,
-                                                      phase.phaseNumber,
-                                                      p.subtotal,
-                                                    ),
-                                                  }
-                                                : p,
-                                            )
-                                            setCustomerPayments(updated)
-                                          }}
-                                          className="text-destructive"
-                                        >
-                                          Remove installment
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  )
-                                })}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">Installments</p>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const defaultMode: PaymentModeSelectValue =
-                            getPaymentTypeValue(activePayment) === "loan" ? "loan" : "cash"
-                          const updated = customerPayments.map((p) =>
-                            p.quotationId === activePayment.quotationId
-                              ? {
-                                  ...p,
-                                  phases: appendInstallmentWithMode(
-                                    p.phases,
-                                    getPaymentEffectiveCap(p),
-                                    defaultMode,
-                                  ),
-                                }
-                              : p,
-                          )
-                          setCustomerPayments(updated)
-                        }}
-                      >
-                        Add
-                      </Button>
-                    </div>
-                              </div>
+                  </div>
                               
                   <div className="space-y-3">
                     {[...activePayment.phases]
@@ -4228,10 +3886,9 @@ export default function AccountManagementPage() {
                                   const isCompleted = phase.status === "completed"
                                   const isPartial = phase.status === "partial"
                                   const isPending = phase.status === "pending"
-                      const paidBefore = activePayment.phases
-                        .filter((p) => p.phaseNumber < phase.phaseNumber)
-                        .reduce((sum, p) => sum + p.paidAmount, 0)
-                      const remainingBefore = Math.max(getPaymentEffectiveCap(activePayment) - paidBefore, 0)
+                      const remainingBefore = getRemainingBeforeInstallment(activePayment, phase)
+                      const isMix = getPaymentTypeValue(activePayment) === "mix"
+                      const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
                       const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
                                   
                                   return (
@@ -4261,7 +3918,8 @@ export default function AccountManagementPage() {
                                           <div>
                                             <p className="text-sm font-semibold">{phase.phaseName}</p>
                                             <p className="text-xs text-muted-foreground">
-                                  Remaining before this installment: ₹{remainingBefore.toLocaleString()}
+                                  {isMix ? `${sideLabel} remaining` : "Remaining"} before this installment: ₹
+                                  {remainingBefore.toLocaleString()}
                                             </p>
                                           </div>
                                         </div>
@@ -4363,7 +4021,7 @@ export default function AccountManagementPage() {
                               <Select
                                 value={
                                   normalizePaymentMode(phase.paymentMode) ||
-                                  (getPaymentTypeValue(activePayment) === "loan" ? "loan" : "cash")
+                                  defaultInstallmentPaymentMode(activePayment)
                                 }
                                 onValueChange={(value) => {
                                   const updated = customerPayments.map((p) =>
@@ -4441,7 +4099,8 @@ export default function AccountManagementPage() {
                               
                           <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
                             <p className="text-xs text-muted-foreground">
-                              Remaining after this installment: ₹{Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
+                              {isMix ? `${sideLabel} remaining` : "Remaining"} after this installment: ₹
+                              {Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
                             </p>
                             <Button
                               type="button"
@@ -4471,8 +4130,6 @@ export default function AccountManagementPage() {
                       )
                     })}
                                 </div>
-                </>
-                  )}
                 </>
               )}
               {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
