@@ -1122,6 +1122,15 @@ export const api = {
       })
     },
 
+    /** Admin: replace catalog set prices (dcr / nonDcr / both / components). See BACKEND_PRICING_TABLES_API.md */
+    updatePricingTables: async (pricingTables: Record<string, unknown>) => {
+      return apiRequest("/quotations/pricing-tables", {
+        method: "PUT",
+        body: pricingTables,
+        requiresAuth: true,
+      })
+    },
+
     getAll: async (params?: {
       page?: number
       limit?: number
@@ -1212,6 +1221,9 @@ export const api = {
           status: "pending" | "cleared"
           clearedAt?: string
         }>
+        /** Manual site cost (INR) — Account Management profit = subtotal − siteCost. */
+        siteCost?: number
+        site_cost?: number
         /** When true, backend must replace all installment rows with `phases` (not merge). */
         replaceInstallments?: boolean
         /** Final settlement write-off (INR). Backend should add to discountAmount and set remaining=0. */
@@ -1226,6 +1238,20 @@ export const api = {
         ? (paymentData.replaceInstallments ?? true)
         : false
 
+      const siteCostPayload =
+        paymentData.siteCost != null || paymentData.site_cost != null
+          ? {
+              siteCost: Math.max(
+                0,
+                Math.round(Number(paymentData.siteCost ?? paymentData.site_cost) || 0),
+              ),
+              site_cost: Math.max(
+                0,
+                Math.round(Number(paymentData.siteCost ?? paymentData.site_cost) || 0),
+              ),
+            }
+          : {}
+
       // Status / settlement-only update — do not touch installment rows (avoids
       // "paid cannot exceed payable after discount" when AM cap ≠ pricing payable).
       if (!hasPhases) {
@@ -1234,6 +1260,7 @@ export const api = {
           paymentType: paymentData.paymentType,
           paymentMode: paymentData.paymentMode,
           replaceInstallments: false,
+          ...siteCostPayload,
           ...(paymentData.finalSettlementAmount != null
             ? { finalSettlementAmount: paymentData.finalSettlementAmount }
             : {}),
@@ -1296,6 +1323,7 @@ export const api = {
 
       const bodyWithReplace = {
         ...paymentData,
+        ...siteCostPayload,
         replaceInstallments,
         installments: paymentData.phases,
       }
@@ -1310,6 +1338,7 @@ export const api = {
             paymentStatus: paymentData.paymentStatus,
             paymentType: paymentData.paymentType,
             paymentMode: paymentData.paymentMode,
+            ...siteCostPayload,
             ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
           },
         },
@@ -1326,6 +1355,7 @@ export const api = {
             replace: true,
             replaceInstallments: true,
             paymentStatus: paymentData.paymentStatus,
+            ...siteCostPayload,
             ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
           },
         },
@@ -1352,6 +1382,50 @@ export const api = {
         }
       }
 
+      throw lastError
+    },
+
+    /**
+     * Persist Account Management “Cost of site” (INR) without touching installments.
+     * PATCH /quotations/:id/payment-details { siteCost, site_cost, replaceInstallments: false }
+     */
+    updateSiteCost: async (quotationId: string, siteCost: number) => {
+      const amount = Math.max(0, Math.round(Number(siteCost) || 0))
+      const body = {
+        siteCost: amount,
+        site_cost: amount,
+        costOfSite: amount,
+        cost_of_site: amount,
+        replaceInstallments: false,
+      }
+      const endpoints = [
+        `/quotations/${quotationId}/payment-details`,
+        `/quotations/${quotationId}/site-cost`,
+        `/admin/quotations/${quotationId}/payment-details`,
+        `/admin/quotations/${quotationId}/site-cost`,
+      ]
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest(endpoint, { method: "PATCH", body })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" ||
+              error.code === "HTTP_405" ||
+              error.code === "HTTP_501" ||
+              error.code === "HTTP_400")
+          // Some stacks 400 on unknown fields — try next alias endpoint.
+          if (!retryable) {
+            const msg = String((error as Error)?.message || "").toLowerCase()
+            if (msg.includes("site") || msg.includes("unknown") || msg.includes("not allowed")) {
+              continue
+            }
+            throw error
+          }
+        }
+      }
       throw lastError
     },
 

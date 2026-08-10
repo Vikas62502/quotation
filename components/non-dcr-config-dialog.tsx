@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { nonDcrPricing, type SystemPricing } from "@/lib/pricing-tables"
+import { nonDcrPricing, getPricingData, type SystemPricing } from "@/lib/pricing-tables"
 import { Search } from "lucide-react"
 
 interface NonDcrConfigDialogProps {
@@ -30,8 +30,9 @@ interface NonDcrConfigDialogProps {
 export function NonDcrConfigDialog({ open, onOpenChange, onSelect }: NonDcrConfigDialogProps) {
   const [searchTerm, setSearchTerm] = useState("")
 
-  // Filter configurations based on search
-  const filteredConfigs = nonDcrPricing.filter((config) => {
+  // Filter configurations based on search (API data when loaded, else hardcoded fallback)
+  const catalogRows = getPricingData().nonDcr?.length ? getPricingData().nonDcr! : nonDcrPricing
+  const filteredConfigs = catalogRows.filter((config) => {
     const searchLower = searchTerm.toLowerCase()
     return (
       config.systemSize.toLowerCase().includes(searchLower) ||

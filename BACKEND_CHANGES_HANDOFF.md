@@ -334,9 +334,16 @@ Use PDF keys in pricing/catalog validation. Do not strip PDF keys on PATCH.
 
 **Full spec:** `BACKEND_CHANGES_REQUIRED.md` §X.
 
-### 2.6 Pricing tables API (optional but recommended)
+### 2.6 Pricing tables API (required for Admin Pricing + dealer PDF)
 
-`GET /api/quotations/pricing-tables` — see `BACKEND_PRICING_TABLES_API.md`. Frontend **falls back** to `lib/pricing-tables.ts` if missing; implement to sync DCR set prices and presets from DB (June 2026 matrix: Adani 555W / Topcon 620W, Waaree 540W, Premier Energies, inverter preset **Vsole/Xwatt**). Response shape: `{ success, data: { dcr, nonDcr, both, panels, inverters, …, systemConfigurations } }`.
+**Docs:** `BACKEND_PRICING_TABLES.md` · copy-paste `BACKEND_PRICING_TABLES_CONTROLLER.ts` · seed `BACKEND_PRICING_TABLES_SEED.json` / helpers `BACKEND_PRICING_TABLES_SEED.ts` · detail `BACKEND_PRICING_TABLES_API.md`
+
+| Method | Path | Who |
+|--------|------|-----|
+| GET | `/api/quotations/pricing-tables` | dealers / admins / visitors |
+| PUT | `/api/quotations/pricing-tables` | **admin only** |
+
+**Admin → Pricing:** Add/Delete are draft-only (confirm in UI). **Save** PUTs full `{ dcr, nonDcr, both, … }` — backend must **replace** those arrays and echo them on GET. Seed from FE `lib/pricing-tables.ts` snapshot (incl. **Waaree Topcon 610W**). Calling Data PDF + New Quotation read GET.
 
 ---
 
@@ -3099,6 +3106,53 @@ Backend should still fix the gate so upload works even if Start PATCH fails.
 
 ---
 
+## 30. Account Management — Cost of site (`siteCost`) + Profit grid
+
+**Frontend:** Manage modal + grid (Cost of site / Profit). Save on blur / close / Submit.  
+**Problem today:** Submit updates UI, **hard refresh resets to ₹0** until GET echoes DB `site_cost`.  
+**Full handoff:** **`BACKEND_SITE_COST.md`** · pack: **`BACKEND_ACCOUNT_PAYMENT_MANAGEMENT.md`**  
+**Also:** `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchQuotationPaymentDetails`, `quotationToApiJson`)
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | DB column `site_cost` on quotations |
+| 2 | `PATCH …/payment-details` `{ siteCost, replaceInstallments: false }` persists **without wiping phases** |
+| 3 | Echo `siteCost` / `site_cost` on **GET list + detail** (required for hard refresh) |
+| 4 | Accept `siteCost` on installment Submit with `phases` |
+| 5 | Optional aliases `PATCH …/site-cost`, `/admin/quotations/…` |
+
+Profit is FE-only — do not store.
+
+### QA
+
+Save Cost of site ₹2,00,000 → GET returns it → hard refresh → grid still shows Cost of site + Profit (subtotal − cost).
+
+---
+
+## 31. Account Management — Installment paid vs AM subtotal (not “payable after discount”)
+
+**Frontend:** Manage → Submit installments  
+**Bug:** `Total paid (126000) cannot exceed payable after discount (117000)` while list Subtotal shows AM gross.  
+**Full handoff:** **`BACKEND_ACCOUNT_PAYMENT_MANAGEMENT.md` §D**  
+**Helper:** `pickQuotationSubtotalForPayments` in `BACKEND_ADMIN_QUOTATION_STATUS.ts`
+
+### Backend deliverable
+
+| Step | Action |
+|------|--------|
+| 1 | For installment replace, `paymentCap = subtotal − discountAmount` (AM fields) |
+| 2 | **Do not** validate installment `sum(paid)` against `amountAfterSubsidy − discount` when lower than AM subtotal |
+| 3 | Error text: `cannot exceed subtotal (Y)` — not “payable after discount” |
+| 4 | Status-only / site-cost PATCH (`replaceInstallments: false`, no phases): skip paid-vs-cap; do not wipe phases |
+
+### QA
+
+Submit installments with total paid = AM subtotal → **200**. Refresh → phases + siteCost persist.
+
+---
+
 ## Related docs
 
 | Doc | Section |
@@ -3147,6 +3201,10 @@ Backend should still fix the gate so upload works even if Start PATCH fails.
 | **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
 | **§29** (this file) | Installation upload — not allowed for this quotation state |
 | **`BACKEND_INSTALLATION_UPLOAD_STATE.ts`** | **§29** allow `pending_installer` completion upload + gate helper |
+| **§30** (this file) | Account Management Cost of site |
+| **`BACKEND_SITE_COST.md`** | **§30** `siteCost` persist + GET echo |
+| **§31** (this file) | AM installment paid vs subtotal (not payable-after-discount) |
+| **`BACKEND_ACCOUNT_PAYMENT_MANAGEMENT.md`** | **§30–§31** pack — site cost + installment payment cap |
 | **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`** | **§24–§25** journey helpers + required GET fields |
 | **§17** (this file) | Metering dual track — Meter left + Bank right |
 | **`BACKEND_METERING_DUAL_TRACK.md`** | **§17** full dual-track + `bank_process_done` + installer auth |

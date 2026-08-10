@@ -33,6 +33,9 @@ export function dcrCatalogPanelRangeLabel(panelType?: string): string {
   if (normalized === "premier energies" || normalized === "premier") {
     return getPanelPdfRangeLabel("premier_600_625_bifacial_topcon") ?? "600-625W Bifacial Topcon"
   }
+  if (normalized === "waaree topcon") {
+    return getPanelPdfRangeLabel("waaree_580_700_bifacial_topcon") ?? "580-700W Bifacial Topcon"
+  }
   if (normalized.includes("crompton")) {
     return getPanelPdfRangeLabel("premier_energy_600_610") ?? "600W - 610W Topcon Bifacial"
   }
@@ -43,12 +46,24 @@ export function groupDcrPricingByPanelType(
   configs: SystemPricing[],
   panelTypes: readonly string[] = DCR_PRICING_PANEL_TYPES,
 ): DcrPricingBrandGroup[] {
-  const filtered = configs
-  return panelTypes
+  const order: string[] = []
+  const seen = new Set<string>()
+  for (const type of panelTypes) {
+    if (seen.has(type)) continue
+    seen.add(type)
+    order.push(type)
+  }
+  for (const config of configs) {
+    const type = String(config.panelType || "").trim()
+    if (!type || seen.has(type)) continue
+    seen.add(type)
+    order.push(type)
+  }
+  return order
     .map((panelType) => ({
       panelType,
       displayTitle: panelType.toUpperCase(),
-      rows: filtered.filter((c) => c.panelType === panelType),
+      rows: configs.filter((c) => c.panelType === panelType),
     }))
     .filter((g) => g.rows.length > 0)
 }

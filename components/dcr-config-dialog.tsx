@@ -20,9 +20,9 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  dcrPricing,
   DCR_PRICING_EFFECTIVE_FROM,
   DCR_PRICING_VALID_TILL,
+  getPricingData,
   type SystemPricing,
 } from "@/lib/pricing-tables"
 import {
@@ -30,9 +30,8 @@ import {
   dcrCatalogPanelRangeLabel,
   groupDcrPricingByPanelType,
 } from "@/lib/dcr-pricing-catalog-display"
+import { downloadDcrPricingPdf } from "@/lib/download-dcr-pricing-pdf"
 import { Search, Download } from "lucide-react"
-import jsPDF from "jspdf"
-import html2canvas from "html2canvas"
 
 interface DcrConfigDialogProps {
   open: boolean
@@ -43,11 +42,14 @@ interface DcrConfigDialogProps {
 export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialogProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [activeBrandTab, setActiveBrandTab] = useState<string>("")
+  const [isExporting, setIsExporting] = useState(false)
+
+  const catalogRows = useMemo(() => getPricingData().dcr ?? [], [])
 
   const filteredConfigs = useMemo(() => {
     const searchLower = searchTerm.toLowerCase().trim()
-    if (!searchLower) return dcrPricing
-    return dcrPricing.filter((config) => {
+    if (!searchLower) return catalogRows
+    return catalogRows.filter((config) => {
       return (
         config.systemSize.toLowerCase().includes(searchLower) ||
         config.inverterSize.toLowerCase().includes(searchLower) ||
@@ -58,7 +60,7 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
         dcrCatalogPanelRangeLabel("tata").toLowerCase().includes(searchLower)
       )
     })
-  }, [searchTerm])
+  }, [searchTerm, catalogRows])
 
   const brandGroups = useMemo(() => groupDcrPricingByPanelType(filteredConfigs), [filteredConfigs])
   const visiblePanelTypes = useMemo(() => brandGroups.map((group) => group.panelType), [brandGroups])
@@ -74,6 +76,7 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
     if (panelType === "Adani") return "Adani (555W)"
     if (panelType === "Adani Topcon") return "Adani Topcon (620W)"
     if (panelType === "Waaree") return "Waaree (540W)"
+    if (panelType === "Waaree Topcon") return "Waaree Topcon (610W)"
     if (panelType === "Premier Energies") return "Premier Energies (600-625W Topcon)"
     if (panelType === "INA") return "INA (500W-600W)"
     if (panelType === "Tata") return "Tata (530W-570W)"
@@ -87,48 +90,13 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
   }
 
   const generatePDF = async () => {
-    const tableElement = document.getElementById("dcr-config-table")
-
-    if (!tableElement) {
-      console.error("Table element not found.")
-      return
-    }
-
+    setIsExporting(true)
     try {
-      const canvas = await html2canvas(tableElement as HTMLElement, {
-        useCORS: true,
-        logging: false,
-        allowTaint: false,
-      })
-
-      const imgWidth = 210
-      const imgHeight = (canvas.height * imgWidth) / canvas.width
-
-      const pdf = new jsPDF("p", "mm", "a4")
-
-      pdf.setFontSize(18)
-      pdf.text("DCR Configuration Catalog", 105, 15, { align: "center" })
-      pdf.setFontSize(12)
-      pdf.text("Pre-configured DCR Solar System Options", 105, 22, { align: "center" })
-
-      const pageHeight = 297
-      let heightLeft = imgHeight
-      let position = 30
-
-      pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 10, position, imgWidth - 20, imgHeight)
-      heightLeft -= pageHeight - position - 10
-
-      while (heightLeft > 10) {
-        position = heightLeft - imgHeight
-        pdf.addPage()
-        pdf.addImage(canvas.toDataURL("image/jpeg", 0.95), "JPEG", 10, position, imgWidth - 20, imgHeight)
-        heightLeft -= pageHeight
-      }
-
-      const filename = `DCR_Configuration_Catalog_${new Date().toISOString().split("T")[0]}.pdf`
-      pdf.save(filename)
+      await downloadDcrPricingPdf({ rows: filteredConfigs })
     } catch (error) {
       console.error("Error generating PDF:", error)
+    } finally {
+      setIsExporting(false)
     }
   }
 
@@ -154,10 +122,11 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
               onClick={generatePDF}
               variant="outline"
               size="sm"
+              disabled={isExporting}
               className="flex-shrink-0 h-9 sm:h-10 text-xs sm:text-sm px-3 sm:px-4 w-full sm:w-auto"
             >
               <Download className="w-4 h-4 mr-2" />
-              Export PDF
+              {isExporting ? "Exporting…" : "Export PDF"}
             </Button>
           </div>
         </DialogHeader>
@@ -184,7 +153,8 @@ export function DcrConfigDialog({ open, onOpenChange, onSelect }: DcrConfigDialo
             </p>
             <p>
               Brands: <strong>Adani (555W)</strong>, <strong>Adani Topcon (620W)</strong>, <strong>Waaree (540W)</strong>,{" "}
-              <strong>Premier Energies (600–625W Topcon)</strong>, <strong>INA (500W–600W)</strong>, <strong>Tata (530W–570W)</strong>.
+              <strong>Waaree Topcon (610W)</strong>, <strong>Premier Energies (600–625W Topcon)</strong>,{" "}
+              <strong>INA (500W–600W)</strong>, <strong>Tata (530W–570W)</strong>.
             </p>
           </div>
 

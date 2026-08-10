@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useMemo } from "react"
+import { useEffect, useState, useCallback, useMemo, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -21,6 +21,8 @@ import {
   ChevronDown,
   Send,
   Users,
+  Loader2,
+  Filter,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
@@ -121,6 +123,8 @@ interface CustomerPayment {
   bankIfsc?: string
   loanAmount?: number
   cashAmount?: number
+  /** Manual site cost (INR) — profit = subtotal − siteCost. */
+  siteCost?: number
   paymentStatus?: "pending" | "completed" | "partial"
   phases: PaymentPhase[]
   quotation: Quotation
@@ -133,6 +137,8 @@ interface CustomerPayment {
 
 const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
+/** Durable Cost of site until GET approved list echoes `site_cost` from DB. */
+const SITE_COST_KEY = "quotationSiteCosts"
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -449,10 +455,74 @@ function saveSubsidyChequesMap(map: Record<string, SubsidyChequeRecord[]>) {
   localStorage.setItem(SUBSIDY_CHEQUES_KEY, JSON.stringify(map))
 }
 
+function getStoredSiteCostMap(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(SITE_COST_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object") return {}
+    const out: Record<string, number> = {}
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const n = Math.max(0, Math.round(Number(value) || 0))
+      if (id && n > 0) out[id] = n
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function persistSiteCostForQuotation(quotationId: string, siteCost: number) {
+  if (!quotationId) return
+  const map = getStoredSiteCostMap()
+  const amount = Math.max(0, Math.round(Number(siteCost) || 0))
+  if (amount > 0) map[quotationId] = amount
+  else delete map[quotationId]
+  localStorage.setItem(SITE_COST_KEY, JSON.stringify(map))
+}
+
+/** Read site cost from flat / nested API quotation payloads. */
+function pickSiteCostFromQuotation(q: Record<string, unknown>): number {
+  const pricing = (q.pricing || {}) as Record<string, unknown>
+  const paymentDetails = (q.paymentDetails || q.payment_details || {}) as Record<string, unknown>
+  return Math.max(
+    0,
+    Math.round(
+      pickFirstFiniteNumber(
+        q.siteCost,
+        q.site_cost,
+        q.costOfSite,
+        q.cost_of_site,
+        pricing.siteCost,
+        pricing.site_cost,
+        paymentDetails.siteCost,
+        paymentDetails.site_cost,
+      ),
+    ),
+  )
+}
+
 function persistSubsidyChequesForQuotation(quotationId: string, cheques: SubsidyChequeRecord[]) {
   const map = getStoredSubsidyChequesMap()
   map[quotationId] = cheques
   saveSubsidyChequesMap(map)
+}
+
+/** Profit for a payment row: subtotal (net of settlement) − site cost. */
+function getPaymentSiteProfit(payment: CustomerPayment, siteCostOverride?: number): number {
+  const subtotal = getPaymentEffectiveCap(payment)
+  const siteCost = Math.max(
+    0,
+    Math.round(Number(siteCostOverride != null ? siteCostOverride : payment.siteCost) || 0),
+  )
+  return Math.round(subtotal - siteCost)
+}
+
+function parseSiteCostInput(raw: string): number {
+  const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
+  if (cleaned === "") return 0
+  const parsed = Number(cleaned)
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : 0
 }
 
 /** Apply cleared subsidy amount across installments in order (does not exceed phase caps). */
@@ -832,9 +902,9 @@ export default function AccountManagementPage() {
   const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
   const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>("all")
   const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
-  /** Approve / file-login filters as calendar ranges (local YYYY-MM-DD derived for row matching). */
+  /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
-  const [fileLoginDateRange, setFileLoginDateRange] = useState<DateRange | undefined>()
+  const [paymentFiltersOpen, setPaymentFiltersOpen] = useState(false)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -846,6 +916,14 @@ export default function AccountManagementPage() {
   const [isSavingFinalSettlement, setIsSavingFinalSettlement] = useState(false)
   const [isRevertingFinalSettlement, setIsRevertingFinalSettlement] = useState(false)
   const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
+  /** Draft Cost of site values while typing; flushed to backend on blur. */
+  const [siteCostDrafts, setSiteCostDrafts] = useState<Record<string, string>>({})
+  const [savingSiteCostId, setSavingSiteCostId] = useState<string | null>(null)
+  /**
+   * Session overrides when GET approved list omits siteCost after a successful save.
+   * Not localStorage — cleared on full page reload (backend GET must echo siteCost).
+   */
+  const siteCostSessionRef = useRef<Record<string, number>>({})
   const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
   const [subsidyDraftAmount, setSubsidyDraftAmount] = useState("")
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -1266,13 +1344,30 @@ export default function AccountManagementPage() {
         // Settlement state comes ONLY from the database (no cache / local / session storage).
         const discountAmount = getQuotationDiscountAmount(q)
         const apiSettled = getQuotationFinalSettlementApplied(q)
-        const originalSubtotal = subtotal
+        const originalSubtotal = Math.round(subtotal)
         const effectiveSubtotal = Math.max(0, originalSubtotal - discountAmount)
         const remFromApi = pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>)
         const settlementApplied =
           apiSettled ||
           (discountAmount > 0 &&
             Math.max(0, originalSubtotal - getTotalPaidPhases(phases)) <= discountAmount + 0.5)
+
+        const apiSiteCost = pickSiteCostFromQuotation(qx as unknown as Record<string, unknown>)
+        const storedSiteCost = getStoredSiteCostMap()[q.id || ""] || 0
+        const sessionSiteCost = siteCostSessionRef.current[q.id || ""] || 0
+        // Prefer API; fall back to durable store / session when GET omits site_cost.
+        const siteCost =
+          apiSiteCost > 0
+            ? Math.round(apiSiteCost)
+            : storedSiteCost > 0
+              ? Math.round(storedSiteCost)
+              : sessionSiteCost > 0
+                ? Math.round(sessionSiteCost)
+                : undefined
+        if (apiSiteCost > 0 && q.id) {
+          persistSiteCostForQuotation(q.id, apiSiteCost)
+          delete siteCostSessionRef.current[q.id]
+        }
 
         return {
           quotationId: q.id || "",
@@ -1308,6 +1403,7 @@ export default function AccountManagementPage() {
           bankIfsc: String((qx as any).bankIfsc ?? (qx as any).bank_ifsc ?? "").trim() || undefined,
           loanAmount: pickFirstFiniteNumber((qx as any).loanAmount, (qx as any).loan_amount) || undefined,
           cashAmount: pickFirstFiniteNumber((qx as any).cashAmount, (qx as any).cash_amount) || undefined,
+          siteCost,
           paymentStatus:
             q.paymentStatus ??
             (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
@@ -1453,11 +1549,8 @@ export default function AccountManagementPage() {
         const paymentStatusValue = getEffectivePaymentStatus(payment)
         const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
         const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
-        const fileLoginYmd = toLocalCalendarDateString(payment.fileLoginAt)
         const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
-        const fileLoginBounds = paymentDateRangeToFilterStrings(fileLoginDateRange)
         const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
-        const matchesFileLoginDateRange = calendarDateInRange(fileLoginYmd, fileLoginBounds.from, fileLoginBounds.to)
         const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
         const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatusFilter)
         const matchesDealer =
@@ -1472,8 +1565,7 @@ export default function AccountManagementPage() {
           matchesInstallment &&
           matchesFileStatus &&
           matchesDealer &&
-          matchesApproveDateRange &&
-          matchesFileLoginDateRange
+          matchesApproveDateRange
         )
       })
         // Recent approve date first; missing dates at the bottom
@@ -1498,25 +1590,98 @@ export default function AccountManagementPage() {
       fileStatusFilter,
       paymentDealerFilter,
       approveDateRange,
-      fileLoginDateRange,
     ],
   )
 
   const paymentDashboardStats = useMemo(() => {
     let totalAmount = 0
     let pendingAmount = 0
+    let totalProfit = 0
     for (const payment of filteredCustomerPayments) {
       // Net payable after discount/settlement (so Total drops by the settlement `d`).
       // Invariant: Total = Paid + Pending.
       totalAmount += getPaymentEffectiveCap(payment)
       pendingAmount += getDisplayRemaining(payment)
+      const draftRaw = siteCostDrafts[payment.quotationId]
+      const liveSiteCost =
+        draftRaw !== undefined ? parseSiteCostInput(draftRaw) : undefined
+      totalProfit += getPaymentSiteProfit(payment, liveSiteCost)
     }
     return {
       totalAmount,
       pendingAmount,
+      totalProfit,
       customerCount: filteredCustomerPayments.length,
     }
-  }, [filteredCustomerPayments])
+  }, [filteredCustomerPayments, siteCostDrafts])
+
+  const updatePaymentSiteCost = async (quotationId: string, raw: string) => {
+    const siteCost = parseSiteCostInput(raw)
+    const previous = customerPayments.find((p) => p.quotationId === quotationId)?.siteCost
+
+    setCustomerPayments((prev) =>
+      prev.map((p) =>
+        p.quotationId === quotationId
+          ? { ...p, siteCost: siteCost > 0 ? siteCost : undefined }
+          : p,
+      ),
+    )
+    setSiteCostDrafts((prev) => {
+      const next = { ...prev }
+      delete next[quotationId]
+      return next
+    })
+
+    // Keep across page refresh even when GET does not yet echo site_cost.
+    persistSiteCostForQuotation(quotationId, siteCost)
+    if (siteCost > 0) siteCostSessionRef.current[quotationId] = siteCost
+    else delete siteCostSessionRef.current[quotationId]
+
+    if (!useApi) {
+      toast({
+        title: "Cost of site saved",
+        description: "Saved for this browser. Enable API mode to sync to server.",
+      })
+      return
+    }
+
+    if ((previous || 0) === siteCost) return
+
+    setSavingSiteCostId(quotationId)
+    try {
+      await api.quotations.updateSiteCost(quotationId, siteCost)
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === quotationId
+            ? ({
+                ...q,
+                siteCost,
+                site_cost: siteCost,
+              } as Quotation)
+            : q,
+        ),
+      )
+      toast({
+        title: "Cost of site saved",
+        description:
+          siteCost > 0
+            ? `₹${siteCost.toLocaleString("en-IN")} saved. Profit updated.`
+            : "Cost of site cleared. Profit updated.",
+      })
+    } catch (error) {
+      // Keep durable store so refresh still shows the amount; warn that server may lag.
+      toast({
+        title: "Cost of site saved on this device",
+        description:
+          error instanceof ApiError
+            ? `${error.message} — value kept after refresh until backend site_cost is live.`
+            : "Backend must persist siteCost. Value kept after refresh on this browser.",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingSiteCostId(null)
+    }
+  }
 
   const paymentListResetKey = [
     paymentSearchTerm,
@@ -1527,8 +1692,6 @@ export default function AccountManagementPage() {
     paymentDealerFilter,
     approveDateRange?.from?.toISOString() ?? "",
     approveDateRange?.to?.toISOString() ?? "",
-    fileLoginDateRange?.from?.toISOString() ?? "",
-    fileLoginDateRange?.to?.toISOString() ?? "",
     filteredCustomerPayments.length,
   ].join("|")
 
@@ -1602,6 +1765,8 @@ export default function AccountManagementPage() {
       "File login date",
       "File login status",
       "Subtotal",
+      "Cost of Site",
+      "Profit",
       "Loan Amount",
       "Cash Amount",
       "Discount",
@@ -1645,6 +1810,8 @@ export default function AccountManagementPage() {
         payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
         fileLoginStatusLabel(payment.fileLoginStatus) || "",
         getPaymentOriginalSubtotal(payment),
+        payment.siteCost || 0,
+        getPaymentSiteProfit(payment),
         loanAmt,
         cashAmt,
         getPaymentDiscountAmount(payment),
@@ -2166,12 +2333,34 @@ export default function AccountManagementPage() {
   const submitInstallments = async () => {
     if (!activePayment) return
 
+    // Use draft Cost of site if user typed but didn't blur yet.
+    const draftRaw = siteCostDrafts[activePayment.quotationId]
+    const resolvedSiteCost =
+      draftRaw !== undefined
+        ? parseSiteCostInput(draftRaw)
+        : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
+
+    if (draftRaw !== undefined) {
+      setCustomerPayments((prev) =>
+        prev.map((p) =>
+          p.quotationId === activePayment.quotationId
+            ? { ...p, siteCost: resolvedSiteCost > 0 ? resolvedSiteCost : undefined }
+            : p,
+        ),
+      )
+      setSiteCostDrafts((prev) => {
+        const next = { ...prev }
+        delete next[activePayment.quotationId]
+        return next
+      })
+    }
+
     const totalPaid = getTotalPaidPhases(activePayment.phases)
     const paymentCap = getPaymentEffectiveCap(activePayment)
     if (totalPaid > paymentCap + 0.5) {
       toast({
         title: "Cannot save",
-        description: `Total paid (₹${Math.round(totalPaid).toLocaleString()}) cannot exceed subtotal (₹${Math.round(paymentCap).toLocaleString()}).`,
+        description: `Total paid (₹${Math.round(totalPaid).toLocaleString("en-IN")}) cannot exceed subtotal (₹${Math.round(paymentCap).toLocaleString("en-IN")}).`,
         variant: "destructive",
       })
       return
@@ -2195,6 +2384,8 @@ export default function AccountManagementPage() {
       paymentMode: paymentModeFromPhases,
       paymentStatus: paymentStatus || "pending",
       replaceInstallments: true,
+      siteCost: resolvedSiteCost,
+      site_cost: resolvedSiteCost,
       ...(activePayment.subsidyCheques?.length
         ? { subsidyCheques: activePayment.subsidyCheques }
         : {}),
@@ -2225,10 +2416,17 @@ export default function AccountManagementPage() {
 
       if (!useApi) {
         saveStoredPaymentPlan(activePayment.quotationId, payload)
+        persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
       } else {
         const response = await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
         const phasesFromResponse = extractPhasesFromPaymentUpdateResponse(response)
         phasesToApply = phasesFromResponse ?? phasesToApply
+        if (resolvedSiteCost > 0) {
+          siteCostSessionRef.current[activePayment.quotationId] = resolvedSiteCost
+        } else {
+          delete siteCostSessionRef.current[activePayment.quotationId]
+        }
+        persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
         await loadApprovedQuotations()
         setQuotations((prev) =>
           prev.map((q) =>
@@ -2239,6 +2437,8 @@ export default function AccountManagementPage() {
                   paymentPhases: phasesToApply,
                   paymentStatus: payload.paymentStatus,
                   paymentMode: payload.paymentMode,
+                  siteCost: resolvedSiteCost,
+                  site_cost: resolvedSiteCost,
                 } as Quotation)
               : q,
           ),
@@ -2254,6 +2454,7 @@ export default function AccountManagementPage() {
                 paymentMode: payload.paymentMode,
                 paymentStatus: payload.paymentStatus,
                 phases: phasesToApply,
+                siteCost: resolvedSiteCost > 0 ? resolvedSiteCost : undefined,
               }
             : payment,
         ),
@@ -2263,7 +2464,7 @@ export default function AccountManagementPage() {
 
       toast({
         title: "Payment details saved",
-        description: "Installments updated successfully.",
+        description: "Installments, cost of site, and profit updated successfully.",
       })
       setInstallmentDialogOpen(false)
       setActivePaymentId(null)
@@ -2741,202 +2942,63 @@ export default function AccountManagementPage() {
           <TabsContent value="payments" className="space-y-4">
             <Card className="border-border/50 shadow-sm">
               <CardHeader className="pb-3">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div>
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0 shrink-0">
                     <CardTitle className="text-base">Payment Management</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">
+                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
                       Installments, subsidy cheques (cash / cash + loan), and balances
                     </p>
                   </div>
-                  <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by customer name, mobile..."
-                      value={paymentSearchTerm}
-                      onChange={(e) => setPaymentSearchTerm(e.target.value)}
-                      className="pl-8 h-9 text-sm"
-                    />
-                  </div>
-                </div>
-                <div className="mt-3 flex flex-col gap-1.5 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-1.5 w-full lg:flex-1">
-                    <div className="w-full sm:min-w-30">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            className="h-9 w-full justify-between px-3 text-sm font-normal"
-                          >
-                            <span className="truncate">{getPaymentTypeFilterTriggerLabel(paymentTypeFilter)}</span>
-                            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-48 p-2" align="start">
-                          <div className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              className={cn(
-                                "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                                paymentTypeFilter.length === 0 && "bg-accent",
-                              )}
-                              onClick={() => setPaymentTypeFilter([])}
-                            >
-                              All Payment Types
-                            </button>
-                            {PAYMENT_TYPE_FILTER_OPTIONS.map((option) => {
-                              const checked = paymentTypeFilter.includes(option.value)
-                              return (
-                                <label
-                                  key={option.value}
-                                  className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
-                                >
-                                  <Checkbox
-                                    checked={checked}
-                                    onCheckedChange={(next) => {
-                                      setPaymentTypeFilter((prev) => {
-                                        if (next === true) {
-                                          const merged = prev.includes(option.value)
-                                            ? prev
-                                            : [...prev, option.value]
-                                          return merged.length === PAYMENT_TYPE_FILTER_OPTIONS.length
-                                            ? []
-                                            : merged
-                                        }
-                                        return prev.filter((v) => v !== option.value)
-                                      })
-                                    }}
-                                  />
-                                  <span>{option.label}</span>
-                                </label>
-                              )
-                            })}
-                          </div>
-                        </PopoverContent>
-                      </Popover>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap lg:justify-end w-full lg:w-auto min-w-0">
+                    <div className="relative w-full sm:w-56 min-w-0">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                      <Input
+                        placeholder="Search by customer name, mobile..."
+                        value={paymentSearchTerm}
+                        onChange={(e) => setPaymentSearchTerm(e.target.value)}
+                        className="pl-8 h-9 text-sm"
+                      />
                     </div>
-                    <div className="w-full sm:min-w-36">
-                      <Select value={paymentStatusFilter} onValueChange={(value) => setPaymentStatusFilter(value as typeof paymentStatusFilter)}>
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="Filter payment status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Statuses</SelectItem>
-                          <SelectItem value="pending">Pending</SelectItem>
-                          <SelectItem value="partial">Partial</SelectItem>
-                          <SelectItem value="completed">Completed</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="w-full sm:min-w-36">
-                      <Select
-                        value={paymentInstallmentFilter}
-                        onValueChange={(value) => setPaymentInstallmentFilter(value as PaymentInstallmentFilter)}
-                      >
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="Installment" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All installments</SelectItem>
-                          <SelectItem value="1">1 installment</SelectItem>
-                          <SelectItem value="2">2 installments</SelectItem>
-                          <SelectItem value="3">3 installments</SelectItem>
-                          <SelectItem value="4">4 installments</SelectItem>
-                          <SelectItem value="5">5 installments</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="w-full sm:min-w-44">
-                      <Select
-                        value={fileStatusFilter}
-                        onValueChange={(value) => setFileStatusFilter(value as FileStatusFilter)}
-                      >
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="File status" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All file statuses</SelectItem>
-                          <SelectItem value="installation:completed">Installation · Approved</SelectItem>
-                          <SelectItem value="installation:in_progress">Installation · In Progress</SelectItem>
-                          <SelectItem value="installation:pending">Installation · Pending</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="w-full sm:min-w-36">
-                      <Select value={paymentDealerFilter} onValueChange={setPaymentDealerFilter}>
-                        <SelectTrigger className="h-9 text-sm">
-                          <SelectValue placeholder="Filter by dealer" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Dealers</SelectItem>
-                          {paymentDealerOptions.map(([id, name]) => (
-                            <SelectItem key={id} value={id}>
-                              {name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-2 w-full sm:w-auto"
-                    onClick={downloadFilteredPaymentsExcel}
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Excel
-                  </Button>
-                </div>
-                <div className="mt-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Date range filters</p>
-                    {(approveDateRange?.from ||
-                      approveDateRange?.to ||
-                      fileLoginDateRange?.from ||
-                      fileLoginDateRange?.to ||
-                      paymentInstallmentFilter !== "all" ||
-                      fileStatusFilter !== "all" ||
-                      paymentDealerFilter !== "all") && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-xs"
-                        onClick={() => {
-                          setApproveDateRange(undefined)
-                          setFileLoginDateRange(undefined)
-                          setPaymentInstallmentFilter("all")
-                          setFileStatusFilter("all")
-                          setPaymentDealerFilter("all")
-                        }}
-                      >
-                        Clear filters
-                      </Button>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <PaymentDateRangeFilter
-                      id="approve-date-range"
-                      label="Approve date range"
-                      value={approveDateRange}
-                      onChange={setApproveDateRange}
-                      placeholder="All approve dates"
-                    />
-                    <PaymentDateRangeFilter
-                      id="file-login-date-range"
-                      label="File login date range"
-                      value={fileLoginDateRange}
-                      onChange={setFileLoginDateRange}
-                      placeholder="All file login dates"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1.5 w-full sm:w-auto"
+                      onClick={() => setPaymentFiltersOpen(true)}
+                    >
+                      <Filter className="w-3.5 h-3.5" />
+                      Filters
+                      {(() => {
+                        const activeCount =
+                          (paymentTypeFilter.length > 0 ? 1 : 0) +
+                          (paymentStatusFilter !== "all" ? 1 : 0) +
+                          (paymentInstallmentFilter !== "all" ? 1 : 0) +
+                          (fileStatusFilter !== "all" ? 1 : 0) +
+                          (paymentDealerFilter !== "all" ? 1 : 0) +
+                          (approveDateRange?.from || approveDateRange?.to ? 1 : 0)
+                        return activeCount > 0 ? (
+                          <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
+                            {activeCount}
+                          </Badge>
+                        ) : null
+                      })()}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1.5 w-full sm:w-auto"
+                      onClick={downloadFilteredPaymentsExcel}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download Excel
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="pt-0 px-2 sm:px-6 space-y-3">
                 {!isLoading && customerPayments.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <Card className="border-border/60 bg-card shadow-sm">
                       <CardContent className="p-4 flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -2962,6 +3024,28 @@ export default function AccountManagementPage() {
                             ₹{paymentDashboardStats.pendingAmount.toLocaleString()}
                           </p>
                           <p className="text-[11px] text-muted-foreground">Sum of remaining</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="border-border/60 bg-card shadow-sm">
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                          <IndianRupee className="w-5 h-5 text-emerald-700" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground/70">Total Profit</p>
+                          <p
+                            className={`text-xl font-bold truncate ${
+                              paymentDashboardStats.totalProfit >= 0
+                                ? "text-emerald-700"
+                                : "text-red-700"
+                            }`}
+                          >
+                            ₹{paymentDashboardStats.totalProfit.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Sum of (subtotal − cost of site)
+                          </p>
                         </div>
                       </CardContent>
                     </Card>
@@ -3009,62 +3093,94 @@ export default function AccountManagementPage() {
                         const effectiveStatus = getEffectivePaymentStatus(payment)
                         const isZeroPaid = paidAmount <= 0 && remainingAmount > 0
                         const isCompletedPayment = effectiveStatus === "completed"
+                        const isPartialPayment = effectiveStatus === "partial"
+                        const paymentType = getPaymentTypeValue(payment)
+                        const statusLabel =
+                          effectiveStatus === "completed"
+                            ? "Completed"
+                            : effectiveStatus === "partial"
+                              ? "Partial"
+                              : "Pending"
 
                         return (
                           <Card
                             key={payment.quotationId}
-                            className={`shadow-sm px-3 py-3 ${
-                              isZeroPaid
-                                ? "border-red-200 bg-red-50/80 dark:border-red-900 dark:bg-red-950/20"
-                                : isCompletedPayment
-                                ? "border-green-200 bg-green-50/80 dark:border-green-900 dark:bg-green-950/20"
-                                : "border-border/60 bg-card/80"
-                            }`}
+                            className={cn(
+                              "shadow-none px-3 py-2.5 border border-border/70 border-l-4 overflow-hidden",
+                              isCompletedPayment
+                                ? "border-l-emerald-500 bg-card"
+                                : isPartialPayment
+                                  ? "border-l-amber-500 bg-card"
+                                  : isZeroPaid
+                                    ? "border-l-rose-500 bg-card"
+                                    : "border-l-border bg-card",
+                            )}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-[repeat(13,minmax(0,1fr))] gap-x-4 gap-y-3 items-start lg:items-center">
-                              <div className="col-span-2 sm:col-span-3 lg:col-span-2 min-w-0">
-                                <p className="text-sm font-semibold leading-tight">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-[minmax(10rem,1.15fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,auto)_minmax(6rem,auto)_minmax(6.75rem,7.25rem)] gap-x-2 gap-y-2 items-center">
+                              <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
+                                <p className="text-sm font-semibold leading-tight break-words">
                                   {payment.customerName}
+                                  <span className="font-normal text-muted-foreground">
+                                    {" "}
+                                    ({payment.customerMobile || "N/A"})
+                                  </span>
                                 </p>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  Customer No: {payment.customerMobile || "N/A"}
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-0.5">
-                                  Dealer: {payment.dealerName || "Unassigned"} • {payment.dealerMobile || "No contact"}
+                                <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                                  Dealer: {payment.dealerName || "Unassigned"} •{" "}
+                                  {payment.dealerMobile || "No contact"}
                                 </p>
                               </div>
 
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
                                 {getPaymentDiscountAmount(payment) > 0 ? (
                                   <>
-                                    <p className="text-sm font-medium line-through text-muted-foreground">
+                                    <p className="text-xs line-through text-muted-foreground">
                                       ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
                                     </p>
-                                    <p className="text-sm font-semibold text-foreground">
+                                    <p className="text-sm font-semibold tabular-nums">
                                       ₹{getPaymentEffectiveCap(payment).toLocaleString()}
-                                    </p>
-                                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                                      − ₹{getPaymentDiscountAmount(payment).toLocaleString()} d
                                     </p>
                                   </>
                                 ) : (
-                                  <p className="text-sm font-semibold">
+                                  <p className="text-sm font-semibold tabular-nums">
                                     ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
                                   </p>
                                 )}
                               </div>
 
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                  Cost of site
+                                </p>
+                                <p className="text-sm font-semibold tabular-nums">
+                                  ₹{Math.max(0, Math.round(Number(payment.siteCost) || 0)).toLocaleString("en-IN")}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+                                <p
+                                  className={cn(
+                                    "text-sm font-semibold tabular-nums",
+                                    getPaymentSiteProfit(payment) >= 0
+                                      ? "text-emerald-700"
+                                      : "text-rose-700",
+                                  )}
+                                >
+                                  ₹{getPaymentSiteProfit(payment).toLocaleString("en-IN")}
+                                </p>
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid</p>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <p
-                                      className={`text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2 inline-block rounded px-1.5 py-0.5 ${
-                                        paidAmount <= 0
-                                          ? "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-300"
-                                          : ""
-                                      }`}
+                                      className={cn(
+                                        "text-sm font-semibold tabular-nums cursor-help underline decoration-dotted underline-offset-2 inline-block",
+                                        paidAmount <= 0 ? "text-rose-700" : "text-foreground",
+                                      )}
                                     >
                                       ₹{paidAmount.toLocaleString()}
                                     </p>
@@ -3089,7 +3205,7 @@ export default function AccountManagementPage() {
                                             </p>
                                           ))
                                       )}
-                                      {getPaymentTypeValue(payment) === "mix" ? (
+                                      {paymentType === "mix" ? (
                                         <div className="border-t border-border/40 pt-1.5 mt-1 space-y-0.5">
                                           <p>
                                             Loan paid: ₹
@@ -3101,37 +3217,27 @@ export default function AccountManagementPage() {
                                           </p>
                                         </div>
                                       ) : null}
-                                      {getSettlementDiscountAmount(payment) > 0 && (
-                                        <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
-                                          d: ₹
-                                          {Math.round(getSettlementDiscountAmount(payment)).toLocaleString("en-IN")}
-                                        </p>
-                                      )}
                                     </div>
                                   </TooltipContent>
                                 </Tooltip>
-                                {getPaymentTypeValue(payment) === "mix" ? (
-                                  <div className="text-[10px] text-muted-foreground mt-0.5 space-y-0.5">
-                                    <p>
-                                      Loan ₹
-                                      {getTotalPaidForSide(payment.phases, "loan").toLocaleString("en-IN")}
-                                    </p>
-                                    <p>
-                                      Cash ₹
-                                      {getTotalPaidForSide(payment.phases, "cash").toLocaleString("en-IN")}
-                                    </p>
-                                  </div>
+                                {paymentType === "mix" ? (
+                                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+                                    L ₹{getTotalPaidForSide(payment.phases, "loan").toLocaleString("en-IN")}
+                                    {" · "}
+                                    C ₹{getTotalPaidForSide(payment.phases, "cash").toLocaleString("en-IN")}
+                                  </p>
                                 ) : null}
                               </div>
 
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Remaining</p>
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Remaining</p>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <p
-                                      className={`text-sm font-semibold cursor-help underline decoration-dotted underline-offset-2 inline-block ${
-                                        remainingAmount <= 0 ? "text-green-600" : "text-amber-600"
-                                      }`}
+                                      className={cn(
+                                        "text-sm font-semibold tabular-nums cursor-help underline decoration-dotted underline-offset-2 inline-block",
+                                        remainingAmount <= 0 ? "text-emerald-700" : "text-amber-700",
+                                      )}
                                     >
                                       ₹{Math.max(remainingAmount, 0).toLocaleString()}
                                     </p>
@@ -3139,25 +3245,8 @@ export default function AccountManagementPage() {
                                   <TooltipContent side="top" className="max-w-[300px]">
                                     <div className="space-y-1.5">
                                       <p className="font-semibold">Breakdown</p>
-                                      {payment.phases.length === 0 ? (
-                                        <p>No installments yet</p>
-                                      ) : (
-                                        payment.phases
-                                          .slice()
-                                          .sort((a, b) => a.phaseNumber - b.phaseNumber)
-                                          .map((phase) => (
-                                            <p key={`rem-${payment.quotationId}-${phase.phaseNumber}`}>
-                                              {formatInstallmentShortLabel(phase).toLowerCase()}
-                                              {phase.paymentMode
-                                                ? ` (${String(phase.paymentMode)})`
-                                                : ""}
-                                              : ₹
-                                              {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
-                                            </p>
-                                          ))
-                                      )}
-                                      {getPaymentTypeValue(payment) === "mix" ? (
-                                        <div className="border-t border-border/40 pt-1.5 mt-1 space-y-0.5">
+                                      {paymentType === "mix" ? (
+                                        <>
                                           <p>
                                             Loan remaining: ₹
                                             {getRemainingForSide(payment, "loan").toLocaleString("en-IN")}
@@ -3166,78 +3255,46 @@ export default function AccountManagementPage() {
                                             Cash remaining: ₹
                                             {getRemainingForSide(payment, "cash").toLocaleString("en-IN")}
                                           </p>
-                                        </div>
-                                      ) : null}
-                                      {getSettlementDiscountAmount(payment) > 0 && (
-                                        <p className="text-amber-600 dark:text-amber-400 font-medium border-t border-border/40 pt-1.5 mt-1">
-                                          d: ₹
-                                          {Math.round(getSettlementDiscountAmount(payment)).toLocaleString("en-IN")}
+                                        </>
+                                      ) : (
+                                        <p>
+                                          Remaining: ₹
+                                          {Math.max(remainingAmount, 0).toLocaleString("en-IN")}
                                         </p>
                                       )}
-                                      <p className="border-t border-border/40 pt-1.5 mt-1 text-muted-foreground">
-                                        Remaining: ₹{Math.max(remainingAmount, 0).toLocaleString("en-IN")}
-                                      </p>
                                     </div>
                                   </TooltipContent>
                                 </Tooltip>
-                                {getPaymentTypeValue(payment) === "mix" ? (
-                                  <div className="text-[10px] text-muted-foreground mt-0.5 space-y-0.5">
-                                    <p>
-                                      Loan ₹
-                                      {getRemainingForSide(payment, "loan").toLocaleString("en-IN")}
-                                    </p>
-                                    <p>
-                                      Cash ₹
-                                      {getRemainingForSide(payment, "cash").toLocaleString("en-IN")}
-                                    </p>
-                                  </div>
+                                {paymentType === "mix" ? (
+                                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+                                    L ₹{getRemainingForSide(payment, "loan").toLocaleString("en-IN")}
+                                    {" · "}
+                                    C ₹{getRemainingForSide(payment, "cash").toLocaleString("en-IN")}
+                                  </p>
                                 ) : null}
                               </div>
 
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Approve date</p>
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Approve date</p>
                                 <p className="text-xs font-medium leading-snug">
                                   {formatAdminDate(payment.statusApprovedAt)}
                                 </p>
                               </div>
 
-                              <div className="min-w-0 lg:col-span-2">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">File status</p>
-                                <div className="mt-1 space-y-1">
-                                  {getJourneyFileStatusStages(payment.quotation).map((item) => (
-                                    <div
-                                      key={item.label}
-                                      className="flex items-center justify-between gap-1.5 min-w-0"
-                                    >
-                                      <span className="text-[10px] text-muted-foreground truncate">{item.label}</span>
-                                      <Badge
-                                        variant="outline"
-                                        className={`text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium ${journeyStageStatusBadgeClass(item.status)}`}
-                                      >
-                                        {item.statusLabel}
-                                      </Badge>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-
                               <div className="min-w-0">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Payment Type</p>
-                                <p className="text-sm font-semibold">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Payment</p>
+                                <p className="text-sm font-semibold leading-tight">
                                   {getPaymentTypeLabel(payment.paymentType || payment.paymentMode)}
                                 </p>
-                                {getPaymentTypeValue(payment) === "mix" ? (
-                                  <div className="text-[10px] text-muted-foreground mt-0.5 space-y-0.5">
-                                    <p>
-                                      Loan ₹
-                                      {(getMixLoanCap(payment) || payment.loanAmount || 0).toLocaleString("en-IN")}
-                                    </p>
-                                    <p>
-                                      Cash ₹
-                                      {(getMixCashCap(payment) || payment.cashAmount || 0).toLocaleString("en-IN")}
-                                    </p>
-                                  </div>
-                                ) : getPaymentTypeValue(payment) === "loan" &&
+                                {paymentType === "mix" ? (
+                                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+                                    L ₹
+                                    {(getMixLoanCap(payment) || payment.loanAmount || 0).toLocaleString("en-IN")}
+                                    {" · "}
+                                    C ₹
+                                    {(getMixCashCap(payment) || payment.cashAmount || 0).toLocaleString("en-IN")}
+                                  </p>
+                                ) : paymentType === "loan" &&
                                   (payment.loanAmount || getMixLoanCap(payment)) ? (
                                   <p className="text-[10px] text-muted-foreground mt-0.5">
                                     Loan ₹
@@ -3245,38 +3302,66 @@ export default function AccountManagementPage() {
                                   </p>
                                 ) : null}
                                 <p
-                                  className={`text-[11px] mt-0.5 font-medium ${
+                                  className={cn(
+                                    "text-[11px] mt-0.5 font-medium",
                                     effectiveStatus === "completed"
-                                      ? "text-green-700"
+                                      ? "text-emerald-700"
                                       : effectiveStatus === "partial"
                                         ? "text-amber-700"
-                                        : "text-red-700"
-                                  }`}
+                                        : "text-rose-700",
+                                  )}
                                 >
-                                  {effectiveStatus === "completed"
-                                    ? "Completed"
-                                    : effectiveStatus === "partial"
-                                      ? "Partial"
-                                      : "Pending"}
+                                  {statusLabel}
                                 </p>
                               </div>
 
-                              <div className="min-w-0 col-span-2 sm:col-span-3 lg:col-span-2">
-                                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
-                                <p className="text-sm font-medium break-words leading-snug">
+                              <div className="min-w-[10.5rem]">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File status</p>
+                                <div className="mt-0.5 space-y-0.5">
+                                  {getJourneyFileStatusStages(payment.quotation).map((item) => {
+                                    const stageLabel =
+                                      item.label === "Final confirmation"
+                                        ? "Final approval"
+                                        : item.label
+                                    return (
+                                      <div
+                                        key={item.label}
+                                        className="flex items-center gap-1.5 whitespace-nowrap"
+                                      >
+                                        <span className="text-[10px] text-muted-foreground shrink-0">
+                                          {stageLabel}
+                                        </span>
+                                        <Badge
+                                          variant="outline"
+                                          className={cn(
+                                            "text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium",
+                                            journeyStageStatusBadgeClass(item.status),
+                                          )}
+                                        >
+                                          {item.statusLabel}
+                                        </Badge>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="min-w-0 max-w-[9rem]">
+                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
+                                <p className="text-[10px] font-medium leading-snug break-words text-muted-foreground">
                                   {getFinancingBankDisplay(payment)}
                                 </p>
                               </div>
 
-                              <div className="col-span-2 sm:col-span-3 lg:col-span-2 flex justify-end">
-                                <div className="flex flex-wrap items-center justify-end gap-2">
+                              <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end">
+                                <div className="flex flex-col items-stretch gap-1 w-full max-w-[7.25rem] min-w-0">
                                   {isQuotationSentToInstaller(
                                     payment.quotation as unknown as Record<string, unknown>,
                                     readInstallerReleaseMap(),
                                   ) ? (
                                     <Badge
                                       variant="outline"
-                                      className="text-[10px] border-emerald-500 text-emerald-700 whitespace-nowrap"
+                                      className="justify-center text-[9px] px-1.5 h-6 border-emerald-500 text-emerald-700 whitespace-nowrap truncate"
                                     >
                                       Sent to installer
                                     </Badge>
@@ -3285,19 +3370,23 @@ export default function AccountManagementPage() {
                                       type="button"
                                       variant="outline"
                                       size="sm"
-                                      className="h-8 text-xs"
+                                      className="h-6 px-1.5 text-[10px] leading-none w-full font-medium"
                                       onClick={() => void handleReleaseToInstaller(payment.quotation)}
                                       disabled={releasingInstallationId === payment.quotationId}
                                       title="Send this quotation to installer dashboard"
                                     >
-                                      <Send className="w-3.5 h-3.5 mr-1" />
-                                      {releasingInstallationId === payment.quotationId ? "Sending..." : "Send to Installer"}
+                                      <Send className="w-3 h-3 mr-1 shrink-0" />
+                                      <span className="truncate">
+                                        {releasingInstallationId === payment.quotationId
+                                          ? "Sending..."
+                                          : "Send to Installer"}
+                                      </span>
                                     </Button>
                                   )}
                                   <Button
                                     type="button"
-                                    variant="outline"
                                     size="sm"
+                                    className="h-6 px-1.5 text-[10px] leading-none w-full font-medium"
                                     onClick={async () => {
                                       if (useApi) {
                                         await loadApprovedQuotations()
@@ -3332,6 +3421,175 @@ export default function AccountManagementPage() {
         </Tabs>
       </main>
 
+      {/* Payment filters modal */}
+      <Dialog open={paymentFiltersOpen} onOpenChange={setPaymentFiltersOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Filters</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-1">
+            <PaymentDateRangeFilter
+              id="approve-date-range"
+              label="Approve date range"
+              value={approveDateRange}
+              onChange={setApproveDateRange}
+              placeholder="All approve dates"
+            />
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Payment type</Label>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 w-full justify-between px-3 text-sm font-normal"
+                  >
+                    <span className="truncate">{getPaymentTypeFilterTriggerLabel(paymentTypeFilter)}</span>
+                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-48 p-2" align="start">
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
+                        paymentTypeFilter.length === 0 && "bg-accent",
+                      )}
+                      onClick={() => setPaymentTypeFilter([])}
+                    >
+                      All Payment Types
+                    </button>
+                    {PAYMENT_TYPE_FILTER_OPTIONS.map((option) => {
+                      const checked = paymentTypeFilter.includes(option.value)
+                      return (
+                        <label
+                          key={option.value}
+                          className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(next) => {
+                              setPaymentTypeFilter((prev) => {
+                                if (next === true) {
+                                  const merged = prev.includes(option.value)
+                                    ? prev
+                                    : [...prev, option.value]
+                                  return merged.length === PAYMENT_TYPE_FILTER_OPTIONS.length
+                                    ? []
+                                    : merged
+                                }
+                                return prev.filter((v) => v !== option.value)
+                              })
+                            }}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Payment status</Label>
+              <Select
+                value={paymentStatusFilter}
+                onValueChange={(value) => setPaymentStatusFilter(value as typeof paymentStatusFilter)}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Filter payment status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="partial">Partial</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Installments</Label>
+              <Select
+                value={paymentInstallmentFilter}
+                onValueChange={(value) => setPaymentInstallmentFilter(value as PaymentInstallmentFilter)}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Installment" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All installments</SelectItem>
+                  <SelectItem value="1">1 installment</SelectItem>
+                  <SelectItem value="2">2 installments</SelectItem>
+                  <SelectItem value="3">3 installments</SelectItem>
+                  <SelectItem value="4">4 installments</SelectItem>
+                  <SelectItem value="5">5 installments</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">File status</Label>
+              <Select
+                value={fileStatusFilter}
+                onValueChange={(value) => setFileStatusFilter(value as FileStatusFilter)}
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="File status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All file statuses</SelectItem>
+                  <SelectItem value="installation:completed">Installation · Approved</SelectItem>
+                  <SelectItem value="installation:in_progress">Installation · In Progress</SelectItem>
+                  <SelectItem value="installation:pending">Installation · Pending</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Dealer</Label>
+              <Select value={paymentDealerFilter} onValueChange={setPaymentDealerFilter}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Filter by dealer" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Dealers</SelectItem>
+                  {paymentDealerOptions.map(([id, name]) => (
+                    <SelectItem key={id} value={id}>
+                      {name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-9"
+                onClick={() => {
+                  setApproveDateRange(undefined)
+                  setPaymentTypeFilter([])
+                  setPaymentStatusFilter("all")
+                  setPaymentInstallmentFilter("all")
+                  setFileStatusFilter("all")
+                  setPaymentDealerFilter("all")
+                }}
+              >
+                Clear filters
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                className="h-9"
+                onClick={() => setPaymentFiltersOpen(false)}
+              >
+                Done
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Quotation Details Dialog */}
       <QuotationDetailsDialog
         quotation={selectedQuotation}
@@ -3343,6 +3601,12 @@ export default function AccountManagementPage() {
       <Dialog
         open={installmentDialogOpen}
         onOpenChange={(open) => {
+          if (!open && activePaymentId) {
+            const draft = siteCostDrafts[activePaymentId]
+            if (draft !== undefined) {
+              void updatePaymentSiteCost(activePaymentId, draft)
+            }
+          }
           setInstallmentDialogOpen(open)
           if (!open) {
             setActivePaymentId(null)
@@ -3353,13 +3617,6 @@ export default function AccountManagementPage() {
           <DialogHeader>
             <DialogTitle>Payment management</DialogTitle>
           </DialogHeader>
-          <Button
-                  type="button"
-                  onClick={submitInstallments}
-                  disabled={isSavingInstallments || isSavingFinalSettlement}
-                >
-                  {isSavingInstallments ? "Submitting..." : "Submit"}
-                </Button>
           {activePayment && (
             <div className="space-y-4">
               {isFinalSettlementEligible(activePayment) &&
@@ -4299,14 +4556,91 @@ export default function AccountManagementPage() {
                   )}
                 </div>
               )}
-               {/* <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                        ₹
+                      </span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={1}
+                        inputMode="numeric"
+                        className="h-9 pl-6 pr-9 text-sm font-medium tabular-nums bg-background"
+                        placeholder="0"
+                        disabled={savingSiteCostId === activePayment.quotationId}
+                        value={
+                          siteCostDrafts[activePayment.quotationId] ??
+                          (activePayment.siteCost && activePayment.siteCost > 0
+                            ? String(activePayment.siteCost)
+                            : "")
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setSiteCostDrafts((prev) => ({
+                            ...prev,
+                            [activePayment.quotationId]: raw,
+                          }))
+                        }}
+                        onBlur={(e) =>
+                          void updatePaymentSiteCost(activePayment.quotationId, e.target.value)
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur()
+                        }}
+                      />
+                      {savingSiteCostId === activePayment.quotationId ? (
+                        <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Saves on blur, close, or Submit — kept after refresh
+                    </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+                    {(() => {
+                      const draftRaw = siteCostDrafts[activePayment.quotationId]
+                      const liveSiteCost =
+                        draftRaw !== undefined
+                          ? parseSiteCostInput(draftRaw)
+                          : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
+                      const liveProfit = getPaymentSiteProfit(activePayment, liveSiteCost)
+                      return (
+                        <>
+                          <p
+                            className={cn(
+                              "text-lg font-semibold tabular-nums",
+                              liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                            )}
+                          >
+                            ₹{liveProfit.toLocaleString("en-IN")}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Subtotal − cost of site
+                          </p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 border-t border-border/60 pt-3">
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => {
-                    setInstallmentDialogOpen(false)
-                    setActivePaymentId(null)
-                  }}
+                    onClick={() => {
+                      const id = activePayment.quotationId
+                      const draft = siteCostDrafts[id]
+                      if (draft !== undefined) {
+                        void updatePaymentSiteCost(id, draft)
+                      }
+                      setInstallmentDialogOpen(false)
+                      setActivePaymentId(null)
+                    }}
                   disabled={isSavingInstallments || isSavingFinalSettlement}
                 >
                   Cancel
@@ -4318,7 +4652,7 @@ export default function AccountManagementPage() {
                 >
                   {isSavingInstallments ? "Submitting..." : "Submit"}
                 </Button>
-              </div> */}
+              </div>
                   </div>
                 )}
         </DialogContent>

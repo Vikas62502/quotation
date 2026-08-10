@@ -2,7 +2,9 @@
 
 **Priority:** HIGH  
 **Status:** ⚠️ REQUIRED - Frontend is ready and depends on this API  
-**Date:** December 30, 2025
+**Date:** December 30, 2025 (updated 8 Aug 2026)
+
+**Seed from FE catalog:** [`BACKEND_PRICING_TABLES.md`](BACKEND_PRICING_TABLES.md) · payload [`BACKEND_PRICING_TABLES_SEED.json`](BACKEND_PRICING_TABLES_SEED.json) (from `lib/pricing-tables.ts`) · helpers [`BACKEND_PRICING_TABLES_SEED.ts`](BACKEND_PRICING_TABLES_SEED.ts)
 
 ---
 
@@ -631,10 +633,64 @@ The frontend will:
    - Calculate prices for components
    - Pre-fill form fields when a configuration is selected
 4. Fall back to hardcoded values if API is unavailable
+5. **Admin → Pricing** tab calls `PUT /api/quotations/pricing-tables` to persist edits; dealers download the same DCR table as PDF from Calling Data
+
+---
+
+## PUT /api/quotations/pricing-tables (Admin)
+
+**Purpose:** Persist package set prices edited in Admin → Pricing (same payload shape as GET `data`).
+
+**Method:** `PUT`
+
+**Authentication:** Required (Bearer token)
+
+**Authorization:** Admin only
+
+**Request body:** Same object as GET `data` (full or partial replace of top-level keys):
+
+```json
+{
+  "dcr": [
+    {
+      "systemSize": "3kW",
+      "phase": "1-Phase",
+      "inverterSize": "3kW",
+      "panelType": "Waaree Topcon",
+      "price": 190000
+    }
+  ],
+  "nonDcr": [],
+  "both": [],
+  "panels": [],
+  "inverters": [],
+  "structures": [],
+  "meters": [],
+  "cables": [],
+  "acdb": [],
+  "dcdb": [],
+  "systemConfigs": []
+}
+```
+
+**Recommended behavior:**
+1. Store JSON document (e.g. `pricing_config` table / key-value) so the next `GET` returns admin values.
+2. Admin UI: Add/Delete are **draft-only**; only **Save** calls PUT with **full** `dcr` + `nonDcr` + `both` arrays — **replace** each array key that is present (do not append).
+3. Return `{ "success": true, "data": <saved PricingTablesData> }` matching GET.
+4. Reject non-admin with 403.
+5. Implement handlers from `BACKEND_PRICING_TABLES_CONTROLLER.ts` (see also `BACKEND_PRICING_TABLES.md`).
+
+**Frontend client:** `api.quotations.updatePricingTables(body)` in `lib/api.ts`.
+
+**Checklist:**
+- [ ] `PUT /api/quotations/pricing-tables` admin-only
+- [ ] Persist to DB; `GET` returns saved `dcr` / `nonDcr` / `both` (and other keys)
+- [ ] Seed initial rows from current Aug 2026 DCR matrix (incl. Waaree Topcon 610W)
+- [ ] Smoke: Admin edit/add/delete → Save → GET reflects all three tables
 
 ---
 
 ## Priority
 
-**HIGH PRIORITY** - The frontend product selection form now depends on this endpoint. Without it, users cannot use the quick-select dropdown feature for pre-configured systems.
+**HIGH PRIORITY** - The frontend product selection form now depends on this endpoint. Without it, users cannot use the quick-select dropdown feature for pre-configured systems. Admin price editing and dealer pricing PDF depend on GET + PUT.
 

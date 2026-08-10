@@ -133,6 +133,7 @@ export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): Pdf
   if (normalized === "ina") return INA_DCR_PANEL_RANGE_KEY
   if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
   if (normalized.includes("crompton")) return "premier_energy_600_610"
+  if (normalized === "waaree topcon") return "waaree_580_700_bifacial_topcon"
   return null
 }
 

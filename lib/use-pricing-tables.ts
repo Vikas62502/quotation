@@ -70,3 +70,10 @@ export function clearPricingTablesCache() {
   setPricingData(null) // Clear global pricing data
 }
 
+/** After admin save — keep module cache + global helpers in sync without a full refetch race. */
+export function setPricingTablesCache(data: PricingTablesData) {
+  cachedPricingTables = data
+  pricingTablesPromise = Promise.resolve(data)
+  setPricingData(data)
+}
+

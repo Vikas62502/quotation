@@ -54,6 +54,7 @@ import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "
 import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
+import { AdminPricingTablesManagement } from "@/components/admin-pricing-tables-management"
 import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
@@ -1527,6 +1528,7 @@ export default function AdminPanelPage() {
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
   const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
+  const [catalogSubTab, setCatalogSubTab] = useState<"products" | "pricing">("products")
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [callingRange, setCallingRange] = useState<
     "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all"
@@ -3398,7 +3400,12 @@ export default function AdminPanelPage() {
     [dealerStats],
   )
 
-  const adminMobileNavValue = activeTab === "quotations" ? `quotations__${operationalTab}` : activeTab
+  const adminMobileNavValue =
+    activeTab === "quotations"
+      ? `quotations__${operationalTab}`
+      : activeTab === "catalog"
+        ? `catalog__${catalogSubTab}`
+        : activeTab
 
   const quotationSubTabTriggerClass = (sub: AdminOperationalTab) =>
     cn(
@@ -3415,6 +3422,18 @@ export default function AdminPanelPage() {
         setOperationalTab(sub)
         return
       }
+      if (value.startsWith("catalog__")) {
+        const sub = value.replace("catalog__", "") as "products" | "pricing"
+        setActiveTab("catalog")
+        setCatalogSubTab(sub === "pricing" ? "pricing" : "products")
+        return
+      }
+      // Legacy deep-links
+      if (value === "products" || value === "pricing") {
+        setActiveTab("catalog")
+        setCatalogSubTab(value)
+        return
+      }
       setActiveTab(value)
       if (value !== "quotations") setOperationalTab("all")
     })
@@ -3422,6 +3441,11 @@ export default function AdminPanelPage() {
 
   const onAdminDesktopTabChange = (value: string) => {
     startTransition(() => {
+      if (value === "products" || value === "pricing") {
+        setActiveTab("catalog")
+        setCatalogSubTab(value)
+        return
+      }
       setActiveTab(value)
       if (value !== "quotations") setOperationalTab("all")
     })
@@ -6705,7 +6729,8 @@ export default function AdminPanelPage() {
                 <SelectItem value="dealers">Dealers</SelectItem>
                 <SelectItem value="customers">Customers</SelectItem>
                 <SelectItem value="visitors">Visitors</SelectItem>
-                <SelectItem value="products">Products</SelectItem>
+                <SelectItem value="catalog__products">Catalog — Products</SelectItem>
+                <SelectItem value="catalog__pricing">Catalog — Pricing</SelectItem>
                 <SelectItem value="account-management">Others</SelectItem>
               </SelectContent>
             </Select>
@@ -6756,7 +6781,7 @@ export default function AdminPanelPage() {
             <TabsTrigger value="dealers">Dealers</TabsTrigger>
             <TabsTrigger value="customers">Customers</TabsTrigger>
             <TabsTrigger value="visitors">Visitors</TabsTrigger>
-            <TabsTrigger value="products">Products</TabsTrigger>
+            <TabsTrigger value="catalog">Catalog</TabsTrigger>
             <TabsTrigger value="account-management">Others</TabsTrigger>
             </TabsList>
           </div>
@@ -11074,9 +11099,26 @@ export default function AdminPanelPage() {
             </Card>
           </TabsContent>
 
-          {/* Products Tab */}
-          <TabsContent value="products" className="space-y-6">
-            <AdminProductManagement />
+          {/* Catalog Tab — Products + Pricing */}
+          <TabsContent value="catalog" className="space-y-6">
+            <Tabs
+              value={catalogSubTab}
+              onValueChange={(value) =>
+                startTransition(() => setCatalogSubTab(value === "pricing" ? "pricing" : "products"))
+              }
+              className="space-y-4"
+            >
+              <TabsList>
+                <TabsTrigger value="products">Products</TabsTrigger>
+                <TabsTrigger value="pricing">Pricing</TabsTrigger>
+              </TabsList>
+              <TabsContent value="products" className="space-y-6 mt-0">
+                <AdminProductManagement />
+              </TabsContent>
+              <TabsContent value="pricing" className="space-y-6 mt-0">
+                <AdminPricingTablesManagement />
+              </TabsContent>
+            </Tabs>
           </TabsContent>
         </Tabs>
 

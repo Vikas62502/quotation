@@ -50,7 +50,16 @@ import {
   buildCallingConnectionSummary,
   classifyCallingConnection,
 } from "@/lib/calling-action-summary"
-import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2 } from "lucide-react"
+import { downloadPricingPdf, PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
+import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
+import { usePricingTables } from "@/lib/use-pricing-tables"
+import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2, Download, ChevronDown, Eye } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 type CallingLead = {
   id: string
@@ -604,6 +613,9 @@ export default function CallingDataPage() {
   const searchParams = useSearchParams()
   const { isAuthenticated, authReady, dealer, role } = useAuth()
   const { toast } = useToast()
+  usePricingTables()
+  const [downloadingPricingPdf, setDownloadingPricingPdf] = useState(false)
+  const [pricingViewScope, setPricingViewScope] = useState<PricingPdfScope | null>(null)
   const [leads, setLeads] = useState<CallingLead[]>([])
   const [scheduledLeads, setScheduledLeads] = useState<CallingLead[]>([])
   const [recentActions, setRecentActions] = useState<ActionLogItem[]>([])
@@ -2604,11 +2616,92 @@ export default function CallingDataPage() {
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-base">Dealer Call Analytics</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Same counts as Admin → Calling Reports for your login. Filter by daily, weekly, monthly, last month,
-              custom range, or all time.
-            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <CardTitle className="text-base">Dealer Call Analytics</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Same counts as Admin → Calling Reports for your login. Filter by daily, weekly, monthly, last month,
+                  custom range, or all time.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1.5 w-full sm:w-auto"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      View pricing
+                      <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {PRICING_PDF_SCOPE_OPTIONS.map((opt) => (
+                      <DropdownMenuItem
+                        key={`view-${opt.value}`}
+                        onSelect={() => setPricingViewScope(opt.value as PricingPdfScope)}
+                      >
+                        {opt.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-9 gap-1.5 w-full sm:w-auto"
+                      disabled={downloadingPricingPdf}
+                    >
+                      {downloadingPricingPdf ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5" />
+                      )}
+                      Download pricing PDF
+                      <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {PRICING_PDF_SCOPE_OPTIONS.map((opt) => (
+                      <DropdownMenuItem
+                        key={opt.value}
+                        onSelect={() => {
+                          void (async () => {
+                            setDownloadingPricingPdf(true)
+                            try {
+                              await downloadPricingPdf({ scope: opt.value as PricingPdfScope })
+                              toast({
+                                title: "Pricing PDF downloaded",
+                                description: `${opt.shortLabel} package prices exported successfully.`,
+                              })
+                            } catch (error) {
+                              toast({
+                                title: "Download failed",
+                                description:
+                                  error instanceof Error
+                                    ? error.message
+                                    : "Could not generate the pricing PDF.",
+                                variant: "destructive",
+                              })
+                            } finally {
+                              setDownloadingPricingPdf(false)
+                            }
+                          })()
+                        }}
+                      >
+                        {opt.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -4470,6 +4563,16 @@ export default function CallingDataPage() {
 
       </Tabs>
       </main>
+
+      {pricingViewScope ? (
+        <PricingSheetViewDialog
+          open={Boolean(pricingViewScope)}
+          onOpenChange={(open) => {
+            if (!open) setPricingViewScope(null)
+          }}
+          scope={pricingViewScope}
+        />
+      ) : null}
     </div>
   )
 }

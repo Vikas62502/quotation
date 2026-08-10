@@ -888,17 +888,18 @@ export function getSystemConfigById(
   return option ? option.value : null
 }
 
-/** DCR package pricing — effective 03 Jun 2026, valid till 30 Jun 2026 */
-export const DCR_PRICING_EFFECTIVE_FROM = "2026-06-03"
-export const DCR_PRICING_VALID_TILL = "2026-06-30"
+/** DCR package pricing — effective 04 Aug 2026, valid till 31 Aug 2026 */
+export const DCR_PRICING_EFFECTIVE_FROM = "2026-08-04"
+export const DCR_PRICING_VALID_TILL = "2026-08-31"
 
-/** Inverter / panel size on June 2026 package sheets (Tata and catalog display). */
+/** Inverter / panel size on package sheets (Tata and catalog display). */
 export const DCR_AS_PER_THE_SET = "As per the set"
 
 export const DCR_PRICING_PANEL_TYPES = [
   "Adani",
   "Adani Topcon",
   "Waaree",
+  "Waaree Topcon",
   "Premier Energies",
   "INA",
   "Tata",
@@ -931,6 +932,7 @@ type DcrPricingMatrixRow = {
   adani555?: number
   adaniTopcon620?: number
   waaree540?: number
+  waareeTopcon610?: number
   premierTopcon?: number
   ina?: number
 }
@@ -956,20 +958,99 @@ const DCR_CROMPTON_SET_PRICING_ROWS: {
   { systemSize: "5kW", phase: "1-Phase", price: 295000 },
 ]
 
+/** Aug 2026 sheet for Adani / Adani Topcon / Waaree / Waaree Topcon; other brands keep prior package prices. */
 const DCR_PRICING_MATRIX: DcrPricingMatrixRow[] = [
-  { systemSize: "3kW", phase: "1-Phase", adani555: 195000, adaniTopcon620: 195000, waaree540: 189000, premierTopcon: 189000 },
-  { systemSize: "3kW", phase: "3-Phase", adani555: 230000, adaniTopcon620: 230000, waaree540: 225000, premierTopcon: 221000 },
+  {
+    systemSize: "3kW",
+    phase: "1-Phase",
+    adani555: 186000,
+    adaniTopcon620: 190000,
+    waaree540: 185000,
+    waareeTopcon610: 190000,
+    premierTopcon: 189000,
+  },
+  {
+    systemSize: "3kW",
+    phase: "3-Phase",
+    adani555: 221000,
+    adaniTopcon620: 221000,
+    waaree540: 215000,
+    waareeTopcon610: 221000,
+    premierTopcon: 221000,
+  },
   { systemSize: "4kW", phase: "1-Phase", premierTopcon: 250000 },
   { systemSize: "4kW", phase: "3-Phase", premierTopcon: 270000 },
-  { systemSize: "5kW", phase: "1-Phase", adani555: 275000, adaniTopcon620: 285000, waaree540: 275000, premierTopcon: 272000 },
-  { systemSize: "5kW", phase: "3-Phase", adani555: 299000, adaniTopcon620: 305000, waaree540: 292000, premierTopcon: 289000 },
-  { systemSize: "6kW", phase: "1-Phase", adani555: 302000, adaniTopcon620: 312000, waaree540: 302000, premierTopcon: 299000 },
-  { systemSize: "6kW", phase: "3-Phase", adani555: 330000, adaniTopcon620: 360000, waaree540: 320000, premierTopcon: 330000 },
+  {
+    systemSize: "5kW",
+    phase: "1-Phase",
+    adani555: 272000,
+    adaniTopcon620: 280000,
+    waaree540: 270000,
+    waareeTopcon610: 280000,
+    premierTopcon: 272000,
+  },
+  {
+    systemSize: "5kW",
+    phase: "3-Phase",
+    adani555: 299000,
+    adaniTopcon620: 305000,
+    waaree540: 299000,
+    waareeTopcon610: 305000,
+    premierTopcon: 289000,
+  },
+  {
+    systemSize: "6kW",
+    phase: "1-Phase",
+    adani555: 310000,
+    adaniTopcon620: 320000,
+    waaree540: 305000,
+    waareeTopcon610: 320000,
+    premierTopcon: 299000,
+  },
+  {
+    systemSize: "6kW",
+    phase: "3-Phase",
+    adani555: 330000,
+    adaniTopcon620: 340000,
+    waaree540: 320000,
+    waareeTopcon610: 340000,
+    premierTopcon: 330000,
+  },
   { systemSize: "7kW", phase: "3-Phase", premierTopcon: 370000 },
-  { systemSize: "8kW", phase: "3-Phase", adani555: 425000, adaniTopcon620: 445000, waaree540: 405000, premierTopcon: 412000 },
-  { systemSize: "10kW", phase: "3-Phase", adani555: 505000, adaniTopcon620: 530000, waaree540: 490000, premierTopcon: 474000 },
-  { systemSize: "12kW", phase: "3-Phase", adani555: 620000, adaniTopcon620: 650000, waaree540: 580000 },
-  { systemSize: "15kW", phase: "3-Phase", adani555: 750000, adaniTopcon620: 780000, waaree540: 700000 },
+  {
+    systemSize: "8kW",
+    phase: "3-Phase",
+    adani555: 425000,
+    adaniTopcon620: 435000,
+    waaree540: 405000,
+    waareeTopcon610: 435000,
+    premierTopcon: 412000,
+  },
+  {
+    systemSize: "10kW",
+    phase: "3-Phase",
+    adani555: 499000,
+    adaniTopcon620: 515000,
+    waaree540: 480000,
+    waareeTopcon610: 515000,
+    premierTopcon: 474000,
+  },
+  {
+    systemSize: "12kW",
+    phase: "3-Phase",
+    adani555: 595000,
+    adaniTopcon620: 625000,
+    waaree540: 570000,
+    waareeTopcon610: 625000,
+  },
+  {
+    systemSize: "15kW",
+    phase: "3-Phase",
+    adani555: 710000,
+    adaniTopcon620: 740000,
+    waaree540: 680000,
+    waareeTopcon610: 740000,
+  },
   { systemSize: "20kW", phase: "3-Phase", adani555: 940000, adaniTopcon620: 995000, waaree540: 900000 },
   { systemSize: "25kW", phase: "3-Phase", adani555: 1145000, adaniTopcon620: 1210000, waaree540: 1090000 },
   { systemSize: "30kW", phase: "3-Phase", adani555: 1350000, adaniTopcon620: 1420000, waaree540: 1350000 },
@@ -988,6 +1069,7 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
     if (row.adani555 != null) out.push({ ...base, panelType: "Adani", price: row.adani555 })
     if (row.adaniTopcon620 != null) out.push({ ...base, panelType: "Adani Topcon", price: row.adaniTopcon620 })
     if (row.waaree540 != null) out.push({ ...base, panelType: "Waaree", price: row.waaree540 })
+    if (row.waareeTopcon610 != null) out.push({ ...base, panelType: "Waaree Topcon", price: row.waareeTopcon610 })
     if (row.premierTopcon != null) out.push({ ...base, panelType: "Premier Energies", price: row.premierTopcon })
     const inaPrice = row.ina ?? row.premierTopcon
     if (inaPrice != null) out.push({ ...base, panelType: "INA", price: inaPrice })
@@ -1014,7 +1096,7 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
   return out
 }
 
-// DCR System Pricing — Adani, Adani Topcon, Waaree, Premier Energies, INA, Tata, Crompton set
+// DCR System Pricing — Adani, Adani Topcon, Waaree, Waaree Topcon, Premier Energies, INA, Tata, Crompton set
 export const dcrPricing: SystemPricing[] = buildDcrPricingFromMatrix()
 
 /** Map form/catalog panel brand to DCR pricing table `panelType`. */
@@ -1023,6 +1105,8 @@ export function resolveDcrPricingPanelType(panelBrand: string, panelTypeHint?: s
     .trim()
     .toLowerCase()
   if (hint.includes("crompton")) return CROMPTON_DCR_SET_NAME
+  if (hint.includes("waaree") && hint.includes("topcon")) return "Waaree Topcon"
+  if (hint.includes("adani") && hint.includes("topcon")) return "Adani Topcon"
 
   const brand = panelBrand.trim()
   if (!brand) return "Adani"
@@ -1030,8 +1114,10 @@ export function resolveDcrPricingPanelType(panelBrand: string, panelTypeHint?: s
   if (brand === "Premier" || brand.startsWith("Premier")) return "Premier Energies"
   if (brand === "INA" || brand.toUpperCase() === "INA") return "INA"
   if (brand === "Adani Topcon") return "Adani Topcon"
+  if (brand === "Waaree Topcon") return "Waaree Topcon"
   if (brand === "Tata") return "Tata"
   if (DCR_PRICING_PANEL_TYPES.includes(brand as (typeof DCR_PRICING_PANEL_TYPES)[number])) return brand
+  if (brand.toLowerCase().includes("topcon") && brand.toLowerCase().includes("waaree")) return "Waaree Topcon"
   if (brand.toLowerCase().includes("topcon") && brand.toLowerCase().includes("adani")) return "Adani Topcon"
   if (brand.toLowerCase().includes("premier")) return "Premier Energies"
   if (brand.toLowerCase() === "ina") return "INA"
@@ -1044,6 +1130,8 @@ export function dcrPanelSizeForPricingType(panelType: string): string {
   switch (panelType) {
     case "Adani Topcon":
       return "620W"
+    case "Waaree Topcon":
+      return "610W"
     case "Waaree":
       return "540W"
     case "Premier Energies":
@@ -1064,6 +1152,7 @@ export function dcrPanelSizeForPricingType(panelType: string): string {
 /** Panel brand stored on quotation when a DCR package column is selected. */
 export function dcrFormPanelBrandForPricingType(panelType: string): string {
   if (panelType === "Adani Topcon") return "Adani"
+  if (panelType === "Waaree Topcon") return "Waaree"
   if (panelType === "Premier Energies" || panelType === "Premier") return "Premier Energies"
   if (panelType === "INA") return "INA"
   // Crompton set uses Premier Energy panels; package identity stays in `panelType`.
@@ -1124,49 +1213,43 @@ export function dcrPanelPackageForPricingRow(config: SystemPricing): {
 
 // NON DCR System Pricing (Without Subsidy - Adani and Waaree panels separated)
 export const nonDcrPricing: SystemPricing[] = [
-  // 1-Phase Systems
-  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Adani", price: 145000 },
-  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Waaree", price: 145000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Adani", price: 222000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Waaree", price: 222000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Adani", price: 240000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Waaree", price: 240000 },
-  
-  // 3-Phase Systems
+  // Aug 2026 sheet — Pricings (Non DCR), Adani / Waaree (same package price)
+  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Adani", price: 142000 },
+  { systemSize: "3kW", phase: "1-Phase", inverterSize: "3kW", panelType: "Waaree", price: 142000 },
   { systemSize: "3kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 180000 },
   { systemSize: "3kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 180000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 250000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 250000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Adani", price: 278000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Waaree", price: 278000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Tata", price: 320000 },
-  { systemSize: "7kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Adani", price: 299000 },
-  { systemSize: "7kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Waaree", price: 299000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Adani", price: 320000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Waaree", price: 320000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Tata", price: 391000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Adani", price: 391000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Waaree", price: 391000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Tata", price: 465000 },
-  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", panelType: "Adani", price: 455000 },
-  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", panelType: "Waaree", price: 455000 },
-  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", panelType: "Tata", price: 525000 },
-  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", panelType: "Adani", price: 567000 },
-  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", panelType: "Waaree", price: 567000 },
-  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", panelType: "Tata", price: 630000 },
-  { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", panelType: "Adani", price: 700000 },
-  { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", panelType: "Waaree", price: 700000 },
-  { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", panelType: "Tata", price: 800000 },
-  { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", panelType: "Adani", price: 845000 },
-  { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", panelType: "Waaree", price: 845000 },
-  { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", panelType: "Tata", price: 940000 },
-  { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Adani", price: 1000000 },
-  { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Waaree", price: 1000000 },
-  { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Tata", price: 1101000 },
-  // 80kW Non-DCR — Vsole/Xwatt set (Renew Energy / Waaree / Adani)
-  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Renew Energy", price: 2510000 },
-  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Waaree", price: 2590000 },
-  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Adani", price: 2590000 },
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Adani", price: 210000 },
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", panelType: "Waaree", price: 210000 },
+  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Adani", price: 245000 },
+  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", panelType: "Waaree", price: 245000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Adani", price: 245000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", panelType: "Waaree", price: 245000 },
+  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Adani", price: 280000 },
+  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", panelType: "Waaree", price: 280000 },
+  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Adani", price: 330000 },
+  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", panelType: "Waaree", price: 330000 },
+  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Adani", price: 395000 },
+  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", panelType: "Waaree", price: 395000 },
+  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", panelType: "Adani", price: 465000 },
+  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", panelType: "Waaree", price: 465000 },
+  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", panelType: "Adani", price: 535000 },
+  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", panelType: "Waaree", price: 535000 },
+  { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", panelType: "Adani", price: 710000 },
+  { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", panelType: "Waaree", price: 710000 },
+  { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", panelType: "Adani", price: 830000 },
+  { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", panelType: "Waaree", price: 830000 },
+  { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Adani", price: 995000 },
+  { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", panelType: "Waaree", price: 995000 },
+  { systemSize: "40kW", phase: "3-Phase", inverterSize: "40kW", panelType: "Adani", price: 1255000 },
+  { systemSize: "40kW", phase: "3-Phase", inverterSize: "40kW", panelType: "Waaree", price: 1255000 },
+  { systemSize: "50kW", phase: "3-Phase", inverterSize: "50kW", panelType: "Adani", price: 1498000 },
+  { systemSize: "50kW", phase: "3-Phase", inverterSize: "50kW", panelType: "Waaree", price: 1498000 },
+  { systemSize: "60kW", phase: "3-Phase", inverterSize: "60kW", panelType: "Adani", price: 1750000 },
+  { systemSize: "60kW", phase: "3-Phase", inverterSize: "60kW", panelType: "Waaree", price: 1750000 },
+  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Adani", price: 2350000 },
+  { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Waaree", price: 2350000 },
+  { systemSize: "100kW", phase: "3-Phase", inverterSize: "100kW", panelType: "Adani", price: 2890000 },
+  { systemSize: "100kW", phase: "3-Phase", inverterSize: "100kW", panelType: "Waaree", price: 2890000 },
 ]
 
 // BOTH (DCR + NON DCR) System Pricing
@@ -1182,45 +1265,31 @@ export interface BothSystemPricing {
 }
 
 export const bothPricing: BothSystemPricing[] = [
-  // 3-Phase Systems (BOTH typically uses 3kW DCR + variable Non DCR) - Adani and Waaree separated
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Adani", price: 270000 },
-  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Waaree", price: 270000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Adani", price: 310000 },
-  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Waaree", price: 310000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Adani", price: 371000 },
-  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Waaree", price: 371000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Adani", price: 421000 },
-  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Waaree", price: 421000 },
-  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Adani", price: 485000 },
-  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Waaree", price: 485000 },
-  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Adani", price: 580000 },
-  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Waaree", price: 580000 },
+  // Aug 2026 sheet — Pricings (DCR + Non DCR), Adani / Waaree 620W (same package price)
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Adani", price: 250000 },
+  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Waaree", price: 250000 },
+  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Adani", price: 272000 },
+  { systemSize: "5kW", phase: "3-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Waaree", price: 272000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Adani", price: 275000 },
+  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Waaree", price: 275000 },
+  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Adani", price: 305000 },
+  { systemSize: "6kW", phase: "3-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Waaree", price: 305000 },
+  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Adani", price: 360000 },
+  { systemSize: "8kW", phase: "3-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Waaree", price: 360000 },
+  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Adani", price: 425000 },
+  { systemSize: "10kW", phase: "3-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Waaree", price: 425000 },
+  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Adani", price: 510000 },
+  { systemSize: "12kW", phase: "3-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Waaree", price: 510000 },
+  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Adani", price: 570000 },
+  { systemSize: "15kW", phase: "3-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Waaree", price: 570000 },
+
+  // Larger BOTH packages (not on Aug sheet — keep prior commercial prices)
   { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Adani", price: 793100 },
   { systemSize: "20kW", phase: "3-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Waaree", price: 793100 },
   { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Adani", price: 988800 },
   { systemSize: "25kW", phase: "3-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Waaree", price: 988800 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Adani", price: 1184500 },
   { systemSize: "30kW", phase: "3-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Waaree", price: 1184500 },
-
-  // 1-Phase BOTH — same package prices as 3-Phase unless backend overrides via API
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Adani", price: 270000 },
-  { systemSize: "5kW", phase: "1-Phase", inverterSize: "5kW", dcrCapacity: "3kW", nonDcrCapacity: "2kW", panelType: "Waaree", price: 270000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Adani", price: 310000 },
-  { systemSize: "6kW", phase: "1-Phase", inverterSize: "6kW", dcrCapacity: "3kW", nonDcrCapacity: "3kW", panelType: "Waaree", price: 310000 },
-  { systemSize: "8kW", phase: "1-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Adani", price: 371000 },
-  { systemSize: "8kW", phase: "1-Phase", inverterSize: "8kW", dcrCapacity: "3kW", nonDcrCapacity: "5kW", panelType: "Waaree", price: 371000 },
-  { systemSize: "10kW", phase: "1-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Adani", price: 421000 },
-  { systemSize: "10kW", phase: "1-Phase", inverterSize: "10kW", dcrCapacity: "3kW", nonDcrCapacity: "7kW", panelType: "Waaree", price: 421000 },
-  { systemSize: "12kW", phase: "1-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Adani", price: 485000 },
-  { systemSize: "12kW", phase: "1-Phase", inverterSize: "12kW", dcrCapacity: "3kW", nonDcrCapacity: "9kW", panelType: "Waaree", price: 485000 },
-  { systemSize: "15kW", phase: "1-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Adani", price: 580000 },
-  { systemSize: "15kW", phase: "1-Phase", inverterSize: "15kW", dcrCapacity: "3kW", nonDcrCapacity: "12kW", panelType: "Waaree", price: 580000 },
-  { systemSize: "20kW", phase: "1-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Adani", price: 793100 },
-  { systemSize: "20kW", phase: "1-Phase", inverterSize: "20kW", dcrCapacity: "3kW", nonDcrCapacity: "17kW", panelType: "Waaree", price: 793100 },
-  { systemSize: "25kW", phase: "1-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Adani", price: 988800 },
-  { systemSize: "25kW", phase: "1-Phase", inverterSize: "25kW", dcrCapacity: "3kW", nonDcrCapacity: "22kW", panelType: "Waaree", price: 988800 },
-  { systemSize: "30kW", phase: "1-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Adani", price: 1184500 },
-  { systemSize: "30kW", phase: "1-Phase", inverterSize: "30kW", dcrCapacity: "3kW", nonDcrCapacity: "27kW", panelType: "Waaree", price: 1184500 },
 ]
 
 // Helper function to get DCR pricing
@@ -1312,8 +1381,21 @@ export function getNonDcrPrice(
       p.inverterSize === inverterSize &&
       p.panelType === panelType,
   )
+  if (pricing) return pricing.price
 
-  return pricing ? pricing.price : null
+  // Aug 2026 Non-DCR sheet is Adani/Waaree only — fall back to Adani package price
+  if (panelType !== "Adani") {
+    const adani = pricingTable.find(
+      (p) =>
+        p.systemSize === systemSize &&
+        p.phase === phase &&
+        p.inverterSize === inverterSize &&
+        p.panelType === "Adani",
+    )
+    if (adani) return adani.price
+  }
+
+  return null
 }
 
 // Helper function to get BOTH (DCR + NON DCR) pricing
