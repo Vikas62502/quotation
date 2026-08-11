@@ -53,7 +53,7 @@ export default function MeteringDashboardPage() {
         </div>
 
         <MeteringWorkflowPanel
-          description={`Welcome, ${meteringUser?.firstName || "Metering"}. Meter process (left): Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step. Bank process (right): Bank Process → Pending Payment for loan / cash+loan files.`}
+          description={`Welcome, ${meteringUser?.firstName || "Metering"}. Meter process: Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step — same flow as Admin → Metering.`}
         />
       </main>
     </div>

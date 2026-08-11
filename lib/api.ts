@@ -1430,6 +1430,106 @@ export const api = {
     },
 
     /**
+     * Account Management — upload PI / proforma documents (PDF, images; multiple).
+     * Multipart: repeated `piUpload` file parts.
+     * Retained URLs: `existingPiUploadUrlsJson` (+ singular `existingPiUploadUrl` when length === 1).
+     * `replacePiUploads=true` when syncing removals (set list to existingUrls only).
+     */
+    uploadPiDocuments: async (
+      quotationId: string,
+      files: File[],
+      existingUrls: string[] = [],
+      options?: { replace?: boolean },
+    ) => {
+      const formData = new FormData()
+      for (const file of files) {
+        formData.append("piUpload", file)
+      }
+      const retained = existingUrls.map(String).map((s) => s.trim()).filter(Boolean)
+      if (retained.length === 1) {
+        formData.append("existingPiUploadUrl", retained[0])
+      }
+      if (retained.length > 0) {
+        formData.append("existingPiUploadUrlsJson", JSON.stringify(retained))
+      }
+      const replace = options?.replace === true || (files.length === 0 && options?.replace !== false)
+      formData.append("replacePiUploads", replace ? "true" : "false")
+      formData.append("replace_pi_uploads", replace ? "true" : "false")
+
+      const endpoints = [
+        `/quotations/${quotationId}/pi-upload`,
+        `/quotations/${quotationId}/pi-documents`,
+        `/account-management/quotations/${quotationId}/pi-upload`,
+        `/admin/quotations/${quotationId}/pi-upload`,
+        `/admin/quotations/${quotationId}/installer-documents`,
+        `/quotations/${quotationId}/documents`,
+        `/installer/quotations/${quotationId}/documents`,
+      ]
+
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await multipartRequest(endpoint, "POST", cloneFormData(formData))
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" ||
+              error.code === "HTTP_405" ||
+              error.code === "HTTP_501" ||
+              error.code === "HTTP_403" ||
+              error.code === "AUTH_004" ||
+              isMulterUnexpectedFileError(error))
+          if (!retryable) throw error
+        }
+      }
+
+      // Fallback: single-file asset uploads then merge retained URLs.
+      if (files.length > 0) {
+        const uploadedUrls: string[] = []
+        for (const file of files) {
+          try {
+            const url = await api.installer.uploadCompletionAsset(quotationId, "piUpload", file)
+            if (url) uploadedUrls.push(url)
+          } catch {
+            /* try next */
+          }
+        }
+        if (uploadedUrls.length > 0) {
+          return {
+            success: true,
+            piUploadUrls: replace ? [...retained, ...uploadedUrls] : [...retained, ...uploadedUrls],
+            piUploadUrl: retained[0] || uploadedUrls[0],
+          }
+        }
+      }
+
+      // Removal-only sync with no new files — some stacks accept empty multipart + JSON list.
+      if (files.length === 0 && replace) {
+        try {
+          return await apiRequest(`/quotations/${quotationId}/pi-upload`, {
+            method: "PATCH",
+            body: {
+              piUploadUrls: retained,
+              pi_upload_urls: retained,
+              piUploadUrl: retained[0] || null,
+              replacePiUploads: true,
+            },
+          })
+        } catch (error) {
+          lastError = error
+        }
+      }
+
+      throw lastError instanceof ApiError
+        ? lastError
+        : new ApiError(
+            "PI upload endpoint is not available. Backend needs POST /quotations/:id/pi-upload (multipart piUpload, multiple).",
+            "HTTP_404",
+          )
+    },
+
+    /**
      * Final Settlement — persist to DB. Settlement amount (Remaining) becomes discount `d`,
      * paymentStatus=completed, remaining=0. Tries an atomic endpoint first, then
      * pricing + status-only payment-details. Throws if nothing persisted server-side.

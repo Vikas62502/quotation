@@ -18,8 +18,11 @@ import {
   extractQuotationListFromApiResponse,
   getInstallationWorkflowStatus,
   getMeteringWorkflowStage,
+  isInstallationPartialApproved,
+  isInstallationUploadCompleteByStatus,
   isQuotationReleasedToInstaller,
 } from "@/lib/operational-install-queue"
+import { isInstallationUploadCompleteWithMedia } from "@/lib/installation-public-images"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
 import { confirmSave } from "@/lib/confirm-save"
 
@@ -349,9 +352,34 @@ export function MeteringWorkflowPanel({
   const isInMeterPipeline = (q: MeteringQuotation) => getMeteringStage(q) !== null || isWccAfterDiscomFlag(q)
 
   const isWccPending = (q: MeteringQuotation) => {
-    if (!isWccAfterDiscomFlag(q)) return false
     const stage = getMeteringStage(q)
-    return stage !== "meter_install" && stage !== "mco"
+    // Post Meter in Discom → WCC (same as Admin)
+    if (isWccAfterDiscomFlag(q)) {
+      return stage !== "meter_install" && stage !== "mco"
+    }
+    // Send to Metering with no Discom/WCC action yet → Meter Pending only
+    if (stage === "processing") return false
+    // Entry: Installation approved, not yet in metering pipeline (Admin WCC Pending entry)
+    if (stage !== null) return false
+    if (isInstallationPartialApproved(q as any)) return false
+    if (!isQuotationReleasedToInstaller(q as any) && !isInstallationUploadCompleteByStatus(q as any)) {
+      return false
+    }
+    const uploadDone =
+      isInstallationUploadCompleteByStatus(q as any) ||
+      isInstallationUploadCompleteWithMedia(q as any) ||
+      Boolean((q as any).installerApprovedAt || (q as any).installer_approved_at)
+    if (!uploadDone) return false
+    const discom = String(q.discomName || (q as any).discom_name || "").trim()
+    const assigned = String(
+      q.authorizedRepresentative ||
+        (q as any).authorized_representative ||
+        (q as any).assignedPersonName ||
+        "",
+    ).trim()
+    // Once WCC pack (discom + assigned) is saved, leave entry WCC Pending
+    if (discom && assigned) return false
+    return true
   }
 
   const applyLocalMeteringStage = (id: string, stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">) => {
@@ -982,6 +1010,7 @@ export function MeteringWorkflowPanel({
     [quotations, searchByTab.mco],
   )
 
+  // Bank process lists — UI commented out; keep logic for easy restore.
   const bankProcessList = useMemo(
     () =>
       onlyCurrent(
@@ -1003,6 +1032,9 @@ export function MeteringWorkflowPanel({
       ),
     [quotations, searchByTab.pending_payment],
   )
+  void bankProcessList
+  void pendingPaymentList
+  void BANK_PROCESS_TABS
 
   const stageBadgeClass = (tab: MeteringStage) => {
     if (tab === "processing") return "border-amber-300/80 bg-amber-50 text-amber-800"
@@ -1213,7 +1245,7 @@ export function MeteringWorkflowPanel({
       {showDescription && description !== null && (
         <p className="text-sm text-muted-foreground">
           {description ||
-            "Meter process flows left → right: Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step. Loan / Cash+loan files also appear in the separate Bank process track on the right."}
+            "Meter process: Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step. Same stages as Admin → Metering."}
         </p>
       )}
 
@@ -1254,6 +1286,7 @@ export function MeteringWorkflowPanel({
           </div>
         </div>
 
+        {/* Bank process UI temporarily commented out
         <div className="xl:w-auto shrink-0 rounded-lg border-2 border-amber-300/80 bg-amber-50/40 p-1.5">
           <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
             Bank process
@@ -1285,6 +1318,7 @@ export function MeteringWorkflowPanel({
             ))}
           </div>
         </div>
+        */}
       </div>
 
       <div className="relative w-full md:w-80 md:ml-auto">
@@ -1304,11 +1338,18 @@ export function MeteringWorkflowPanel({
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as MeteringStage)}>
         <TabsList className="hidden">
-          {[...METER_PROCESS_TABS, ...BANK_PROCESS_TABS].map((key) => (
+          {METER_PROCESS_TABS.map((key) => (
             <TabsTrigger key={key} value={key}>
               {key}
             </TabsTrigger>
           ))}
+          {/* Bank process tabs temporarily commented out
+          {[...BANK_PROCESS_TABS].map((key) => (
+            <TabsTrigger key={key} value={key}>
+              {key}
+            </TabsTrigger>
+          ))}
+          */}
         </TabsList>
         <TabsContent value="processing" className="space-y-3 pt-2">
           {renderTabBody(processingList, "processing", "No items in Meter Pending.")}
@@ -1325,12 +1366,14 @@ export function MeteringWorkflowPanel({
         <TabsContent value="mco" className="space-y-3 pt-2">
           {renderTabBody(mcoList, "mco", "No items in Final Step.")}
         </TabsContent>
+        {/* Bank process tab bodies temporarily commented out
         <TabsContent value="bank_process" className="space-y-3 pt-2">
           {renderTabBody(bankProcessList, "bank_process", "No loan / cash+loan items in Bank Process.")}
         </TabsContent>
         <TabsContent value="pending_payment" className="space-y-3 pt-2">
           {renderTabBody(pendingPaymentList, "pending_payment", "No items in Pending Payment.")}
         </TabsContent>
+        */}
       </Tabs>
 
       <Dialog open={detailsModalOpen} onOpenChange={setDetailsModalOpen}>

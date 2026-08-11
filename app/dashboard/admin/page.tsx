@@ -3813,12 +3813,12 @@ export default function AdminPanelPage() {
     operationalTab === "metering" ? sortedQuotations.filter((q) => isAdminMeterInstallationPending(q)) : []
   const meteringMcoQuotations =
     operationalTab === "metering" ? sortedQuotations.filter((q) => getAdminMeteringStage(q) === "mco") : []
-  /** Metering → Bank process: loan + cash+loan not yet moved to pending payment. */
+  /** Metering → Bank process: loan + cash+loan already in meter pipeline (not Installation Approved-only). */
   const meteringBankProcessQuotations =
     operationalTab === "metering"
       ? sortedQuotations.filter(
           (q) =>
-            isMeteringVisible(q) &&
+            isMeteringBankPipelineVisible(q) &&
             isMeteringBankProcessEligible(q) &&
             !isAdminBankProcessDone(q),
         )
@@ -3828,7 +3828,7 @@ export default function AdminPanelPage() {
     operationalTab === "metering"
       ? sortedQuotations.filter(
           (q) =>
-            isMeteringVisible(q) &&
+            isMeteringBankPipelineVisible(q) &&
             isMeteringBankProcessEligible(q) &&
             isAdminBankProcessDone(q),
         )
@@ -4482,6 +4482,15 @@ export default function AdminPanelPage() {
 
   function isMeteringVisible(quotation: Quotation) {
     return getAdminMeteringStage(quotation) !== null || isAdminMeteringWccPending(quotation)
+  }
+
+  /**
+   * Bank Process / Pending Payment: only files already in the meter pipeline.
+   * Do NOT include Installation → Approved rows waiting on WCC entry
+   * (those are WCC Pending on the meter track, not bank work yet).
+   */
+  function isMeteringBankPipelineVisible(quotation: Quotation) {
+    return getAdminMeteringStage(quotation) !== null || isAdminMeteringPostDiscomWcc(quotation)
   }
 
   function isConfirmationVisible(quotation: Quotation) {
@@ -7646,6 +7655,7 @@ export default function AdminPanelPage() {
                           ))}
                         </div>
                       </div>
+                      {/* Bank process UI temporarily commented out
                       <div className="lg:w-auto shrink-0 rounded-lg border-2 border-amber-300/80 bg-amber-50/40 p-1.5">
                         <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-amber-900/80">
                           Bank process
@@ -7676,6 +7686,7 @@ export default function AdminPanelPage() {
                           ))}
                         </div>
                       </div>
+                      */}
                     </div>
                   ) : (
                   <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
@@ -8153,9 +8164,11 @@ export default function AdminPanelPage() {
                       )
                     }
 
+                    // Bank process / Pending Payment table UI temporarily commented out
                     if (
-                      operationalProgressTab === "bank_process" ||
-                      operationalProgressTab === "pending_payment"
+                      false &&
+                      (operationalProgressTab === "bank_process" ||
+                        operationalProgressTab === "pending_payment")
                     ) {
                       const isPendingPaymentTab = operationalProgressTab === "pending_payment"
                       return activeQuotationList.length === 0 ? (
@@ -8227,14 +8240,18 @@ export default function AdminPanelPage() {
                                     meteringStage === "mco"
                                       ? "Final Step"
                                       : meteringStage === "approved"
-                                        ? "Meter in Discom"
+                                        ? isAdminMeteringPostDiscomWcc(quotation)
+                                          ? "WCC Pending"
+                                          : "Meter in Discom"
                                         : meteringStage === "processing"
                                           ? isAdminMeteringWccPending(quotation)
                                             ? "WCC Pending"
                                             : "Meter Pending"
                                           : meteringStage === "meter_install"
                                             ? "Meter Installation Pending"
-                                            : "—"
+                                            : isAdminMeteringPostDiscomWcc(quotation)
+                                              ? "WCC Pending"
+                                              : "—"
                                   const assignedPerson =
                                     getAdminBankProcessDraft(quotation).assignedPersonName.trim() ||
                                     getMeteringAssignedPersonName(quotation) ||
@@ -14254,8 +14271,9 @@ export default function AdminPanelPage() {
           </DialogContent>
         </Dialog>
 
+        {/* Bank process details dialog UI temporarily commented out */}
         <Dialog
-          open={Boolean(adminBankProcessModalQuotationId)}
+          open={false && Boolean(adminBankProcessModalQuotationId)}
           onOpenChange={(open) => {
             if (!open) setAdminBankProcessModalQuotationId(null)
           }}

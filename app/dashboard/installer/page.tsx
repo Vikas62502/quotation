@@ -52,6 +52,8 @@ import {
   mergeInstallerReleaseOntoQuotation,
   readInstallerReleaseMap,
   shouldShowInAdminInstallationTab,
+  isInstallationPartialApproved,
+  getInstallationAdminTabProgress,
   toYmdFromStored,
 } from "@/lib/operational-install-queue"
 import {
@@ -240,7 +242,7 @@ export default function InstallerDashboardPage() {
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [activeSection, setActiveSection] = useState<InstallerSection>("installation")
-  const [activeTab, setActiveTab] = useState<"all" | "pending" | "approved">("pending")
+  const [activeTab, setActiveTab] = useState<"all" | "pending" | "partial" | "approved">("pending")
   const [searchTerm, setSearchTerm] = useState("")
   const [quotations, setQuotations] = useState<InstallerQuotation[]>([])
   const [expandedQuotationId, setExpandedQuotationId] = useState<string | null>(null)
@@ -499,8 +501,11 @@ export default function InstallerDashboardPage() {
       approvedQueueIds: installerQueueApprovedIds,
     })
 
-  const getInstallerStatus = (q: InstallerQuotation): "pending" | "inprogress" | "approved" => {
+  const getInstallerStatus = (q: InstallerQuotation): "pending" | "partial" | "inprogress" | "approved" => {
+    if (isInstallationPartialApproved(q as Record<string, unknown>)) return "partial"
     if (isInstallationUploadComplete(q)) return "approved"
+    const progress = getInstallationAdminTabProgress(q as Record<string, unknown>, false)
+    if (progress === "partial") return "partial"
     const backendStatus = getInstallationWorkflowStatus(q as Record<string, unknown>)
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
       return "inprogress"
@@ -553,7 +558,16 @@ export default function InstallerDashboardPage() {
   }, [quotations, normalizedSearch])
 
   const pendingQuotations = useMemo(
-    () => sortedQuotations.filter((q) => getInstallerStatus(q) !== "approved"),
+    () =>
+      sortedQuotations.filter((q) => {
+        const s = getInstallerStatus(q)
+        return s === "pending" || s === "inprogress"
+      }),
+    [sortedQuotations, workflowMap, installerQueueApprovedIds],
+  )
+
+  const partialQuotations = useMemo(
+    () => sortedQuotations.filter((q) => getInstallerStatus(q) === "partial"),
     [sortedQuotations, workflowMap, installerQueueApprovedIds],
   )
 
@@ -564,9 +578,10 @@ export default function InstallerDashboardPage() {
 
   const activeInstallationList = useMemo(() => {
     if (activeTab === "pending") return pendingQuotations
+    if (activeTab === "partial") return partialQuotations
     if (activeTab === "approved") return approvedQuotations
     return sortedQuotations
-  }, [activeTab, pendingQuotations, approvedQuotations, sortedQuotations])
+  }, [activeTab, pendingQuotations, partialQuotations, approvedQuotations, sortedQuotations])
 
   const openUploadPanel = (q: InstallerQuotation) => {
     ensureInstallerDraftData(q)
@@ -872,7 +887,11 @@ export default function InstallerDashboardPage() {
     }))
   }
 
-  const handleApproveInstallation = async (quotation: InstallerQuotation) => {
+  const handleApproveInstallation = async (
+    quotation: InstallerQuotation,
+    mode: "full" | "partial" = "full",
+  ) => {
+    const isPartial = mode === "partial"
     const filesByField = uploadFilesByQuotation[quotation.id] || {}
     const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => isImageFieldRequired(field))
     const uploadedFiles = INSTALLATION_IMAGE_FIELDS.flatMap((field) => filesByField[field.key] || [])
@@ -891,14 +910,27 @@ export default function InstallerDashboardPage() {
       return
     }
 
-    const missingFields = requiredFields.filter((field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0))
-    if (missingFields.length > 0) {
-      toast({
-        title: "Images required",
-        description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
-        variant: "destructive",
-      })
-      return
+    if (isPartial) {
+      if (uploadedFiles.length === 0 && piUploads.length === 0) {
+        toast({
+          title: "Add files",
+          description: "Add at least one photo or PI before marking Partial Approved.",
+          variant: "destructive",
+        })
+        return
+      }
+    } else {
+      const missingFields = requiredFields.filter(
+        (field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0),
+      )
+      if (missingFields.length > 0) {
+        toast({
+          title: "Images required",
+          description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+          variant: "destructive",
+        })
+        return
+      }
     }
     const backCm = dimensions.length.trim()
     const frontCm = dimensions.height.trim()
@@ -1012,7 +1044,11 @@ export default function InstallerDashboardPage() {
         if (midN != null) formData.append("midLegFeet", String(cmToFeet(midN)))
         if (frontN != null) formData.append("frontLegFeet", String(cmToFeet(frontN)))
         formData.append("installerRemarks", notes)
-        formData.append("installationStatus", "installer_approved")
+        formData.append(
+          "installationStatus",
+          isPartial ? "installer_partial_approved" : "installer_approved",
+        )
+        formData.append("installation_partial_approved", isPartial ? "true" : "false")
         formData.append("force", "true")
         formData.append("allowFromPendingInstaller", "true")
 
@@ -1113,8 +1149,10 @@ export default function InstallerDashboardPage() {
             if (it.id !== quotation.id) return it
             return {
               ...it,
-              installationStatus: "installer_approved",
-              installation_status: "installer_approved",
+              installationStatus: isPartial ? "installer_partial_approved" : "installer_approved",
+              installation_status: isPartial ? "installer_partial_approved" : "installer_approved",
+              installationPartialApproved: isPartial,
+              installation_partial_approved: isPartial,
               ...(backNum != null && Number.isFinite(backNum)
                 ? { length: backNum, siteLength: backNum, backLegFeet: cmToFeet(backNum) }
                 : {}),
@@ -1127,11 +1165,13 @@ export default function InstallerDashboardPage() {
             }
           }),
         )
-        setInstallerQueueApprovedIds((prev) => new Set([...prev, quotation.id]))
+        if (!isPartial) {
+          setInstallerQueueApprovedIds((prev) => new Set([...prev, quotation.id]))
+        }
         setWorkflowMap((prev) => ({
           ...prev,
           [quotation.id]: {
-            status: "approved",
+            status: isPartial ? "inprogress" : "approved",
             notes,
             imageNames: [
               ...uploadedFiles.map((f) => f.name),
@@ -1141,12 +1181,14 @@ export default function InstallerDashboardPage() {
           },
         }))
         setExpandedQuotationId(null)
-        setActiveTab("approved")
+        setActiveTab(isPartial ? "partial" : "approved")
         toast({
-          title: "Installation complete",
-          description: useApi
-            ? "Moved to Approved Installation — use Send to Metering when ready to hand off."
-            : "Moved to Approved Installation (saved locally). Use Send to Metering when ready.",
+          title: isPartial ? "Partial Approved" : "Installation complete",
+          description: isPartial
+            ? "Saved under Partial Approved — finish remaining photos to move to Approved Installation."
+            : useApi
+              ? "Moved to Approved Installation — use Send to Metering when ready to hand off."
+              : "Moved to Approved Installation (saved locally). Use Send to Metering when ready.",
         })
       } else if (useApi) {
         toast({
@@ -1311,7 +1353,7 @@ export default function InstallerDashboardPage() {
 
         {activeSection === "metering" ? (
           <MeteringWorkflowPanel
-            description={`Metering queue for ${inventoryDisplayName}. Same Meter Pending → Meter in Discom → MCO flow as the Admin panel, saved through the backend metering APIs.`}
+            description={`Metering for ${inventoryDisplayName}. Same Admin → Metering stages: Meter Pending → Meter in Discom → WCC Pending → Meter Installation Pending → Final Step.`}
           />
         ) : activeSection === "inventory" ? (
           <div className="space-y-3">
@@ -1329,11 +1371,16 @@ export default function InstallerDashboardPage() {
         <>
         <Card className="border-border/60 bg-card/90 shadow-sm">
           <CardContent className="pt-5 space-y-3">
-            <div className="w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+            <div className="w-full rounded-lg border-2 border-sky-300/80 bg-sky-50/40 p-1.5">
+              <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-sky-800/80">
+                Installation (same as Admin)
+              </p>
+              <div className="flex flex-wrap gap-1">
               {(
                 [
                   { key: "all" as const, label: "All", count: sortedQuotations.length },
                   { key: "pending" as const, label: "Pending Installation", count: pendingQuotations.length },
+                  { key: "partial" as const, label: "Partial Approved", count: partialQuotations.length },
                   { key: "approved" as const, label: "Approved Installation", count: approvedQuotations.length },
                 ] as const
               ).map((item) => (
@@ -1346,10 +1393,12 @@ export default function InstallerDashboardPage() {
                   onClick={() => setActiveTab(item.key)}
                 >
                   {item.key === "pending" ? <Clock3 className="w-3.5 h-3.5" /> : null}
+                  {item.key === "partial" ? <Edit className="w-3.5 h-3.5" /> : null}
                   {item.key === "approved" ? <CheckCircle2 className="w-3.5 h-3.5" /> : null}
                   {item.label} ({item.count})
                 </Button>
               ))}
+              </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
@@ -1497,16 +1546,20 @@ export default function InstallerDashboardPage() {
                           className={
                             installerStatus === "approved"
                               ? "text-xs font-medium border-green-300/80 bg-green-50 text-green-800"
-                              : installerStatus === "inprogress"
-                                ? "text-xs font-medium border-sky-300/80 bg-sky-50 text-sky-800"
-                                : "text-xs font-medium border-amber-300/80 bg-amber-50 text-amber-800"
+                              : installerStatus === "partial"
+                                ? "text-xs font-medium border-violet-300/80 bg-violet-50 text-violet-800"
+                                : installerStatus === "inprogress"
+                                  ? "text-xs font-medium border-sky-300/80 bg-sky-50 text-sky-800"
+                                  : "text-xs font-medium border-amber-300/80 bg-amber-50 text-amber-800"
                           }
                         >
                           {installerStatus === "approved"
                             ? "Approved"
-                            : installerStatus === "inprogress"
-                              ? "In Progress"
-                              : "Pending"}
+                            : installerStatus === "partial"
+                              ? "Partial Approved"
+                              : installerStatus === "inprogress"
+                                ? "In Progress"
+                                : "Pending"}
                         </Badge>
                       </div>
                       <div className="flex flex-wrap items-center justify-start gap-2 lg:ml-auto lg:justify-end">
@@ -1522,7 +1575,7 @@ export default function InstallerDashboardPage() {
                             </Button>
                           </>
                         ) : null}
-                        {installerStatus === "inprogress" ? (
+                        {installerStatus === "inprogress" || installerStatus === "partial" ? (
                           <Button size="sm" onClick={() => openUploadPanel(q)}>
                             <ChevronDown className="w-3.5 h-3.5 mr-1" />
                             Upload
@@ -1662,9 +1715,13 @@ export default function InstallerDashboardPage() {
                             },
                           ]}
                           saveLabel={installerStatus === "approved" ? "Save changes" : "Complete & Mark as Approved"}
+                          secondarySaveLabel={
+                            installerStatus === "approved" ? undefined : "Partial Approved"
+                          }
                           saving={savingId === q.id}
                           onCancel={() => setExpandedQuotationId(null)}
-                          onSave={() => void handleApproveInstallation(q)}
+                          onSave={() => void handleApproveInstallation(q, "full")}
+                          onSecondarySave={() => void handleApproveInstallation(q, "partial")}
                         />
                       </div>
                     ) : null}

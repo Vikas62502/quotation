@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
 import { LogOut, BadgeCheck, FileCheck2, ShieldCheck, Search, CalendarDays, ChevronDown } from "lucide-react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { api } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
 
 type BaldevQuotation = {
   id: string
@@ -40,11 +40,12 @@ export default function BaldevDashboardPage() {
   const { isAuthenticated, role, baldev, logout } = useAuth()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState("queue")
+  const [activeTab, setActiveTab] = useState<"all" | "dcr" | "pending" | "done">("dcr")
   const [searchTerm, setSearchTerm] = useState("")
   const [quotations, setQuotations] = useState<BaldevQuotation[]>([])
   const [installerWorkflowMap, setInstallerWorkflowMap] = useState<Record<string, InstallerWorkflowItem>>({})
   const [baldevWorkflowMap, setBaldevWorkflowMap] = useState<Record<string, BaldevWorkflowItem>>({})
+  const [dcrGeneratedIds, setDcrGeneratedIds] = useState<Record<string, boolean>>({})
   const [savingId, setSavingId] = useState<string | null>(null)
   const [finalDocsExpandedId, setFinalDocsExpandedId] = useState<string | null>(null)
   const [finalDocsSavingId, setFinalDocsSavingId] = useState<string | null>(null)
@@ -75,11 +76,33 @@ export default function BaldevDashboardPage() {
     } catch {
       setBaldevWorkflowMap({})
     }
+    try {
+      const raw = JSON.parse(localStorage.getItem("baldevDcrGenerated") || "[]")
+      const ids = Array.isArray(raw) ? raw : []
+      const map: Record<string, boolean> = {}
+      for (const id of ids) {
+        if (typeof id === "string" && id.trim()) map[id.trim()] = true
+      }
+      setDcrGeneratedIds(map)
+    } catch {
+      setDcrGeneratedIds({})
+    }
   }, [])
 
   useEffect(() => {
     localStorage.setItem("baldevWorkflowMap", JSON.stringify(baldevWorkflowMap))
   }, [baldevWorkflowMap])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        "baldevDcrGenerated",
+        JSON.stringify(Object.keys(dcrGeneratedIds).filter((id) => dcrGeneratedIds[id])),
+      )
+    } catch {
+      /* ignore */
+    }
+  }, [dcrGeneratedIds])
 
   useEffect(() => {
     const loadInstallerApprovedData = async () => {
@@ -158,6 +181,16 @@ export default function BaldevDashboardPage() {
       .sort((a, b) => toTimestamp(getInstallerApprovedDate(a)) - toTimestamp(getInstallerApprovedDate(b)))
   }, [quotations, installerWorkflowMap, baldevWorkflowMap, normalizedSearch])
 
+  /** Same split as Admin → Final confirmation: DCR Generation → Final process → Done. */
+  const dcrQuotations = useMemo(
+    () => queueQuotations.filter((q) => !dcrGeneratedIds[q.id]),
+    [queueQuotations, dcrGeneratedIds],
+  )
+  const finalProcessQuotations = useMemo(
+    () => queueQuotations.filter((q) => Boolean(dcrGeneratedIds[q.id])),
+    [queueQuotations, dcrGeneratedIds],
+  )
+
   const finalClosedQuotations = useMemo(() => {
     return quotations
       .filter((q) => isFinalClosed(q))
@@ -173,6 +206,22 @@ export default function BaldevDashboardPage() {
       })
   }, [quotations, baldevWorkflowMap, normalizedSearch])
 
+  const activeList = useMemo(() => {
+    if (activeTab === "dcr") return dcrQuotations
+    if (activeTab === "pending") return finalProcessQuotations
+    if (activeTab === "done") return finalClosedQuotations
+    return [...queueQuotations, ...finalClosedQuotations]
+  }, [activeTab, dcrQuotations, finalProcessQuotations, finalClosedQuotations, queueQuotations])
+
+  const markDcrGenerated = (quotationId: string) => {
+    setDcrGeneratedIds((prev) => ({ ...prev, [quotationId]: true }))
+    setActiveTab("pending")
+    toast({
+      title: "DCR generated",
+      description: "Moved to Final process.",
+    })
+  }
+
   const markFinalApproved = async (quotationId: string) => {
     setSavingId(quotationId)
     try {
@@ -185,8 +234,9 @@ export default function BaldevDashboardPage() {
       }))
       toast({
         title: "Final approval done",
-        description: "Moved to Final Closure.",
+        description: "Moved to Done (Final confirmation).",
       })
+      setActiveTab("done")
     } finally {
       setSavingId(null)
     }
@@ -262,55 +312,75 @@ export default function BaldevDashboardPage() {
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
             <BadgeCheck className="w-4 h-4 text-primary" />
           </div>
-          <h1 className="text-xl font-semibold">Baldev Confirmation Dashboard</h1>
+          <h1 className="text-xl font-semibold">Final confirmation</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          Welcome, {baldev?.firstName || "Baldev"}. Verify warranty/meter documents and finalize plant completion.
+          Welcome, {baldev?.firstName || "Baldev"}. Same stages as Admin → Final confirmation: DCR Generation → Final
+          process → Done.
         </p>
 
         <Card className="border-border/60 bg-card/90 shadow-sm">
           <CardContent className="pt-5 space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <Tabs value={activeTab} onValueChange={setActiveTab}>
-                <TabsList className="h-9">
-                  <TabsTrigger value="queue" className="text-xs gap-1.5">
-                    <FileCheck2 className="w-3.5 h-3.5" />
-                    Confirmation Queue ({queueQuotations.length})
-                  </TabsTrigger>
-                  <TabsTrigger value="final" className="text-xs gap-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5" />
-                    Final Closure ({finalClosedQuotations.length})
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-
-              <div className="relative w-full md:w-80">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                <Input
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  placeholder="Search by customer, mobile, quotation id"
-                  className="h-9 pl-8 text-sm"
-                />
+            <div className="w-full rounded-lg border-2 border-violet-300/80 bg-violet-50/40 p-1.5">
+              <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-violet-900/80">
+                Final confirmation (same as Admin)
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {(
+                  [
+                    { key: "all" as const, label: `All (${queueQuotations.length + finalClosedQuotations.length})` },
+                    { key: "dcr" as const, label: `DCR Generation (${dcrQuotations.length})` },
+                    { key: "pending" as const, label: `Final process (${finalProcessQuotations.length})` },
+                    { key: "done" as const, label: `Done (${finalClosedQuotations.length})` },
+                  ] as const
+                ).map((item) => (
+                  <Button
+                    key={item.key}
+                    type="button"
+                    size="sm"
+                    variant={activeTab === item.key ? "default" : "ghost"}
+                    className={cn("h-8 text-xs", activeTab === item.key && "shadow-sm")}
+                    onClick={() => setActiveTab(item.key)}
+                  >
+                    {item.key === "dcr" ? <FileCheck2 className="w-3.5 h-3.5 mr-1" /> : null}
+                    {item.key === "pending" ? <ShieldCheck className="w-3.5 h-3.5 mr-1" /> : null}
+                    {item.key === "done" ? <BadgeCheck className="w-3.5 h-3.5 mr-1" /> : null}
+                    {item.label}
+                  </Button>
+                ))}
               </div>
+            </div>
+
+            <div className="relative w-full md:w-80 md:ml-auto">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search by customer, mobile, quotation id"
+                className="h-9 pl-8 text-sm"
+              />
             </div>
           </CardContent>
         </Card>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="hidden">
-            <TabsTrigger value="queue">Queue</TabsTrigger>
-            <TabsTrigger value="final">Final</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="queue" className="space-y-3 pt-2">
+        <div className="space-y-3 pt-1">
             {isLoading ? (
-              <Card><CardContent className="py-8 text-sm text-muted-foreground">Loading installer-approved records...</CardContent></Card>
-            ) : queueQuotations.length === 0 ? (
-              <Card><CardContent className="py-8 text-sm text-muted-foreground">No installer-approved records in confirmation queue.</CardContent></Card>
+              <Card><CardContent className="py-8 text-sm text-muted-foreground">Loading final confirmation records...</CardContent></Card>
+            ) : activeList.length === 0 ? (
+              <Card><CardContent className="py-8 text-sm text-muted-foreground">No records in this stage.</CardContent></Card>
             ) : (
-              queueQuotations.map((q) => (
-                <Card key={q.id} className="border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm">
+              activeList.map((q) => {
+                const isDone = isFinalClosed(q)
+                const needsDcr = !isDone && !dcrGeneratedIds[q.id]
+                return (
+                <Card
+                  key={q.id}
+                  className={
+                    isDone
+                      ? "border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm"
+                      : "border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm"
+                  }
+                >
                   <CardContent className="p-4">
                     <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
                       <div className="min-w-[180px] flex-1">
@@ -318,10 +388,18 @@ export default function BaldevDashboardPage() {
                         <p className="text-xs text-muted-foreground mt-0.5">{q.customer?.mobile || "No mobile"} • {q.id}</p>
                       </div>
                       <div className="min-w-[120px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Installer Approved</p>
+                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                          {isDone ? "Closed On" : "Installer Approved"}
+                        </p>
                         <p className="text-xs font-medium flex items-center gap-1">
                           <CalendarDays className="w-3 h-3 text-muted-foreground" />
-                          {getInstallerApprovedDate(q) ? new Date(getInstallerApprovedDate(q) as string).toLocaleDateString("en-IN") : "N/A"}
+                          {isDone
+                            ? baldevWorkflowMap[q.id]?.updatedAt
+                              ? new Date(baldevWorkflowMap[q.id].updatedAt).toLocaleDateString("en-IN")
+                              : "N/A"
+                            : getInstallerApprovedDate(q)
+                              ? new Date(getInstallerApprovedDate(q) as string).toLocaleDateString("en-IN")
+                              : "N/A"}
                         </p>
                       </div>
                       <div className="min-w-[120px]">
@@ -329,16 +407,34 @@ export default function BaldevDashboardPage() {
                         <p className="text-sm font-semibold">₹{getAmount(q).toLocaleString()}</p>
                       </div>
                       <div className="min-w-[130px]">
-                        <Badge variant="outline" className="text-xs">Pending Baldev</Badge>
+                        <Badge
+                          variant="outline"
+                          className={
+                            isDone
+                              ? "text-xs border-green-300 bg-green-50 text-green-800"
+                              : needsDcr
+                                ? "text-xs border-amber-300 bg-amber-50 text-amber-900"
+                                : "text-xs border-sky-300 bg-sky-50 text-sky-800"
+                          }
+                        >
+                          {isDone ? "Done" : needsDcr ? "DCR Generation" : "Final process"}
+                        </Badge>
                       </div>
-                      <div className="ml-auto flex gap-2">
+                      <div className="ml-auto flex flex-wrap gap-2 justify-end">
                         <Button variant="outline" size="sm" onClick={() => toggleFinalDocuments(q.id)}>
                           <ChevronDown className="w-3.5 h-3.5 mr-1" />
                           Update Final Details
                         </Button>
-                        <Button size="sm" onClick={() => markFinalApproved(q.id)} disabled={savingId === q.id}>
-                          {savingId === q.id ? "Saving..." : "Mark Final Approved"}
-                        </Button>
+                        {needsDcr ? (
+                          <Button size="sm" onClick={() => markDcrGenerated(q.id)}>
+                            Generate DCR
+                          </Button>
+                        ) : null}
+                        {!isDone && !needsDcr ? (
+                          <Button size="sm" onClick={() => markFinalApproved(q.id)} disabled={savingId === q.id}>
+                            {savingId === q.id ? "Saving..." : "Mark Final Approved"}
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
                     {finalDocsExpandedId === q.id ? (
@@ -401,107 +497,9 @@ export default function BaldevDashboardPage() {
                     ) : null}
                   </CardContent>
                 </Card>
-              ))
+              )})
             )}
-          </TabsContent>
-
-          <TabsContent value="final" className="space-y-3 pt-2">
-            {isLoading ? (
-              <Card><CardContent className="py-8 text-sm text-muted-foreground">Loading final closure records...</CardContent></Card>
-            ) : finalClosedQuotations.length === 0 ? (
-              <Card><CardContent className="py-8 text-sm text-muted-foreground">No final closures yet.</CardContent></Card>
-            ) : (
-              finalClosedQuotations.map((q) => (
-                <Card key={q.id} className="border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm">
-                  <CardContent className="p-4">
-                    <div className="flex flex-wrap md:flex-nowrap items-center gap-3">
-                      <div className="min-w-[180px] flex-1">
-                        <p className="text-sm font-semibold leading-tight">{q.customer?.firstName || "N/A"} {q.customer?.lastName || ""}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{q.customer?.mobile || "No mobile"} • {q.id}</p>
-                      </div>
-                      <div className="min-w-[120px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Closed On</p>
-                        <p className="text-xs font-medium flex items-center gap-1">
-                          <CalendarDays className="w-3 h-3 text-muted-foreground" />
-                          {baldevWorkflowMap[q.id]?.updatedAt ? new Date(baldevWorkflowMap[q.id].updatedAt).toLocaleDateString("en-IN") : "N/A"}
-                        </p>
-                      </div>
-                      <div className="min-w-[120px]">
-                        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                        <p className="text-sm font-semibold">₹{getAmount(q).toLocaleString()}</p>
-                      </div>
-                      <div className="ml-auto flex items-center gap-2">
-                        <Button variant="outline" size="sm" onClick={() => toggleFinalDocuments(q.id)}>
-                          <ChevronDown className="w-3.5 h-3.5 mr-1" />
-                          Update Final Details
-                        </Button>
-                        <Badge className="bg-green-600 text-white text-xs">Final Closure</Badge>
-                      </div>
-                    </div>
-                    {finalDocsExpandedId === q.id ? (
-                      <div className="mt-4 rounded-md border border-border/70 p-3">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <div className="space-y-1">
-                            <p className="text-xs">Customer Final Bill (PDF/JPG)</p>
-                            <Input
-                              type="file"
-                              accept="image/*,.heic,.heif,.pdf"
-                              className="h-9 text-sm"
-                              onChange={(e) =>
-                                setFinalBillFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-xs">Panel Warranty (PDF/JPG)</p>
-                            <Input
-                              type="file"
-                              accept="image/*,.heic,.heif,.pdf"
-                              className="h-9 text-sm"
-                              onChange={(e) =>
-                                setPanelWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-xs">Inverter Warranty (PDF/JPG)</p>
-                            <Input
-                              type="file"
-                              accept="image/*,.heic,.heif,.pdf"
-                              className="h-9 text-sm"
-                              onChange={(e) =>
-                                setInverterWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
-                              }
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <p className="text-xs">Work Completion Warranty (PDF/JPG)</p>
-                            <Input
-                              type="file"
-                              accept="image/*,.heic,.heif,.pdf"
-                              className="h-9 text-sm"
-                              onChange={(e) =>
-                                setWorkCompletionWarrantyFileByQuotation((prev) => ({ ...prev, [q.id]: e.target.files?.[0] || null }))
-                              }
-                            />
-                          </div>
-                        </div>
-                        <div className="mt-3 flex justify-end gap-2">
-                          <Button variant="outline" size="sm" onClick={() => setFinalDocsExpandedId(null)}>
-                            Cancel
-                          </Button>
-                          <Button size="sm" onClick={() => void saveFinalDocuments(q.id)} disabled={finalDocsSavingId === q.id}>
-                            {finalDocsSavingId === q.id ? "Saving..." : "Save Details"}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </TabsContent>
-        </Tabs>
+        </div>
       </main>
     </div>
   )

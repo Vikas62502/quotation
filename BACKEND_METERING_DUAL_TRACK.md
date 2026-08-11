@@ -92,12 +92,14 @@ ALTER TABLE quotations
 
 ### B.2 Who appears in Bank tabs
 
-Row is bank-eligible when payment type is **loan** or **mix** (cash+loan), **and** it is still in the metering pipeline (any of: Meter Pending / Discom / WCC / Meter Install / Final Step — i.e. not yet Baldev-done / completed).
+Row is bank-eligible when payment type is **loan** or **mix** (cash+loan), **and** it is already in the **meter pipeline** (Meter Pending / Discom / post-Discom WCC / Meter Install / Final Step).
+
+**Do not** put Installation → **Approved** rows into Bank Process until they have entered metering (`pending_metering` / later). Those stay on the meter track under WCC Pending entry only.
 
 | UI tab | Filter |
 |--------|--------|
-| Bank Process | metering-visible **and** payment ∈ `{loan, mix}` **and** `bank_process_done !== true` |
-| Pending Payment | metering-visible **and** payment ∈ `{loan, mix}` **and** `bank_process_done === true` |
+| Bank Process | meter-pipeline **and** payment ∈ `{loan, mix}` **and** `bank_process_done !== true` |
+| Pending Payment | meter-pipeline **and** payment ∈ `{loan, mix}` **and** `bank_process_done === true` |
 
 ### B.3 Echo payment type on GET
 

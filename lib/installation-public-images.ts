@@ -82,6 +82,12 @@ function extractPiMediaUrls(q: Record<string, unknown>): string[] {
   return urls
 }
 
+/** Public PI / proforma document URLs on a quotation (list or detail shape). */
+export function extractPiUploadUrls(q: Record<string, unknown> | null | undefined): string[] {
+  if (!q || typeof q !== "object") return []
+  return extractPiMediaUrls(q)
+}
+
 function addDedupedUrl(sink: string[], max: number, s?: string) {
   const normalized = toPublicOpenHref(s)
   if (!normalized || sink.includes(normalized) || sink.length >= max) return

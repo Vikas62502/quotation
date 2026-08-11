@@ -23,6 +23,8 @@ import {
   Users,
   Loader2,
   Filter,
+  Upload,
+  X,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
@@ -72,6 +74,8 @@ import {
   mergeInstallerReleaseOntoQuotation,
   readInstallerReleaseMap,
 } from "@/lib/operational-install-queue"
+import { extractPiUploadUrls } from "@/lib/installation-public-images"
+import { toPublicOpenHref } from "@/lib/media-url"
 
 
 // Payment Phase Interface
@@ -956,6 +960,9 @@ export default function AccountManagementPage() {
   /** Draft Cost of site values while typing; flushed to backend on blur. */
   const [siteCostDrafts, setSiteCostDrafts] = useState<Record<string, string>>({})
   const [savingSiteCostId, setSavingSiteCostId] = useState<string | null>(null)
+  /** Session PI URLs after upload when GET list omits piUploadUrls. */
+  const [piUrlsByQuotation, setPiUrlsByQuotation] = useState<Record<string, string[]>>({})
+  const [uploadingPiId, setUploadingPiId] = useState<string | null>(null)
   /**
    * Session overrides when GET approved list omits siteCost after a successful save.
    * Not localStorage — cleared on full page reload (backend GET must echo siteCost).
@@ -1717,6 +1724,128 @@ export default function AccountManagementPage() {
       })
     } finally {
       setSavingSiteCostId(null)
+    }
+  }
+
+  const getActivePaymentPiUrls = (payment: CustomerPayment): string[] => {
+    const session = piUrlsByQuotation[payment.quotationId]
+    if (session) return session
+    return extractPiUploadUrls(payment.quotation as unknown as Record<string, unknown>)
+  }
+
+  const uploadPaymentPiFiles = async (quotationId: string, files: File[]) => {
+    if (files.length === 0) return
+    const payment = customerPayments.find((p) => p.quotationId === quotationId)
+    const existing = payment ? getActivePaymentPiUrls(payment) : piUrlsByQuotation[quotationId] || []
+
+    if (!useApi) {
+      toast({
+        title: "API mode required",
+        description: "Enable backend API mode to upload PI documents.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setUploadingPiId(quotationId)
+    try {
+      const response = (await api.quotations.uploadPiDocuments(quotationId, files, existing)) as Record<
+        string,
+        unknown
+      >
+      const fromResponse = extractPiUploadUrls({
+        ...response,
+        documents: (response.documents as Record<string, unknown>) || response,
+        piUploadUrls:
+          (response.piUploadUrls as string[]) ||
+          (response.pi_upload_urls as string[]) ||
+          ((response.data as Record<string, unknown> | undefined)?.piUploadUrls as string[]),
+      })
+      const nextUrls =
+        fromResponse.length > 0
+          ? fromResponse
+          : existing
+
+      setPiUrlsByQuotation((prev) => ({
+        ...prev,
+        [quotationId]: fromResponse.length > 0 ? nextUrls : existing,
+      }))
+      if (fromResponse.length > 0) {
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === quotationId
+              ? ({
+                  ...q,
+                  piUploadUrls: nextUrls,
+                  pi_upload_urls: nextUrls,
+                  piUploadUrl: nextUrls[0],
+                  pi_upload_url: nextUrls[0],
+                } as Quotation)
+              : q,
+          ),
+        )
+      }
+      toast({
+        title: "PI uploaded",
+        description:
+          fromResponse.length > 0
+            ? `${files.length} file(s) saved for this quotation.`
+            : `${files.length} file(s) uploaded. Refresh if the list does not update yet.`,
+      })
+    } catch (error) {
+      toast({
+        title: "PI upload failed",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Could not upload PI. Backend needs POST /quotations/:id/pi-upload.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingPiId(null)
+    }
+  }
+
+  const removePaymentPiUrl = async (quotationId: string, urlToRemove: string) => {
+    const payment = customerPayments.find((p) => p.quotationId === quotationId)
+    const existing = payment ? getActivePaymentPiUrls(payment) : piUrlsByQuotation[quotationId] || []
+    const nextUrls = existing.filter((u) => u !== urlToRemove)
+
+    setPiUrlsByQuotation((prev) => ({ ...prev, [quotationId]: nextUrls }))
+    setQuotations((prev) =>
+      prev.map((q) =>
+        q.id === quotationId
+          ? ({
+              ...q,
+              piUploadUrls: nextUrls,
+              pi_upload_urls: nextUrls,
+              piUploadUrl: nextUrls[0],
+              pi_upload_url: nextUrls[0],
+            } as Quotation)
+          : q,
+      ),
+    )
+
+    if (!useApi) return
+
+    setUploadingPiId(quotationId)
+    try {
+      await api.quotations.uploadPiDocuments(quotationId, [], nextUrls, { replace: true })
+      toast({
+        title: "PI removed",
+        description: "Document list updated.",
+      })
+    } catch (error) {
+      toast({
+        title: "Could not sync PI removal",
+        description:
+          error instanceof ApiError
+            ? `${error.message} — removed locally; refresh may restore until backend supports replace.`
+            : "Removed locally. Backend may still keep the old file.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingPiId(null)
     }
   }
 
@@ -2753,16 +2882,21 @@ export default function AccountManagementPage() {
 
         {/* Tabbed Interface */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="mb-4 h-auto min-h-9 p-1 w-full justify-start overflow-x-auto whitespace-nowrap">
-            <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5">
-              <FileText className="w-4 h-4" />
-              Approved Quotations
-            </TabsTrigger>
-            <TabsTrigger value="payments" className="gap-1.5 text-xs px-3 py-1.5">
-              <Wallet className="w-4 h-4" />
-              Payment Management
-            </TabsTrigger>
-          </TabsList>
+          <div className="mb-3 w-full rounded-lg border-2 border-emerald-300/80 bg-emerald-50/40 p-1.5">
+            <p className="px-2 pb-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-900/80">
+              Accounts (same as Admin)
+            </p>
+            <TabsList className="h-auto w-full justify-start bg-transparent p-0 gap-1 flex-wrap">
+              <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
+                <FileText className="w-4 h-4" />
+                Approved Quotations
+              </TabsTrigger>
+              <TabsTrigger value="payments" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
+                <Wallet className="w-4 h-4" />
+                Payment Management
+              </TabsTrigger>
+            </TabsList>
+          </div>
 
           {/* Approved Quotations Tab */}
           <TabsContent value="approved" className="space-y-6">
@@ -4219,6 +4353,91 @@ export default function AccountManagementPage() {
                       )
                     })()}
                   </div>
+                </div>
+
+                <div className="border-t border-border/50 pt-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">PI upload</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Upload multiple PDFs or images (JPG, PNG, WEBP, HEIC). Select several files at once.
+                      </p>
+                    </div>
+                    <div>
+                      <Input
+                        id={`am-pi-upload-${activePayment.quotationId}`}
+                        type="file"
+                        accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
+                        multiple
+                        className="hidden"
+                        disabled={uploadingPiId === activePayment.quotationId}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || [])
+                          e.currentTarget.value = ""
+                          void uploadPaymentPiFiles(activePayment.quotationId, files)
+                        }}
+                      />
+                      <Label
+                        htmlFor={`am-pi-upload-${activePayment.quotationId}`}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium",
+                          uploadingPiId === activePayment.quotationId
+                            ? "cursor-not-allowed opacity-60"
+                            : "cursor-pointer hover:bg-muted/40",
+                        )}
+                      >
+                        {uploadingPiId === activePayment.quotationId ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="w-3.5 h-3.5" />
+                        )}
+                        {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI (multiple)"}
+                      </Label>
+                    </div>
+                  </div>
+                  {(() => {
+                    const piUrls = getActivePaymentPiUrls(activePayment)
+                    if (piUrls.length === 0) {
+                      return (
+                        <p className="text-xs text-muted-foreground">No PI documents uploaded yet.</p>
+                      )
+                    }
+                    return (
+                      <ul className="space-y-1.5">
+                        {piUrls.map((url, index) => {
+                          const href = toPublicOpenHref(url) || url
+                          const label =
+                            url.split("/").pop()?.split("?")[0] || `PI document ${index + 1}`
+                          return (
+                            <li
+                              key={`${activePayment.quotationId}-pi-${index}-${url}`}
+                              className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5"
+                            >
+                              <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="min-w-0 flex-1 truncate text-xs text-primary underline-offset-2 hover:underline"
+                                title={label}
+                              >
+                                {decodeURIComponent(label)}
+                              </a>
+                              <button
+                                type="button"
+                                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                aria-label={`Remove ${label}`}
+                                disabled={uploadingPiId === activePayment.quotationId}
+                                onClick={() => void removePaymentPiUrl(activePayment.quotationId, url)}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )
+                  })()}
                 </div>
               </div>
 
