@@ -24,7 +24,7 @@ import { SolarLogo } from "@/components/solar-logo"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import { Menu, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall, Eye, ChevronDown } from "lucide-react"
+import { Menu, Home, Users, FileText, PlusCircle, LogOut, User, Shield, PhoneCall, Eye, ChevronDown, Wallet } from "lucide-react"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
 
 const getNavItems = (isAdmin: boolean, role: string | null) => {
@@ -50,6 +50,7 @@ const getNavItems = (isAdmin: boolean, role: string | null) => {
     { href: "/dashboard", label: "Dashboard", icon: Home },
     { href: "/dashboard/customers", label: "Customers", icon: Users },
     { href: "/dashboard/quotations", label: "Quotations", icon: FileText },
+    { href: "/dashboard/payments", label: "Payments", icon: Wallet },
     { href: "/dashboard/calling-data", label: "Calling Data", icon: PhoneCall },
   ]
 }

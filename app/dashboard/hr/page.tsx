@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, UserPlus, Search } from "lucide-react"
+import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, Search, UserRoundPlus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import {
   buildCallingActionsQueryDates,
@@ -80,7 +80,10 @@ type UploadedLeadBatch = {
   assignedCount: number
   unassignedCount: number
   completedCount: number
+  /** Display names for the eligible dealer pool on this upload. */
   dealers: string[]
+  /** Dealer IDs in the eligible pool (when API provides them). */
+  dealerIds: string[]
   rows: ParsedCsvRow[]
 }
 
@@ -114,9 +117,9 @@ const extractUploadedLeadBatchesList = (response: unknown): any[] => {
 /** Per-dealer open-lead cap sent on upload (backend Zod max is 50). Keep at 1 — same as earlier working assign. */
 const DEFAULT_ACTIVE_LIMIT = 1
 /**
- * Upload uses active_cap (proven backend path). Drain leftover Unassigned with
- * "Assign unassigned" / assign-unassigned API — do NOT send round_robin_all on
- * upload (that path sent oversized limits → "expected number to be <=50").
+ * Upload uses active_cap (proven backend path). Drain leftover Unassigned via
+ * Manage dealers → replace pool + assign-unassigned API. Do NOT send
+ * round_robin_all on upload (oversized limits → "expected number to be <=50").
  */
 const HR_UPLOAD_ASSIGNMENT_MODE = "active_cap" as const
 
@@ -255,8 +258,10 @@ export default function HrDashboardPage() {
   const [realtimeTick, setRealtimeTick] = useState(0)
   const [uploadedLeadBatches, setUploadedLeadBatches] = useState<UploadedLeadBatch[]>([])
   const [isLoadingUploadedBatches, setIsLoadingUploadedBatches] = useState(false)
-  const [assigningBatchId, setAssigningBatchId] = useState<string | null>(null)
   const [uploadedBatchesLoadError, setUploadedBatchesLoadError] = useState<string | null>(null)
+  const [addDealersBatch, setAddDealersBatch] = useState<UploadedLeadBatch | null>(null)
+  const [addDealerIds, setAddDealerIds] = useState<string[]>([])
+  const [isSavingDealers, setIsSavingDealers] = useState(false)
   const [isBatchModalOpen, setIsBatchModalOpen] = useState(false)
   const [activeBatch, setActiveBatch] = useState<UploadedLeadBatch | null>(null)
   const [activeBatchRows, setActiveBatchRows] = useState<ParsedCsvRow[]>([])
@@ -449,19 +454,60 @@ export default function HrDashboardPage() {
             ? [item.dealerId]
             : []
 
-    const normalizedDealers = dealerValues
-      .map((value: any) => {
-        if (typeof value === "string") {
-          const dealer = fallbackDealers.find((d) => d.id === value)
-          return dealer ? `${dealer.firstName} ${dealer.lastName}`.trim() : value
+    const dealerIdSet = new Set<string>()
+    const normalizedDealers: string[] = []
+
+    for (const value of dealerValues) {
+      if (typeof value === "string") {
+        const dealer = fallbackDealers.find((d) => d.id === value)
+        if (dealer) {
+          dealerIdSet.add(dealer.id)
+          const name = `${dealer.firstName} ${dealer.lastName}`.trim()
+          if (name && !normalizedDealers.includes(name)) normalizedDealers.push(name)
+        } else {
+          // May be a bare name when API only returns display names
+          const byName = fallbackDealers.find(
+            (d) => normalizeName(`${d.firstName} ${d.lastName}`) === normalizeName(value),
+          )
+          if (byName) {
+            dealerIdSet.add(byName.id)
+            const name = `${byName.firstName} ${byName.lastName}`.trim()
+            if (name && !normalizedDealers.includes(name)) normalizedDealers.push(name)
+          } else if (value.trim() && !normalizedDealers.includes(value.trim())) {
+            normalizedDealers.push(value.trim())
+          }
         }
-        if (value && typeof value === "object") {
-          const fullName = `${value.firstName || ""} ${value.lastName || ""}`.trim()
-          return fullName || value.name || value.id || ""
+        continue
+      }
+      if (value && typeof value === "object") {
+        const obj = value as Record<string, unknown>
+        const id = String(obj.id || obj.dealerId || obj.dealer_id || "").trim()
+        const fullName =
+          `${obj.firstName || ""} ${obj.lastName || ""}`.trim() ||
+          String(obj.name || "").trim()
+        if (id) dealerIdSet.add(id)
+        else if (fullName) {
+          const byName = fallbackDealers.find(
+            (d) => normalizeName(`${d.firstName} ${d.lastName}`) === normalizeName(fullName),
+          )
+          if (byName) dealerIdSet.add(byName.id)
         }
-        return ""
-      })
-      .filter(Boolean)
+        if (fullName && !normalizedDealers.includes(fullName)) normalizedDealers.push(fullName)
+        else if (id) {
+          const dealer = fallbackDealers.find((d) => d.id === id)
+          const name = dealer ? `${dealer.firstName} ${dealer.lastName}`.trim() : id
+          if (name && !normalizedDealers.includes(name)) normalizedDealers.push(name)
+        }
+      }
+    }
+
+    // Also accept explicit dealerIds array alongside dealers[]
+    if (Array.isArray(item?.dealerIds)) {
+      for (const rawId of item.dealerIds) {
+        const id = String(rawId || "").trim()
+        if (id) dealerIdSet.add(id)
+      }
+    }
 
     const rowCountFromApi = Number(item?.rowCount || item?.totalRows || item?.count || 0)
     const resolvedCounts = resolveHrUploadBatchCounts(rows, rowCountFromApi, item)
@@ -475,6 +521,7 @@ export default function HrDashboardPage() {
       unassignedCount: resolvedCounts.unassigned,
       completedCount: resolvedCounts.completed,
       dealers: normalizedDealers,
+      dealerIds: Array.from(dealerIdSet),
       rows,
     }
   }
@@ -1093,103 +1140,131 @@ export default function HrDashboardPage() {
     }
   }
 
-  const assignUnassignedForBatch = async (batch: UploadedLeadBatch) => {
+  const resolveBatchDealerIds = (batch: UploadedLeadBatch): string[] => {
+    if (batch.dealerIds.length > 0) return [...batch.dealerIds]
+    const ids: string[] = []
+    const active = filterActiveDealers(dealers)
+    for (const name of batch.dealers) {
+      const match = active.find(
+        (d) => normalizeName(`${d.firstName} ${d.lastName}`) === normalizeName(name),
+      )
+      if (match && !ids.includes(match.id)) ids.push(match.id)
+    }
+    return ids
+  }
+
+  const openManageDealersDialog = (batch: UploadedLeadBatch) => {
+    setAddDealersBatch(batch)
+    setAddDealerIds(resolveBatchDealerIds(batch))
+  }
+
+  const toggleManageDealer = (dealerId: string) => {
+    setAddDealerIds((prev) =>
+      prev.includes(dealerId) ? prev.filter((id) => id !== dealerId) : [...prev, dealerId],
+    )
+  }
+
+  const saveManagedDealers = async () => {
+    if (!addDealersBatch) return
     if (!useApi) {
       toast({
         title: "API mode required",
-        description: "Enable backend API mode to assign unassigned leads.",
+        description: "Enable backend API mode to manage dealers on a batch.",
         variant: "destructive",
       })
       return
     }
-    if (batch.unassignedCount <= 0) {
+    if (addDealerIds.length === 0) {
       toast({
-        title: "Nothing to assign",
-        description: "This batch already has Unassigned = 0.",
+        title: "Select dealers",
+        description: "Keep at least one dealer selected for this batch pool.",
+        variant: "destructive",
       })
       return
     }
 
-    setAssigningBatchId(batch.id)
-    try {
-      const result = (await api.hr.assignUnassignedLeads(batch.id)) as any
-      const assigned = Number(
-        result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? result?.data?.assignedCount ?? 0,
-      )
-      const remaining = Number(
-        result?.unassignedRemaining ??
-          result?.unassignedCount ??
-          result?.data?.unassignedRemaining ??
-          result?.data?.unassignedCount ??
-          Math.max(0, batch.unassignedCount - assigned),
-      )
-      setRealtimeTick((prev) => prev + 1)
-      toast({
-        title: remaining === 0 ? "Unassigned cleared" : "Partial assign",
-        description:
-          remaining === 0
-            ? `Assigned ${assigned || batch.unassignedCount} lead(s) to pool dealers. Unassigned is now 0.`
-            : `Assigned ${assigned} lead(s). ${remaining} still unassigned — check backend assign-unassigned support (HANDOFF §15).`,
-        variant: remaining === 0 ? "default" : "destructive",
+    const batchId = addDealersBatch.id
+    const selectedIds = [...addDealerIds]
+    const selectedNames = selectedIds
+      .map((id) => {
+        const d = dealers.find((x) => x.id === id)
+        return d ? `${d.firstName} ${d.lastName}`.trim() : id
       })
-      return { ok: remaining === 0, assigned, remaining }
+      .filter(Boolean)
+
+    setIsSavingDealers(true)
+    try {
+      // Pool replace only — keep Save fast.
+      await api.hr.updateUploadDealerPool(batchId, selectedIds, {
+        mode: "replace",
+        existingDealerIds: [],
+      })
+
+      setAddDealersBatch(null)
+      setAddDealerIds([])
+      setIsSavingDealers(false)
+      setRealtimeTick((prev) => prev + 1)
+
+      toast({
+        title: "Dealers updated",
+        description: `Pool set to ${selectedNames.join(", ")}. Ensuring each dealer has at most 1 active lead (rest stay Unassigned)…`,
+      })
+
+      // Always rebalance: 1 open lead per dealer; excess Assigned → Unassigned; top up from Unassigned.
+      void (async () => {
+        try {
+          const result = (await api.hr.assignUnassignedLeads(batchId, {
+            assignmentMode: "active_cap",
+            activeLimitPerDealer: DEFAULT_ACTIVE_LIMIT,
+            rebalance: true,
+          })) as any
+          const assigned = Number(
+            result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? result?.data?.assignedCount ?? 0,
+          )
+          const released = Number(
+            result?.released ?? result?.unassignedFromAssigned ?? result?.data?.released ?? 0,
+          )
+          const unassignedRemaining = Number(
+            result?.unassignedRemaining ??
+              result?.unassignedCount ??
+              result?.data?.unassignedRemaining ??
+              result?.data?.unassignedCount,
+          )
+          setRealtimeTick((prev) => prev + 1)
+          toast({
+            title: "Active leads balanced",
+            description:
+              Number.isFinite(unassignedRemaining)
+                ? `Seeded ~${assigned} lead(s)${released ? `, returned ~${released} excess to Unassigned` : ""}. Unassigned now ~${unassignedRemaining}; each dealer keeps 1 until they Complete.`
+                : `Each selected dealer gets up to ${DEFAULT_ACTIVE_LIMIT} active lead; the rest stay Unassigned until Complete.`,
+          })
+        } catch {
+          toast({
+            title: "Pool saved — balance still pending",
+            description:
+              "Dealer pool was updated, but active-cap assign failed. Backend must honor assignmentMode=active_cap + rebalance (1 lead per dealer).",
+            variant: "destructive",
+          })
+        }
+      })()
     } catch (error) {
       const message =
         error instanceof ApiError
           ? error.details?.[0]?.message || error.message
           : error instanceof Error
             ? error.message
-            : "Failed to assign unassigned leads."
+            : "Failed to update dealers."
       const missingEndpoint =
         error instanceof ApiError &&
         (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
       toast({
-        title: "Assign unassigned failed",
+        title: "Could not update dealers",
         description: missingEndpoint
-          ? `${message} Backend must implement POST …/assign-unassigned (HANDOFF §15).`
+          ? `${message} Backend needs PATCH /hr/leads/uploads/:id/dealers with full dealerIds[].`
           : message,
         variant: "destructive",
       })
-      return { ok: false, assigned: 0, remaining: batch.unassignedCount }
-    } finally {
-      setAssigningBatchId(null)
-    }
-  }
-
-  const assignAllUnassignedOldestFirst = async () => {
-    const pending = [...uploadedLeadBatches]
-      .filter((b) => b.unassignedCount > 0)
-      .sort((a, b) => new Date(a.uploadedAt || 0).getTime() - new Date(b.uploadedAt || 0).getTime())
-    if (pending.length === 0) {
-      toast({ title: "Nothing to assign", description: "All batches already have Unassigned = 0." })
-      return
-    }
-
-    setAssigningBatchId("__all__")
-    let totalAssigned = 0
-    let failed = 0
-    try {
-      for (const batch of pending) {
-        try {
-          const result = (await api.hr.assignUnassignedLeads(batch.id)) as any
-          totalAssigned += Number(
-            result?.assigned ?? result?.assignedCount ?? result?.data?.assigned ?? batch.unassignedCount ?? 0,
-          )
-        } catch {
-          failed += 1
-          break
-        }
-      }
-      setRealtimeTick((prev) => prev + 1)
-      toast({
-        title: failed ? "Stopped on backend error" : "Unassigned drain started",
-        description: failed
-          ? `Assigned ${totalAssigned} lead(s) then failed on a later batch. Retry Assign unassigned on the remaining files.`
-          : `Processed ${pending.length} batch(es) oldest-first. Assigned ~${totalAssigned} lead(s). Refresh badges should show Unassigned → 0.`,
-        variant: failed ? "destructive" : "default",
-      })
-    } finally {
-      setAssigningBatchId(null)
+      setIsSavingDealers(false)
     }
   }
 
@@ -1356,10 +1431,11 @@ export default function HrDashboardPage() {
                       })}
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      Leads are saved and seeded to the selected dealers on upload. To push any leftover rows out
-                      (Unassigned → 0), use <span className="font-medium text-foreground">Assign unassigned</span> on
-                      the batch below. Dealers then work assigned leads first-come-first-serve in Calling Data until
-                      Assigned drains to Completed.
+                      Leads are saved and seeded to the selected dealers on upload (1 active lead per dealer). To
+                      change the pool or rebalance active leads, use{" "}
+                      <span className="font-medium text-foreground">Add dealers</span> on the batch in Uploaded Data.
+                      Dealers then work that one lead in Calling Data; after Complete, the next Unassigned lead is
+                      assigned.
                     </p>
                   </div>
                 )}
@@ -1381,27 +1457,12 @@ export default function HrDashboardPage() {
                   <div className="space-y-1.5">
                     <CardTitle className="text-base">Uploaded Lead Data</CardTitle>
                     <CardDescription>
-                      Clear Unassigned first: use{" "}
-                      <span className="font-medium text-foreground">Assign unassigned</span> so remaining rows go
-                      round-robin to that file&apos;s dealers. Prefer oldest uploads first (FCFS). Dealers then finish
-                      Assigned → Completed in Calling Data.
+                      Use <span className="font-medium text-foreground">Add dealers</span> on a file to choose who is
+                      in that batch&apos;s pool. Each dealer gets <span className="font-medium text-foreground">1 active
+                      lead</span> at a time; the rest stay Unassigned until they Complete, then the next one is
+                      assigned. Dealers work Assigned → Completed in Calling Data.
                     </CardDescription>
                   </div>
-                  {uploadedLeadBatches.some((b) => b.unassignedCount > 0) ? (
-                    <Button
-                      size="sm"
-                      className="gap-1 shrink-0"
-                      disabled={assigningBatchId != null}
-                      onClick={() => void assignAllUnassignedOldestFirst()}
-                    >
-                      {assigningBatchId === "__all__" ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <UserPlus className="w-4 h-4" />
-                      )}
-                      Assign all unassigned (oldest first)
-                    </Button>
-                  ) : null}
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1554,29 +1615,22 @@ export default function HrDashboardPage() {
                             </div>
                           </div>
                           <div className="ml-auto flex items-center gap-2">
-                            <div className="flex flex-wrap gap-1 justify-end">
-                            {batch.dealers.map((name) => (
-                              <Badge key={`${batch.id}-${name}`} variant="outline">
-                                {name}
-                              </Badge>
-                            ))}
-                            </div>
-                            {batch.unassignedCount > 0 ? (
+                            <div className="flex flex-wrap gap-1 justify-end items-center">
+                              {batch.dealers.map((name) => (
+                                <Badge key={`${batch.id}-${name}`} variant="outline">
+                                  {name}
+                                </Badge>
+                              ))}
                               <Button
                                 size="sm"
-                                variant="secondary"
-                                className="gap-1 shrink-0"
-                                disabled={assigningBatchId != null}
-                                onClick={() => assignUnassignedForBatch(batch)}
+                                variant="outline"
+                                className="h-7 gap-1 shrink-0"
+                                onClick={() => openManageDealersDialog(batch)}
                               >
-                                {assigningBatchId === batch.id ? (
-                                  <Loader2 className="w-4 h-4 animate-spin" />
-                                ) : (
-                                  <UserPlus className="w-4 h-4" />
-                                )}
-                                Assign unassigned
+                                <UserRoundPlus className="w-3.5 h-3.5" />
+                                Add dealers
                               </Button>
-                            ) : null}
+                            </div>
                             <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={() => openBatchPreview(batch)}>
                               <Eye className="w-4 h-4" />
                               View
@@ -1898,6 +1952,90 @@ export default function HrDashboardPage() {
                   }}
                 >
                   Next
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(addDealersBatch)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAddDealersBatch(null)
+            setAddDealerIds([])
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Manage dealers</DialogTitle>
+            <DialogDescription>
+              {addDealersBatch
+                ? `Choose which dealers are in the pool for “${addDealersBatch.fileName}”. Checked = assigned to this batch; unchecked = removed.`
+                : "Select dealers for this batch."}
+            </DialogDescription>
+          </DialogHeader>
+
+          {addDealersBatch ? (
+            <div className="space-y-3 overflow-hidden flex flex-col min-h-0">
+              {addDealersBatch.unassignedCount > 0 || addDealersBatch.assignedCount > 0 ? (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                  After save, each selected dealer keeps at most 1 active lead. Extra Assigned leads return to
+                  Unassigned; Completed is unchanged.
+                  {addDealersBatch.unassignedCount > 0
+                    ? ` Currently ${addDealersBatch.unassignedCount} unassigned.`
+                    : ""}
+                </p>
+              ) : null}
+
+              <div className="overflow-y-auto max-h-[42vh] space-y-2 pr-1">
+                {activeDealers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">No active dealers available.</p>
+                ) : (
+                  activeDealers.map((dealer) => (
+                    <label
+                      key={dealer.id}
+                      className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40"
+                    >
+                      <Checkbox
+                        checked={addDealerIds.includes(dealer.id)}
+                        onCheckedChange={() => toggleManageDealer(dealer.id)}
+                      />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {dealer.firstName} {dealer.lastName}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {dealer.mobile} • {dealer.email}
+                        </p>
+                      </div>
+                    </label>
+                  ))
+                )}
+              </div>
+
+              <div className="flex justify-end gap-2 pt-1 border-t">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isSavingDealers}
+                  onClick={() => {
+                    setAddDealersBatch(null)
+                    setAddDealerIds([])
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  disabled={isSavingDealers || addDealerIds.length === 0}
+                  onClick={() => void saveManagedDealers()}
+                  className="gap-1.5"
+                >
+                  {isSavingDealers ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserRoundPlus className="w-4 h-4" />}
+                  Save dealers
                 </Button>
               </div>
             </div>

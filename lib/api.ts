@@ -3344,10 +3344,18 @@ export const api = {
     },
 
     /**
-     * Drain Unassigned → Assigned for one upload batch (round-robin across batch dealer pool).
-     * POST /hr/leads/uploads/:id/assign-unassigned (aliases tried below).
+     * Top up Unassigned → Assigned for one upload using active_cap (1 open lead per dealer).
+     * Does NOT dump every row into Assigned (that was round_robin_all — wrong for Calling FIFO).
+     * rebalance:true asks backend to demote excess Assigned (>1 per dealer) back to Unassigned.
      */
-    assignUnassignedLeads: async (batchId: string): Promise<any> => {
+    assignUnassignedLeads: async (
+      batchId: string,
+      options?: {
+        assignmentMode?: "active_cap" | "round_robin_all"
+        activeLimitPerDealer?: number
+        rebalance?: boolean
+      },
+    ): Promise<any> => {
       const safeBatchId = encodeURIComponent(batchId)
       const endpoints = [
         `/hr/leads/uploads/${safeBatchId}/assign-unassigned`,
@@ -3357,9 +3365,13 @@ export const api = {
       ]
 
       // Pass a plain object — apiRequest already JSON.stringify's the body.
-      // Double-stringify made the backend body parser fail with:
-      // "Unexpected token \" in JSON at position 0"
-      const requestBody = { assignmentMode: "round_robin_all" as const }
+      const limit = Math.min(50, Math.max(1, Number(options?.activeLimitPerDealer ?? 1) || 1))
+      const requestBody = {
+        assignmentMode: options?.assignmentMode ?? ("active_cap" as const),
+        activeLimitPerDealer: limit,
+        activeLeadsLimit: limit,
+        rebalance: options?.rebalance !== false,
+      }
 
       let lastError: unknown = null
       for (const endpoint of endpoints) {
@@ -3378,6 +3390,116 @@ export const api = {
       }
 
       throw lastError
+    },
+
+    /**
+     * Set or expand the eligible dealer pool on an existing upload batch.
+     * mode "add": merge new ids into existing (POST …/add-dealers preferred).
+     * mode "replace": full pool replace (PATCH …/dealers preferred; avoids merge-only add endpoints).
+     */
+    updateUploadDealerPool: async (
+      batchId: string,
+      dealerIds: string[],
+      options?: { mode?: "add" | "replace"; existingDealerIds?: string[] },
+    ): Promise<any> => {
+      const safeBatchId = encodeURIComponent(batchId)
+      const mode = options?.mode ?? "add"
+      const existing = (options?.existingDealerIds || []).map(String).filter(Boolean)
+      const incoming = dealerIds.map(String).filter(Boolean)
+      const merged =
+        mode === "replace"
+          ? Array.from(new Set(incoming))
+          : Array.from(new Set([...existing, ...incoming]))
+
+      if (incoming.length === 0) {
+        throw new ApiError("Select at least one dealer.", "VAL_002")
+      }
+
+      const replaceAttempts: Array<{
+        endpoint: string
+        method: "POST" | "PATCH" | "PUT"
+        body: Record<string, unknown>
+      }> = [
+        // Prefer routes most likely already live (add-dealers was shipped first).
+        {
+          endpoint: `/hr/leads/uploads/${safeBatchId}/add-dealers`,
+          method: "POST",
+          body: { dealerIds: merged, mode: "replace" },
+        },
+        {
+          endpoint: `/hr/leads/uploads/${safeBatchId}/dealers`,
+          method: "PATCH",
+          body: { dealerIds: merged, mode: "replace" },
+        },
+        {
+          endpoint: `/hr/calling-uploads/${safeBatchId}/add-dealers`,
+          method: "POST",
+          body: { dealerIds: merged, mode: "replace" },
+        },
+        {
+          endpoint: `/hr/calling-uploads/${safeBatchId}/dealers`,
+          method: "PATCH",
+          body: { dealerIds: merged, mode: "replace" },
+        },
+        {
+          endpoint: `/hr/leads/uploads/${safeBatchId}`,
+          method: "PATCH",
+          body: { dealerIds: merged },
+        },
+        {
+          endpoint: `/hr/uploads/${safeBatchId}/dealers`,
+          method: "PUT",
+          body: { dealerIds: merged },
+        },
+        {
+          endpoint: `/admin/leads/uploads/${safeBatchId}/dealers`,
+          method: "PATCH",
+          body: { dealerIds: merged, mode: "replace" },
+        },
+      ]
+
+      const addAttempts: Array<{
+        endpoint: string
+        method: "POST" | "PATCH" | "PUT"
+        body: Record<string, unknown>
+      }> = [
+        {
+          endpoint: `/hr/leads/uploads/${safeBatchId}/add-dealers`,
+          method: "POST",
+          body: { dealerIds: incoming, mode: "add" },
+        },
+        {
+          endpoint: `/hr/calling-uploads/${safeBatchId}/add-dealers`,
+          method: "POST",
+          body: { dealerIds: incoming, mode: "add" },
+        },
+        ...replaceAttempts,
+      ]
+
+      const attempts = mode === "replace" ? replaceAttempts : addAttempts
+
+      let lastError: unknown = null
+      for (const attempt of attempts) {
+        try {
+          return await apiRequest(attempt.endpoint, {
+            method: attempt.method,
+            body: attempt.body,
+          })
+        } catch (error) {
+          lastError = error
+          const isMissingEndpoint =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!isMissingEndpoint) throw error
+        }
+      }
+
+      throw lastError instanceof ApiError
+        ? lastError
+        : new ApiError(
+            "Add-dealers endpoint is not available. Backend needs POST /hr/leads/uploads/:id/add-dealers (or PATCH …/dealers).",
+            "HTTP_404",
+          )
     },
   },
 
