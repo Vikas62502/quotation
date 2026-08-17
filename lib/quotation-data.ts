@@ -9,7 +9,7 @@ export const inverterBrands = ["Growatt", "Solis", "Fronius", "Havells", "Polyca
 export const panelSizes = ["440W", "445W", "540W", "545W", "550W", "555W"]
 
 // Inverter Sizes (in kW)
-export const inverterSizes = ["3kW", "5kW", "6kW", "8kW", "10kW", "12kW", "15kW", "20kW", "25kW", "30kW", "50kW", "80kW", "100kW"]
+export const inverterSizes = ["3kW", "5kW", "6kW", "8kW", "10kW", "12kW", "15kW", "20kW", "25kW", "30kW", "50kW", "80kW", "100kW", "125kW"]
 
 // Structure Types and Sizes
 export const structureTypes = ["GI Structure", "Aluminum Structure", "MS Structure"]
@@ -23,6 +23,16 @@ export const cableBrands = ["Polycab", "Havells", "KEI", "Finolex", "RR Kabel"]
 
 // Cable Sizes (sq mm)
 export const cableSizes = ["4 sq mm", "6 sq mm", "10 sq mm", "16 sq mm", "25 sq mm"]
+
+/** Earthing wire sizes for quotation (plus "As per the set" / custom in the form). */
+export const earthingWireSizes = ["2mm", "4mm", "6mm"] as const
+
+export type EarthingWirePresetSize = (typeof earthingWireSizes)[number]
+
+/** Earthing wire brands for quotation (plus "As per the set" / custom in the form). */
+export const earthingWireBrands = ["JMP", "Polycab", "Havells", "KEI", "Finolex"] as const
+
+export type EarthingWirePresetBrand = (typeof earthingWireBrands)[number]
 
 // ACDB/DCDB Options
 export const acdbOptions = ["1-String", "2-String", "3-String", "4-String"]

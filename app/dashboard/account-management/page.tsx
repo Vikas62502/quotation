@@ -1573,55 +1573,70 @@ export default function AccountManagementPage() {
 
   const installerReleaseMapForPayments = useMemo(() => readInstallerReleaseMap(), [customerPayments, quotations])
 
+  const paymentMatchesRowFilters = useCallback(
+    (payment: CustomerPayment, fileStatus: FileStatusFilter = fileStatusFilter) => {
+      // One row per customer for normal payments — but keep every Send-to-Installer
+      // row so Account FILE STATUS matches Admin Installation counts (e.g. Pending 27).
+      if (
+        currentQuotationIdsForPayments.size > 0 &&
+        payment.quotationId &&
+        !currentQuotationIdsForPayments.has(payment.quotationId)
+      ) {
+        const q = payment.quotation as unknown as Record<string, unknown>
+        if (!isQuotationSentToInstaller(q, installerReleaseMapForPayments)) {
+          return false
+        }
+      }
+      const matchesSearch =
+        payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
+        payment.customerMobile.includes(paymentSearchTerm) ||
+        payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
+      const paymentTypeValue = getPaymentTypeValue(payment)
+      const matchesPaymentType =
+        paymentTypeFilter.length === 0 ||
+        paymentTypeFilter.length === PAYMENT_TYPE_FILTER_OPTIONS.length ||
+        paymentTypeFilter.some((selected) =>
+          selected === "unknown" ? !paymentTypeValue : paymentTypeValue === selected,
+        )
+      const paymentStatusValue = getEffectivePaymentStatus(payment)
+      const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
+      const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
+      const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
+      const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
+      const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
+      const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatus)
+      const matchesDealer =
+        paymentDealerFilter === "all" ||
+        (paymentDealerFilter === "__unassigned__"
+          ? !payment.dealerId
+          : payment.dealerId === paymentDealerFilter)
+      return (
+        matchesSearch &&
+        matchesPaymentType &&
+        matchesPaymentStatus &&
+        matchesInstallment &&
+        matchesFileStatus &&
+        matchesDealer &&
+        matchesApproveDateRange
+      )
+    },
+    [
+      currentQuotationIdsForPayments,
+      installerReleaseMapForPayments,
+      paymentSearchTerm,
+      paymentTypeFilter,
+      paymentStatusFilter,
+      paymentInstallmentFilter,
+      fileStatusFilter,
+      paymentDealerFilter,
+      approveDateRange,
+    ],
+  )
+
   const filteredCustomerPayments = useMemo(
     () =>
       customerPayments
-        .filter((payment) => {
-        // One row per customer for normal payments — but keep every Send-to-Installer
-        // row so Account FILE STATUS matches Admin Installation counts (e.g. Pending 27).
-        if (
-          currentQuotationIdsForPayments.size > 0 &&
-          payment.quotationId &&
-          !currentQuotationIdsForPayments.has(payment.quotationId)
-        ) {
-          const q = payment.quotation as unknown as Record<string, unknown>
-          if (!isQuotationSentToInstaller(q, installerReleaseMapForPayments)) {
-            return false
-          }
-        }
-        const matchesSearch =
-          payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
-          payment.customerMobile.includes(paymentSearchTerm) ||
-          payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
-        const paymentTypeValue = getPaymentTypeValue(payment)
-        const matchesPaymentType =
-          paymentTypeFilter.length === 0 ||
-          paymentTypeFilter.length === PAYMENT_TYPE_FILTER_OPTIONS.length ||
-          paymentTypeFilter.some((selected) =>
-            selected === "unknown" ? !paymentTypeValue : paymentTypeValue === selected,
-          )
-        const paymentStatusValue = getEffectivePaymentStatus(payment)
-        const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
-        const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
-        const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
-        const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
-        const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
-        const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatusFilter)
-        const matchesDealer =
-          paymentDealerFilter === "all" ||
-          (paymentDealerFilter === "__unassigned__"
-            ? !payment.dealerId
-            : payment.dealerId === paymentDealerFilter)
-        return (
-          matchesSearch &&
-          matchesPaymentType &&
-          matchesPaymentStatus &&
-          matchesInstallment &&
-          matchesFileStatus &&
-          matchesDealer &&
-          matchesApproveDateRange
-        )
-      })
+        .filter((payment) => paymentMatchesRowFilters(payment, fileStatusFilter))
         // Recent approve date first; missing dates at the bottom
         .sort((a, b) => {
           const aTime = a.statusApprovedAt ? new Date(a.statusApprovedAt).getTime() : 0
@@ -1633,18 +1648,7 @@ export default function AccountManagementPage() {
           if (bValid) return 1
           return 0
         }),
-    [
-      customerPayments,
-      currentQuotationIdsForPayments,
-      installerReleaseMapForPayments,
-      paymentSearchTerm,
-      paymentTypeFilter,
-      paymentStatusFilter,
-      paymentInstallmentFilter,
-      fileStatusFilter,
-      paymentDealerFilter,
-      approveDateRange,
-    ],
+    [customerPayments, paymentMatchesRowFilters, fileStatusFilter],
   )
 
   const paymentDashboardStats = useMemo(() => {
@@ -1661,13 +1665,25 @@ export default function AccountManagementPage() {
         draftRaw !== undefined ? parseSiteCostInput(draftRaw) : undefined
       totalProfit += getPaymentSiteProfit(payment, liveSiteCost)
     }
+
+    // Remaining only for Installation · Approved (completed), independent of File status filter.
+    let installationCompletedRemaining = 0
+    let installationCompletedCount = 0
+    for (const payment of customerPayments) {
+      if (!paymentMatchesRowFilters(payment, "installation:completed")) continue
+      installationCompletedRemaining += getDisplayRemaining(payment)
+      installationCompletedCount += 1
+    }
+
     return {
       totalAmount,
       pendingAmount,
       totalProfit,
       customerCount: filteredCustomerPayments.length,
+      installationCompletedRemaining,
+      installationCompletedCount,
     }
-  }, [filteredCustomerPayments, siteCostDrafts])
+  }, [filteredCustomerPayments, customerPayments, paymentMatchesRowFilters, siteCostDrafts])
 
   const updatePaymentSiteCost = async (quotationId: string, raw: string) => {
     const siteCost = parseSiteCostInput(raw)
@@ -3192,7 +3208,7 @@ export default function AccountManagementPage() {
               </CardHeader>
               <CardContent className="pt-0 px-2 sm:px-6 space-y-3">
                 {!isLoading && customerPayments.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
                     <Card className="border-border/60 bg-card shadow-sm">
                       <CardContent className="p-4 flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -3218,6 +3234,44 @@ export default function AccountManagementPage() {
                             ₹{paymentDashboardStats.pendingAmount.toLocaleString()}
                           </p>
                           <p className="text-[11px] text-muted-foreground">Sum of remaining</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card
+                      className={cn(
+                        "border-border/60 bg-card shadow-sm cursor-pointer transition-colors hover:border-emerald-400/80",
+                        fileStatusFilter === "installation:completed" && "border-emerald-500 ring-1 ring-emerald-500/30",
+                      )}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setFileStatusFilter((prev) =>
+                          prev === "installation:completed" ? "all" : "installation:completed",
+                        )
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault()
+                          setFileStatusFilter((prev) =>
+                            prev === "installation:completed" ? "all" : "installation:completed",
+                          )
+                        }
+                      }}
+                    >
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
+                          <CheckCircle2 className="w-5 h-5 text-emerald-700" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-xs font-medium text-foreground/70">Installation completed</p>
+                          <p className="text-xl font-bold text-emerald-700 truncate">
+                            ₹{paymentDashboardStats.installationCompletedRemaining.toLocaleString()}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            Remaining · {paymentDashboardStats.installationCompletedCount.toLocaleString()}{" "}
+                            {paymentDashboardStats.installationCompletedCount === 1 ? "customer" : "customers"}
+                            {fileStatusFilter === "installation:completed" ? " · filter on" : " · click to filter"}
+                          </p>
                         </div>
                       </CardContent>
                     </Card>

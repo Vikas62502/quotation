@@ -581,7 +581,7 @@ export function QuotationConfirmation({
         
         // If error mentions inverter size, provide helpful context
         if (errorMessage.includes("inverter size") || errorMessage.includes("Invalid inverter")) {
-          errorMessage += "\n\nNote: The inverter size must match the backend product catalog. Common sizes are: 3kW, 5kW, 6kW, 8kW, 10kW, 12kW, 15kW, 20kW, 25kW, 30kW, 50kW, 100kW. Please ensure the inverter size is valid or contact support to add it to the catalog."
+          errorMessage += "\n\nNote: The inverter size must match the backend product catalog. Common sizes are: 3kW, 5kW, 6kW, 8kW, 10kW, 12kW, 15kW, 20kW, 25kW, 30kW, 50kW, 80kW, 100kW, 125kW. Please ensure the inverter size is valid or contact support to add it to the catalog."
         }
       }
       

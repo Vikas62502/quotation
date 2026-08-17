@@ -30,7 +30,7 @@ interface NonDcrConfigDialogProps {
 export function NonDcrConfigDialog({ open, onOpenChange, onSelect }: NonDcrConfigDialogProps) {
   const [searchTerm, setSearchTerm] = useState("")
 
-  // Filter configurations based on search (API data when loaded, else hardcoded fallback)
+  // API Non-DCR catalog merged with local FE-only packages (e.g. Waaree 125kW)
   const catalogRows = getPricingData().nonDcr?.length ? getPricingData().nonDcr! : nonDcrPricing
   const filteredConfigs = catalogRows.filter((config) => {
     const searchLower = searchTerm.toLowerCase()

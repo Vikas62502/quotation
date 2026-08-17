@@ -28,6 +28,15 @@ const PRODUCT_FIELD_KEYS = [
   "pdfCommercialSet",
   "panelType",
   "inaDcrPackage",
+  "earthingWireSize",
+  "earthingWireBrand",
+  "acCableBrand",
+  "acCableSize",
+  "dcCableBrand",
+  "dcCableSize",
+  "acdb",
+  "dcdb",
+  "meterBrand",
 ] as const
 
 const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string>> = {
@@ -55,6 +64,13 @@ const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string
   pdfCommercialSet: "pdf_commercial_set",
   panelType: "panel_type",
   inaDcrPackage: "ina_dcr_package",
+  earthingWireSize: "earthing_wire_size",
+  earthingWireBrand: "earthing_wire_brand",
+  acCableBrand: "ac_cable_brand",
+  acCableSize: "ac_cable_size",
+  dcCableBrand: "dc_cable_brand",
+  dcCableSize: "dc_cable_size",
+  meterBrand: "meter_brand",
 }
 
 function isNonEmptyPlainObject(value: unknown): value is RecordLike {

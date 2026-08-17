@@ -122,7 +122,7 @@ export function useProductCatalog() {
           const inverterSizes = Array.isArray(catalogData.inverters?.sizes)
             ? [...catalogData.inverters.sizes]
             : []
-          for (const size of ["3.6kW", "50kW", "80kW", "100kW"]) {
+          for (const size of ["3.6kW", "50kW", "80kW", "100kW", "125kW"]) {
             if (!inverterSizes.includes(size)) inverterSizes.push(size)
           }
           const inverterBrands = Array.isArray(catalogData.inverters?.brands)
@@ -134,7 +134,7 @@ export function useProductCatalog() {
           const structureSizes = Array.isArray(catalogData.structures?.sizes)
             ? [...catalogData.structures.sizes]
             : []
-          for (const size of ["25kW", "30kW", "50kW", "80kW", "100kW"]) {
+          for (const size of ["25kW", "30kW", "50kW", "80kW", "100kW", "125kW"]) {
             if (!structureSizes.includes(size)) structureSizes.push(size)
           }
           setCatalog({

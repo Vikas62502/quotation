@@ -64,6 +64,16 @@ export interface ProductSelection {
   dcCableSize: string
   acdb: string
   dcdb: string
+  /**
+   * Earthing wire size for the quotation.
+   * Presets: "As per the set" | "2mm" | "4mm" | "6mm", or a free-text custom size.
+   */
+  earthingWireSize?: string
+  /**
+   * Earthing wire brand.
+   * Presets: "As per the set" | "JMP" | "Polycab" | "Havells" | …, or custom.
+   */
+  earthingWireBrand?: string
   // DCR specific
   centralSubsidy?: number
   stateSubsidy?: number
@@ -608,6 +618,8 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           dcCableSize: currentProducts.dcCableSize || "",
           acdb: currentProducts.acdb || "",
           dcdb: currentProducts.dcdb || "",
+          earthingWireSize: currentProducts.earthingWireSize || "",
+          earthingWireBrand: currentProducts.earthingWireBrand || "",
         }
 
         if (!cleanedProducts.phase || cleanedProducts.phase.trim() === "") {

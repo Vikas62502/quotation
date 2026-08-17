@@ -7,6 +7,7 @@ import {
 import {
   isAsPerTheSetLabel,
   isPdfCommercialSet,
+  QUOTATION_AS_PER_THE_SET_LABEL,
   TATA_DCR_PANEL_RANGE_KEY,
   INA_DCR_PANEL_RANGE_KEY,
   applyDefaultPdfPanelRanges,
@@ -637,6 +638,12 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
     ...next,
     acCableSize: normalizeAsPerSetCableSize(next.acCableSize) ?? next.acCableSize,
     dcCableSize: normalizeAsPerSetCableSize(next.dcCableSize) ?? next.dcCableSize,
+    earthingWireSize: isAsPerTheSetLabel(next.earthingWireSize)
+      ? "As per Set"
+      : next.earthingWireSize,
+    earthingWireBrand: isAsPerTheSetLabel(next.earthingWireBrand)
+      ? "As per Set"
+      : next.earthingWireBrand,
   }
 
   if (isTataDcrPackageSet(next)) {

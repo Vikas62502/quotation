@@ -421,9 +421,13 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
   ) => {
     const brandLower = String(brand || "").trim().toLowerCase()
     const panelWatts = Number.parseFloat(String(size || "").replace(/[^0-9.]/g, "")) || 0
-    // Waaree above 580W → fixed Topcon Bifacial label on PDF (not 580–630 range)
+    // Waaree above 580W → Topcon Bifacial on PDF, keep the selected wattage (e.g. 705W).
     if (brandLower.includes("waaree") && panelWatts > 580) {
-      return `615W Topcon Bifacial, ${grade}`
+      const rawSize = String(size || "").trim()
+      const sizeLabel = rawSize
+        ? rawSize.replace(/w$/i, "W")
+        : `${Math.round(panelWatts)}W`
+      return `${sizeLabel} Topcon Bifacial, ${grade}`
     }
     if (rangeKey) {
       const rangeLabel = getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
@@ -547,8 +551,25 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     },
     {
       component: "Lightning Arrestor & Earthing",
-      specification: "Copper-bonded lightning protection with green earthing wire",
-      brandModel: "JMP Green Earthing Wire",
+      specification: (() => {
+        const wire = String(p.earthingWireSize || p.earthing_wire_size || "").trim()
+        if (!wire || isAsPerTheSetLabel(wire)) {
+          return "Copper-bonded lightning protection with green earthing wire (As per the set)"
+        }
+        return `Copper-bonded lightning protection with green earthing wire (${wire})`
+      })(),
+      brandModel: (() => {
+        const brand = String(p.earthingWireBrand || p.earthing_wire_brand || "").trim()
+        const wire = String(p.earthingWireSize || p.earthing_wire_size || "").trim()
+        const brandLabel =
+          !brand || isAsPerTheSetLabel(brand)
+            ? `JMP / ${QUOTATION_AS_PER_THE_SET_LABEL}`
+            : brand
+        if (!wire || isAsPerTheSetLabel(wire)) {
+          return `${brandLabel} Green Earthing Wire`
+        }
+        return `${brandLabel} Green Earthing Wire ${wire}`
+      })(),
       qty: "1 Set",
     },
     {

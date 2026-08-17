@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect, useMemo, useRef } from "react"
 import type { ProductSelection } from "@/lib/quotation-context"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Checkbox } from "@/components/ui/checkbox"
-import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box, List } from "lucide-react"
+import { ArrowLeft, ArrowRight, Plus, Trash2, Sun, Zap, Cable, Gauge, Box, List, Shield } from "lucide-react"
 import { DcrConfigDialog } from "@/components/dcr-config-dialog"
 import { NonDcrConfigDialog } from "@/components/non-dcr-config-dialog"
 import { BothConfigDialog } from "@/components/both-config-dialog"
@@ -64,6 +64,66 @@ import { restoreDcrPackageDisplayForForm, backfillPanelQuantityForPdfRange } fro
 import { cn } from "@/lib/utils"
 
 const DEFAULT_QUOTATION_SYSTEM_TYPE = "dcr" as const
+
+/**
+ * Earthing selects mirror AC/DC cable sizing: store/display "As per Set" (works with Radix).
+ * Custom uses unique sentinels so brand + size never share the same SelectItem value.
+ */
+const EARTHING_AS_PER_SET_OPTION = "As per Set"
+const EARTHING_SIZE_CUSTOM_VALUE = "__earthing_size_custom__"
+const EARTHING_BRAND_CUSTOM_VALUE = "__earthing_brand_custom__"
+const EARTHING_WIRE_PRESET_SIZES = ["2mm", "4mm", "6mm"] as const
+const EARTHING_WIRE_PRESET_BRANDS = ["JMP", "Polycab", "Havells", "KEI", "Finolex"] as const
+
+function resolveEarthingSizeSelectValue(size: string | undefined): string {
+  const trimmed = String(size || "").trim()
+  if (!trimmed || isAsPerTheSetLabel(trimmed)) return EARTHING_AS_PER_SET_OPTION
+  if ((EARTHING_WIRE_PRESET_SIZES as readonly string[]).includes(trimmed)) return trimmed
+  return EARTHING_SIZE_CUSTOM_VALUE
+}
+
+function resolveEarthingBrandSelectValue(brand: string | undefined): string {
+  const trimmed = String(brand || "").trim()
+  if (!trimmed || isAsPerTheSetLabel(trimmed)) return EARTHING_AS_PER_SET_OPTION
+  if ((EARTHING_WIRE_PRESET_BRANDS as readonly string[]).includes(trimmed)) return trimmed
+  return EARTHING_BRAND_CUSTOM_VALUE
+}
+
+function earthingSizeFromSelectValue(selectValue: string, previous?: string): string {
+  if (selectValue === EARTHING_AS_PER_SET_OPTION || isAsPerTheSetLabel(selectValue)) {
+    return EARTHING_AS_PER_SET_OPTION
+  }
+  if (selectValue === EARTHING_SIZE_CUSTOM_VALUE) {
+    const prev = String(previous || "").trim()
+    if (
+      prev &&
+      !isAsPerTheSetLabel(prev) &&
+      !(EARTHING_WIRE_PRESET_SIZES as readonly string[]).includes(prev)
+    ) {
+      return prev
+    }
+    return ""
+  }
+  return selectValue
+}
+
+function earthingBrandFromSelectValue(selectValue: string, previous?: string): string {
+  if (selectValue === EARTHING_AS_PER_SET_OPTION || isAsPerTheSetLabel(selectValue)) {
+    return EARTHING_AS_PER_SET_OPTION
+  }
+  if (selectValue === EARTHING_BRAND_CUSTOM_VALUE) {
+    const prev = String(previous || "").trim()
+    if (
+      prev &&
+      !isAsPerTheSetLabel(prev) &&
+      !(EARTHING_WIRE_PRESET_BRANDS as readonly string[]).includes(prev)
+    ) {
+      return prev
+    }
+    return ""
+  }
+  return selectValue
+}
 
 type QuotationSystemTypeOption = "dcr" | "non-dcr" | "both"
 
@@ -198,6 +258,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       dcCableSize: "",
       acdb: "",
       dcdb: "",
+      earthingWireSize: EARTHING_AS_PER_SET_OPTION,
+      earthingWireBrand: "JMP",
       centralSubsidy: 0,
       stateSubsidy: 0,
       hybridInverter: "",
@@ -262,6 +324,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     ].join("|")
   }, [initialData])
 
+  /** Parent earthing fingerprint — only apply server earthing when this changes. */
+  const appliedEarthingKeyRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!initialData) return
     let restored = restoreDcrPackageDisplayForForm(initialData)
@@ -275,7 +340,25 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         dcdb: restored.dcdb?.trim() || defaults.dcdb,
       }
     }
-    setFormData(restored)
+    const incomingEarthingKey = [
+      String(restored.earthingWireSize ?? "").trim(),
+      String(restored.earthingWireBrand ?? "").trim(),
+    ].join("|")
+    setFormData((prev) => {
+      // Keep local 2mm → As per Set (etc.) when parent re-syncs other fields but earthing is unchanged.
+      const keepLocalEarthing =
+        appliedEarthingKeyRef.current != null &&
+        appliedEarthingKeyRef.current === incomingEarthingKey
+      if (keepLocalEarthing) {
+        return {
+          ...restored,
+          earthingWireSize: prev.earthingWireSize,
+          earthingWireBrand: prev.earthingWireBrand,
+        }
+      }
+      appliedEarthingKeyRef.current = incomingEarthingKey
+      return restored
+    })
     if (
       restored.systemType === "dcr" &&
       (restored.panelBrand?.trim() || restored.systemPrice)
@@ -690,6 +773,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           nonDcrPanelQuantity: nonDcrQuantity,
           acdb: acdbForPhase,
           dcdb: dcdbForPhase,
+          earthingWireSize:
+            systemConfig.earthingWireSize ||
+            preFilledData.earthingWireSize ||
+            EARTHING_AS_PER_SET_OPTION,
+          earthingWireBrand:
+            systemConfig.earthingWireBrand ||
+            preFilledData.earthingWireBrand ||
+            "JMP",
           // BOTH systems require central subsidy (default: 78000) — except commercial (always 0)
           centralSubsidy: prev.pdfCommercialSet
             ? 0
@@ -744,6 +835,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
+        earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
+        earthingWireBrand: prev.earthingWireBrand || "JMP",
         // DCR systems require central subsidy (mandatory: 78000) — except commercial (always 0)
         centralSubsidy: prev.pdfCommercialSet
           ? 0
@@ -797,6 +890,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           panelSize: panelSizeToSet,
           acdb: acdbForPhase,
           dcdb: dcdbForPhase,
+          earthingWireSize:
+            systemConfig.earthingWireSize ||
+            preFilledData.earthingWireSize ||
+            EARTHING_AS_PER_SET_OPTION,
+          earthingWireBrand:
+            systemConfig.earthingWireBrand ||
+            preFilledData.earthingWireBrand ||
+            "JMP",
           // NON-DCR systems should always have 0 subsidies
           centralSubsidy: 0,
           stateSubsidy: 0,
@@ -853,6 +954,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: config.inverterSize,
         acdb: defaultAcdb,
         dcdb: defaultDcdb,
+        earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
+        earthingWireBrand: prev.earthingWireBrand || "JMP",
         // NON-DCR systems should always have 0 subsidies
         centralSubsidy: 0,
         stateSubsidy: 0,
@@ -951,6 +1054,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           panelQuantity: panelQuantityToSet,
           acdb: acdbForPhase,
           dcdb: dcdbForPhase,
+          earthingWireSize:
+            systemConfig.earthingWireSize ||
+            preFilledData.earthingWireSize ||
+            EARTHING_AS_PER_SET_OPTION,
+          earthingWireBrand:
+            systemConfig.earthingWireBrand ||
+            preFilledData.earthingWireBrand ||
+            "JMP",
           // Set subsidies from config (DCR default 78000) — commercial set always 0
           centralSubsidy: prev.pdfCommercialSet
             ? 0
@@ -1018,6 +1129,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         structureSize: config.systemSize,
         acdb: cromptonAcdb,
         dcdb: cromptonDcdb,
+        earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
+        earthingWireBrand: prev.earthingWireBrand || "JMP",
         systemPrice: config.price,
         centralSubsidy: prev.pdfCommercialSet
           ? 0
@@ -1722,6 +1835,97 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 </div>
               </div>
 
+              {/* Earthing Wire for BOTH */}
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Shield className="w-4 h-4 text-primary" />
+                  </div>
+                  <h3 className="text-sm font-medium">Earthing Wire</h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <Label>Earthing wire brand</Label>
+                    <Select
+                      key={`earthing-brand-both-${resolveEarthingBrandSelectValue(formData.earthingWireBrand)}`}
+                      value={resolveEarthingBrandSelectValue(formData.earthingWireBrand)}
+                      onValueChange={(v) =>
+                        updateFormData(
+                          "earthingWireBrand",
+                          earthingBrandFromSelectValue(v, formData.earthingWireBrand),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select brand" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={EARTHING_AS_PER_SET_OPTION}>
+                          {EARTHING_AS_PER_SET_OPTION}
+                        </SelectItem>
+                        {EARTHING_WIRE_PRESET_BRANDS.map((brand) => (
+                          <SelectItem key={brand} value={brand}>
+                            {brand}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={EARTHING_BRAND_CUSTOM_VALUE}>Custom…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {resolveEarthingBrandSelectValue(formData.earthingWireBrand) === EARTHING_BRAND_CUSTOM_VALUE ? (
+                    <div>
+                      <Label>Custom brand</Label>
+                      <Input
+                        value={formData.earthingWireBrand || ""}
+                        onChange={(e) => updateFormData("earthingWireBrand", e.target.value)}
+                        placeholder="e.g. Other brand"
+                      />
+                    </div>
+                  ) : null}
+                  <div>
+                    <Label>Earthing wire size</Label>
+                    <Select
+                      key={`earthing-size-both-${resolveEarthingSizeSelectValue(formData.earthingWireSize)}`}
+                      value={resolveEarthingSizeSelectValue(formData.earthingWireSize)}
+                      onValueChange={(v) =>
+                        updateFormData(
+                          "earthingWireSize",
+                          earthingSizeFromSelectValue(v, formData.earthingWireSize),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select size" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={EARTHING_AS_PER_SET_OPTION}>
+                          {EARTHING_AS_PER_SET_OPTION}
+                        </SelectItem>
+                        {EARTHING_WIRE_PRESET_SIZES.map((size) => (
+                          <SelectItem key={size} value={size}>
+                            {size}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={EARTHING_SIZE_CUSTOM_VALUE}>Custom…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Package default is As per Set; choose 2mm / 4mm / 6mm or enter custom.
+                    </p>
+                  </div>
+                  {resolveEarthingSizeSelectValue(formData.earthingWireSize) === EARTHING_SIZE_CUSTOM_VALUE ? (
+                    <div>
+                      <Label>Custom size</Label>
+                      <Input
+                        value={formData.earthingWireSize || ""}
+                        onChange={(e) => updateFormData("earthingWireSize", e.target.value)}
+                        placeholder="e.g. 8mm, 10mm"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
               {/* Battery Configuration for BOTH - shown when Hybrid Inverter is selected */}
               {showBatteryFields && (
                 <div className="border-t border-border pt-4 sm:pt-6">
@@ -2245,6 +2449,97 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+              </div>
+
+              {/* Earthing Wire */}
+              <div className="border-t border-border pt-4 sm:pt-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <Shield className="w-4 h-4 text-primary" />
+                  </div>
+                  <h3 className="text-sm font-medium">Earthing Wire</h3>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                  <div>
+                    <Label>Earthing wire brand</Label>
+                    <Select
+                      key={`earthing-brand-${resolveEarthingBrandSelectValue(formData.earthingWireBrand)}`}
+                      value={resolveEarthingBrandSelectValue(formData.earthingWireBrand)}
+                      onValueChange={(v) =>
+                        updateFormData(
+                          "earthingWireBrand",
+                          earthingBrandFromSelectValue(v, formData.earthingWireBrand),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select brand" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={EARTHING_AS_PER_SET_OPTION}>
+                          {EARTHING_AS_PER_SET_OPTION}
+                        </SelectItem>
+                        {EARTHING_WIRE_PRESET_BRANDS.map((brand) => (
+                          <SelectItem key={brand} value={brand}>
+                            {brand}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={EARTHING_BRAND_CUSTOM_VALUE}>Custom…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {resolveEarthingBrandSelectValue(formData.earthingWireBrand) === EARTHING_BRAND_CUSTOM_VALUE ? (
+                    <div>
+                      <Label>Custom brand</Label>
+                      <Input
+                        value={formData.earthingWireBrand || ""}
+                        onChange={(e) => updateFormData("earthingWireBrand", e.target.value)}
+                        placeholder="e.g. Other brand"
+                      />
+                    </div>
+                  ) : null}
+                  <div>
+                    <Label>Earthing wire size</Label>
+                    <Select
+                      key={`earthing-size-${resolveEarthingSizeSelectValue(formData.earthingWireSize)}`}
+                      value={resolveEarthingSizeSelectValue(formData.earthingWireSize)}
+                      onValueChange={(v) =>
+                        updateFormData(
+                          "earthingWireSize",
+                          earthingSizeFromSelectValue(v, formData.earthingWireSize),
+                        )
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select size" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={EARTHING_AS_PER_SET_OPTION}>
+                          {EARTHING_AS_PER_SET_OPTION}
+                        </SelectItem>
+                        {EARTHING_WIRE_PRESET_SIZES.map((size) => (
+                          <SelectItem key={size} value={size}>
+                            {size}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value={EARTHING_SIZE_CUSTOM_VALUE}>Custom…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Package default is As per Set; choose 2mm / 4mm / 6mm or enter custom.
+                    </p>
+                  </div>
+                  {resolveEarthingSizeSelectValue(formData.earthingWireSize) === EARTHING_SIZE_CUSTOM_VALUE ? (
+                    <div>
+                      <Label>Custom size</Label>
+                      <Input
+                        value={formData.earthingWireSize || ""}
+                        onChange={(e) => updateFormData("earthingWireSize", e.target.value)}
+                        placeholder="e.g. 8mm, 10mm"
+                      />
+                    </div>
+                  ) : null}
                 </div>
               </div>
 

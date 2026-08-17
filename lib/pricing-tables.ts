@@ -73,6 +73,10 @@ export interface SystemConfigurationPreset {
   dcCableSize: string
   acdb: string
   dcdb: string
+  /** Optional preset earthing wire (2mm / 4mm / 6mm / As per the set / custom). */
+  earthingWireSize?: string
+  /** Optional earthing wire brand (JMP / Polycab / … / As per the set / custom). */
+  earthingWireBrand?: string
   // Subsidies (optional - DCR systems have fixed central subsidy of 78000)
   centralSubsidy?: number
   stateSubsidy?: number
@@ -602,6 +606,7 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "non-dcr", systemSize: "25kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "25kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "25kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "30kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "550W", inverterBrand: "Vsole/Xwatt", inverterSize: "30kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "30kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   { systemType: "non-dcr", systemSize: "80kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Vsole/Xwatt", inverterSize: "80kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "80kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
+  { systemType: "non-dcr", systemSize: "125kW", phase:"3-Phase", panelBrand: "Waaree", panelSize: "580W", inverterBrand: "Vsole/Xwatt", inverterSize: "125kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "125kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
   
   // Renew Energy NON DCR 3-Phase (80kW Vsole/Xwatt set)
   { systemType: "non-dcr", systemSize: "80kW", phase:"3-Phase", panelBrand: "Renew Energy", panelSize: "600W", inverterBrand: "Vsole/Xwatt", inverterSize: "80kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "80kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Havells (3-Phase)", dcdb: "Havells (3-Phase)" },
@@ -688,6 +693,33 @@ export function mergeSystemConfigsWithDefaults(
   return Array.from(byKey.values())
 }
 
+function nonDcrPricingRowKey(row: SystemPricing): string {
+  return [
+    String(row.systemSize || "").trim().toLowerCase(),
+    String(row.phase || "").trim().toLowerCase(),
+    String(row.inverterSize || "").trim().toLowerCase(),
+    String(row.panelType || "").trim().toLowerCase(),
+  ].join("|")
+}
+
+/**
+ * Keep API Non-DCR rows, and append local FE packages the API does not have yet
+ * (e.g. Waaree 125kW @ ₹35,62,500).
+ */
+export function mergeNonDcrPricingWithDefaults(apiRows?: SystemPricing[]): SystemPricing[] {
+  if (!apiRows?.length) return nonDcrPricing
+
+  const byKey = new Map<string, SystemPricing>()
+  for (const row of apiRows) {
+    byKey.set(nonDcrPricingRowKey(row), row)
+  }
+  for (const local of nonDcrPricing) {
+    const key = nonDcrPricingRowKey(local)
+    if (!byKey.has(key)) byKey.set(key, local)
+  }
+  return Array.from(byKey.values())
+}
+
 // Function to get current pricing data (API or fallback)
 export function getPricingData(): PricingTablesData {
   if (!apiPricingData) {
@@ -709,7 +741,7 @@ export function getPricingData(): PricingTablesData {
   return {
     ...apiPricingData,
     dcr: apiPricingData.dcr?.length ? apiPricingData.dcr : dcrPricing,
-    nonDcr: apiPricingData.nonDcr?.length ? apiPricingData.nonDcr : nonDcrPricing,
+    nonDcr: mergeNonDcrPricingWithDefaults(apiPricingData.nonDcr),
     both: apiPricingData.both?.length ? apiPricingData.both : bothPricing,
     panels: apiPricingData.panels?.length ? apiPricingData.panels : defaultPanelPricing,
     inverters: apiPricingData.inverters?.length ? apiPricingData.inverters : defaultInverterPricing,
@@ -872,6 +904,8 @@ export function configToProductSelection(
     dcCableSize: config.dcCableSize,
     acdb: config.acdb,
     dcdb: config.dcdb,
+    earthingWireSize: config.earthingWireSize || "As per Set",
+    earthingWireBrand: config.earthingWireBrand || "JMP",
     // Include subsidies if present in config
     ...(config.centralSubsidy !== undefined && { centralSubsidy: config.centralSubsidy }),
     ...(config.stateSubsidy !== undefined && { stateSubsidy: config.stateSubsidy }),
@@ -1250,6 +1284,7 @@ export const nonDcrPricing: SystemPricing[] = [
   { systemSize: "80kW", phase: "3-Phase", inverterSize: "80kW", panelType: "Waaree", price: 2350000 },
   { systemSize: "100kW", phase: "3-Phase", inverterSize: "100kW", panelType: "Adani", price: 2890000 },
   { systemSize: "100kW", phase: "3-Phase", inverterSize: "100kW", panelType: "Waaree", price: 2890000 },
+  { systemSize: "125kW", phase: "3-Phase", inverterSize: "125kW", panelType: "Waaree", price: 3562500 },
 ]
 
 // BOTH (DCR + NON DCR) System Pricing
