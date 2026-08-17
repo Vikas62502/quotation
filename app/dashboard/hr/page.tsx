@@ -16,6 +16,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, Search, UserRoundPlus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { AccessSwitchBar } from "@/components/access-switch-bar"
+import {
+  canOpenSection,
+  getAccessOptions,
+  getPostLoginPath,
+  listedUserHasAccess,
+  resolveUserAccess,
+  type UserAccessKey,
+} from "@/lib/user-access"
 import {
   buildCallingActionsQueryDates,
   formatYmdLocal,
@@ -33,6 +42,7 @@ import {
   classifyCallingConnection,
 } from "@/lib/calling-action-summary"
 import { filterActiveDealers } from "@/lib/active-dealers"
+import { listAssignableQuotationFromDirectory } from "@/lib/quotation-assignable-directory"
 
 type DealerOption = {
   id: string
@@ -41,6 +51,36 @@ type DealerOption = {
   mobile: string
   email: string
   isActive: boolean
+  username?: string
+  role?: string
+  access: UserAccessKey[]
+}
+
+/** Dealers eligible for HR lead pools: active + Quotation access checked (Admin Users). */
+function hasQuotationAccessForLeadPool(dealer: DealerOption): boolean {
+  return listedUserHasAccess(
+    {
+      username: dealer.username,
+      role: dealer.role || "dealer",
+      access: dealer.access,
+      isActive: dealer.isActive,
+    },
+    "quotation",
+  )
+}
+
+function pickUserRows(response: any): any[] {
+  if (Array.isArray(response)) return response
+  if (Array.isArray(response?.dealers)) return response.dealers
+  if (Array.isArray(response?.visitors)) return response.visitors
+  if (Array.isArray(response?.accountManagers)) return response.accountManagers
+  if (Array.isArray(response?.items)) return response.items
+  if (Array.isArray(response?.data?.dealers)) return response.data.dealers
+  if (Array.isArray(response?.data?.visitors)) return response.data.visitors
+  if (Array.isArray(response?.data?.accountManagers)) return response.data.accountManagers
+  if (Array.isArray(response?.data?.items)) return response.data.items
+  if (Array.isArray(response?.data)) return response.data
+  return []
 }
 
 type ParsedCsvRow = {
@@ -245,7 +285,7 @@ const normalizeName = (value?: string) =>
 
 export default function HrDashboardPage() {
   const router = useRouter()
-  const { isAuthenticated, role, logout } = useAuth()
+  const { isAuthenticated, role, logout, access } = useAuth()
   const { toast } = useToast()
   const [dealers, setDealers] = useState<DealerOption[]>([])
   const [selectedDealerIds, setSelectedDealerIds] = useState<string[]>([])
@@ -286,70 +326,179 @@ export default function HrDashboardPage() {
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
   const normalizeDealerList = (list: any[]): DealerOption[] => {
-    const uniqueMap = new Map<string, DealerOption>()
-    list
-      .filter((d: any) => d && d.id)
-      .forEach((d: any) => {
-        if (uniqueMap.has(d.id)) return
-        uniqueMap.set(d.id, {
-          id: d.id,
-          firstName: d.firstName || "",
-          lastName: d.lastName || "",
-          mobile: d.mobile || "",
-          email: d.email || "",
-          isActive: d.isActive === true,
-        })
+    const byUsername = new Map<string, DealerOption>()
+    const orphans: DealerOption[] = []
+
+    const score = (d: DealerOption) => {
+      let s = 0
+      if (hasQuotationAccessForLeadPool(d)) s += 10
+      if (d.firstName || d.lastName) s += 2
+      if (d.mobile) s += 1
+      if (d.email) s += 1
+      return s
+    }
+
+    for (const d of list) {
+      if (!d?.id) continue
+      const username = String(d.username || d.userName || "")
+        .trim()
+        .replace(/@+$/, "")
+      const role = String(d.role || d.sourceRole || "").trim()
+      const access = resolveUserAccess({
+        username,
+        role: role || (d.sourceRole === "visitor" || role === "visitor" ? "visitor" : "dealer"),
+        access: d.access,
+        permissions: d.permissions,
       })
-    return Array.from(uniqueMap.values())
+      const row: DealerOption = {
+        id: String(d.id),
+        firstName: d.firstName || "",
+        lastName: d.lastName || "",
+        mobile: d.mobile || "",
+        email: d.email || "",
+        isActive: d.isActive !== false,
+        username: username || undefined,
+        role: role || undefined,
+        access,
+      }
+
+      const key = username.toLowerCase()
+      if (!key) {
+        orphans.push(row)
+        continue
+      }
+      const prev = byUsername.get(key)
+      if (!prev || score(row) >= score(prev)) byUsername.set(key, row)
+    }
+
+    const result = Array.from(byUsername.values())
+    const usedIds = new Set(result.map((d) => d.id))
+    for (const row of orphans) {
+      if (usedIds.has(row.id)) continue
+      usedIds.add(row.id)
+      result.push(row)
+    }
+    return result
   }
 
   const getLocalDealers = (): DealerOption[] => {
     const localDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
-    return filterActiveDealers(normalizeDealerList(localDealers))
+    const localVisitors = JSON.parse(localStorage.getItem("visitors") || "[]").map((v: any) => ({
+      ...v,
+      role: v.role || "visitor",
+      sourceRole: "visitor",
+    }))
+    const localOps = JSON.parse(localStorage.getItem("accountManagers") || "[]")
+    return filterActiveDealers(
+      normalizeDealerList([...localDealers, ...localVisitors, ...localOps, ...listAssignableQuotationFromDirectory()]),
+    ).filter(hasQuotationAccessForLeadPool)
   }
 
+  /** All active users with Quotation checkbox — dealers + visitors + ops (not dealers table only). */
   const getAllDealersFromAdmin = async (): Promise<DealerOption[]> => {
     const pageSize = 200
-    let page = 1
-    let totalPages = Number.POSITIVE_INFINITY
     const merged: any[] = []
-    const seenIds = new Set<string>()
 
-    const pickDealerRows = (response: any): any[] => {
-      if (Array.isArray(response)) return response
-      if (Array.isArray(response?.dealers)) return response.dealers
-      if (Array.isArray(response?.items)) return response.items
-      if (Array.isArray(response?.data?.dealers)) return response.data.dealers
-      if (Array.isArray(response?.data?.items)) return response.data.items
-      if (Array.isArray(response?.data)) return response.data
-      return []
-    }
-
-    while (page <= totalPages && page <= 100) {
-      // Use HR-aware endpoint chain first, then admin dealers as fallback (handled in api.hr.dealers.getAll).
-      const response = await api.hr.dealers.getAll({ page, limit: pageSize, isActive: true })
-      const list = pickDealerRows(response)
-      const before = seenIds.size
-      list.forEach((dealer: any) => {
-        if (!dealer?.id || seenIds.has(dealer.id)) return
-        seenIds.add(dealer.id)
-        merged.push(dealer)
-      })
-
-      const responseTotalPages = Number(
-        response?.pagination?.totalPages || response?.meta?.totalPages || response?.data?.pagination?.totalPages || 0,
-      )
-      if (responseTotalPages > 0) {
-        totalPages = responseTotalPages
+    const pushRows = (rows: any[], sourceRole?: string) => {
+      for (const row of rows) {
+        if (!row?.id && !row?.username) continue
+        merged.push({
+          ...row,
+          id: row.id || row.username,
+          role: row.role || sourceRole,
+          sourceRole: sourceRole || row.role,
+          isActive: row.isActive !== false,
+        })
       }
-
-      if (list.length < pageSize && !Number.isFinite(totalPages)) break
-      if (list.length === 0) break
-      if (seenIds.size === before && page > 1) break
-      page += 1
     }
 
-    return filterActiveDealers(normalizeDealerList(merged))
+    const loadPagedDealers = async () => {
+      let page = 1
+      let totalPages = Number.POSITIVE_INFINITY
+      while (page <= totalPages && page <= 100) {
+        const response = await api.hr.dealers.getAll({ page, limit: pageSize, isActive: true })
+        const list = pickUserRows(response)
+        const before = merged.length
+        pushRows(list, "dealer")
+        const responseTotalPages = Number(
+          response?.pagination?.totalPages ||
+            response?.meta?.totalPages ||
+            response?.data?.pagination?.totalPages ||
+            0,
+        )
+        if (responseTotalPages > 0) totalPages = responseTotalPages
+        if (list.length < pageSize && !Number.isFinite(totalPages)) break
+        if (list.length === 0) break
+        if (merged.length === before && page > 1) break
+        page += 1
+      }
+    }
+
+    await loadPagedDealers()
+
+    // Soft-merge every source that can carry Quotation-checkbox users (visitor-kind like Jagdish)
+    await Promise.all([
+      (async () => {
+        try {
+          const res = await api.admin.visitors.getAll({ isActive: true, limit: 1000 } as any)
+          pushRows(pickUserRows(res), "visitor")
+        } catch {
+          /* HR token may 403 */
+        }
+      })(),
+      (async () => {
+        try {
+          const res = await api.admin.accountManagers.getAll({ page: 1, limit: 1000 } as any)
+          pushRows(pickUserRows(res), "account-management")
+        } catch {
+          /* ignore */
+        }
+      })(),
+      (async () => {
+        try {
+          // Dealer-facing visitors list (often allowed for multi-access HR+Quotation)
+          const res = await api.dealers.getVisitors({ isActive: true } as any)
+          pushRows(pickUserRows(res), "visitor")
+        } catch {
+          /* ignore */
+        }
+      })(),
+    ])
+
+    // Local caches + Admin-synced Quotation directory (same browser)
+    try {
+      pushRows(JSON.parse(localStorage.getItem("visitors") || "[]"), "visitor")
+    } catch {
+      /* ignore */
+    }
+    try {
+      pushRows(JSON.parse(localStorage.getItem("dealers") || "[]"), "dealer")
+    } catch {
+      /* ignore */
+    }
+    try {
+      pushRows(JSON.parse(localStorage.getItem("accountManagers") || "[]"), "account-management")
+    } catch {
+      /* ignore */
+    }
+
+    pushRows(
+      listAssignableQuotationFromDirectory().map((u) => ({
+        id: u.id,
+        username: u.username,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        email: u.email,
+        mobile: u.mobile,
+        isActive: u.isActive !== false,
+        role: u.role || "visitor",
+        access: u.access,
+        permissions: u.access,
+      })),
+      "directory",
+    )
+
+    return filterActiveDealers(normalizeDealerList(merged)).filter(hasQuotationAccessForLeadPool)
   }
 
   const normalizeCallingAction = (item: any, fallbackDealers: DealerOption[], index: number): CallingActionRecord => {
@@ -528,13 +677,13 @@ export default function HrDashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      router.push("/hr-login")
+      router.push("/login")
       return
     }
-    if (role !== "hr") {
-      router.push("/login")
+    if (role !== "hr" && !canOpenSection(access, role, "hr")) {
+      router.push(getPostLoginPath(access.length ? access : []))
     }
-  }, [isAuthenticated, role, router])
+  }, [isAuthenticated, role, access, router])
 
   useEffect(() => {
     const loadDealers = async () => {
@@ -562,8 +711,13 @@ export default function HrDashboardPage() {
   }, [toast, useApi, realtimeTick])
 
   useEffect(() => {
-    // Keep selected IDs valid when dealer directory refreshes.
-    setSelectedDealerIds((prev) => prev.filter((id) => dealers.some((d) => d.id === id)))
+    // Keep selected IDs valid when dealer directory refreshes (Quotation access only).
+    setSelectedDealerIds((prev) =>
+      prev.filter((id) => {
+        const d = dealers.find((x) => x.id === id)
+        return Boolean(d && d.isActive === true && hasQuotationAccessForLeadPool(d))
+      }),
+    )
   }, [dealers])
 
   useEffect(() => {
@@ -1141,9 +1295,14 @@ export default function HrDashboardPage() {
   }
 
   const resolveBatchDealerIds = (batch: UploadedLeadBatch): string[] => {
-    if (batch.dealerIds.length > 0) return [...batch.dealerIds]
+    const quotationIds = new Set(
+      filterActiveDealers(dealers).filter(hasQuotationAccessForLeadPool).map((d) => d.id),
+    )
+    if (batch.dealerIds.length > 0) {
+      return batch.dealerIds.filter((id) => quotationIds.has(id))
+    }
     const ids: string[] = []
-    const active = filterActiveDealers(dealers)
+    const active = filterActiveDealers(dealers).filter(hasQuotationAccessForLeadPool)
     for (const name of batch.dealers) {
       const match = active.find(
         (d) => normalizeName(`${d.firstName} ${d.lastName}`) === normalizeName(name),
@@ -1177,14 +1336,23 @@ export default function HrDashboardPage() {
     if (addDealerIds.length === 0) {
       toast({
         title: "Select dealers",
-        description: "Keep at least one dealer selected for this batch pool.",
+        description: "Keep at least one Quotation-access dealer selected for this batch pool.",
         variant: "destructive",
       })
       return
     }
 
     const batchId = addDealersBatch.id
-    const selectedIds = [...addDealerIds]
+    const quotationIdSet = new Set(quotationDealers.map((d) => d.id))
+    const selectedIds = addDealerIds.filter((id) => quotationIdSet.has(id))
+    if (selectedIds.length === 0) {
+      toast({
+        title: "Select dealers",
+        description: "Only dealers with Quotation access can be in the pool.",
+        variant: "destructive",
+      })
+      return
+    }
     const selectedNames = selectedIds
       .map((id) => {
         const d = dealers.find((x) => x.id === id)
@@ -1302,6 +1470,12 @@ export default function HrDashboardPage() {
 
   const activeDealers = useMemo(() => filterActiveDealers(dealers), [dealers])
 
+  /** Manage dealers / Assignment Select Dealers — Quotation checkbox only. */
+  const quotationDealers = useMemo(
+    () => activeDealers.filter(hasQuotationAccessForLeadPool),
+    [activeDealers],
+  )
+
   const dealerFilterOptions = useMemo(() => {
     return activeDealers
       .map((d) => ({
@@ -1334,27 +1508,32 @@ export default function HrDashboardPage() {
     [filteredCallingActions],
   )
 
+  const multiAccess = getAccessOptions(access).length > 1
+
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <button onClick={() => router.push("/")} className="flex items-center">
-            <SolarLogo size="md" />
-          </button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await logout()
-              router.push("/")
-            }}
-            className="gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </Button>
-        </div>
-      </header>
+      <AccessSwitchBar current="hr" title="HR" />
+      {!multiAccess ? (
+        <header className="border-b border-border bg-card">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+            <button onClick={() => router.push("/")} className="flex items-center">
+              <SolarLogo size="md" />
+            </button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await logout()
+                router.push("/")
+              }}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </Button>
+          </div>
+        </header>
+      ) : null}
 
       <main className="container mx-auto px-4 py-6 space-y-4">
         <div className="flex items-center gap-2">
@@ -1401,11 +1580,13 @@ export default function HrDashboardPage() {
               <CardContent>
                 {isLoadingDealers ? (
                   <p className="text-sm text-muted-foreground">Loading dealers...</p>
-                ) : activeDealers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No active dealers found.</p>
+                ) : quotationDealers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No dealers with Quotation access. Enable Quotation in Admin → Users.
+                  </p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {activeDealers.map((dealer) => (
+                    {quotationDealers.map((dealer) => (
                       <label key={dealer.id} className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40">
                         <Checkbox checked={selectedDealerIds.includes(dealer.id)} onCheckedChange={() => toggleDealer(dealer.id)} />
                         <div className="min-w-0">
@@ -1973,7 +2154,7 @@ export default function HrDashboardPage() {
             <DialogTitle>Manage dealers</DialogTitle>
             <DialogDescription>
               {addDealersBatch
-                ? `Choose which dealers are in the pool for “${addDealersBatch.fileName}”. Checked = assigned to this batch; unchecked = removed.`
+                ? `Choose which Quotation-access dealers are in the pool for “${addDealersBatch.fileName}”. Checked = assigned to this batch; unchecked = removed.`
                 : "Select dealers for this batch."}
             </DialogDescription>
           </DialogHeader>
@@ -1983,7 +2164,7 @@ export default function HrDashboardPage() {
               {addDealersBatch.unassignedCount > 0 || addDealersBatch.assignedCount > 0 ? (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
                   After save, each selected dealer keeps at most 1 active lead. Extra Assigned leads return to
-                  Unassigned; Completed is unchanged.
+                  Unassigned; Completed is unchanged. Only dealers with Quotation access are listed.
                   {addDealersBatch.unassignedCount > 0
                     ? ` Currently ${addDealersBatch.unassignedCount} unassigned.`
                     : ""}
@@ -1991,10 +2172,12 @@ export default function HrDashboardPage() {
               ) : null}
 
               <div className="overflow-y-auto max-h-[42vh] space-y-2 pr-1">
-                {activeDealers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">No active dealers available.</p>
+                {quotationDealers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-6 text-center">
+                    No dealers with Quotation access. Enable Quotation in Admin → Users.
+                  </p>
                 ) : (
-                  activeDealers.map((dealer) => (
+                  quotationDealers.map((dealer) => (
                     <label
                       key={dealer.id}
                       className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40"

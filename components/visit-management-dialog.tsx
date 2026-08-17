@@ -14,11 +14,62 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent } from "@/components/ui/card"
-import { Calendar, Clock, MapPin, Plus, X, Trash2, Users, Link } from "lucide-react"
+import { ArrowRightLeft, Calendar, Clock, MapPin, Plus, X, Trash2, Users, Link } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import type { Visitor } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
+import { getAccessOverride, hasAccess, listedUserHasAccess, normalizeAccessList, type UserAccessKey } from "@/lib/user-access"
+import { listAssignableVisitorsFromDirectory } from "@/lib/visitor-assignable-directory"
+
+/** Users with Admin Visitor checkbox — not only legacy visitor accounts. */
+function isVisitorAccessEligible(raw: any): boolean {
+  if (!raw) return false
+  const roleHint =
+    String(raw.role || "")
+      .toLowerCase()
+      .replace(/_/g, "-") ||
+    (raw.source === "visitors" || raw.employeeId != null ? "visitor" : undefined)
+  return listedUserHasAccess(
+    {
+      username: raw.username,
+      role: roleHint,
+      access: raw.access,
+      permissions: raw.permissions,
+      isActive: raw.isActive,
+    },
+    "visitor",
+  )
+}
+
+function mapApiVisitor(v: any): Visitor & { access?: UserAccessKey[] } {
+  const fromApi = normalizeAccessList(v.access ?? v.permissions)
+  const override = getAccessOverride(v.username)
+  const access = Array.from(new Set([...fromApi, ...override])) as UserAccessKey[]
+  return {
+    id: String(v.id || ""),
+    username: v.username || "",
+    password: "",
+    firstName: v.firstName || "",
+    lastName: v.lastName || "",
+    email: v.email || "",
+    mobile: v.mobile || "",
+    employeeId: v.employeeId,
+    isActive: v.isActive ?? true,
+    access,
+  } as Visitor & { access?: UserAccessKey[] }
+}
+
+function extractUserList(response: any): any[] {
+  if (!response) return []
+  if (Array.isArray(response)) return response
+  if (Array.isArray(response.visitors)) return response.visitors
+  if (Array.isArray(response.dealers)) return response.dealers
+  if (Array.isArray(response.accountManagers)) return response.accountManagers
+  if (Array.isArray(response.users)) return response.users
+  if (Array.isArray(response.data)) return response.data
+  return []
+}
 
 interface VisitVisitor {
   visitorId: string
@@ -87,13 +138,17 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
   const [visits, setVisits] = useState<Visit[]>([])
   const [isAdding, setIsAdding] = useState(false)
   const [availableVisitors, setAvailableVisitors] = useState<Visitor[]>([])
-  const [assignedVisitors, setAssignedVisitors] = useState<VisitVisitor[]>([])
+  const [selectedVisitorId, setSelectedVisitorId] = useState("")
   const [isLoadingVisitors, setIsLoadingVisitors] = useState(false)
   const [rescheduleVisit, setRescheduleVisit] = useState<Visit | null>(null)
   const [rescheduleReason, setRescheduleReason] = useState("")
   const [rescheduleDate, setRescheduleDate] = useState("")
   const [rescheduleStartTime, setRescheduleStartTime] = useState("")
   const [rescheduleEndTime, setRescheduleEndTime] = useState("")
+  const [transferVisit, setTransferVisit] = useState<Visit | null>(null)
+  const [transferVisitorId, setTransferVisitorId] = useState("")
+  const [transferReason, setTransferReason] = useState("")
+  const [isTransferring, setIsTransferring] = useState(false)
   const [formData, setFormData] = useState({
     date: "",
     startTime: "",
@@ -113,53 +168,115 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
         ? `${address.street || ""}, ${address.city || ""}, ${address.state || ""} - ${address.pincode || ""}`.replace(/^,\s*|,\s*$/g, "").replace(/,\s*,/g, ",")
         : ""
       setFormData((prev) => ({ ...prev, location: customerAddress, locationLink: "" }))
-      setAssignedVisitors([])
+      setSelectedVisitorId("")
+      setTransferVisit(null)
+      setTransferVisitorId("")
+      setTransferReason("")
     }
   }, [quotation, open])
 
   const loadAvailableVisitors = async () => {
     setIsLoadingVisitors(true)
     try {
-      if (useApi) {
-        // Use the dealer visitors endpoint: GET /api/dealers/visitors
-        // apiRequest returns data.data, so response is already the data object
-        // API response structure: { success: true, data: { visitors: [...] } }
-        // After apiRequest unwrapping: response = { visitors: [...] }
-        const response = await api.dealers.getVisitors({ isActive: true })
-        const visitorsList = response.visitors || []
-        
-        if (visitorsList.length > 0) {
-          setAvailableVisitors(visitorsList.map((v: any) => ({
-            id: v.id,
-            username: v.username || "",
-            password: "",
-            firstName: v.firstName || "",
-            lastName: v.lastName || "",
-            email: v.email || "",
-            mobile: v.mobile || "",
-            employeeId: v.employeeId,
-            isActive: v.isActive ?? true,
-          })))
-        } else {
-          console.warn("No active visitors found in API response")
-          setAvailableVisitors([])
+      const merged: any[] = []
+      const pushAll = (rows: any[], source: string) => {
+        for (const row of rows) {
+          if (!row) continue
+          merged.push({ ...row, source: row.source || source })
         }
-      } else {
-        // Fallback to localStorage
-        const visitors = JSON.parse(localStorage.getItem("visitors") || "[]")
-        setAvailableVisitors(visitors.filter((v: any) => v.isActive !== false))
       }
+
+      if (useApi) {
+        // 1) Legacy + (hopefully) access-aware assignable visitors
+        try {
+          const response = await api.dealers.getVisitors({ isActive: true })
+          pushAll(extractUserList(response), "visitors")
+        } catch (error) {
+          console.warn("[visits] dealers.getVisitors failed:", error)
+        }
+
+        // 2) Also pull Admin Users sources — dealers/ops with Visitor checkbox
+        //    (soft-fail if current login is not admin)
+        const extraLoads: Array<Promise<void>> = [
+          (async () => {
+            try {
+              const res = await api.admin.visitors.getAll({ isActive: true, limit: 1000 } as any)
+              pushAll(extractUserList(res), "visitors")
+            } catch {
+              /* dealer token may 403 */
+            }
+          })(),
+          (async () => {
+            try {
+              const res = await api.admin.dealers.getAll({
+                page: 1,
+                limit: 1000,
+                includeInactive: false,
+              } as any)
+              pushAll(extractUserList(res), "dealer")
+            } catch {
+              /* ignore */
+            }
+          })(),
+          (async () => {
+            try {
+              const res = await api.admin.accountManagers.getAll({ page: 1, limit: 1000 } as any)
+              pushAll(extractUserList(res), "ops")
+            } catch {
+              /* ignore */
+            }
+          })(),
+        ]
+        await Promise.all(extraLoads)
+      } else {
+        pushAll(JSON.parse(localStorage.getItem("visitors") || "[]"), "visitors")
+        pushAll(JSON.parse(localStorage.getItem("dealers") || "[]"), "dealer")
+        pushAll(JSON.parse(localStorage.getItem("accountManagers") || "[]"), "ops")
+      }
+
+      // 3) Local directory synced from Admin → Users (Visitor checkbox), e.g. Saurav / aman4119
+      pushAll(listAssignableVisitorsFromDirectory(), "directory")
+
+      // Keep anyone with Visitor access (API or local Admin override), including dealers like aman4119
+      const eligible = merged
+        .filter((v: any) => isVisitorAccessEligible(v))
+        .map((v: any) => mapApiVisitor(v))
+        .filter((v) => v.id)
+
+      const byKey = new Map<string, Visitor>()
+      for (const v of eligible) {
+        const key = v.id || v.username.toLowerCase()
+        if (!key) continue
+        const prev = byKey.get(key)
+        if (!prev) {
+          byKey.set(key, v)
+          continue
+        }
+        // Prefer row that already has visitor in access
+        const prevHas = hasAccess((prev as any).access, "visitor")
+        const nextHas = hasAccess((v as any).access, "visitor")
+        if (!prevHas && nextHas) byKey.set(key, v)
+      }
+
+      // Username-level dedupe (same person may appear as dealer + visitor ids)
+      const byUsername = new Map<string, Visitor>()
+      for (const v of byKey.values()) {
+        const uk = (v.username || "").trim().toLowerCase()
+        if (!uk) {
+          byUsername.set(v.id, v)
+          continue
+        }
+        if (!byUsername.has(uk)) byUsername.set(uk, v)
+      }
+
+      setAvailableVisitors(
+        [...byUsername.values()].sort((a, b) =>
+          `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`),
+        ),
+      )
     } catch (error) {
-      console.error("Error loading visitors from API:", error)
-      // Only fallback to localStorage if API is explicitly disabled
-      if (!useApi) {
-        const visitors = JSON.parse(localStorage.getItem("visitors") || "[]")
-        setAvailableVisitors(visitors.filter((v: any) => v.isActive !== false))
-      } else {
-        // If API is enabled but call failed, show empty list instead of dummy data
-        console.error("Failed to load visitors from API. Please check your connection and try again.")
-        setAvailableVisitors([])
-      }
+      console.error("Error loading visitors:", error)
+      setAvailableVisitors([])
     } finally {
       setIsLoadingVisitors(false)
     }
@@ -298,20 +415,20 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
       return
     }
 
-    if (assignedVisitors.length === 0) {
-      alert("Please assign at least one visitor")
+    if (!selectedVisitorId.trim()) {
+      alert("Please select a visitor")
       return
     }
 
-    // Validate that at least one assigned visitor has a valid visitorId
-    const hasValidVisitor = assignedVisitors.some(v => v.visitorId && v.visitorId.trim())
-    if (!hasValidVisitor) {
-      alert("Please select a visitor for at least one assigned visitor slot")
-      return
-    }
-
-    // Filter out visitors with empty IDs (only send valid visitors)
-    const validVisitors = assignedVisitors.filter(v => v.visitorId && v.visitorId.trim())
+    const selected = availableVisitors.find((v) => v.id === selectedVisitorId)
+    const validVisitors: VisitVisitor[] = [
+      {
+        visitorId: selectedVisitorId,
+        visitorName: selected
+          ? `${selected.firstName} ${selected.lastName}`.trim()
+          : "",
+      },
+    ]
 
     const newVisit: Visit = {
       id: `visit_${Date.now()}`,
@@ -340,7 +457,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
         locationLink: "",
         notes: "",
       })
-      setAssignedVisitors([])
+      setSelectedVisitorId("")
     } catch (error) {
       console.error("Error adding visit:", error)
       let errorMessage = "Failed to add visit. Please try again."
@@ -446,6 +563,104 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
     } catch (error) {
       console.error("Error rescheduling visit:", error)
       alert(error instanceof ApiError ? error.message : "Failed to reschedule visit. Please try again.")
+    }
+  }
+
+  const openTransferDialog = (visit: Visit, preferVisitorId?: string) => {
+    const currentId = visit.visitors?.[0]?.visitorId || ""
+    setTransferVisit(visit)
+    setTransferReason("")
+    const preferred =
+      preferVisitorId && preferVisitorId !== currentId
+        ? preferVisitorId
+        : ""
+    if (preferred) {
+      setTransferVisitorId(preferred)
+      return
+    }
+    setTransferVisitorId("")
+    const others = availableVisitors.filter((v) => v.id !== currentId)
+    if (others.length === 1) setTransferVisitorId(others[0].id)
+  }
+
+  /** From Assign Visitor form: transfer an existing scheduled visit to the selected visitor. */
+  const openTransferFromAssignForm = () => {
+    const transferable = visits.filter((v) => !isPastVisit(v))
+    if (transferable.length === 0) {
+      alert("No upcoming scheduled visits to transfer. Schedule a visit first, then use Transfer.")
+      return
+    }
+    if (!selectedVisitorId.trim()) {
+      alert("Select the visitor to transfer the visit to")
+      return
+    }
+    // Prefer visit currently assigned to someone else; otherwise first upcoming
+    const targetVisit =
+      transferable.find((v) => (v.visitors?.[0]?.visitorId || "") !== selectedVisitorId) ||
+      transferable[0]
+    if ((targetVisit.visitors?.[0]?.visitorId || "") === selectedVisitorId) {
+      alert("This visit is already assigned to the selected visitor. Choose a different visitor.")
+      return
+    }
+    openTransferDialog(targetVisit, selectedVisitorId)
+  }
+
+  const handleTransferVisit = async () => {
+    if (!quotation || !transferVisit) return
+    if (!transferVisitorId.trim()) {
+      alert("Please select the visitor to transfer this visit to")
+      return
+    }
+    const currentId = transferVisit.visitors?.[0]?.visitorId || ""
+    if (transferVisitorId === currentId) {
+      alert("Choose a different visitor to transfer to")
+      return
+    }
+    const selected = availableVisitors.find((v) => v.id === transferVisitorId)
+    const visitorName = selected
+      ? `${selected.firstName} ${selected.lastName}`.trim()
+      : ""
+    const visitorsPayload = [{ visitorId: transferVisitorId, visitorName }]
+
+    setIsTransferring(true)
+    try {
+      if (useApi) {
+        await api.visits.transfer(transferVisit.id, {
+          visitorId: transferVisitorId,
+          visitorName,
+          visitors: visitorsPayload,
+          reason: transferReason.trim() || undefined,
+        })
+        await loadVisits()
+      } else {
+        const updatedVisits = visits.map((v) =>
+          v.id === transferVisit.id
+            ? {
+                ...v,
+                visitors: visitorsPayload,
+                notes: [
+                  v.notes || "",
+                  transferReason.trim()
+                    ? `Transferred to ${visitorName}: ${transferReason.trim()}`
+                    : `Transferred to ${visitorName}`,
+                ]
+                  .map((p) => p.trim())
+                  .filter(Boolean)
+                  .join(" | "),
+              }
+            : v,
+        )
+        localStorage.setItem(`visits_${quotation.id}`, JSON.stringify(updatedVisits))
+        setVisits(updatedVisits)
+      }
+      setTransferVisit(null)
+      setTransferVisitorId("")
+      setTransferReason("")
+    } catch (error) {
+      console.error("Error transferring visit:", error)
+      alert(error instanceof ApiError ? error.message : "Failed to transfer visit. Please try again.")
+    } finally {
+      setIsTransferring(false)
     }
   }
 
@@ -614,93 +829,45 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                     />
                   </div>
 
-                  {/* Assign Visitors */}
-                  <div className="border-t pt-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <Label className="flex items-center gap-2">
-                        <Users className="w-4 h-4" />
-                        Assign Visitors (Fixed Assignment)
-                      </Label>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setAssignedVisitors([...assignedVisitors, { visitorId: "", visitorName: "" }])
-                        }}
-                      >
-                        <Plus className="w-3 h-3 mr-1" />
-                        Add Visitor
-                      </Button>
-                    </div>
-
-                    {assignedVisitors.map((visitor, index) => (
-                      <Card key={index} className="mb-3 border-border">
-                        <CardContent className="pt-4">
-                          <div className="space-y-3">
-                            <div className="flex items-center justify-between">
-                              <span className="text-sm font-medium">Assigned Visitor {index + 1}</span>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => {
-                                  setAssignedVisitors(assignedVisitors.filter((_, i) => i !== index))
-                                }}
-                                className="h-6 w-6"
-                              >
-                                <X className="w-3 h-3" />
-                              </Button>
-                            </div>
-
-                            <div>
-                              <Label className="text-xs">Select Visitor</Label>
-                              <Select
-                                value={visitor.visitorId}
-                                onValueChange={(value) => {
-                                  const selected = availableVisitors.find((v) => v.id === value)
-                                  const updated = [...assignedVisitors]
-                                  updated[index] = {
-                                    ...updated[index],
-                                    visitorId: value,
-                                    visitorName: selected ? `${selected.firstName} ${selected.lastName}` : "",
-                                  }
-                                  setAssignedVisitors(updated)
-                                }}
-                                disabled={isLoadingVisitors}
-                              >
-                                <SelectTrigger className="mt-1">
-                                  <SelectValue placeholder={isLoadingVisitors ? "Loading visitors..." : "Select visitor"} />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {isLoadingVisitors ? (
-                                    <SelectItem value="loading" disabled>
-                                      Loading visitors...
-                                    </SelectItem>
-                                  ) : availableVisitors.length > 0 ? (
-                                    availableVisitors.map((v) => (
-                                      <SelectItem key={v.id} value={v.id}>
-                                        {v.firstName} {v.lastName} ({v.username})
-                                      </SelectItem>
-                                    ))
-                                  ) : (
-                                    <SelectItem value="no-visitors" disabled>
-                                      No active visitors available
-                                    </SelectItem>
-                                  )}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-
-                    {assignedVisitors.length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center py-2">
-                        No visitors assigned. Click "Add Visitor" to assign one.
-                      </p>
-                    )}
+                  {/* Assign single visitor — dropdown shows Admin-checked Visitor access only */}
+                  <div className="border-t pt-4 space-y-3">
+                    <Label className="flex items-center gap-2">
+                      <Users className="w-4 h-4" />
+                      Assign Visitor *
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      Only users with the Visitor checkbox in Admin → Users appear here. One visitor per visit.
+                      Use Transfer to move an existing scheduled visit to the visitor selected below.
+                    </p>
+                    <Select
+                      value={selectedVisitorId}
+                      onValueChange={setSelectedVisitorId}
+                      disabled={isLoadingVisitors}
+                    >
+                      <SelectTrigger>
+                        <SelectValue
+                          placeholder={isLoadingVisitors ? "Loading visitors..." : "Select visitor"}
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {isLoadingVisitors ? (
+                          <SelectItem value="loading" disabled>
+                            Loading visitors...
+                          </SelectItem>
+                        ) : availableVisitors.length > 0 ? (
+                          availableVisitors.map((v) => (
+                            <SelectItem key={v.id} value={v.id}>
+                              {v.firstName} {v.lastName}
+                              {v.username ? ` (${v.username})` : ""}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <SelectItem value="no-visitors" disabled>
+                            No visitors with Visitor access
+                          </SelectItem>
+                        )}
+                      </SelectContent>
+                    </Select>
                   </div>
 
                   <div className="flex flex-col sm:flex-row gap-2">
@@ -712,10 +879,20 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                       Schedule Visit
                     </Button>
                     <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1 h-11"
+                      onClick={openTransferFromAssignForm}
+                      disabled={isLoadingVisitors || visits.filter((v) => !isPastVisit(v)).length === 0}
+                    >
+                      <ArrowRightLeft className="w-4 h-4 mr-2" />
+                      Transfer
+                    </Button>
+                    <Button
                       variant="outline"
                       onClick={() => {
                         setIsAdding(false)
-                        setAssignedVisitors([])
+                        setSelectedVisitorId("")
                       }}
                       className="flex-1 h-11"
                     >
@@ -808,7 +985,7 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                             <div className="bg-primary/5 rounded-md p-2 mt-2 border border-primary/20">
                               <div className="flex items-center gap-2 mb-2">
                                 <Users className="w-3 h-3 text-primary" />
-                                <p className="text-xs font-semibold text-primary">Assigned Visitors (Fixed):</p>
+                                <p className="text-xs font-semibold text-primary">Assigned Visitor:</p>
                               </div>
                               <div className="space-y-1">
                                 {visit.visitors.map((v, idx) => (
@@ -828,23 +1005,34 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
                           )}
                         </div>
 
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => openRescheduleDialog(visit)}
-                          className="mr-2"
-                        >
-                          <Calendar className="w-4 h-4 mr-1" />
-                          Reschedule
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteVisit(visit.id)}
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex flex-col sm:flex-row gap-2 shrink-0">
+                          {!isPastVisit(visit) ? (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openTransferDialog(visit)}
+                            >
+                              <ArrowRightLeft className="w-4 h-4 mr-1" />
+                              Transfer
+                            </Button>
+                          ) : null}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openRescheduleDialog(visit)}
+                          >
+                            <Calendar className="w-4 h-4 mr-1" />
+                            Reschedule
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteVisit(visit.id)}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -856,63 +1044,176 @@ export function VisitManagementDialog({ quotation, open, onOpenChange }: VisitMa
       </DialogContent>
 
       <Dialog open={!!rescheduleVisit} onOpenChange={(open) => !open && setRescheduleVisit(null)}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Reschedule Visit</DialogTitle>
+              <DialogDescription>Update visit date and time range with reason.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="reschedule-reason">Reason *</Label>
+                <Textarea
+                  id="reschedule-reason"
+                  value={rescheduleReason}
+                  onChange={(e) => setRescheduleReason(e.target.value)}
+                  placeholder="Please provide reason for rescheduling..."
+                  rows={3}
+                  className="mt-1"
+                />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label htmlFor="reschedule-date">Date *</Label>
+                  <Input
+                    id="reschedule-date"
+                    type="date"
+                    value={rescheduleDate}
+                    onChange={(e) => setRescheduleDate(e.target.value)}
+                    min={new Date().toISOString().split("T")[0]}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="reschedule-start-time">Start *</Label>
+                  <Input
+                    id="reschedule-start-time"
+                    type="time"
+                    value={rescheduleStartTime}
+                    onChange={(e) => setRescheduleStartTime(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="reschedule-end-time">End *</Label>
+                  <Input
+                    id="reschedule-end-time"
+                    type="time"
+                    value={rescheduleEndTime}
+                    onChange={(e) => setRescheduleEndTime(e.target.value)}
+                    className="mt-1"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setRescheduleVisit(null)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleRescheduleVisit} className="bg-purple-600 hover:bg-purple-700">
+                  <Calendar className="w-4 h-4 mr-2" />
+                  Reschedule Visit
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+      <Dialog
+        open={!!transferVisit}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTransferVisit(null)
+            setTransferVisitorId("")
+            setTransferReason("")
+          }
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Reschedule Visit</DialogTitle>
-            <DialogDescription>Update visit date and time range with reason.</DialogDescription>
+            <DialogTitle>Transfer Visit</DialogTitle>
+            <DialogDescription>
+              Move this visit to another visitor. Only users with Visitor access in Admin are listed.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
+            {transferVisit ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                <p>
+                  <span className="text-muted-foreground">Visit: </span>
+                  <span className="font-medium">
+                    {formatDate(transferVisit.date)} · {formatTime(transferVisit.time)}
+                  </span>
+                </p>
+                {transferVisit.visitors?.[0]?.visitorName ? (
+                  <p>
+                    <span className="text-muted-foreground">Current visitor: </span>
+                    <span className="font-medium">{transferVisit.visitors[0].visitorName}</span>
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {visits.filter((v) => !isPastVisit(v)).length > 1 ? (
+              <div>
+                <Label>Which visit to transfer *</Label>
+                <Select
+                  value={transferVisit?.id || ""}
+                  onValueChange={(id) => {
+                    const visit = visits.find((v) => v.id === id)
+                    if (visit) openTransferDialog(visit, transferVisitorId || selectedVisitorId || undefined)
+                  }}
+                >
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Select scheduled visit" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {visits
+                      .filter((v) => !isPastVisit(v))
+                      .map((v) => (
+                        <SelectItem key={v.id} value={v.id}>
+                          {formatDate(v.date)} · {formatTime(v.time)}
+                          {v.visitors?.[0]?.visitorName ? ` → ${v.visitors[0].visitorName}` : ""}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
             <div>
-              <Label htmlFor="reschedule-reason">Reason *</Label>
+              <Label>Transfer to visitor *</Label>
+              <Select
+                value={transferVisitorId}
+                onValueChange={setTransferVisitorId}
+                disabled={isLoadingVisitors}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select visitor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableVisitors
+                    .filter((v) => v.id !== transferVisit?.visitors?.[0]?.visitorId)
+                    .map((v) => (
+                      <SelectItem key={v.id} value={v.id}>
+                        {v.firstName} {v.lastName}
+                        {v.username ? ` (${v.username})` : ""}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label htmlFor="transfer-reason">Reason (optional)</Label>
               <Textarea
-                id="reschedule-reason"
-                value={rescheduleReason}
-                onChange={(e) => setRescheduleReason(e.target.value)}
-                placeholder="Please provide reason for rescheduling..."
-                rows={3}
+                id="transfer-reason"
+                value={transferReason}
+                onChange={(e) => setTransferReason(e.target.value)}
+                placeholder="Why is this visit being transferred?"
+                rows={2}
                 className="mt-1"
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <Label htmlFor="reschedule-date">Date *</Label>
-                <Input
-                  id="reschedule-date"
-                  type="date"
-                  value={rescheduleDate}
-                  onChange={(e) => setRescheduleDate(e.target.value)}
-                  min={new Date().toISOString().split("T")[0]}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="reschedule-start-time">Start *</Label>
-                <Input
-                  id="reschedule-start-time"
-                  type="time"
-                  value={rescheduleStartTime}
-                  onChange={(e) => setRescheduleStartTime(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="reschedule-end-time">End *</Label>
-                <Input
-                  id="reschedule-end-time"
-                  type="time"
-                  value={rescheduleEndTime}
-                  onChange={(e) => setRescheduleEndTime(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-            </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setRescheduleVisit(null)}>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setTransferVisit(null)
+                  setTransferVisitorId("")
+                  setTransferReason("")
+                }}
+              >
                 Cancel
               </Button>
-              <Button onClick={handleRescheduleVisit} className="bg-purple-600 hover:bg-purple-700">
-                <Calendar className="w-4 h-4 mr-2" />
-                Reschedule Visit
+              <Button onClick={handleTransferVisit} disabled={isTransferring}>
+                <ArrowRightLeft className="w-4 h-4 mr-2" />
+                {isTransferring ? "Transferring..." : "Transfer Visit"}
               </Button>
             </div>
           </div>

@@ -4,6 +4,8 @@ import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
+import { AccessSwitchBar } from "@/components/access-switch-bar"
+import { canOpenSection, getAccessOptions, getPostLoginPath } from "@/lib/user-access"
 import { API_CONFIG } from "@/lib/api-config"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -383,9 +385,62 @@ const mapVisitApiRecord = (
 }
 
 export default function VisitorDashboardPage() {
-  const { visitor, role, isAuthenticated, logout } = useAuth()
+  const {
+    visitor: authVisitor,
+    role,
+    isAuthenticated,
+    logout,
+    access,
+    dealer,
+    accountManager,
+    installer,
+    meteringUser,
+    baldev,
+    hrUser,
+  } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
+
+  /** Multi-access users (e.g. HR + Visitor) may not have primary role visitor. */
+  const visitor =
+    authVisitor ||
+    (canOpenSection(access, role, "visitor")
+      ? {
+          id: String(
+            dealer?.id ||
+              accountManager?.id ||
+              installer?.id ||
+              meteringUser?.id ||
+              baldev?.id ||
+              hrUser?.id ||
+              "",
+          ),
+          username: String(
+            dealer?.username || accountManager?.username || hrUser?.username || installer?.username || meteringUser?.username || "",
+          ),
+          password: "",
+          firstName: String(
+            dealer?.firstName ||
+              accountManager?.firstName ||
+              installer?.firstName ||
+              meteringUser?.firstName ||
+              baldev?.firstName ||
+              hrUser?.firstName ||
+              "Visitor",
+          ),
+          lastName: String(
+            dealer?.lastName ||
+              accountManager?.lastName ||
+              installer?.lastName ||
+              meteringUser?.lastName ||
+              baldev?.lastName ||
+              hrUser?.lastName ||
+              "",
+          ),
+          mobile: String(dealer?.mobile || accountManager?.mobile || hrUser?.mobile || ""),
+          email: String(dealer?.email || accountManager?.email || hrUser?.email || ""),
+        }
+      : null)
   const [assignedVisits, setAssignedVisits] = useState<VisitWithQuotation[]>([])
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -440,19 +495,19 @@ export default function VisitorDashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      router.push("/visitor-login")
+      router.push("/login")
       return
     }
 
-    if (role !== "visitor") {
-      router.push("/dashboard")
+    if (role !== "visitor" && !canOpenSection(access, role, "visitor")) {
+      router.push(access.length ? getPostLoginPath(access) : "/dashboard")
       return
     }
 
     if (visitor) {
       loadAssignedVisits()
     }
-  }, [isAuthenticated, role, router, visitor])
+  }, [isAuthenticated, role, access, router, visitor])
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -1161,27 +1216,39 @@ export default function VisitorDashboardPage() {
     }
   }
 
-  if (!isAuthenticated || role !== "visitor" || !visitor) return null
+  if (!isAuthenticated || !visitor || (role !== "visitor" && !canOpenSection(access, role, "visitor"))) {
+    return null
+  }
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-3 sm:py-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <h1 className="text-lg sm:text-xl font-bold truncate">Visitor Dashboard</h1>
-              <p className="text-xs sm:text-sm text-muted-foreground truncate">
-                Welcome, {visitor.firstName} {visitor.lastName}
-              </p>
+      <AccessSwitchBar current="visitor" title="Visitor" />
+      {getAccessOptions(access).length <= 1 ? (
+        <header className="border-b border-border bg-card">
+          <div className="container mx-auto px-4 py-3 sm:py-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <h1 className="text-lg sm:text-xl font-bold truncate">Visitor Dashboard</h1>
+                <p className="text-xs sm:text-sm text-muted-foreground truncate">
+                  Welcome, {visitor.firstName} {visitor.lastName}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleLogout} className="flex-shrink-0">
+                <LogOut className="w-4 h-4 sm:mr-2" />
+                <span className="hidden sm:inline">Logout</span>
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={handleLogout} className="flex-shrink-0">
-              <LogOut className="w-4 h-4 sm:mr-2" />
-              <span className="hidden sm:inline">Logout</span>
-            </Button>
+          </div>
+        </header>
+      ) : (
+        <div className="border-b border-border/60 bg-muted/20">
+          <div className="container mx-auto px-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Welcome, {visitor.firstName} {visitor.lastName} — Visitor
+            </p>
           </div>
         </div>
-      </header>
+      )}
 
       <main className="container mx-auto px-4 py-4 sm:py-8">
         <div className="mb-4 sm:mb-6">

@@ -15,6 +15,8 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { indianStates } from "@/lib/quotation-data"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 
 interface CustomerData {
   id?: string
@@ -40,6 +42,7 @@ export default function CustomersPage() {
   const router = useRouter()
   const [customers, setCustomers] = useState<CustomerData[]>([])
   const [searchTerm, setSearchTerm] = useState("")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [editingCustomer, setEditingCustomer] = useState<CustomerData | null>(null)
   const [editDialogOpen, setEditDialogOpen] = useState(false)
   const [customerEditForm, setCustomerEditForm] = useState({
@@ -198,10 +201,11 @@ export default function CustomersPage() {
 
   const filteredCustomers = customers.filter(
     (c) =>
-      c.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      c.mobile.includes(searchTerm) ||
-      c.email.toLowerCase().includes(searchTerm.toLowerCase()),
+      (c.firstName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.lastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        c.mobile.includes(searchTerm) ||
+        c.email.toLowerCase().includes(searchTerm.toLowerCase())) &&
+      matchesCityFilter(c, filterCities),
   )
 
   return (
@@ -219,13 +223,20 @@ export default function CustomersPage() {
 
         <Card>
           <CardHeader>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search customers by name, mobile, or email..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9"
+            <div className="flex flex-col sm:flex-row gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search customers by name, mobile, or email..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <CityMultiSelectFilter
+                value={filterCities}
+                onChange={setFilterCities}
+                className="w-full sm:w-52"
               />
             </div>
           </CardHeader>
@@ -234,9 +245,15 @@ export default function CustomersPage() {
               <div className="text-center py-12 text-muted-foreground">
                 <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No customers found</p>
-                {searchTerm ? (
-                  <Button variant="link" onClick={() => setSearchTerm("")}>
-                    Clear search
+                {searchTerm || filterCities.length > 0 ? (
+                  <Button
+                    variant="link"
+                    onClick={() => {
+                      setSearchTerm("")
+                      setFilterCities([])
+                    }}
+                  >
+                    Clear filters
                   </Button>
                 ) : (
                   <Button variant="link" onClick={() => router.push("/dashboard/new-quotation")}>

@@ -23,6 +23,9 @@ import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { formatPersonName } from "@/lib/name-display"
+import { canOpenSection, getPostLoginPath } from "@/lib/user-access"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 
 /** Same amount as the Recent Quotations AMOUNT column (subtotal / package price first). */
 function getQuotationDisplayAmount(quotation: {
@@ -38,11 +41,12 @@ function formatDashboardTotalValue(amount: number): string {
 }
 
 export default function DashboardPage() {
-  const { isAuthenticated, dealer, role } = useAuth()
+  const { isAuthenticated, dealer, role, access } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [searchTerm, setSearchTerm] = useState("")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [visitQuotation, setVisitQuotation] = useState<Quotation | null>(null)
@@ -196,23 +200,33 @@ export default function DashboardPage() {
       return
     }
 
-    if (role === "account-management") {
-      router.push("/dashboard/account-management")
-      return
-    }
-    if (role === "hr") {
-      router.push("/dashboard/hr")
-      return
-    }
-    
-    // Redirect admin / super-admin to admin panel
-    if (isQuotationAdminAccess({ role, username: dealer?.username })) {
+    const canUseQuotation = canOpenSection(access, role, "quotation") || role === "dealer"
+    const isAdminUser = isQuotationAdminAccess({ role, username: dealer?.username })
+
+    // Admin uses Admin Panel only — never the dealer quotation create UI
+    if (isAdminUser) {
       router.push("/dashboard/admin")
       return
     }
-    
+
+    // Ops-only roles without Quotation access → their own dashboard
+    if (role === "account-management" && !canUseQuotation) {
+      router.push("/dashboard/account-management")
+      return
+    }
+    if (role === "hr" && !canUseQuotation) {
+      router.push("/dashboard/hr")
+      return
+    }
+    if (!canUseQuotation) {
+      if (access.length > 0) {
+        router.push(getPostLoginPath(access))
+        return
+      }
+    }
+
     loadQuotations()
-  }, [isAuthenticated, router, dealer, role])
+  }, [isAuthenticated, router, dealer, role, access])
 
   const loadQuotations = async () => {
     if (!dealer?.id) return
@@ -347,7 +361,8 @@ export default function DashboardPage() {
   const { uploadingField, onDocumentFileSelected } = useQuotationDocumentFileUpload(useApi, updateDocumentsForm)
 
   if (!isAuthenticated) return null
-  if (role === "account-management" || role === "hr") {
+  const canUseQuotation = canOpenSection(access, role, "quotation") || role === "dealer"
+  if ((role === "account-management" || role === "hr") && !canUseQuotation) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
@@ -382,10 +397,11 @@ export default function DashboardPage() {
 
   const filteredQuotations = quotations.filter(
     (q) =>
-      (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.customer?.mobile || "").includes(searchTerm) ||
-      (q.id || "").toLowerCase().includes(searchTerm.toLowerCase()),
+      ((q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (q.customer?.mobile || "").includes(searchTerm) ||
+        (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())) &&
+      matchesCityFilter(q, filterCities),
   )
 
   const recentQuotations = [...filteredQuotations]
@@ -610,13 +626,20 @@ export default function DashboardPage() {
           <CardHeader>
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <CardTitle className="text-base sm:text-lg">Recent Quotations</CardTitle>
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                <Input
-                  placeholder="Search by name, mobile, ID..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 h-10"
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search by name, mobile, ID..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 h-10"
+                  />
+                </div>
+                <CityMultiSelectFilter
+                  value={filterCities}
+                  onChange={setFilterCities}
+                  className="w-full sm:w-48"
                 />
               </div>
             </div>

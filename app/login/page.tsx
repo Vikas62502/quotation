@@ -13,43 +13,45 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { SolarLogo } from "@/components/solar-logo"
 import { Eye, EyeOff, Check } from "lucide-react"
+import { getPostLoginPath, readSessionAccess } from "@/lib/user-access"
 
 function LoginForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { login, isAuthenticated, role } = useAuth()
+  const { login, isAuthenticated, role, access } = useAuth()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState("")
   const [showPassword, setShowPassword] = useState(false)
   const [otpSent, setOtpSent] = useState(false)
 
+  const routeAfterLogin = () => {
+    const redirectTo = searchParams.get("redirect")
+    if (redirectTo === "account-management") {
+      router.push("/dashboard/account-management")
+      return
+    }
+    const granted = access.length > 0 ? access : readSessionAccess()
+    if (granted.length > 0) {
+      router.push(getPostLoginPath(granted))
+      return
+    }
+    if (role === "hr") router.push("/dashboard/hr")
+    else if (role === "installer" || role === "installation-team") router.push("/dashboard/installer")
+    else if (role === "metering") router.push("/dashboard/metering")
+    else if (role === "baldev") router.push("/dashboard/baldev")
+    else if (role === "visitor") router.push("/visitor/dashboard")
+    else if (role === "admin" || role === "super-admin") router.push("/dashboard/admin")
+    else if (role === "account-management") router.push("/dashboard/account-management")
+    else router.push("/dashboard")
+  }
+
   useEffect(() => {
     // Redirect if already logged in
     if (isAuthenticated) {
-      const redirectTo = searchParams.get("redirect")
-      
-      // If redirect parameter is set to account-management, go there
-      if (redirectTo === "account-management") {
-        router.push("/dashboard/account-management")
-      } else if (role === "hr") {
-        router.push("/dashboard/hr")
-      } else if (role === "installer") {
-        router.push("/dashboard/installer")
-      } else if (role === "installation-team") {
-        router.push("/dashboard/installer")
-      } else if (role === "metering") {
-        router.push("/dashboard/metering")
-      } else if (role === "baldev") {
-        router.push("/dashboard/baldev")
-      } else if (role === "visitor") {
-        router.push("/visitor/dashboard")
-      } else if (role === "admin" || role === "super-admin") {
-        router.push("/dashboard/admin")
-      } else {
-        router.push("/dashboard")
-      }
+      routeAfterLogin()
     }
-  }, [isAuthenticated, role, router, searchParams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated, role, access, router, searchParams])
 
   const [credentials, setCredentials] = useState({
     username: "",
@@ -73,34 +75,23 @@ function LoginForm() {
     try {
       const success = await login(credentials.username, credentials.password)
       if (success) {
-        // Get role from localStorage (set by login function)
-        const userRole = localStorage.getItem("userRole")
-        
-        // Check if redirect to account management is requested
-        const redirectTo = searchParams.get("redirect")
-        
-        // Small delay to ensure state is updated
         setTimeout(() => {
-          // If redirect parameter is set to account-management, go there
+          const granted = readSessionAccess()
+          const redirectTo = searchParams.get("redirect")
           if (redirectTo === "account-management") {
             router.push("/dashboard/account-management")
-          } else if (userRole === "hr") {
-            router.push("/dashboard/hr")
-          } else if (userRole === "installer") {
-            router.push("/dashboard/installer")
-          } else if (userRole === "installation-team") {
-            router.push("/dashboard/installer")
-          } else if (userRole === "metering") {
-            router.push("/dashboard/metering")
-          } else if (userRole === "baldev") {
-            router.push("/dashboard/baldev")
-          } else if (userRole === "visitor") {
-            router.push("/visitor/dashboard")
-          } else if (userRole === "admin" || userRole === "super-admin") {
-            // Admin / Super Admin → Admin Panel (includes Accounts → Inventory)
-            router.push("/dashboard/admin")
+          } else if (granted.length > 0) {
+            router.push(getPostLoginPath(granted))
           } else {
-            router.push("/dashboard")
+            const userRole = localStorage.getItem("userRole")
+            if (userRole === "hr") router.push("/dashboard/hr")
+            else if (userRole === "installer" || userRole === "installation-team") router.push("/dashboard/installer")
+            else if (userRole === "metering") router.push("/dashboard/metering")
+            else if (userRole === "baldev") router.push("/dashboard/baldev")
+            else if (userRole === "visitor") router.push("/visitor/dashboard")
+            else if (userRole === "admin" || userRole === "super-admin") router.push("/dashboard/admin")
+            else if (userRole === "account-management") router.push("/dashboard/account-management")
+            else router.push("/dashboard")
           }
         }, 100)
       } else {

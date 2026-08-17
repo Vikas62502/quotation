@@ -29,6 +29,8 @@ import {
   setCurrentQuotationForMobile,
 } from "@/lib/quotation-current"
 import { buildReviseQuotationHref } from "@/lib/quotation-system-history"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 
 const ADMIN_USERNAME = "admin"
 
@@ -39,6 +41,7 @@ export default function QuotationsPage() {
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [filterMonth, setFilterMonth] = useState("all")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [visitQuotation, setVisitQuotation] = useState<Quotation | null>(null)
@@ -346,25 +349,25 @@ export default function QuotationsPage() {
       safeLastName.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (q.customer?.mobile || "").includes(searchTerm) ||
       (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())
+    if (!matchesSearch) return false
+    if (!matchesCityFilter(q, filterCities)) return false
 
-    if (filterMonth === "all") return matchesSearch
+    if (filterMonth === "all") return true
 
     const date = new Date(q.createdAt)
     const currentDate = new Date()
 
     if (filterMonth === "current") {
-      return (
-        matchesSearch && date.getMonth() === currentDate.getMonth() && date.getFullYear() === currentDate.getFullYear()
-      )
+      return date.getMonth() === currentDate.getMonth() && date.getFullYear() === currentDate.getFullYear()
     }
 
     if (filterMonth === "previous") {
       const prevMonth = currentDate.getMonth() === 0 ? 11 : currentDate.getMonth() - 1
       const prevYear = currentDate.getMonth() === 0 ? currentDate.getFullYear() - 1 : currentDate.getFullYear()
-      return matchesSearch && date.getMonth() === prevMonth && date.getFullYear() === prevYear
+      return date.getMonth() === prevMonth && date.getFullYear() === prevYear
     }
 
-    return matchesSearch
+    return true
   })
 
   const sortedQuotations = [...filteredQuotations].sort(
@@ -688,6 +691,11 @@ export default function QuotationsPage() {
                   className="pl-9"
                 />
               </div>
+              <CityMultiSelectFilter
+                value={filterCities}
+                onChange={setFilterCities}
+                className="w-full sm:w-52"
+              />
               <Select value={filterMonth} onValueChange={setFilterMonth}>
                 <SelectTrigger className="w-full sm:w-48">
                   <SelectValue placeholder="Filter by month" />
@@ -705,12 +713,13 @@ export default function QuotationsPage() {
               <div className="text-center py-12 text-muted-foreground">
                 <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No quotations found</p>
-                {searchTerm || filterMonth !== "all" ? (
+                {searchTerm || filterMonth !== "all" || filterCities.length > 0 ? (
                   <Button
                     variant="link"
                     onClick={() => {
                       setSearchTerm("")
                       setFilterMonth("all")
+                      setFilterCities([])
                     }}
                   >
                     Clear filters

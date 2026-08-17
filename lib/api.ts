@@ -889,8 +889,33 @@ export const api = {
           if (value !== undefined) queryParams.append(key, String(value))
         })
       }
+      // Ask backends that support it to include dealers/ops with Visitor access checkbox
+      if (!queryParams.has("includeAccessUsers")) queryParams.set("includeAccessUsers", "true")
+      if (!queryParams.has("access")) queryParams.set("access", "visitor")
       const query = queryParams.toString()
-      return apiRequest(`/dealers/visitors${query ? `?${query}` : ""}`)
+      const paths = [
+        `/dealers/visitors?${query}`,
+        `/dealers/me/visitors?${query}`,
+        `/visitors/assignable?${query}`,
+        `/visitors?${query}`,
+      ]
+      let lastError: unknown = null
+      for (const path of paths) {
+        try {
+          return await apiRequest(path, { suppressErrorLog: path !== paths[0] })
+        } catch (error) {
+          lastError = error
+          if (!(error instanceof ApiError)) throw error
+          const retryable =
+            error.code === "HTTP_404" ||
+            error.code === "HTTP_405" ||
+            error.code === "HTTP_501" ||
+            error.code === "AUTH_004" ||
+            error.code === "HTTP_403"
+          if (!retryable) throw error
+        }
+      }
+      throw lastError instanceof Error ? lastError : new ApiError("Visitors list unavailable", "HTTP_404")
     },
 
     getCallingQueueNext: async () => {
@@ -2658,6 +2683,61 @@ export const api = {
         method: "PATCH",
         body: { rejectionReason },
       })
+    },
+
+    /** Transfer / reassign visit to another visitor (single assignee). */
+    transfer: async (
+      visitId: string,
+      payload: {
+        visitorId: string
+        visitorName?: string
+        visitors?: Array<{ visitorId: string; visitorName?: string }>
+        reason?: string
+      },
+    ) => {
+      const body = {
+        visitorId: payload.visitorId,
+        visitor_id: payload.visitorId,
+        visitorName: payload.visitorName,
+        visitors: payload.visitors || [
+          { visitorId: payload.visitorId, visitorName: payload.visitorName || "" },
+        ],
+        reason: payload.reason,
+      }
+      const paths = [
+        `/visits/${visitId}/transfer`,
+        `/visits/${visitId}/reassign`,
+        `/dealers/visits/${visitId}/transfer`,
+        `/dealers/me/visits/${visitId}/transfer`,
+      ]
+      let lastError: unknown = null
+      for (const path of paths) {
+        try {
+          return await apiRequest(path, { method: "PATCH", body, suppressErrorLog: true })
+        } catch (error) {
+          lastError = error
+          if (!(error instanceof ApiError)) throw error
+          const retryable =
+            error.code === "HTTP_404" ||
+            error.code === "HTTP_405" ||
+            error.code === "HTTP_501"
+          if (!retryable) throw error
+        }
+      }
+      // Fallback: patch visitors array on the visit
+      try {
+        return await apiRequest(`/visits/${visitId}`, {
+          method: "PATCH",
+          body: {
+            visitors: body.visitors,
+            visitorId: body.visitorId,
+          },
+        })
+      } catch {
+        throw lastError instanceof Error
+          ? lastError
+          : new ApiError("Visit transfer unavailable", "HTTP_404")
+      }
     },
 
     delete: async (visitId: string) => {

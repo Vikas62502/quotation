@@ -47,8 +47,23 @@ import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { Checkbox } from "@/components/ui/checkbox"
 import { api, ApiError, apiErrorToUserMessage, fetchSentToInstallerQuotationRows, getAuthToken, isApiAuthFailure, sendQuotationToMetering } from "@/lib/api"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
+import {
+  USER_ACCESS_OPTIONS,
+  accessLabels,
+  getAccessOverride,
+  hasAccess,
+  listedUserHasAccess,
+  normalizeAccessList,
+  primaryBackendRoleFromAccess,
+  resolveUserAccess,
+  saveAccessOverride,
+  type UserAccessKey,
+} from "@/lib/user-access"
+import { syncAssignableVisitorsFromUsers } from "@/lib/visitor-assignable-directory"
+import { syncAssignableQuotationFromUsers } from "@/lib/quotation-assignable-directory"
 import { useQuotationDocumentFileUpload } from "@/hooks/use-quotation-document-file-upload"
 import { buildDocumentsMultipartFormData, firstPendingDocumentFileField } from "@/lib/quotation-documents-form"
 import { getRealtime } from "@/lib/realtime"
@@ -106,6 +121,8 @@ import {
 import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
 import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 import { cn } from "@/lib/utils"
 import { confirmSave } from "@/lib/confirm-save"
 import {
@@ -1410,8 +1427,10 @@ export default function AdminPanelPage() {
   const [accountManagers, setAccountManagers] = useState<AccountManager[]>([])
   const [customers, setCustomers] = useState<any[]>([])
   const [customerSearchTerm, setCustomerSearchTerm] = useState("")
+  const [customerFilterCities, setCustomerFilterCities] = useState<string[]>([])
   const [searchTerm, setSearchTerm] = useState("")
   const [filterDealer, setFilterDealer] = useState("all")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [filterMonth, setFilterMonth] = useState("all")
   const [filterStatus, setFilterStatus] = useState("all")
   const [filterFileLogin, setFilterFileLogin] = useState("all")
@@ -1630,19 +1649,37 @@ export default function AdminPanelPage() {
   const [accountManagerSearchTerm, setAccountManagerSearchTerm] = useState("")
   const [accountManagerDialogOpen, setAccountManagerDialogOpen] = useState(false)
   const [editingAccountManager, setEditingAccountManager] = useState<AccountManager | null>(null)
+  const [editingManagedKind, setEditingManagedKind] = useState<"dealer" | "operations" | "visitor" | null>(null)
   const [accountManagerHistoryDialogOpen, setAccountManagerHistoryDialogOpen] = useState(false)
   const [selectedAccountManagerForHistory, setSelectedAccountManagerForHistory] = useState<AccountManager | null>(null)
   const [accountManagerHistory, setAccountManagerHistory] = useState<any[]>([])
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
-  const [newAccountManager, setNewAccountManager] = useState({
+  const emptyUnifiedUserForm = () => ({
     role: "",
+    access: ["quotation"] as UserAccessKey[],
     username: "",
     password: "",
     firstName: "",
     lastName: "",
     email: "",
     mobile: "",
+    gender: "",
+    dateOfBirth: "",
+    fatherName: "",
+    fatherContact: "",
+    governmentIdType: "",
+    governmentIdNumber: "",
+    address: {
+      street: "",
+      city: "",
+      state: "",
+      pincode: "",
+    },
+    employeeId: "",
+    isActive: true,
+    emailVerified: false,
   })
+  const [newAccountManager, setNewAccountManager] = useState(emptyUnifiedUserForm)
   const [dealerSearchTerm, setDealerSearchTerm] = useState("")
   const [editingCustomer, setEditingCustomer] = useState<any | null>(null)
   const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
@@ -1681,6 +1718,7 @@ export default function AdminPanelPage() {
     },
     isActive: true,
     emailVerified: false,
+    access: ["quotation"] as UserAccessKey[],
   })
   const [newVisitor, setNewVisitor] = useState({
     username: "",
@@ -2886,6 +2924,8 @@ export default function AdminPanelPage() {
             isActive: d.isActive ?? false,
             createdAt: d.createdAt,
             emailVerified: d.emailVerified ?? false,
+            access: normalizeAccessList(d.access ?? d.permissions),
+            permissions: normalizeAccessList(d.permissions ?? d.access),
           }))
           setDealers(dealersList)
         } catch (dealersError) {
@@ -2909,6 +2949,8 @@ export default function AdminPanelPage() {
             createdAt: v.createdAt,
             updatedAt: v.updatedAt,
             visitCount: v.visitCount || 0,
+            access: normalizeAccessList(v.access ?? v.permissions),
+            permissions: normalizeAccessList(v.permissions ?? v.access),
           })))
         } catch (visitorsError) {
           console.error("Error loading visitors:", visitorsError)
@@ -2932,6 +2974,8 @@ export default function AdminPanelPage() {
             createdAt: am.createdAt,
             loginCount: am.loginCount || 0,
             lastLogin: am.lastLogin,
+            access: normalizeAccessList(am.access ?? am.permissions),
+            permissions: normalizeAccessList(am.permissions ?? am.access),
           })))
         } catch (error) {
           console.error("Error loading account managers:", error)
@@ -3266,16 +3310,301 @@ export default function AdminPanelPage() {
     setVisitorReportCustomToDate(t)
   }, [visitorReportRange, visitorReportCustomFromDate, visitorReportCustomToDate])
 
+  /**
+   * Dealer dropdowns / charts: active users with Quotation checkbox
+   * (not every row from the old dealers table).
+   */
+  const activeDealers = useMemo(() => {
+    return filterActiveDealers(dealers).filter((d) =>
+      listedUserHasAccess(
+        {
+          username: d.username,
+          role: d.username === ADMIN_USERNAME ? "admin" : "dealer",
+          access: d.access,
+          permissions: d.permissions,
+          isActive: d.isActive,
+        },
+        "quotation",
+      ),
+    )
+  }, [dealers])
+
+  /** Users tab: dealers + operations users + visitors. */
+  type ManagedUserRow = {
+    id: string
+    kind: "dealer" | "operations" | "visitor"
+    username: string
+    firstName: string
+    lastName: string
+    email: string
+    mobile: string
+    isActive?: boolean
+    emailVerified?: boolean
+    roleLabel: string
+    access: UserAccessKey[]
+    dealer?: Dealer
+    operations?: AccountManager & { role?: string }
+    visitor?: Visitor
+  }
+
+  const managedUsers = useMemo((): ManagedUserRow[] => {
+    const dealerRows: ManagedUserRow[] = dealers.map((d) => {
+      const access = resolveUserAccess({
+        username: d.username,
+        role: d.username === ADMIN_USERNAME ? "admin" : "dealer",
+        access: d.access,
+        permissions: d.permissions,
+      })
+      return {
+        id: `dealer:${d.id}`,
+        kind: "dealer",
+        username: d.username,
+        firstName: d.firstName,
+        lastName: d.lastName,
+        email: d.email,
+        mobile: d.mobile,
+        isActive: d.isActive,
+        emailVerified: d.emailVerified,
+        roleLabel: d.username === ADMIN_USERNAME ? "Admin" : "Dealer",
+        access,
+        dealer: d,
+      }
+    })
+
+    const dealerUsernames = new Set(dealers.map((d) => d.username.trim().toLowerCase()))
+    const opsRows: ManagedUserRow[] = accountManagers
+      .filter((am) => !dealerUsernames.has(String(am.username || "").trim().toLowerCase()))
+      .map((am) => {
+        const roleValue = String((am as any).role || "account-management")
+        const access = resolveUserAccess({
+          username: am.username,
+          role: roleValue,
+          access: am.access,
+          permissions: am.permissions,
+        })
+        return {
+          id: `ops:${am.id}`,
+          kind: "operations",
+          username: am.username,
+          firstName: am.firstName,
+          lastName: am.lastName,
+          email: am.email,
+          mobile: am.mobile,
+          isActive: am.isActive,
+          emailVerified: am.emailVerified,
+          roleLabel: roleValue.replace(/-/g, " "),
+          access,
+          operations: am,
+        }
+      })
+
+    const takenUsernames = new Set([
+      ...dealers.map((d) => d.username.trim().toLowerCase()),
+      ...accountManagers.map((am) => String(am.username || "").trim().toLowerCase()),
+    ])
+    const visitorRows: ManagedUserRow[] = visitors
+      .filter((v) => !takenUsernames.has(String(v.username || "").trim().toLowerCase()))
+      .map((v) => {
+        const access = resolveUserAccess({
+          username: v.username,
+          role: "visitor",
+          access: v.access,
+          permissions: v.permissions,
+        })
+        return {
+          id: `visitor:${v.id}`,
+          kind: "visitor" as const,
+          username: v.username,
+          firstName: v.firstName,
+          lastName: v.lastName,
+          email: v.email,
+          mobile: v.mobile,
+          isActive: v.isActive,
+          roleLabel: "Visitor",
+          access,
+          visitor: v,
+        }
+      })
+
+    return [...dealerRows, ...opsRows, ...visitorRows].sort((a, b) => {
+      const an = `${a.firstName} ${a.lastName}`.toLowerCase()
+      const bn = `${b.firstName} ${b.lastName}`.toLowerCase()
+      return an.localeCompare(bn)
+    })
+  }, [dealers, accountManagers, visitors])
+
+  /** Visitors tab / visit filters: anyone with Visitor checkbox (dealers + ops + visitors). */
+  const visitorAccessUsers = useMemo(() => {
+    return managedUsers
+      .filter((u) => hasAccess(u.access, "visitor"))
+      .map((u) => ({
+        rowId: u.id,
+        entityId: u.dealer?.id || u.operations?.id || u.visitor?.id || u.id,
+        username: u.username,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        email: u.email,
+        mobile: u.mobile,
+        employeeId: u.visitor?.employeeId,
+        isActive: u.isActive,
+        access: u.access,
+        kind: u.kind,
+        managed: u,
+        visitCount: (u.visitor as any)?.visitCount || 0,
+      }))
+  }, [managedUsers])
+
+  // Keep Schedule Visit + HR dealer lists in sync with Admin access checkboxes
+  useEffect(() => {
+    if (managedUsers.length === 0) return
+    const profiles = managedUsers.map((u) => ({
+      id: u.dealer?.id || u.operations?.id || u.visitor?.id || u.id,
+      username: u.username,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      email: u.email,
+      mobile: u.mobile,
+      employeeId: u.visitor?.employeeId,
+      isActive: u.isActive,
+      role: u.kind === "dealer" ? "dealer" : u.kind === "visitor" ? "visitor" : u.roleLabel,
+      access: u.access,
+    }))
+    syncAssignableVisitorsFromUsers(profiles)
+    syncAssignableQuotationFromUsers(profiles)
+  }, [managedUsers])
+
   useEffect(() => {
     if (
       visitorReportVisitorFilter !== "all" &&
-      !visitors.some((v) => v.id === visitorReportVisitorFilter)
+      !visitorAccessUsers.some((v) => v.entityId === visitorReportVisitorFilter)
     ) {
       setVisitorReportVisitorFilter("all")
     }
-  }, [visitorReportVisitorFilter, visitors])
+  }, [visitorReportVisitorFilter, visitorAccessUsers])
 
-  const activeDealers = useMemo(() => filterActiveDealers(dealers), [dealers])
+  const openManagedUserEdit = (row: ManagedUserRow) => {
+    const base = emptyUnifiedUserForm()
+    const access = row.access.length ? row.access : (["quotation"] as UserAccessKey[])
+
+    if (row.kind === "operations" && row.operations) {
+      const am = row.operations
+      setEditingManagedKind("operations")
+      setEditingAccountManager(am)
+      setEditingDealer(null)
+      setEditingVisitor(null)
+      setNewAccountManager({
+        ...base,
+        role: (am as any).role || primaryBackendRoleFromAccess(access),
+        access,
+        username: am.username || "",
+        password: "",
+        firstName: am.firstName || "",
+        lastName: am.lastName || "",
+        email: am.email || "",
+        mobile: am.mobile || "",
+        gender: (am as any).gender || "",
+        dateOfBirth: (am as any).dateOfBirth || "",
+        fatherName: (am as any).fatherName || "",
+        fatherContact: (am as any).fatherContact || "",
+        governmentIdType: (am as any).governmentIdType || "",
+        governmentIdNumber: (am as any).governmentIdNumber || "",
+        address: {
+          street: (am as any).address?.street || "",
+          city: (am as any).address?.city || "",
+          state: (am as any).address?.state || "",
+          pincode: (am as any).address?.pincode || "",
+        },
+        employeeId: (am as any).employeeId || "",
+        isActive: am.isActive ?? true,
+        emailVerified: am.emailVerified ?? false,
+      })
+      setAccountManagerDialogOpen(true)
+      return
+    }
+
+    if (row.kind === "visitor" && row.visitor) {
+      const visitor = row.visitor
+      setEditingManagedKind("visitor")
+      setEditingVisitor(visitor)
+      setEditingDealer(null)
+      setEditingAccountManager(null)
+      setNewAccountManager({
+        ...base,
+        role: "visitor",
+        access: access.length ? access : (["visitor"] as UserAccessKey[]),
+        username: visitor.username || "",
+        password: "",
+        firstName: visitor.firstName || "",
+        lastName: visitor.lastName || "",
+        email: visitor.email || "",
+        mobile: visitor.mobile || "",
+        gender: (visitor as any).gender || "",
+        dateOfBirth: (visitor as any).dateOfBirth || "",
+        fatherName: (visitor as any).fatherName || "",
+        fatherContact: (visitor as any).fatherContact || "",
+        governmentIdType: (visitor as any).governmentIdType || "",
+        governmentIdNumber: (visitor as any).governmentIdNumber || "",
+        address: {
+          street: (visitor as any).address?.street || "",
+          city: (visitor as any).address?.city || "",
+          state: (visitor as any).address?.state || "",
+          pincode: (visitor as any).address?.pincode || "",
+        },
+        employeeId: visitor.employeeId || "",
+        isActive: visitor.isActive ?? true,
+        emailVerified: (visitor as any).emailVerified ?? false,
+      })
+      setAccountManagerDialogOpen(true)
+      return
+    }
+
+    const d = row.dealer
+    if (!d) return
+    setEditingManagedKind("dealer")
+    setEditingDealer(d)
+    setEditingAccountManager(null)
+    setEditingVisitor(null)
+    setNewAccountManager({
+      ...base,
+      role: d.username === ADMIN_USERNAME ? "admin" : "dealer",
+      access,
+      username: d.username || "",
+      password: "",
+      firstName: d.firstName || "",
+      lastName: d.lastName || "",
+      email: d.email || "",
+      mobile: d.mobile || "",
+      gender: d.gender || "",
+      dateOfBirth: d.dateOfBirth || "",
+      fatherName: d.fatherName || "",
+      fatherContact: d.fatherContact || "",
+      governmentIdType: d.governmentIdType || "",
+      governmentIdNumber: d.governmentIdNumber || "",
+      address: {
+        street: d.address?.street || "",
+        city: d.address?.city || "",
+        state: d.address?.state || "",
+        pincode: d.address?.pincode || "",
+      },
+      employeeId: (d as any).employeeId || "",
+      isActive: d.isActive ?? true,
+      emailVerified: d.emailVerified ?? false,
+    })
+    setAccountManagerDialogOpen(true)
+  }
+
+  const openCreateUnifiedUser = (presetAccess: UserAccessKey[] = ["quotation"]) => {
+    setEditingManagedKind(null)
+    setEditingAccountManager(null)
+    setEditingDealer(null)
+    setEditingVisitor(null)
+    setNewAccountManager({
+      ...emptyUnifiedUserForm(),
+      access: presetAccess,
+      role: primaryBackendRoleFromAccess(presetAccess),
+    })
+    setAccountManagerDialogOpen(true)
+  }
 
   useEffect(() => {
     if (filterDealer !== "all" && !activeDealers.some((d) => d.id === filterDealer)) {
@@ -3522,6 +3851,7 @@ export default function AdminPanelPage() {
     if (!quotationMatchesQuickSearch(q, searchTerm)) return false
 
     const matchesDealer = filterDealer === "all" || q.dealerId === filterDealer
+    const matchesCity = matchesCityFilter(q, filterCities)
     const normalizedStatus = String(q.status || "pending").toLowerCase()
     const normalizedFileLogin = String(q.fileLoginStatus || "unset").toLowerCase()
     const normalizedPaymentType = String((q as any).paymentType || q.paymentMode || "").toLowerCase()
@@ -3613,6 +3943,7 @@ export default function AdminPanelPage() {
 
     return (
       matchesDealer &&
+      matchesCity &&
       matchesMonth &&
       matchesStatus &&
       matchesFileLogin &&
@@ -3949,6 +4280,7 @@ export default function AdminPanelPage() {
     operationalProgressTab === "all" &&
     normalizedSearchTerm.length === 0 &&
     filterDealer === "all" &&
+    filterCities.length === 0 &&
     filterMonth === "all" &&
     filterStatus === "all" &&
     filterFileLogin === "all" &&
@@ -3961,6 +4293,7 @@ export default function AdminPanelPage() {
     operationalProgressTab,
     searchTerm,
     filterDealer,
+    filterCities.join(","),
     filterMonth,
     filterStatus,
     filterFileLogin,
@@ -3998,7 +4331,7 @@ export default function AdminPanelPage() {
     filterPaymentType,
     filterBankDetails,
     filterInstallOverdue,
-  ].filter((v) => v !== "all").length
+  ].filter((v) => v !== "all").length + (filterCities.length > 0 ? 1 : 0)
 
   function findDealerById(dealerId?: string) {
     const normalizedId = String(dealerId || "").trim()
@@ -6735,7 +7068,7 @@ export default function AdminPanelPage() {
                 <SelectItem value="quotations__installation">Installation</SelectItem>
                 <SelectItem value="quotations__metering">Metering</SelectItem>
                 <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
-                <SelectItem value="dealers">Dealers</SelectItem>
+                <SelectItem value="dealers">Users</SelectItem>
                 <SelectItem value="customers">Customers</SelectItem>
                 <SelectItem value="visitors">Visitors</SelectItem>
                 <SelectItem value="catalog__products">Catalog — Products</SelectItem>
@@ -6787,7 +7120,7 @@ export default function AdminPanelPage() {
             >
               Final confirmation
             </TabsTrigger>
-            <TabsTrigger value="dealers">Dealers</TabsTrigger>
+            <TabsTrigger value="dealers">Users</TabsTrigger>
             <TabsTrigger value="customers">Customers</TabsTrigger>
             <TabsTrigger value="visitors">Visitors</TabsTrigger>
             <TabsTrigger value="catalog">Catalog</TabsTrigger>
@@ -7258,8 +7591,8 @@ export default function AdminPanelPage() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All visitors</SelectItem>
-                      {visitors.map((visitor) => (
-                        <SelectItem key={visitor.id} value={visitor.id}>
+                      {visitorAccessUsers.map((visitor) => (
+                        <SelectItem key={visitor.entityId} value={visitor.entityId}>
                           {visitor.firstName} {visitor.lastName}
                           {visitor.isActive === false ? " (inactive)" : ""}
                         </SelectItem>
@@ -7500,7 +7833,7 @@ export default function AdminPanelPage() {
                   <DialogHeader>
                     <DialogTitle>Quotation Filters</DialogTitle>
                     <DialogDescription>
-                      Filter by dealer, time, status, file login, payment type, bank details, and install overdue.
+                      Filter by dealer, city, time, status, file login, payment type, bank details, and install overdue.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
@@ -7517,6 +7850,11 @@ export default function AdminPanelPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    <CityMultiSelectFilter
+                      value={filterCities}
+                      onChange={setFilterCities}
+                      className="w-full"
+                    />
                     <Select value={filterMonth} onValueChange={setFilterMonth}>
                       <SelectTrigger>
                         <SelectValue placeholder="Filter by month" />
@@ -7593,6 +7931,7 @@ export default function AdminPanelPage() {
                       variant="outline"
                       onClick={() => {
                         setFilterDealer("all")
+                        setFilterCities([])
                         setFilterMonth("all")
                         setFilterStatus("all")
                         setFilterFileLogin("all")
@@ -10170,16 +10509,30 @@ export default function AdminPanelPage() {
             </Card>
           </TabsContent>
 
-          {/* Dealers Tab */}
+          {/* Users Tab (formerly Dealers) */}
           <TabsContent value="dealers" className="space-y-4">
             <Card>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                  <CardTitle>All Dealers ({dealers.length})</CardTitle>
-                  <div className="relative w-full sm:w-auto">
+                  <div>
+                    <CardTitle>Users ({managedUsers.length})</CardTitle>
+                    <CardDescription className="mt-1">
+                      All dealers, operations users, and visitors. Edit to update details and dashboard access.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    className="w-full sm:w-auto"
+                    onClick={() => openCreateUnifiedUser(["quotation"])}
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Create User ID
+                  </Button>
+                </div>
+                <div className="mt-4">
+                  <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
-                      placeholder="Search by name, email, mobile, username..."
+                      placeholder="Search by name, email, mobile, username, access..."
                       value={dealerSearchTerm}
                       onChange={(e) => setDealerSearchTerm(e.target.value)}
                       className="pl-9"
@@ -10190,125 +10543,129 @@ export default function AdminPanelPage() {
               <CardContent>
                 <div className="space-y-4">
                   {(() => {
-                    const filteredDealers = dealers.filter((d) => {
+                    const filteredUsers = managedUsers.filter((u) => {
                       if (!dealerSearchTerm.trim()) return true
                       const search = dealerSearchTerm.toLowerCase()
                       return (
-                        d.firstName.toLowerCase().includes(search) ||
-                        d.lastName.toLowerCase().includes(search) ||
-                        d.email.toLowerCase().includes(search) ||
-                        d.mobile.includes(search) ||
-                        d.username.toLowerCase().includes(search)
+                        u.firstName.toLowerCase().includes(search) ||
+                        u.lastName.toLowerCase().includes(search) ||
+                        u.email.toLowerCase().includes(search) ||
+                        u.mobile.includes(search) ||
+                        u.username.toLowerCase().includes(search) ||
+                        u.roleLabel.toLowerCase().includes(search) ||
+                        (u.visitor?.employeeId || "").toLowerCase().includes(search) ||
+                        accessLabels(u.access).some((label) => label.toLowerCase().includes(search))
                       )
                     })
 
-                    if (filteredDealers.length === 0) {
+                    if (filteredUsers.length === 0) {
                       return (
                         <div className="text-center py-12 text-muted-foreground">
                           <Building className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                          <p>No dealers found</p>
+                          <p>No users found</p>
                         </div>
                       )
                     }
 
-                    return filteredDealers.map((d) => {
-                      const dealerQuotations = quotations.filter((q) => q.dealerId === d.id)
+                    return filteredUsers.map((row) => {
+                      const d = row.dealer
+                      const v = row.visitor
+                      const dealerQuotations = d ? quotations.filter((q) => q.dealerId === d.id) : []
                       const dealerRevenue = dealerQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
-                      const isPending = d.isActive === false
+                      const visitCount = v ? Number((v as any).visitCount || 0) : 0
+                      const isPending = row.kind === "dealer" && row.isActive === false
+                      const isInactive = row.isActive === false
                       return (
                         <div
-                          key={d.id}
-                          className={`p-4 border rounded-lg ${isPending ? "opacity-75 bg-muted/30 border-orange-200" : ""}`}
+                          key={row.id}
+                          className={`p-4 border rounded-lg ${isPending || (row.kind === "visitor" && isInactive) ? "opacity-75 bg-muted/30 border-orange-200" : ""}`}
                         >
                           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 mb-2 flex-wrap">
                                 <h3 className="font-semibold text-lg">
-                                  {d.firstName} {d.lastName}
+                                  {row.firstName} {row.lastName}
                                 </h3>
-                                {d.username === ADMIN_USERNAME && (
+                                <Badge variant="outline" className="text-xs capitalize">
+                                  {row.roleLabel}
+                                </Badge>
+                                {row.kind === "dealer" && row.username === ADMIN_USERNAME ? (
                                   <Badge variant="default">Admin</Badge>
-                                )}
+                                ) : null}
                                 {isPending ? (
                                   <Badge variant="secondary" className="bg-orange-500">Pending Approval</Badge>
+                                ) : isInactive ? (
+                                  <Badge variant="secondary">Inactive</Badge>
                                 ) : (
                                   <Badge className="bg-green-500">Active</Badge>
                                 )}
+                                {accessLabels(row.access).map((label) => (
+                                  <Badge key={label} variant="secondary" className="text-xs">
+                                    {label}
+                                  </Badge>
+                                ))}
                               </div>
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground break-words">
                                 <div>
-                                  <span className="font-medium">Email:</span> <span className="break-all">{d.email}</span>
-                                  {d.emailVerified === false && <Badge variant="outline" className="ml-2 text-xs">Unverified</Badge>}
+                                  <span className="font-medium">Email:</span> <span className="break-all">{row.email}</span>
+                                  {row.emailVerified === false ? <Badge variant="outline" className="ml-2 text-xs">Unverified</Badge> : null}
                                 </div>
                                 <div>
-                                  <span className="font-medium">Mobile:</span> {d.mobile}
+                                  <span className="font-medium">Mobile:</span> {row.mobile}
                                 </div>
                                 <div>
-                                  <span className="font-medium">Username:</span> {d.username}
+                                  <span className="font-medium">Username:</span> {row.username}
                                 </div>
-                                <div>
-                                  <span className="font-medium">Gender:</span> {d.gender}
-                                </div>
-                                {d.dateOfBirth && (
+                                {v?.employeeId ? (
                                   <div>
-                                    <span className="font-medium">Date of Birth:</span> {new Date(d.dateOfBirth).toLocaleDateString()}
+                                    <span className="font-medium">Employee ID:</span> {v.employeeId}
                                   </div>
-                                )}
-                                {d.fatherName && (
+                                ) : null}
+                                {d?.gender ? (
                                   <div>
-                                    <span className="font-medium">Father&apos;s Name:</span> {d.fatherName}
+                                    <span className="font-medium">Gender:</span> {d.gender}
                                   </div>
-                                )}
-                                {d.fatherContact && (
-                                  <div>
-                                    <span className="font-medium">Father&apos;s Contact:</span> {d.fatherContact}
+                                ) : null}
+                                {d?.address ? (
+                                  <div className="md:col-span-2">
+                                    <span className="font-medium">Address:</span>{" "}
+                                    <span className="break-words">
+                                      {[d.address.street, d.address.city, d.address.state, d.address.pincode]
+                                        .filter(Boolean)
+                                        .join(", ")}
+                                    </span>
                                   </div>
-                                )}
-                                {d.governmentIdType && (
-                                  <div>
-                                    <span className="font-medium">ID Type:</span> {d.governmentIdType}
-                                  </div>
-                                )}
-                                {d.governmentIdNumber && (
-                                  <div>
-                                    <span className="font-medium">ID Number:</span> {d.governmentIdNumber}
-                                  </div>
-                                )}
-                                <div className="md:col-span-2">
-                                  <span className="font-medium">Address:</span>{" "}
-                                  <span className="break-words">{d.address.street}, {d.address.city}, {d.address.state} - {d.address.pincode}</span>
-                                </div>
-                                {d.createdAt && (
-                                  <div className="md:col-span-2 text-xs">
-                                    <span className="font-medium">Registered:</span> {new Date(d.createdAt).toLocaleString()}
-                                  </div>
-                                )}
+                                ) : null}
                               </div>
                             </div>
                             <div className="w-full lg:w-auto lg:ml-4 space-y-2 text-left lg:text-right">
-                              <div>
-                                <div className="text-lg font-semibold">₹{(dealerRevenue / 100000).toFixed(1)}L</div>
-                                <div className="text-sm text-muted-foreground">{dealerQuotations.length} quotations</div>
-                              </div>
-                              {isPending && (
+                              {row.kind === "dealer" ? (
+                                <div>
+                                  <div className="text-lg font-semibold">₹{(dealerRevenue / 100000).toFixed(1)}L</div>
+                                  <div className="text-sm text-muted-foreground">{dealerQuotations.length} quotations</div>
+                                </div>
+                              ) : null}
+                              {row.kind === "visitor" ? (
+                                <div>
+                                  <div className="text-lg font-semibold">{visitCount}</div>
+                                  <div className="text-sm text-muted-foreground">visits assigned</div>
+                                </div>
+                              ) : null}
+                              {row.kind === "dealer" && isPending && d ? (
                                 <Button
                                   size="sm"
                                   className="w-full sm:w-auto bg-green-600 hover:bg-green-700"
                                   onClick={async () => {
                                     if (!confirm(`Are you sure you want to approve and activate ${d.firstName} ${d.lastName}?`)) return
-                                    
                                     try {
                                       if (useApi) {
-                                        // Try activate endpoint first, fallback to update
                                         try {
                                           await api.admin.dealers.activate(d.id)
                                         } catch {
-                                          // If activate endpoint doesn't exist, use update
                                           await api.admin.dealers.update(d.id, { isActive: true })
                                         }
                                         await loadData()
                                       } else {
-                                        // Fallback to localStorage
                                         const updated = dealers.map((dealer) =>
                                           dealer.id === d.id ? { ...dealer, isActive: true } : dealer
                                         )
@@ -10323,47 +10680,26 @@ export default function AdminPanelPage() {
                                   <UserCheck className="w-3 h-3 mr-1" />
                                   Approve
                                 </Button>
-                              )}
+                              ) : null}
+                              {row.kind === "dealer" && d ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="w-full sm:w-auto"
+                                  onClick={() => {
+                                    setSelectedDealer(d)
+                                    setDealerDialogOpen(true)
+                                  }}
+                                >
+                                  <Eye className="w-3 h-3 mr-1" />
+                                  View Details
+                                </Button>
+                              ) : null}
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="w-full sm:w-auto"
-                                onClick={() => {
-                                  setSelectedDealer(d)
-                                  setDealerDialogOpen(true)
-                                }}
-                              >
-                                <Eye className="w-3 h-3 mr-1" />
-                                View Details
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="w-full sm:w-auto"
-                                onClick={() => {
-                                  setEditingDealer(d)
-                                  setDealerEditForm({
-                                    firstName: d.firstName || "",
-                                    lastName: d.lastName || "",
-                                    email: d.email || "",
-                                    mobile: d.mobile || "",
-                                    gender: d.gender || "",
-                                    dateOfBirth: d.dateOfBirth || "",
-                                    fatherName: d.fatherName || "",
-                                    fatherContact: d.fatherContact || "",
-                                    governmentIdType: d.governmentIdType || "",
-                                    governmentIdNumber: d.governmentIdNumber || "",
-                                    address: {
-                                      street: d.address?.street || "",
-                                      city: d.address?.city || "",
-                                      state: d.address?.state || "",
-                                      pincode: d.address?.pincode || "",
-                                    },
-                                    isActive: d.isActive ?? true,
-                                    emailVerified: d.emailVerified ?? false,
-                                  })
-                                  setDealerEditDialogOpen(true)
-                                }}
+                                onClick={() => openManagedUserEdit(row)}
                               >
                                 <Edit className="w-3 h-3 mr-1" />
                                 Edit
@@ -10391,17 +10727,25 @@ export default function AdminPanelPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="relative mb-4">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search customers by name, mobile, email, or dealer..."
-                    value={customerSearchTerm}
-                    onChange={(e) => setCustomerSearchTerm(e.target.value)}
-                    className="pl-9"
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Search customers by name, mobile, email, or dealer..."
+                      value={customerSearchTerm}
+                      onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                  <CityMultiSelectFilter
+                    value={customerFilterCities}
+                    onChange={setCustomerFilterCities}
+                    className="w-full sm:w-52"
                   />
                 </div>
                 {(() => {
                   const filteredCustomers = customers.filter((c) => {
+                    if (!matchesCityFilter(c, customerFilterCities)) return false
                     if (!customerSearchTerm.trim()) return true
                     const searchLower = customerSearchTerm.toLowerCase()
                     return (
@@ -10418,9 +10762,16 @@ export default function AdminPanelPage() {
                       <div className="text-center py-12 text-muted-foreground">
                         <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
                         <p>No customers found</p>
-                        {customerSearchTerm ? (
-                          <Button variant="link" onClick={() => setCustomerSearchTerm("")} className="mt-2">
-                            Clear search
+                        {customerSearchTerm || customerFilterCities.length > 0 ? (
+                          <Button
+                            variant="link"
+                            onClick={() => {
+                              setCustomerSearchTerm("")
+                              setCustomerFilterCities([])
+                            }}
+                            className="mt-2"
+                          >
+                            Clear filters
                           </Button>
                         ) : null}
                       </div>
@@ -10535,32 +10886,23 @@ export default function AdminPanelPage() {
             </Card>
           </TabsContent>
 
-          {/* Visitors Tab */}
+          {/* Visitors Tab — Admin Visitor checkbox users (not legacy visitors table only) */}
           <TabsContent value="visitors" className="space-y-4">
             <Card>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                  <CardTitle>All Visitors ({visitors.length})</CardTitle>
+                  <CardTitle>All Visitors ({visitorAccessUsers.length})</CardTitle>
                   <Button
-                    onClick={() => {
-                      setNewVisitor({
-                        username: "",
-                        password: "",
-                        firstName: "",
-                        lastName: "",
-                        email: "",
-                        mobile: "",
-                        employeeId: "",
-                      })
-                      setEditingVisitor(null)
-                      setVisitorDialogOpen(true)
-                    }}
+                    onClick={() => openCreateUnifiedUser(["visitor"])}
                     className="w-full sm:w-auto"
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
                     Create Visitor
                   </Button>
                 </div>
+                <CardDescription className="mt-1">
+                  Users with the Visitor checkbox in Admin → Users (dealers, ops, and visitors).
+                </CardDescription>
                 <div className="mt-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -10575,7 +10917,7 @@ export default function AdminPanelPage() {
               </CardHeader>
               <CardContent>
                 {(() => {
-                  const filteredVisitors = visitors.filter((v) => {
+                  const filteredVisitors = visitorAccessUsers.filter((v) => {
                     if (!visitorSearchTerm.trim()) return true
                     const search = visitorSearchTerm.toLowerCase()
                     return (
@@ -10592,7 +10934,7 @@ export default function AdminPanelPage() {
                     return (
                       <div className="text-center py-12 text-muted-foreground">
                         <UserCheck className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                        <p>No visitors found</p>
+                        <p>No users with Visitor access found</p>
                       </div>
                     )
                   }
@@ -10600,12 +10942,11 @@ export default function AdminPanelPage() {
                   return (
                     <div className="space-y-4">
                       {filteredVisitors.map((visitor) => {
-                        // Visit count from API response (visitCount field from visitor data)
-                        const visitCount = (visitor as any).visitCount || 0
+                        const visitCount = visitor.visitCount || 0
 
                         return (
                           <div
-                            key={visitor.id}
+                            key={visitor.rowId}
                             className={`p-4 border rounded-lg ${visitor.isActive === false ? "opacity-60 bg-muted/30" : ""}`}
                           >
                             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
@@ -10619,10 +10960,17 @@ export default function AdminPanelPage() {
                                   ) : (
                                     <Badge className="bg-green-500">Active</Badge>
                                   )}
+                                  <Badge variant="outline">{visitor.managed.roleLabel}</Badge>
+                                  {accessLabels(visitor.access).map((label) => (
+                                    <Badge key={label} variant="secondary" className="text-xs">
+                                      {label}
+                                    </Badge>
+                                  ))}
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-muted-foreground break-words">
                                   <div>
-                                    <span className="font-medium">Email:</span> <span className="break-all">{visitor.email}</span>
+                                    <span className="font-medium">Email:</span>{" "}
+                                    <span className="break-all">{visitor.email}</span>
                                   </div>
                                   <div>
                                     <span className="font-medium">Mobile:</span> {visitor.mobile}
@@ -10630,11 +10978,11 @@ export default function AdminPanelPage() {
                                   <div>
                                     <span className="font-medium">Username:</span> {visitor.username}
                                   </div>
-                                  {visitor.employeeId && (
+                                  {visitor.employeeId ? (
                                     <div>
                                       <span className="font-medium">Employee ID:</span> {visitor.employeeId}
                                     </div>
-                                  )}
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="w-full lg:w-auto lg:ml-4 text-left lg:text-right">
@@ -10645,107 +10993,10 @@ export default function AdminPanelPage() {
                                     variant="outline"
                                     size="sm"
                                     className="w-full sm:w-auto"
-                                    onClick={async () => {
-                                      if (useApi) {
-                                        // Fetch full visitor details from API
-                                        try {
-                                          const fullVisitorResponse = await api.admin.visitors.getById(visitor.id)
-                                          // apiRequest returns data.data, so response is already the visitor object
-                                          const fullVisitor = fullVisitorResponse || visitor
-                                          setEditingVisitor(fullVisitor)
-                                          setNewVisitor({
-                                            username: fullVisitor.username || "",
-                                            password: "",
-                                            firstName: fullVisitor.firstName || "",
-                                            lastName: fullVisitor.lastName || "",
-                                            email: fullVisitor.email || "",
-                                            mobile: fullVisitor.mobile || "",
-                                            employeeId: fullVisitor.employeeId || "",
-                                          })
-                                          setVisitorDialogOpen(true)
-                                        } catch (error) {
-                                          console.error("Error loading visitor details:", error)
-                                          // Fallback to visitor from list
-                                          setEditingVisitor(visitor)
-                                          setNewVisitor({
-                                            username: visitor.username || "",
-                                            password: "",
-                                            firstName: visitor.firstName || "",
-                                            lastName: visitor.lastName || "",
-                                            email: visitor.email || "",
-                                            mobile: visitor.mobile || "",
-                                            employeeId: visitor.employeeId || "",
-                                          })
-                                          setVisitorDialogOpen(true)
-                                        }
-                                      } else {
-                                        // Fallback to localStorage
-                                        const allVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
-                                        const fullVisitor = allVisitors.find((v: Visitor & { password?: string }) => v.id === visitor.id)
-                                        setEditingVisitor(fullVisitor || visitor)
-                                        setNewVisitor({
-                                          username: fullVisitor?.username || "",
-                                          password: "",
-                                          firstName: fullVisitor?.firstName || "",
-                                          lastName: fullVisitor?.lastName || "",
-                                          email: fullVisitor?.email || "",
-                                          mobile: fullVisitor?.mobile || "",
-                                          employeeId: fullVisitor?.employeeId || "",
-                                        })
-                                        setVisitorDialogOpen(true)
-                                      }
-                                    }}
+                                    onClick={() => openManagedUserEdit(visitor.managed)}
                                   >
                                     <Edit className="w-3 h-3 mr-1" />
                                     Edit
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="w-full sm:w-auto"
-                                    onClick={async () => {
-                                      if (!confirm(`Are you sure you want to ${visitor.isActive === false ? "activate" : "deactivate"} this visitor?`)) return
-                                      
-                                      try {
-                                        if (useApi) {
-                                          if (visitor.isActive === false) {
-                                            // Activate by updating isActive to true
-                                            await api.admin.visitors.update(visitor.id, { isActive: true })
-                                          } else {
-                                            // Deactivate
-                                            await api.admin.visitors.delete(visitor.id)
-                                          }
-                                          await loadData()
-                                        } else {
-                                          // Fallback to localStorage
-                                          const allVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
-                                          const updated = allVisitors.map((v: Visitor) =>
-                                            v.id === visitor.id ? { ...v, isActive: visitor.isActive === false ? true : false } : v
-                                          )
-                                          localStorage.setItem("visitors", JSON.stringify(updated))
-                                          const visitorsWithoutPassword = updated.map((v: Visitor & { password?: string }) => {
-                                            const { password: _, ...visitorData } = v
-                                            return visitorData
-                                          })
-                                          setVisitors(visitorsWithoutPassword)
-                                        }
-                                      } catch (error) {
-                                        console.error("Error updating visitor status:", error)
-                                        alert(error instanceof ApiError ? error.message : "Failed to update visitor status")
-                                      }
-                                    }}
-                                  >
-                                    {visitor.isActive === false ? (
-                                      <>
-                                        <UserCheck className="w-3 h-3 mr-1" />
-                                        Activate
-                                      </>
-                                    ) : (
-                                      <>
-                                        <UserX className="w-3 h-3 mr-1" />
-                                        Deactivate
-                                      </>
-                                    )}
                                   </Button>
                                 </div>
                               </div>
@@ -10767,19 +11018,7 @@ export default function AdminPanelPage() {
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                   <CardTitle>Operations User IDs ({accountManagers.length})</CardTitle>
                   <Button
-                    onClick={() => {
-                      setNewAccountManager({
-                        role: "",
-                        username: "",
-                        password: "",
-                        firstName: "",
-                        lastName: "",
-                        email: "",
-                        mobile: "",
-                      })
-                      setEditingAccountManager(null)
-                      setAccountManagerDialogOpen(true)
-                    }}
+                    onClick={() => openCreateUnifiedUser(["quotation"])}
                     className="w-full sm:w-auto"
                   >
                     <UserPlus className="w-4 h-4 mr-2" />
@@ -10822,7 +11061,9 @@ export default function AdminPanelPage() {
                           {accountManagerSearchTerm ? "No matching account managers found" : "No account management users found"}
                         </p>
                         {!accountManagerSearchTerm && (
-                          <p className="text-sm mt-1">Click "Create User ID" to add account manager, installer, metering, baldev, or HR user</p>
+                          <p className="text-sm mt-1">
+                            Click &quot;Create User ID&quot; and check the dashboards this user can open (Admin, Quotation, Metering, …).
+                          </p>
                         )}
                       </div>
                     )
@@ -10855,6 +11096,17 @@ export default function AdminPanelPage() {
                                   <Badge variant="outline" className="text-xs capitalize">
                                     {((am as any).role || "account-management").replace("-", " ")}
                                   </Badge>
+                                  {accessLabels(
+                                    normalizeAccessList(
+                                      (am as any).access ||
+                                        (am as any).permissions ||
+                                        getAccessOverride(am.username),
+                                    ),
+                                  ).map((label) => (
+                                    <Badge key={label} variant="secondary" className="text-xs">
+                                      {label}
+                                    </Badge>
+                                  ))}
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                                   <div className="flex items-center gap-2">
@@ -10939,48 +11191,40 @@ export default function AdminPanelPage() {
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={async () => {
-                                      if (useApi) {
-                                        try {
-                                          const fullAccountManager = await api.admin.accountManagers.getById(am.id)
-                                          setEditingAccountManager(fullAccountManager || am)
-                                          setNewAccountManager({
-                                            role: fullAccountManager?.role || (am as any).role || "account-management",
-                                            username: fullAccountManager?.username || am.username,
-                                            password: "",
-                                            firstName: fullAccountManager?.firstName || am.firstName,
-                                            lastName: fullAccountManager?.lastName || am.lastName,
-                                            email: fullAccountManager?.email || am.email,
-                                            mobile: fullAccountManager?.mobile || am.mobile,
-                                          })
-                                          setAccountManagerDialogOpen(true)
-                                        } catch (error) {
-                                          console.error("Error loading account manager details:", error)
-                                          setEditingAccountManager(am)
-                                          setNewAccountManager({
-                                            role: (am as any).role || "account-management",
-                                            username: am.username,
-                                            password: "",
-                                            firstName: am.firstName,
-                                            lastName: am.lastName,
-                                            email: am.email,
-                                            mobile: am.mobile,
-                                          })
-                                          setAccountManagerDialogOpen(true)
-                                        }
-                                      } else {
-                                        setEditingAccountManager(am)
-                                        setNewAccountManager({
-                                          role: (am as any).role || "account-management",
-                                          username: am.username,
-                                          password: "",
-                                          firstName: am.firstName,
-                                          lastName: am.lastName,
-                                          email: am.email,
-                                          mobile: am.mobile,
-                                        })
-                                        setAccountManagerDialogOpen(true)
-                                      }
+                                    onClick={() => {
+                                      const roleValue = (am as any).role || "account-management"
+                                      const fromStored = normalizeAccessList(
+                                        (am as any).access || (am as any).permissions,
+                                      )
+                                      const fromOverride = getAccessOverride(am.username)
+                                      const accessValue =
+                                        fromStored.length > 0
+                                          ? fromStored
+                                          : fromOverride.length > 0
+                                            ? fromOverride
+                                            : roleValue === "installer"
+                                              ? (["installation"] as UserAccessKey[])
+                                              : roleValue === "metering"
+                                                ? (["metering"] as UserAccessKey[])
+                                                : roleValue === "baldev"
+                                                  ? (["final_confirmation"] as UserAccessKey[])
+                                                  : roleValue === "hr"
+                                                    ? (["hr"] as UserAccessKey[])
+                                                    : (["accounts"] as UserAccessKey[])
+                                      openManagedUserEdit({
+                                        id: `ops:${am.id}`,
+                                        kind: "operations",
+                                        username: am.username,
+                                        firstName: am.firstName,
+                                        lastName: am.lastName,
+                                        email: am.email,
+                                        mobile: am.mobile,
+                                        isActive: am.isActive,
+                                        emailVerified: am.emailVerified,
+                                        roleLabel: String(roleValue).replace(/-/g, " "),
+                                        access: accessValue,
+                                        operations: am,
+                                      })
                                     }}
                                   >
                                     <Edit className="w-3 h-3 mr-1" />
@@ -12416,33 +12660,37 @@ export default function AdminPanelPage() {
                     variant="outline"
                     onClick={() => {
                       setDealerDialogOpen(false)
-                      setEditingDealer(selectedDealer)
-                      setDealerEditForm({
-                        firstName: selectedDealer.firstName || "",
-                        lastName: selectedDealer.lastName || "",
-                        email: selectedDealer.email || "",
-                        mobile: selectedDealer.mobile || "",
-                        gender: selectedDealer.gender || "",
-                        dateOfBirth: selectedDealer.dateOfBirth || "",
-                        fatherName: selectedDealer.fatherName || "",
-                        fatherContact: selectedDealer.fatherContact || "",
-                        governmentIdType: selectedDealer.governmentIdType || "",
-                        governmentIdNumber: selectedDealer.governmentIdNumber || "",
-                        address: {
-                          street: selectedDealer.address?.street || "",
-                          city: selectedDealer.address?.city || "",
-                          state: selectedDealer.address?.state || "",
-                          pincode: selectedDealer.address?.pincode || "",
-                        },
-                        isActive: selectedDealer.isActive ?? true,
-                        emailVerified: selectedDealer.emailVerified ?? false,
+                      const fromStored = normalizeAccessList(
+                        (selectedDealer as any).access || (selectedDealer as any).permissions,
+                      )
+                      const fromOverride = getAccessOverride(selectedDealer.username)
+                      const access =
+                        fromStored.length > 0
+                          ? fromStored
+                          : fromOverride.length > 0
+                            ? fromOverride
+                            : selectedDealer.username === ADMIN_USERNAME
+                              ? (["admin"] as UserAccessKey[])
+                              : (["quotation"] as UserAccessKey[])
+                      openManagedUserEdit({
+                        id: `dealer:${selectedDealer.id}`,
+                        kind: "dealer",
+                        username: selectedDealer.username,
+                        firstName: selectedDealer.firstName,
+                        lastName: selectedDealer.lastName,
+                        email: selectedDealer.email,
+                        mobile: selectedDealer.mobile,
+                        isActive: selectedDealer.isActive,
+                        emailVerified: selectedDealer.emailVerified,
+                        roleLabel: selectedDealer.username === ADMIN_USERNAME ? "Admin" : "Dealer",
+                        access,
+                        dealer: selectedDealer,
                       })
-                      setDealerEditDialogOpen(true)
                     }}
                     className="flex-1"
                   >
                     <Edit className="w-4 h-4 mr-2" />
-                    Edit Dealer
+                    Edit User
                   </Button>
                   {selectedDealer.isActive === false && (
                     <Button
@@ -12482,18 +12730,62 @@ export default function AdminPanelPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Edit Dealer Dialog */}
+        {/* Edit User Dialog (dealer profile + access) */}
         <Dialog open={dealerEditDialogOpen} onOpenChange={setDealerEditDialogOpen}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Edit Dealer - {editingDealer?.firstName} {editingDealer?.lastName}</DialogTitle>
+              <DialogTitle>Edit User - {editingDealer?.firstName} {editingDealer?.lastName}</DialogTitle>
               <DialogDescription>
-                Update dealer information. Username cannot be changed.
+                Update user information and dashboard access. Username cannot be changed.
               </DialogDescription>
             </DialogHeader>
 
             {editingDealer && (
               <div className="space-y-4">
+                <div className="space-y-2 rounded-lg border border-border/70 p-3">
+                  <Label className="text-base font-semibold">Dashboard access *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Check the dashboards this user can open after login.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {USER_ACCESS_OPTIONS.map((opt) => {
+                      const checked = dealerEditForm.access.includes(opt.key)
+                      return (
+                        <label
+                          key={opt.key}
+                          className="flex items-start gap-2 rounded-md p-2 hover:bg-muted/40 cursor-pointer"
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) => {
+                              const on = value === true
+                              setDealerEditForm((prev) => {
+                                const next = on
+                                  ? [...prev.access, opt.key]
+                                  : prev.access.filter((k) => k !== opt.key)
+                                return {
+                                  ...prev,
+                                  access: Array.from(new Set(next)) as UserAccessKey[],
+                                }
+                              })
+                            }}
+                            className="mt-0.5"
+                          />
+                          <span className="min-w-0">
+                            <span className="block text-sm font-medium leading-tight">{opt.label}</span>
+                            <span className="block text-[11px] text-muted-foreground leading-snug">{opt.description}</span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {dealerEditForm.access.length > 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      Selected: {accessLabels(dealerEditForm.access).join(", ")}
+                    </p>
+                  ) : null}
+                </div>
+
                 {/* Personal Information */}
                 <div className="space-y-4">
                   <Label className="text-base font-semibold">Personal Information</Label>
@@ -12743,6 +13035,12 @@ export default function AdminPanelPage() {
                   </Button>
                   <Button
                     onClick={async () => {
+                      const selectedAccess = normalizeAccessList(dealerEditForm.access)
+                      if (selectedAccess.length === 0) {
+                        alert("Select at least one dashboard access")
+                        return
+                      }
+
                       // Validation
                       if (!dealerEditForm.firstName || !dealerEditForm.lastName || !dealerEditForm.email ||
                           !dealerEditForm.mobile || !dealerEditForm.gender || !dealerEditForm.dateOfBirth ||
@@ -12771,7 +13069,7 @@ export default function AdminPanelPage() {
 
                       try {
                         if (useApi) {
-                          await api.admin.dealers.update(editingDealer.id, {
+                          const updatePayload: any = {
                             firstName: dealerEditForm.firstName.trim(),
                             lastName: dealerEditForm.lastName.trim(),
                             email: dealerEditForm.email.trim(),
@@ -12790,7 +13088,16 @@ export default function AdminPanelPage() {
                             },
                             isActive: dealerEditForm.isActive,
                             emailVerified: dealerEditForm.emailVerified,
-                          })
+                            access: selectedAccess,
+                            permissions: selectedAccess,
+                          }
+                          try {
+                            await api.admin.dealers.update(editingDealer.id, updatePayload)
+                          } catch {
+                            const { access: _a, permissions: _p, ...withoutAccess } = updatePayload
+                            await api.admin.dealers.update(editingDealer.id, withoutAccess)
+                          }
+                          saveAccessOverride(editingDealer.username, selectedAccess)
                           await loadData()
                         } else {
                           // Fallback to localStorage
@@ -12817,19 +13124,30 @@ export default function AdminPanelPage() {
                                 },
                                 isActive: dealerEditForm.isActive,
                                 emailVerified: dealerEditForm.emailVerified,
+                                access: selectedAccess,
                               }
                             }
                             return d
                           })
                           localStorage.setItem("dealers", JSON.stringify(updated))
-                          setDealers(updated.filter((d: Dealer) => !(d as any).password))
+                          saveAccessOverride(editingDealer.username, selectedAccess)
+                          setDealers(
+                            updated.map((d: Dealer & { password?: string }) => {
+                              const { password: _, ...rest } = d
+                              return rest
+                            }),
+                          )
                         }
                         setDealerEditDialogOpen(false)
                         setSelectedDealer(null)
                         setDealerDialogOpen(false)
+                        toast({
+                          title: "Saved",
+                          description: "User details and dashboard access updated.",
+                        })
                       } catch (error) {
                         console.error("Error updating dealer:", error)
-                        alert(error instanceof ApiError ? error.message : "Failed to update dealer")
+                        alert(error instanceof ApiError ? error.message : "Failed to update user")
                       }
                     }}
                     className="bg-blue-600 hover:bg-blue-700"
@@ -13073,339 +13391,707 @@ export default function AdminPanelPage() {
           </DialogContent>
         </Dialog>
 
-        {/* Account Manager Create/Edit Dialog */}
-        <Dialog open={accountManagerDialogOpen} onOpenChange={setAccountManagerDialogOpen}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        {/* Unified Create/Edit User Dialog (same registration fields for all) */}
+        <Dialog
+          open={accountManagerDialogOpen}
+          onOpenChange={(open) => {
+            setAccountManagerDialogOpen(open)
+            if (!open) {
+              setEditingManagedKind(null)
+              setEditingAccountManager(null)
+              setEditingDealer(null)
+              setEditingVisitor(null)
+              setNewAccountManager(emptyUnifiedUserForm())
+            }
+          }}
+        >
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editingAccountManager ? "Edit User ID" : "Create New User ID"}</DialogTitle>
+              <DialogTitle>
+                {editingManagedKind
+                  ? `Edit User — ${newAccountManager.firstName} ${newAccountManager.lastName}`.trim()
+                  : "Create New User ID"}
+              </DialogTitle>
               <DialogDescription>
-                {editingAccountManager ? "Update user information" : "Add a new account manager, installer, metering, baldev, or HR user"}
+                Same registration form for dealers, operations, and visitors. Check dashboard access and fill profile details.
               </DialogDescription>
             </DialogHeader>
 
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="am-role">Role *</Label>
-                <Select
-                  value={newAccountManager.role || undefined}
-                  onValueChange={(value) => setNewAccountManager({ ...newAccountManager, role: value })}
-                  disabled={!!editingAccountManager}
-                >
-                  <SelectTrigger id="am-role">
-                    <SelectValue placeholder="Select role" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="account-management">Account Manager</SelectItem>
-                    <SelectItem value="installer">Installer</SelectItem>
-                    <SelectItem value="metering">Metering</SelectItem>
-                    <SelectItem value="baldev">Baldev Confirmation</SelectItem>
-                    <SelectItem value="hr">HR</SelectItem>
-                  </SelectContent>
-                </Select>
-                {editingAccountManager && (
-                  <p className="text-xs text-muted-foreground">Role cannot be changed during edit</p>
-                )}
+              <div className="space-y-2 rounded-lg border border-border/70 p-3">
+                <Label className="text-base font-semibold">Dashboard access *</Label>
+                <p className="text-xs text-muted-foreground">
+                  Check the dashboards this user can open after login. Multiple boxes allowed.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {USER_ACCESS_OPTIONS.map((opt) => {
+                    const checked = newAccountManager.access.includes(opt.key)
+                    return (
+                      <label
+                        key={opt.key}
+                        className="flex items-start gap-2 rounded-md p-2 hover:bg-muted/40 cursor-pointer"
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(value) => {
+                            const on = value === true
+                            setNewAccountManager((prev) => {
+                              const next = on
+                                ? [...prev.access, opt.key]
+                                : prev.access.filter((k) => k !== opt.key)
+                              const unique = Array.from(new Set(next)) as UserAccessKey[]
+                              return {
+                                ...prev,
+                                access: unique,
+                                role: unique.length ? primaryBackendRoleFromAccess(unique) : "",
+                              }
+                            })
+                          }}
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium leading-tight">{opt.label}</span>
+                          <span className="block text-[11px] text-muted-foreground leading-snug">{opt.description}</span>
+                        </span>
+                      </label>
+                    )
+                  })}
+                </div>
+                {newAccountManager.access.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Selected: {accessLabels(newAccountManager.access).join(", ")}
+                  </p>
+                ) : null}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Login</Label>
                 <div className="space-y-2">
-                  <Label htmlFor="am-firstName">First Name *</Label>
+                  <Label htmlFor="am-username">Username *</Label>
                   <Input
-                    id="am-firstName"
-                    value={newAccountManager.firstName}
-                    onChange={(e) => setNewAccountManager({ ...newAccountManager, firstName: e.target.value })}
-                    placeholder="Enter first name"
+                    id="am-username"
+                    value={newAccountManager.username}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, username: e.target.value })}
+                    placeholder="Enter username"
+                    disabled={!!editingManagedKind}
                   />
+                  {editingManagedKind ? (
+                    <p className="text-xs text-muted-foreground">Username cannot be changed</p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="am-lastName">Last Name *</Label>
+                  <Label htmlFor="am-password">
+                    {editingManagedKind ? "New Password (leave blank to keep current)" : "Password *"}
+                  </Label>
                   <Input
-                    id="am-lastName"
-                    value={newAccountManager.lastName}
-                    onChange={(e) => setNewAccountManager({ ...newAccountManager, lastName: e.target.value })}
-                    placeholder="Enter last name"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="am-username">Username *</Label>
-                <Input
-                  id="am-username"
-                  value={newAccountManager.username}
-                  onChange={(e) => setNewAccountManager({ ...newAccountManager, username: e.target.value })}
-                  placeholder="Enter username"
-                  disabled={!!editingAccountManager}
-                />
-                {editingAccountManager && (
-                  <p className="text-xs text-muted-foreground">Username cannot be changed</p>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="am-password">
-                  {editingAccountManager ? "New Password (leave blank to keep current)" : "Password *"}
-                </Label>
-                <Input
-                  id="am-password"
-                  type="password"
-                  value={newAccountManager.password}
-                  onChange={(e) => setNewAccountManager({ ...newAccountManager, password: e.target.value })}
-                  placeholder={editingAccountManager ? "Enter new password" : "Enter password"}
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="am-email">Email *</Label>
-                  <Input
-                    id="am-email"
-                    type="email"
-                    value={newAccountManager.email}
-                    onChange={(e) => setNewAccountManager({ ...newAccountManager, email: e.target.value })}
-                    placeholder="Enter email"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="am-mobile">Mobile *</Label>
-                  <Input
-                    id="am-mobile"
-                    type="tel"
-                    value={newAccountManager.mobile}
-                    onChange={(e) => setNewAccountManager({ ...newAccountManager, mobile: e.target.value })}
-                    placeholder="Enter 10-digit mobile number"
-                    maxLength={10}
+                    id="am-password"
+                    type="password"
+                    value={newAccountManager.password}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, password: e.target.value })}
+                    placeholder={editingManagedKind ? "Enter new password" : "Enter password"}
                   />
                 </div>
               </div>
+
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Personal Information</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-firstName">First Name *</Label>
+                    <Input
+                      id="am-firstName"
+                      value={newAccountManager.firstName}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, firstName: e.target.value })}
+                      placeholder="Enter first name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-lastName">Last Name *</Label>
+                    <Input
+                      id="am-lastName"
+                      value={newAccountManager.lastName}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, lastName: e.target.value })}
+                      placeholder="Enter last name"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-email">Email *</Label>
+                    <Input
+                      id="am-email"
+                      type="email"
+                      value={newAccountManager.email}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, email: e.target.value })}
+                      placeholder="Enter email"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-mobile">Mobile *</Label>
+                    <Input
+                      id="am-mobile"
+                      type="tel"
+                      value={newAccountManager.mobile}
+                      onChange={(e) => {
+                        const cleaned = e.target.value.replace(/\D/g, "").slice(0, 10)
+                        setNewAccountManager({ ...newAccountManager, mobile: cleaned })
+                      }}
+                      placeholder="Enter 10-digit mobile number"
+                      maxLength={10}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-gender">Gender *</Label>
+                    <Select
+                      value={newAccountManager.gender || ""}
+                      onValueChange={(value) => setNewAccountManager({ ...newAccountManager, gender: value })}
+                    >
+                      <SelectTrigger id="am-gender">
+                        <SelectValue placeholder="Select gender" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Male">Male</SelectItem>
+                        <SelectItem value="Female">Female</SelectItem>
+                        <SelectItem value="Other">Other</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-dob">Date of Birth *</Label>
+                    <Input
+                      id="am-dob"
+                      type="date"
+                      value={newAccountManager.dateOfBirth || ""}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, dateOfBirth: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-fatherName">Father Name *</Label>
+                    <Input
+                      id="am-fatherName"
+                      value={newAccountManager.fatherName}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, fatherName: e.target.value })}
+                      placeholder="Enter father name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-fatherContact">Father Contact *</Label>
+                    <Input
+                      id="am-fatherContact"
+                      value={newAccountManager.fatherContact}
+                      onChange={(e) => {
+                        const cleaned = e.target.value.replace(/\D/g, "").slice(0, 10)
+                        setNewAccountManager({ ...newAccountManager, fatherContact: cleaned })
+                      }}
+                      placeholder="Enter 10-digit mobile"
+                      maxLength={10}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-govType">Government ID Type *</Label>
+                    <Select
+                      value={newAccountManager.governmentIdType || ""}
+                      onValueChange={(value) => setNewAccountManager({ ...newAccountManager, governmentIdType: value })}
+                    >
+                      <SelectTrigger id="am-govType">
+                        <SelectValue placeholder="Select ID type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {governmentIds.map((idType) => (
+                          <SelectItem key={idType} value={idType}>
+                            {idType}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-govNumber">Government ID Number *</Label>
+                    <Input
+                      id="am-govNumber"
+                      value={newAccountManager.governmentIdNumber}
+                      onChange={(e) => setNewAccountManager({ ...newAccountManager, governmentIdNumber: e.target.value })}
+                      placeholder="Enter ID number"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="am-employeeId">Employee ID</Label>
+                  <Input
+                    id="am-employeeId"
+                    value={newAccountManager.employeeId}
+                    onChange={(e) => setNewAccountManager({ ...newAccountManager, employeeId: e.target.value })}
+                    placeholder="Optional — used for visitors / staff"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <Label className="text-base font-semibold">Address</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="am-street">Street *</Label>
+                  <Input
+                    id="am-street"
+                    value={newAccountManager.address.street}
+                    onChange={(e) =>
+                      setNewAccountManager({
+                        ...newAccountManager,
+                        address: { ...newAccountManager.address, street: e.target.value },
+                      })
+                    }
+                    placeholder="Street address"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="am-city">City *</Label>
+                    <Input
+                      id="am-city"
+                      value={newAccountManager.address.city}
+                      onChange={(e) =>
+                        setNewAccountManager({
+                          ...newAccountManager,
+                          address: { ...newAccountManager.address, city: e.target.value },
+                        })
+                      }
+                      placeholder="City"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="am-state">State *</Label>
+                    <Select
+                      value={newAccountManager.address.state || ""}
+                      onValueChange={(value) =>
+                        setNewAccountManager({
+                          ...newAccountManager,
+                          address: { ...newAccountManager.address, state: value },
+                        })
+                      }
+                    >
+                      <SelectTrigger id="am-state">
+                        <SelectValue placeholder="Select state" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {indianStates.map((state) => (
+                          <SelectItem key={state} value={state}>
+                            {state}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="am-pincode">Pincode *</Label>
+                  <Input
+                    id="am-pincode"
+                    value={newAccountManager.address.pincode}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/\D/g, "").slice(0, 6)
+                      setNewAccountManager({
+                        ...newAccountManager,
+                        address: { ...newAccountManager.address, pincode: cleaned },
+                      })
+                    }}
+                    placeholder="6-digit pincode"
+                    maxLength={6}
+                  />
+                </div>
+              </div>
+
+              {editingManagedKind ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={newAccountManager.isActive}
+                      onCheckedChange={(v) =>
+                        setNewAccountManager({ ...newAccountManager, isActive: v === true })
+                      }
+                    />
+                    Active
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox
+                      checked={newAccountManager.emailVerified}
+                      onCheckedChange={(v) =>
+                        setNewAccountManager({ ...newAccountManager, emailVerified: v === true })
+                      }
+                    />
+                    Email verified
+                  </label>
+                </div>
+              ) : null}
 
               <div className="flex justify-end gap-2 pt-4">
-                <Button variant="outline" onClick={() => setAccountManagerDialogOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setAccountManagerDialogOpen(false)
+                    setEditingManagedKind(null)
+                    setEditingAccountManager(null)
+                    setEditingDealer(null)
+                    setEditingVisitor(null)
+                    setNewAccountManager(emptyUnifiedUserForm())
+                  }}
+                >
                   Cancel
                 </Button>
                 <Button
+                  className="bg-green-600 hover:bg-green-700"
                   onClick={async () => {
-                    if (!newAccountManager.role) {
+                    const selectedAccess = normalizeAccessList(newAccountManager.access)
+                    if (selectedAccess.length === 0) {
                       toast({
                         title: "Validation Error",
-                        description: "Please select a role (Account Manager, Installer, Metering, Baldev, or HR).",
+                        description: "Select at least one dashboard access.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    const primaryRole = primaryBackendRoleFromAccess(selectedAccess)
+                    const isEditing = Boolean(editingManagedKind)
+                    const coreMissing =
+                      !newAccountManager.firstName.trim() ||
+                      !newAccountManager.lastName.trim() ||
+                      !newAccountManager.username.trim() ||
+                      !newAccountManager.email.trim() ||
+                      !newAccountManager.mobile.trim()
+                    const profileMissing =
+                      !newAccountManager.gender ||
+                      !newAccountManager.dateOfBirth ||
+                      !newAccountManager.fatherName.trim() ||
+                      !newAccountManager.fatherContact.trim() ||
+                      !newAccountManager.governmentIdType ||
+                      !newAccountManager.governmentIdNumber.trim() ||
+                      !newAccountManager.address.street.trim() ||
+                      !newAccountManager.address.city.trim() ||
+                      !newAccountManager.address.state ||
+                      !newAccountManager.address.pincode.trim()
+
+                    if (coreMissing || (!isEditing && profileMissing)) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Please fill in all required registration fields.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    if (!isEditing && !newAccountManager.password) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Password is required for new users.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    if (newAccountManager.mobile.length !== 10) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Mobile must be 10 digits.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    if (newAccountManager.fatherContact && newAccountManager.fatherContact.length !== 10) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Father contact must be 10 digits.",
+                        variant: "destructive",
+                      })
+                      return
+                    }
+                    if (newAccountManager.address.pincode && newAccountManager.address.pincode.length !== 6) {
+                      toast({
+                        title: "Validation Error",
+                        description: "Pincode must be 6 digits.",
                         variant: "destructive",
                       })
                       return
                     }
 
-                    if (!newAccountManager.firstName || !newAccountManager.lastName || !newAccountManager.username || !newAccountManager.email || !newAccountManager.mobile) {
-                      toast({
-                        title: "Validation Error",
-                        description: "Please fill in all required fields",
-                        variant: "destructive",
-                      })
-                      return
-                    }
-
-                    if (!editingAccountManager && !newAccountManager.password) {
-                      toast({
-                        title: "Validation Error",
-                        description: "Password is required for new account managers",
-                        variant: "destructive",
-                      })
-                      return
+                    const profilePayload = {
+                      firstName: newAccountManager.firstName.trim(),
+                      lastName: newAccountManager.lastName.trim(),
+                      email: newAccountManager.email.trim(),
+                      mobile: newAccountManager.mobile,
+                      gender: newAccountManager.gender || undefined,
+                      dateOfBirth: newAccountManager.dateOfBirth || undefined,
+                      fatherName: newAccountManager.fatherName.trim() || undefined,
+                      fatherContact: newAccountManager.fatherContact || undefined,
+                      governmentIdType: newAccountManager.governmentIdType || undefined,
+                      governmentIdNumber: newAccountManager.governmentIdNumber.trim() || undefined,
+                      address: {
+                        street: newAccountManager.address.street.trim(),
+                        city: newAccountManager.address.city.trim(),
+                        state: newAccountManager.address.state,
+                        pincode: newAccountManager.address.pincode,
+                      },
+                      employeeId: newAccountManager.employeeId.trim() || undefined,
+                      access: selectedAccess,
+                      permissions: selectedAccess,
+                      role: primaryRole,
+                      isActive: newAccountManager.isActive,
+                      emailVerified: newAccountManager.emailVerified,
                     }
 
                     try {
                       if (useApi) {
-                        if (editingAccountManager) {
-                          // Update existing account manager
-                          await api.admin.accountManagers.update(editingAccountManager.id, {
-                            firstName: newAccountManager.firstName.trim(),
-                            lastName: newAccountManager.lastName.trim(),
-                            email: newAccountManager.email.trim(),
-                            mobile: newAccountManager.mobile,
+                        if (editingManagedKind === "dealer" && editingDealer) {
+                          try {
+                            await api.admin.dealers.update(editingDealer.id, profilePayload)
+                          } catch {
+                            await api.admin.dealers.update(editingDealer.id, {
+                              firstName: profilePayload.firstName,
+                              lastName: profilePayload.lastName,
+                              email: profilePayload.email,
+                              mobile: profilePayload.mobile,
+                              gender: profilePayload.gender,
+                              dateOfBirth: profilePayload.dateOfBirth,
+                              fatherName: profilePayload.fatherName,
+                              fatherContact: profilePayload.fatherContact,
+                              governmentIdType: profilePayload.governmentIdType,
+                              governmentIdNumber: profilePayload.governmentIdNumber,
+                              address: profilePayload.address,
+                              isActive: profilePayload.isActive,
+                              emailVerified: profilePayload.emailVerified,
+                              access: selectedAccess,
+                              permissions: selectedAccess,
+                            })
+                          }
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else if (editingManagedKind === "visitor" && editingVisitor) {
+                          await api.admin.visitors.update(editingVisitor.id, {
+                            ...profilePayload,
+                            employeeId: newAccountManager.employeeId.trim() || undefined,
                           })
                           if (newAccountManager.password) {
-                            await api.admin.accountManagers.updatePassword(editingAccountManager.id, newAccountManager.password)
+                            await api.admin.visitors.updatePassword(editingVisitor.id, newAccountManager.password)
                           }
-                        } else {
-                          // Create new operational user (with role). Retry without role for older backend compatibility.
-                          const createPayload = {
-                            role: newAccountManager.role,
-                            username: newAccountManager.username,
-                            password: newAccountManager.password,
-                            firstName: newAccountManager.firstName,
-                            lastName: newAccountManager.lastName,
-                            email: newAccountManager.email,
-                            mobile: newAccountManager.mobile,
-                          }
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else if (editingManagedKind === "operations" && editingAccountManager) {
                           try {
-                            await api.admin.accountManagers.create(createPayload)
-                          } catch (createError) {
-                            if (
-                              createError instanceof ApiError &&
-                              (createError.code === "VAL_001" || createError.code === "HTTP_400")
-                            ) {
-                              await api.admin.accountManagers.create({
-                                username: newAccountManager.username,
-                                password: newAccountManager.password,
-                                firstName: newAccountManager.firstName,
-                                lastName: newAccountManager.lastName,
-                                email: newAccountManager.email,
-                                mobile: newAccountManager.mobile,
-                              })
-                              if (newAccountManager.role !== "account-management") {
-                                saveOperationsRoleOverride(newAccountManager.username, newAccountManager.role)
+                            await api.admin.accountManagers.update(editingAccountManager.id, profilePayload)
+                          } catch {
+                            await api.admin.accountManagers.update(editingAccountManager.id, {
+                              firstName: profilePayload.firstName,
+                              lastName: profilePayload.lastName,
+                              email: profilePayload.email,
+                              mobile: profilePayload.mobile,
+                              access: selectedAccess,
+                              permissions: selectedAccess,
+                              role: primaryRole,
+                            })
+                          }
+                          if (newAccountManager.password) {
+                            await api.admin.accountManagers.updatePassword(
+                              editingAccountManager.id,
+                              newAccountManager.password,
+                            )
+                          }
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                          saveOperationsRoleOverride(newAccountManager.username, primaryRole)
+                        } else if (!isEditing) {
+                          if (primaryRole === "visitor" || (selectedAccess.length === 1 && selectedAccess[0] === "visitor")) {
+                            await api.admin.visitors.create({
+                              username: newAccountManager.username.trim(),
+                              password: newAccountManager.password,
+                              ...profilePayload,
+                            })
+                          } else if (primaryRole === "dealer") {
+                            await api.dealers.register({
+                              username: newAccountManager.username.trim(),
+                              password: newAccountManager.password,
+                              firstName: profilePayload.firstName,
+                              lastName: profilePayload.lastName,
+                              email: profilePayload.email,
+                              mobile: profilePayload.mobile,
+                              gender: profilePayload.gender,
+                              dateOfBirth: profilePayload.dateOfBirth,
+                              fatherName: profilePayload.fatherName,
+                              fatherContact: profilePayload.fatherContact,
+                              governmentIdType: profilePayload.governmentIdType,
+                              governmentIdNumber: profilePayload.governmentIdNumber,
+                              address: profilePayload.address,
+                            })
+                            // Best-effort: activate + persist access after self-register path
+                            try {
+                              const dealersRes = await api.admin.dealers.getAll({
+                                page: 1,
+                                limit: 1000,
+                                includeInactive: true,
+                                search: newAccountManager.username.trim(),
+                              } as any)
+                              const created = (dealersRes.dealers || dealersRes || []).find(
+                                (d: any) =>
+                                  String(d.username || "").toLowerCase() ===
+                                  newAccountManager.username.trim().toLowerCase(),
+                              )
+                              if (created?.id) {
+                                try {
+                                  await api.admin.dealers.activate(created.id)
+                                } catch {
+                                  /* optional */
+                                }
+                                try {
+                                  await api.admin.dealers.update(created.id, {
+                                    access: selectedAccess,
+                                    permissions: selectedAccess,
+                                    isActive: true,
+                                  })
+                                } catch {
+                                  /* optional */
+                                }
+                              }
+                            } catch {
+                              /* list may differ by backend */
+                            }
+                          } else {
+                            const createPayload = {
+                              username: newAccountManager.username.trim(),
+                              password: newAccountManager.password,
+                              ...profilePayload,
+                            }
+                            try {
+                              await api.admin.accountManagers.create(createPayload)
+                            } catch (createError) {
+                              if (
+                                createError instanceof ApiError &&
+                                (createError.code === "VAL_001" || createError.code === "HTTP_400")
+                              ) {
+                                await api.admin.accountManagers.create({
+                                  role: primaryRole,
+                                  username: createPayload.username,
+                                  password: createPayload.password,
+                                  firstName: createPayload.firstName,
+                                  lastName: createPayload.lastName,
+                                  email: createPayload.email,
+                                  mobile: createPayload.mobile,
+                                })
                                 toast({
                                   title: "Created with compatibility mode",
                                   description:
-                                    "Backend role validation is not updated yet. User created and role is tracked locally until backend update.",
+                                    "Full profile/access saved locally until backend accepts extended fields.",
                                 })
+                              } else {
+                                throw createError
                               }
-                            } else {
-                              throw createError
                             }
+                            saveOperationsRoleOverride(newAccountManager.username, primaryRole)
                           }
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
                         }
                         await loadData()
                       } else {
-                        // Fallback to localStorage
-                        const allAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-                        const allInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
-                        const allMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
-                        const allBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
-                        const allHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
-
-                        if (editingAccountManager) {
-                          // Update existing account manager
-                          const roleKey = (editingAccountManager as any).role || "account-management"
-                          const sourceList =
-                            roleKey === "installer"
-                              ? allInstallers
-                              : roleKey === "metering"
-                                ? allMeteringUsers
-                                : roleKey === "baldev"
-                                  ? allBaldevUsers
-                                  : roleKey === "hr"
-                                    ? allHrUsers
-                                    : allAccountManagers
-                          const updated = sourceList.map((am: AccountManager & { password?: string }) => {
-                            if (am.id === editingAccountManager.id) {
-                              return {
-                                ...am,
-                                firstName: newAccountManager.firstName,
-                                lastName: newAccountManager.lastName,
-                                email: newAccountManager.email,
-                                mobile: newAccountManager.mobile,
-                                password: newAccountManager.password || am.password,
-                              }
-                            }
-                            return am
-                          })
-                          if (roleKey === "installer") {
-                            localStorage.setItem("installers", JSON.stringify(updated))
-                          } else if (roleKey === "metering") {
-                            localStorage.setItem("meteringUsers", JSON.stringify(updated))
-                          } else if (roleKey === "baldev") {
-                            localStorage.setItem("baldevUsers", JSON.stringify(updated))
-                          } else if (roleKey === "hr") {
-                            localStorage.setItem("hrUsers", JSON.stringify(updated))
-                          } else {
-                            localStorage.setItem("accountManagers", JSON.stringify(updated))
-                          }
-                        } else {
-                          // Create new account manager
-                          const newAccountManagerData: (AccountManager & { password: string }) & { role: string } = {
-                            id: `account-mgr-${Date.now()}`,
-                            username: newAccountManager.username,
+                        // localStorage fallback — mirror previous behaviour for ops; dealers/visitors too
+                        if (editingManagedKind === "dealer" && editingDealer) {
+                          const allDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
+                          const updated = allDealers.map((d: any) =>
+                            d.id === editingDealer.id
+                              ? { ...d, ...profilePayload, username: d.username, password: d.password }
+                              : d,
+                          )
+                          localStorage.setItem("dealers", JSON.stringify(updated))
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else if (editingManagedKind === "visitor" && editingVisitor) {
+                          const allVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
+                          const updated = allVisitors.map((v: any) =>
+                            v.id === editingVisitor.id
+                              ? {
+                                  ...v,
+                                  ...profilePayload,
+                                  password: newAccountManager.password || v.password,
+                                }
+                              : v,
+                          )
+                          localStorage.setItem("visitors", JSON.stringify(updated))
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else if (!isEditing && primaryRole === "visitor") {
+                          const allVisitors = JSON.parse(localStorage.getItem("visitors") || "[]")
+                          allVisitors.push({
+                            id: `visitor-${Date.now()}`,
+                            username: newAccountManager.username.trim(),
                             password: newAccountManager.password,
-                            firstName: newAccountManager.firstName,
-                            lastName: newAccountManager.lastName,
-                            email: newAccountManager.email,
-                            mobile: newAccountManager.mobile,
-                            role: newAccountManager.role,
+                            ...profilePayload,
+                            createdAt: new Date().toISOString(),
+                          })
+                          localStorage.setItem("visitors", JSON.stringify(allVisitors))
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else if (!isEditing && primaryRole === "dealer") {
+                          const allDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
+                          allDealers.push({
+                            id: `dealer-${Date.now()}`,
+                            username: newAccountManager.username.trim(),
+                            password: newAccountManager.password,
+                            ...profilePayload,
                             isActive: true,
                             emailVerified: false,
                             createdAt: new Date().toISOString(),
-                          }
-
-                          // Check if username or email already exists (for localStorage fallback only)
-                          const allUsers = [...allAccountManagers, ...allInstallers, ...allMeteringUsers, ...allBaldevUsers, ...allHrUsers]
-                          const usernameExists = allUsers.some((am: AccountManager) => am.username === newAccountManager.username)
-                          const emailExists = allUsers.some((am: AccountManager) => am.email === newAccountManager.email)
-
-                          if (usernameExists) {
-                            toast({
-                              title: "Validation Error",
-                              description: "Username already exists. Please choose a different username.",
-                              variant: "destructive",
-                            })
-                            return
-                          }
-
-                          if (emailExists) {
-                            toast({
-                              title: "Validation Error",
-                              description: "Email already exists. Please use a different email address.",
-                              variant: "destructive",
-                            })
-                            return
-                          }
-
-                          if (newAccountManager.role === "installer") {
-                            allInstallers.push(newAccountManagerData)
-                            localStorage.setItem("installers", JSON.stringify(allInstallers))
-                          } else if (newAccountManager.role === "metering") {
-                            allMeteringUsers.push(newAccountManagerData)
-                            localStorage.setItem("meteringUsers", JSON.stringify(allMeteringUsers))
-                          } else if (newAccountManager.role === "baldev") {
-                            allBaldevUsers.push(newAccountManagerData)
-                            localStorage.setItem("baldevUsers", JSON.stringify(allBaldevUsers))
-                          } else if (newAccountManager.role === "hr") {
-                            allHrUsers.push(newAccountManagerData)
-                            localStorage.setItem("hrUsers", JSON.stringify(allHrUsers))
+                          })
+                          localStorage.setItem("dealers", JSON.stringify(allDealers))
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                        } else {
+                          const storageKey =
+                            primaryRole === "installer"
+                              ? "installers"
+                              : primaryRole === "metering"
+                                ? "meteringUsers"
+                                : primaryRole === "baldev"
+                                  ? "baldevUsers"
+                                  : primaryRole === "hr"
+                                    ? "hrUsers"
+                                    : "accountManagers"
+                          const list = JSON.parse(localStorage.getItem(storageKey) || "[]")
+                          if (editingManagedKind === "operations" && editingAccountManager) {
+                            const updated = list.map((am: any) =>
+                              am.id === editingAccountManager.id
+                                ? {
+                                    ...am,
+                                    ...profilePayload,
+                                    password: newAccountManager.password || am.password,
+                                  }
+                                : am,
+                            )
+                            localStorage.setItem(storageKey, JSON.stringify(updated))
                           } else {
-                            allAccountManagers.push(newAccountManagerData)
-                            localStorage.setItem("accountManagers", JSON.stringify(allAccountManagers))
+                            list.push({
+                              id: `ops-${Date.now()}`,
+                              username: newAccountManager.username.trim(),
+                              password: newAccountManager.password,
+                              ...profilePayload,
+                              createdAt: new Date().toISOString(),
+                            })
+                            localStorage.setItem(storageKey, JSON.stringify(list))
                           }
+                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                          saveOperationsRoleOverride(newAccountManager.username, primaryRole)
                         }
-
-                        // Reload account managers
-                        const updatedAccountManagers = JSON.parse(localStorage.getItem("accountManagers") || "[]")
-                        const updatedInstallers = JSON.parse(localStorage.getItem("installers") || "[]")
-                        const updatedMeteringUsers = JSON.parse(localStorage.getItem("meteringUsers") || "[]")
-                        const updatedBaldevUsers = JSON.parse(localStorage.getItem("baldevUsers") || "[]")
-                        const updatedHrUsers = JSON.parse(localStorage.getItem("hrUsers") || "[]")
-                        const mergedUpdatedUsers = [
-                          ...updatedAccountManagers.map((u: any) => ({ ...u, role: "account-management" })),
-                          ...updatedInstallers.map((u: any) => ({ ...u, role: "installer" })),
-                          ...updatedMeteringUsers.map((u: any) => ({ ...u, role: "metering" })),
-                          ...updatedBaldevUsers.map((u: any) => ({ ...u, role: "baldev" })),
-                          ...updatedHrUsers.map((u: any) => ({ ...u, role: "hr" })),
-                        ]
-                        const accountManagersWithoutPassword = mergedUpdatedUsers.map((am: AccountManager & { password?: string }) => {
-                          const { password: _, ...accountManagerData } = am
-                          return accountManagerData
-                        })
-                        setAccountManagers(accountManagersWithoutPassword)
+                        await loadData()
                       }
 
                       setAccountManagerDialogOpen(false)
+                      setEditingManagedKind(null)
                       setEditingAccountManager(null)
-                      setNewAccountManager({
-                        role: "",
-                        username: "",
-                        password: "",
-                        firstName: "",
-                        lastName: "",
-                        email: "",
-                        mobile: "",
-                      })
-                      
+                      setEditingDealer(null)
+                      setEditingVisitor(null)
+                      setNewAccountManager(emptyUnifiedUserForm())
                       toast({
                         title: "Success",
-                        description: editingAccountManager ? "User ID updated successfully!" : "User ID created successfully!",
+                        description: isEditing ? "User updated successfully!" : "User created successfully!",
                       })
                     } catch (error) {
-                      console.error("Error saving account manager:", error)
-                      let detailedMessage = "Failed to save user ID"
+                      console.error("Error saving user:", error)
+                      let detailedMessage = "Failed to save user"
                       if (error instanceof ApiError) {
                         const firstDetail = error.details?.[0]
                         detailedMessage = firstDetail?.message || error.message || detailedMessage
@@ -13417,10 +14103,9 @@ export default function AdminPanelPage() {
                       })
                     }
                   }}
-                  className="bg-green-600 hover:bg-green-700"
                 >
                   <Save className="w-4 h-4 mr-2" />
-                  {editingAccountManager ? "Update User ID" : "Create User ID"}
+                  {editingManagedKind ? "Update User" : "Create User ID"}
                 </Button>
               </div>
             </div>

@@ -15,13 +15,18 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet"
+import { getPostLoginPath } from "@/lib/user-access"
 
 export default function HomePage() {
-  const { isAuthenticated, role } = useAuth()
+  const { isAuthenticated, role, access } = useAuth()
   const router = useRouter()
 
   useEffect(() => {
     if (isAuthenticated) {
+      if (access.length > 0) {
+        router.push(getPostLoginPath(access))
+        return
+      }
       if (role === "account-management") {
         router.push("/dashboard/account-management")
       } else if (role === "hr") {
@@ -40,16 +45,10 @@ export default function HomePage() {
         router.push("/dashboard")
       }
     }
-  }, [isAuthenticated, role, router])
+  }, [isAuthenticated, role, access, router])
 
   const loginLinks = [
     { label: "Login", path: "/login" },
-    { label: "Account Mgmt Login", path: "/account-management-login" },
-    { label: "Visitor Login", path: "/visitor-login" },
-    { label: "HR Login", path: "/hr-login" },
-    { label: "Installer Login", path: "/installer-login" },
-    { label: "Metering Login", path: "/metering-login" },
-    { label: "Final Login", path: "/baldev-login" },
   ]
 
   return (
@@ -78,7 +77,7 @@ export default function HomePage() {
               <SheetContent side="right" className="w-[85vw] max-w-sm">
                 <SheetHeader>
                   <SheetTitle>Menu</SheetTitle>
-                  <SheetDescription>Select login type or create account.</SheetDescription>
+                  <SheetDescription>Sign in or create a dealer account.</SheetDescription>
                 </SheetHeader>
                 <div className="px-4 pb-4 space-y-2">
                   {loginLinks.map((item) => (

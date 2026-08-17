@@ -12,6 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowRight } from "lucide-react"
 import { indianStates } from "@/lib/quotation-data"
+import { SERVICE_CITIES } from "@/lib/service-cities"
 
 interface Props {
   onSubmit: (customer: Customer) => void
@@ -225,14 +226,26 @@ export function CustomerDetailsForm({ onSubmit, initialData, locked = false }: P
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
                   <Label htmlFor="city">City *</Label>
-                  <Input
-                    id="city"
+                  <Select
                     value={formData.address.city}
-                    onChange={(e) => updateFormData("address.city", e.target.value)}
-                    placeholder="Enter city"
+                    onValueChange={(v) => updateFormData("address.city", v)}
                     disabled={locked}
-                    readOnly={locked}
-                  />
+                  >
+                    <SelectTrigger id="city">
+                      <SelectValue placeholder="Select city" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SERVICE_CITIES.map((city) => (
+                        <SelectItem key={city} value={city}>
+                          {city}
+                        </SelectItem>
+                      ))}
+                      {formData.address.city &&
+                      !(SERVICE_CITIES as readonly string[]).includes(formData.address.city) ? (
+                        <SelectItem value={formData.address.city}>{formData.address.city}</SelectItem>
+                      ) : null}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div>
                   <Label htmlFor="state">State *</Label>

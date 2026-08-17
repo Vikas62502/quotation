@@ -12,6 +12,14 @@ import { readInstallationTeams } from "./installation-teams"
 import { disconnectRealtime, initRealtime } from "./realtime"
 import { mapBackendRoleToAdminUserRole, buildInventoryAuthUserFromQuotationSession } from "./admin-access"
 import { authService as inventoryAuthService } from "@/inventory-sa/lib/auth"
+import {
+  type UserAccessKey,
+  clearSessionAccess,
+  primaryAppRoleFromAccess,
+  readSessionAccess,
+  resolveUserAccess,
+  writeSessionAccess,
+} from "./user-access"
 
 // asd
 
@@ -37,6 +45,9 @@ export interface Dealer {
   isActive?: boolean
   createdAt?: string
   emailVerified?: boolean
+  /** Admin dashboard access checkboxes (when API / edit provides them). */
+  access?: UserAccessKey[]
+  permissions?: UserAccessKey[]
 }
 
 export interface Visitor {
@@ -52,6 +63,8 @@ export interface Visitor {
   createdBy?: string
   createdAt?: string
   updatedAt?: string
+  access?: UserAccessKey[]
+  permissions?: UserAccessKey[]
 }
 
 export interface AccountManager {
@@ -64,6 +77,9 @@ export interface AccountManager {
   isActive?: boolean
   createdAt?: string
   emailVerified?: boolean
+  role?: string
+  access?: UserAccessKey[]
+  permissions?: UserAccessKey[]
 }
 
 export interface InstallerUser {
@@ -143,6 +159,8 @@ interface AuthContextType {
   baldev: BaldevUser | null
   hrUser: HrUser | null
   role: UserRole | null
+  /** Dashboard sections granted by Admin (checkboxes). */
+  access: UserAccessKey[]
   isAuthenticated: boolean
   /** False until localStorage session has been read (avoids refresh redirect races). */
   authReady: boolean
@@ -169,8 +187,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [baldev, setBaldev] = useState<BaldevUser | null>(null)
   const [hrUser, setHrUser] = useState<HrUser | null>(null)
   const [role, setRole] = useState<UserRole | null>(null)
+  const [access, setAccess] = useState<UserAccessKey[]>([])
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [authReady, setAuthReady] = useState(false)
+
+  const clearProfiles = () => {
+    setDealer(null)
+    setVisitor(null)
+    setAccountManager(null)
+    setInstaller(null)
+    setInstallationTeamUser(null)
+    setMeteringUser(null)
+    setBaldev(null)
+    setHrUser(null)
+  }
+
+  /** Fill profile slots for every granted access so each dashboard can show the user name. */
+  const applyAccessProfiles = (user: any, granted: UserAccessKey[]) => {
+    const base = {
+      id: user.id,
+      username: user.username,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      email: user.email,
+      mobile: user.mobile || "",
+      isActive: user.isActive ?? true,
+      createdAt: user.createdAt,
+      emailVerified: user.emailVerified ?? false,
+    }
+    clearProfiles()
+    if (granted.includes("quotation") || granted.includes("admin")) {
+      setDealer({
+        ...base,
+        gender: user.gender || "",
+        dateOfBirth: user.dateOfBirth || "",
+        fatherName: user.fatherName || "",
+        fatherContact: user.fatherContact || "",
+        governmentIdType: user.governmentIdType || "",
+        governmentIdNumber: user.governmentIdNumber || "",
+        address: user.address || { street: "", city: "", state: "", pincode: "" },
+      })
+    }
+    if (granted.includes("accounts")) setAccountManager(base)
+    if (granted.includes("installation")) setInstaller(base)
+    if (granted.includes("metering")) setMeteringUser(base)
+    if (granted.includes("final_confirmation")) setBaldev(base)
+    if (granted.includes("hr")) setHrUser(base)
+    if (granted.includes("visitor")) {
+      setVisitor({
+        ...base,
+        password: "",
+        employeeId: user.employeeId,
+      })
+    }
+  }
+
+  const commitSessionAccess = (username: string, backendRole: string, user: any): UserAccessKey[] => {
+    const granted = resolveUserAccess({
+      username,
+      role: backendRole,
+      access: user?.access,
+      permissions: user?.permissions,
+    })
+    writeSessionAccess(granted)
+    setAccess(granted)
+    return granted
+  }
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -203,8 +285,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token && savedUser) {
       try {
         const user = JSON.parse(savedUser)
+        const sessionAccess = resolveUserAccess({
+          username: user.username,
+          role: savedRole || user.role,
+          access: user.access,
+          permissions: user.permissions,
+        })
+        if (sessionAccess.length > 0) {
+          writeSessionAccess(sessionAccess)
+          setAccess(sessionAccess)
+        }
         setInstallationTeamUser(null)
-        if (user.role === "visitor") {
+        if (sessionAccess.length > 1) {
+          applyAccessProfiles(user, sessionAccess)
+          const appRole = primaryAppRoleFromAccess(sessionAccess) as UserRole
+          setRole((savedRole as UserRole) || appRole)
+          setIsAuthenticated(true)
+        } else if (user.role === "visitor") {
           setVisitor(user)
           setRole("visitor")
           setAccountManager(null)
@@ -434,13 +531,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const user = response.user
         const backendRole = String(user.role || "").toLowerCase()
         const adminMapped = mapBackendRoleToAdminUserRole(backendRole)
-        const userRole: UserRole =
+
+        const normalizedBackendRole =
           adminMapped ||
           (backendRole === "visitor"
             ? "visitor"
             : backendRole === "hr" || backendRole === "human-resources"
               ? "hr"
-              : "dealer")
+              : backendRole === "account-management" ||
+                  backendRole === "accountmanager" ||
+                  backendRole === "account_manager"
+                ? "account-management"
+                : backendRole === "installer" || backendRole === "installation"
+                  ? "installer"
+                  : backendRole === "installation-team" || backendRole === "installation_team"
+                    ? "installation-team"
+                    : backendRole === "metering" ||
+                        backendRole === "meter" ||
+                        backendRole === "metering-team" ||
+                        backendRole === "mco"
+                      ? "metering"
+                      : backendRole === "baldev" || backendRole === "confirmation"
+                        ? "baldev"
+                        : "dealer")
+
+        const granted = commitSessionAccess(user.username || username, normalizedBackendRole, user)
+        const userRole = (
+          granted.length > 0 ? primaryAppRoleFromAccess(granted) : normalizedBackendRole
+        ) as UserRole
 
         // Store tokens
         if (response.token) {
@@ -452,88 +570,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.setItem("refreshToken", response.refreshToken)
         }
 
-        if (adminMapped) {
+        if (adminMapped || granted.includes("admin")) {
           inventoryAuthService.setUser(
             buildInventoryAuthUserFromQuotationSession({
               id: user.id,
               username: user.username,
               firstName: user.firstName,
               lastName: user.lastName,
-              role: adminMapped,
+              role: adminMapped || "admin",
               isActive: (user as any).isActive ?? true,
               loginUser: user as any,
             })
           )
         }
 
-        if (userRole === "visitor") {
-          setVisitor({
-            id: user.id,
-            username: user.username,
-            password: "",
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            mobile: (user as any).mobile || "",
+        applyAccessProfiles(user, granted.length > 0 ? granted : resolveUserAccess({ role: userRole }))
+
+        // Keep installation-team shape when that is the only / primary role
+        if (userRole === "installation-team" || normalizedBackendRole === "installation-team") {
+          const u = user as any
+          setInstallationTeamUser({
+            id: String(u.id || u.teamId || ""),
+            teamId: String(u.teamId || u.installationTeamId || u.installation_team_id || u.id || ""),
+            teamName: String(u.teamName || u.team_name || u.username || "Team"),
+            username: u.username,
+            firstName: u.firstName || String(u.teamName || u.team_name || ""),
+            lastName: u.lastName || "",
+            isActive: u.isActive !== false,
           })
-          setDealer(null)
-          setAccountManager(null)
-          setInstaller(null)
-          setMeteringUser(null)
-          setBaldev(null)
-          setHrUser(null)
-        } else if (userRole === "hr") {
-          setHrUser({
-            id: user.id,
-            username: user.username,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            mobile: (user as any).mobile || "",
-            isActive: (user as any).isActive ?? true,
-            createdAt: (user as any).createdAt,
-          })
-          setDealer(null)
-          setVisitor(null)
-          setAccountManager(null)
-          setInstaller(null)
-          setMeteringUser(null)
-          setBaldev(null)
-        } else {
-          setDealer({
-            id: user.id,
-            username: user.username,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            email: user.email,
-            mobile: (user as any).mobile || "",
-            gender: (user as any).gender || "",
-            dateOfBirth: (user as any).dateOfBirth || "",
-            fatherName: (user as any).fatherName || "",
-            fatherContact: (user as any).fatherContact || "",
-            governmentIdType: (user as any).governmentIdType || "",
-            governmentIdNumber: (user as any).governmentIdNumber || "",
-            address: (user as any).address || {
-              street: "",
-              city: "",
-              state: "",
-              pincode: "",
-            },
-            isActive: (user as any).isActive ?? true, // Backend should reject login if false
-            emailVerified: (user as any).emailVerified ?? false,
-            createdAt: (user as any).createdAt,
-          })
-          setVisitor(null)
-          setAccountManager(null)
-          setInstaller(null)
-          setMeteringUser(null)
-          setBaldev(null)
-          setHrUser(null)
         }
 
         setRole(userRole)
         setIsAuthenticated(true)
-        localStorage.setItem("user", JSON.stringify(user))
+        localStorage.setItem("user", JSON.stringify({ ...user, access: granted }))
         localStorage.setItem("userRole", userRole)
         return true
       } catch (error) {
@@ -558,20 +627,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (foundDealer) {
         const { password: _, ...dealerData } = foundDealer
-        setDealer(dealerData)
-        setVisitor(null)
-        setAccountManager(null)
-        setInstaller(null)
-        setMeteringUser(null)
-        setBaldev(null)
-        setHrUser(null)
         const userRole: UserRole = username === "admin" ? "admin" : "dealer"
+        const granted = commitSessionAccess(username, userRole, { ...dealerData, access: (foundDealer as any).access })
+        applyAccessProfiles(dealerData, granted.length ? granted : resolveUserAccess({ role: userRole, username }))
         setRole(userRole)
         setIsAuthenticated(true)
         localStorage.setItem("dealer", JSON.stringify(dealerData))
         localStorage.setItem("userRole", userRole)
+        localStorage.setItem("user", JSON.stringify({ ...dealerData, role: userRole, access: granted }))
         localStorage.removeItem("visitor")
         return true
+      }
+
+      // Operational users stored under accountManagers / installers / etc.
+      const opsPools = [
+        { listKey: "accountManagers", role: "account-management" as UserRole },
+        { listKey: "installers", role: "installer" as UserRole },
+        { listKey: "meteringUsers", role: "metering" as UserRole },
+        { listKey: "baldevUsers", role: "baldev" as UserRole },
+        { listKey: "hrUsers", role: "hr" as UserRole },
+      ]
+      for (const pool of opsPools) {
+        const list = JSON.parse(localStorage.getItem(pool.listKey) || "[]")
+        const found = list.find((u: any) => u.username === username && u.password === password)
+        if (found) {
+          const { password: _, ...userData } = found
+          const roleHint = (found as any).role || pool.role
+          const granted = commitSessionAccess(username, roleHint, found)
+          applyAccessProfiles(userData, granted.length ? granted : resolveUserAccess({ role: roleHint, username }))
+          const userRole = (granted.length ? primaryAppRoleFromAccess(granted) : pool.role) as UserRole
+          setRole(userRole)
+          setIsAuthenticated(true)
+          localStorage.setItem("userRole", userRole)
+          localStorage.setItem("user", JSON.stringify({ ...userData, role: userRole, access: granted }))
+          return true
+        }
       }
 
       // Check visitors
@@ -582,17 +672,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (foundVisitor) {
         const { password: _, ...visitorData } = foundVisitor
-        setVisitor(visitorData as Visitor)
-        setDealer(null)
-        setAccountManager(null)
-        setInstaller(null)
-        setMeteringUser(null)
-        setBaldev(null)
-        setHrUser(null)
+        const granted = commitSessionAccess(username, "visitor", foundVisitor)
+        applyAccessProfiles(visitorData, granted.length ? granted : ["visitor"])
         setRole("visitor")
         setIsAuthenticated(true)
         localStorage.setItem("visitor", JSON.stringify(visitorData))
         localStorage.setItem("userRole", "visitor")
+        localStorage.setItem("user", JSON.stringify({ ...visitorData, role: "visitor", access: granted }))
         localStorage.removeItem("dealer")
         return true
       }
@@ -643,6 +729,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setBaldev(null)
     setHrUser(null)
     setRole(null)
+    setAccess([])
 
     localStorage.removeItem("authToken")
     localStorage.removeItem("refreshToken")
@@ -657,6 +744,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem("hrUser")
     localStorage.removeItem("userRole")
     localStorage.removeItem("user")
+    clearSessionAccess()
 
     if (useApi) {
       try {
@@ -1333,6 +1421,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         baldev,
         hrUser,
         role,
+        access,
         isAuthenticated,
         authReady,
         login,

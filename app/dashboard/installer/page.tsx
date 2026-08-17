@@ -61,6 +61,8 @@ import {
   persistInstallationTeamAssignment,
 } from "@/lib/installation-team-management"
 import { getInstallationTeamIdForQuotation, type InstallationTeamRecord } from "@/lib/installation-teams"
+import { AccessSwitchBar } from "@/components/access-switch-bar"
+import { canOpenSection, getAccessOptions, getPostLoginPath } from "@/lib/user-access"
 
 type InstallerQuotation = {
   id: string
@@ -238,7 +240,7 @@ type InstallerSection = "installation" | "metering" | "inventory"
 
 export default function InstallerDashboardPage() {
   const router = useRouter()
-  const { isAuthenticated, role, installer, installationTeamUser, logout } = useAuth()
+  const { isAuthenticated, role, installer, installationTeamUser, logout, access } = useAuth()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [activeSection, setActiveSection] = useState<InstallerSection>("installation")
@@ -269,13 +271,17 @@ export default function InstallerDashboardPage() {
 
   useEffect(() => {
     if (!isAuthenticated) {
-      router.push("/installer-login")
+      router.push("/login")
       return
     }
-    if (role !== "installer" && role !== "installation-team") {
-      router.push("/login")
+    if (
+      role !== "installer" &&
+      role !== "installation-team" &&
+      !canOpenSection(access, role, "installation")
+    ) {
+      router.push(getPostLoginPath(access.length ? access : []))
     }
-  }, [isAuthenticated, role, router])
+  }, [isAuthenticated, role, access, router])
 
   useEffect(() => {
     const stored = localStorage.getItem("installerWorkflowMap")
@@ -1284,25 +1290,28 @@ export default function InstallerDashboardPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-card">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <button onClick={() => router.push("/")} className="flex items-center">
-            <SolarLogo size="md" />
-          </button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await logout()
-              router.push("/")
-            }}
-            className="gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Logout
-          </Button>
-        </div>
-      </header>
+      <AccessSwitchBar current="installation" title="Installation" />
+      {getAccessOptions(access).length <= 1 ? (
+        <header className="border-b border-border bg-card">
+          <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+            <button onClick={() => router.push("/")} className="flex items-center">
+              <SolarLogo size="md" />
+            </button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await logout()
+                router.push("/")
+              }}
+              className="gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Logout
+            </Button>
+          </div>
+        </header>
+      ) : null}
 
       <main className="container mx-auto px-4 py-6 space-y-4">
         <div className="flex items-center gap-2">

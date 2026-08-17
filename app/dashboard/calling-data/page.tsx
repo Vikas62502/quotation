@@ -22,6 +22,8 @@ import {
 } from "@/lib/dealer-calling-action-history"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -627,6 +629,7 @@ export default function CallingDataPage() {
   const [callRemark, setCallRemark] = useState("")
   const [rescheduleAt, setRescheduleAt] = useState("")
   const [scheduledSearchTerm, setScheduledSearchTerm] = useState("")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [recentSearchTerm, setRecentSearchTerm] = useState("")
   const [interestedSearchTerm, setInterestedSearchTerm] = useState("")
   const [scheduledTimeFilter, setScheduledTimeFilter] = useState<"all" | "today" | "next7" | "next30">("all")
@@ -1801,6 +1804,7 @@ export default function CallingDataPage() {
             ? nextAtMs >= nowMs && nextAtMs <= nowMs + 7 * 24 * 60 * 60 * 1000
             : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
       if (!matchesTime) return false
+      if (!matchesCityFilter(lead, filterCities)) return false
       if (!term) return true
       const remarkText = getScheduledLeadFreeRemark(lead)
       const haystack = [lead.name, lead.mobile, lead.kNumber, lead.address, lead.city, lead.state, lead.callRemark, remarkText]
@@ -1809,7 +1813,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, callingVisibilityCtx])
+  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, callingVisibilityCtx, filterCities])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
@@ -1818,6 +1822,7 @@ export default function CallingDataPage() {
       const category = getTaggedCategory(item.callRemark)
       if (recentCategoryFilter !== "all" && category !== recentCategoryFilter) return false
       if (!matchesDateRange(item.actionAt, recentDateFilter)) return false
+      if (!matchesCityFilter(item, filterCities)) return false
       if (!term) return true
       const haystack = [item.name, item.mobile, item.action, item.callRemark, item.kNumber, item.address, item.city, item.state]
         .filter(Boolean)
@@ -1825,7 +1830,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [recentActions, recentSearchTerm, recentActionFilter, recentCategoryFilter, recentDateFilter])
+  }, [recentActions, recentSearchTerm, recentActionFilter, recentCategoryFilter, recentDateFilter, filterCities])
 
   const filteredInterestedActions = useMemo(() => {
     const term = interestedSearchTerm.trim().toLowerCase()
@@ -1833,6 +1838,7 @@ export default function CallingDataPage() {
       const category = getTaggedCategory(item.callRemark)
       if (interestedCategoryFilter !== "all" && category !== interestedCategoryFilter) return false
       if (!matchesDateRange(item.actionAt, interestedDateFilter)) return false
+      if (!matchesCityFilter(item, filterCities)) return false
       if (!term) return true
       const haystack = [item.name, item.mobile, item.callRemark, item.kNumber, item.address, item.city, item.state]
         .filter(Boolean)
@@ -1840,7 +1846,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter])
+  }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter, filterCities])
 
   const currentLead = pinnedCurrentLead || dealerAssignedQueue[0] || null
 
@@ -2603,11 +2609,18 @@ export default function CallingDataPage() {
     <div className="min-h-screen bg-background">
       <DashboardNav />
       <main className="container mx-auto px-4 py-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 border border-orange-200 flex items-center justify-center">
-            <PhoneCall className="w-4 h-4 text-primary" />
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 border border-orange-200 flex items-center justify-center">
+              <PhoneCall className="w-4 h-4 text-primary" />
+            </div>
+            <h1 className="text-xl font-semibold">Calling Data</h1>
           </div>
-          <h1 className="text-xl font-semibold">Calling Data</h1>
+          <CityMultiSelectFilter
+            value={filterCities}
+            onChange={setFilterCities}
+            className="w-full sm:w-56"
+          />
         </div>
         <p className="text-sm text-muted-foreground">
           One lead at a time. After Start Call, submit the outcome before the next lead appears — repeated Start

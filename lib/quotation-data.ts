@@ -74,6 +74,9 @@ export const indianStates = [
   "Jammu & Kashmir",
 ]
 
+/** @deprecated Prefer `SERVICE_CITIES` from `@/lib/service-cities` */
+export { SERVICE_CITIES as indianCities } from "@/lib/service-cities"
+
 // Subsidy Rates (example rates)
 export const centralSubsidyRates = {
   "1kW": 30000,

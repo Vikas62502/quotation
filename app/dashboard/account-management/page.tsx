@@ -28,6 +28,10 @@ import {
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
+import { AccessSwitchBar } from "@/components/access-switch-bar"
+import { canOpenSection, getAccessOptions, getPostLoginPath } from "@/lib/user-access"
+import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
+import { matchesCityFilter } from "@/lib/service-cities"
 import { useToast } from "@/hooks/use-toast"
 import { useIncrementalList } from "@/hooks/use-incremental-list"
 import { IncrementalListSentinel } from "@/components/incremental-list-sentinel"
@@ -931,12 +935,13 @@ function PaymentDateRangeFilter({
 }
 
 export default function AccountManagementPage() {
-  const { isAuthenticated, role, logout, accountManager, dealer } = useAuth()
+  const { isAuthenticated, role, logout, accountManager, dealer, access } = useAuth()
   const router = useRouter()
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([])
   const [searchTerm, setSearchTerm] = useState("")
+  const [filterCities, setFilterCities] = useState<string[]>([])
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<PaymentTypeFilterValue[]>([])
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
@@ -1310,17 +1315,21 @@ export default function AccountManagementPage() {
 
     // Only account-management role can access this page
     if (!isAuthenticated) {
-      router.push("/account-management-login")
+      router.push("/login")
       return
     }
     
-    // Allow both account-management and admin (admin uses same page when account managers unavailable)
-    const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
+    // Allow account-management, admin, or users granted Accounts access
+    const canAccess =
+      role === "account-management" ||
+      role === "admin" ||
+      dealer?.username === "admin" ||
+      canOpenSection(access, role, "accounts")
     if (!canAccess) {
       if (role === "visitor") {
         router.push("/visitor/dashboard")
       } else {
-        router.push("/dashboard")
+        router.push(getPostLoginPath(access.length ? access : []))
       }
       return
     }
@@ -1328,7 +1337,7 @@ export default function AccountManagementPage() {
     if (isAuthenticated && canAccess) {
       loadApprovedQuotations()
     }
-  }, [isAuthenticated, role, dealer, router, isInitialLoad, loadApprovedQuotations])
+  }, [isAuthenticated, role, dealer, access, router, isInitialLoad, loadApprovedQuotations])
 
   // Initialize payment phases for quotations
   useEffect(() => {
@@ -1486,10 +1495,11 @@ export default function AccountManagementPage() {
 
   const filteredQuotations = quotations.filter(
     (q) =>
-      (q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (q.customer?.mobile || "").includes(searchTerm) ||
-      (q.id || "").toLowerCase().includes(searchTerm.toLowerCase()),
+      ((q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (q.customer?.mobile || "").includes(searchTerm) ||
+        (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())) &&
+      matchesCityFilter(q, filterCities),
   )
 
   // One row per customer — same as dealer Quotations (current version only).
@@ -1888,7 +1898,11 @@ export default function AccountManagementPage() {
     )
   }
 
-  const canAccess = role === "account-management" || role === "admin" || dealer?.username === "admin"
+  const canAccess =
+    role === "account-management" ||
+    role === "admin" ||
+    dealer?.username === "admin" ||
+    canOpenSection(access, role, "accounts")
   if (!isAuthenticated || !canAccess) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -2802,7 +2816,8 @@ export default function AccountManagementPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Account Management Header */}
+      <AccessSwitchBar current="accounts" title="Accounts" />
+      {getAccessOptions(access).length <= 1 ? (
       <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 shadow-sm">
         <div className="container mx-auto px-4">
           <div className="flex items-center justify-between h-14 sm:h-16 gap-2">
@@ -2859,6 +2874,7 @@ export default function AccountManagementPage() {
           </div>
         </div>
       </header>
+      ) : null}
 
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-5">
         <div className="mb-5">
@@ -2952,13 +2968,20 @@ export default function AccountManagementPage() {
                     <CardTitle className="text-lg">Approved Quotations</CardTitle>
                     <p className="text-xs text-muted-foreground mt-1">Only quotations approved by admin are visible here</p>
                   </div>
-                  <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search by name, mobile, ID..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-10 h-10"
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <div className="relative w-full sm:w-72">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search by name, mobile, ID..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        className="pl-10 h-10"
+                      />
+                    </div>
+                    <CityMultiSelectFilter
+                      value={filterCities}
+                      onChange={setFilterCities}
+                      className="w-full sm:w-48"
                     />
                   </div>
                 </div>
