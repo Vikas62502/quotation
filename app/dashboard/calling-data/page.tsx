@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
+import { canOpenSection, getPostLoginPath } from "@/lib/user-access"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
 import {
@@ -613,7 +614,7 @@ function getScheduledLeadFreeRemark(lead: CallingLead): string {
 export default function CallingDataPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const { isAuthenticated, authReady, dealer, role } = useAuth()
+  const { isAuthenticated, authReady, dealer, role, access, accountManager, visitor, hrUser } = useAuth()
   const { toast } = useToast()
   usePricingTables()
   const [downloadingPricingPdf, setDownloadingPricingPdf] = useState(false)
@@ -740,9 +741,12 @@ export default function CallingDataPage() {
     })
     setPinnedCurrentLead(pinnedCurrentLeadRef.current)
   }
-  const currentDealerId = String(dealer?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "").trim()
-  const currentDealerUsername = String(dealer?.username || "").trim().toLowerCase()
-  const currentDealerFullName = `${dealer?.firstName || ""} ${dealer?.lastName || ""}`.trim().toLowerCase()
+  const callingUser = dealer || accountManager || visitor || hrUser
+  const currentDealerId = String(
+    callingUser?.id || (dealer as any)?._id || (dealer as any)?.dealerId || "",
+  ).trim()
+  const currentDealerUsername = String(callingUser?.username || dealer?.username || "").trim().toLowerCase()
+  const currentDealerFullName = `${callingUser?.firstName || dealer?.firstName || ""} ${callingUser?.lastName || dealer?.lastName || ""}`.trim().toLowerCase()
   const dealerCallingBatchIds = useMemo(() => {
     const d = dealer as Record<string, unknown> | null | undefined
     if (!d) return [] as string[]
@@ -798,11 +802,15 @@ export default function CallingDataPage() {
       router.push("/login")
       return
     }
-    if (role !== "dealer" && role !== "admin") {
-      router.push("/dashboard")
+    if (
+      !canOpenSection(access, role, "quotation") &&
+      role !== "dealer" &&
+      role !== "admin"
+    ) {
+      router.push(access?.length ? getPostLoginPath(access) : "/dashboard")
       return
     }
-  }, [authReady, isAuthenticated, role, router])
+  }, [authReady, isAuthenticated, role, access, router])
 
   const normalizeApiLead = (lead: any): CallingLead => {
     const source = lead?.lead || lead?.customerLead || lead

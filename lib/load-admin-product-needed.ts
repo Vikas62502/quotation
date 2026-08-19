@@ -1,5 +1,5 @@
 import type { Dealer } from "@/lib/auth-context"
-import { api, ApiError } from "@/lib/api"
+import { api } from "@/lib/api"
 import type { Quotation } from "@/lib/quotation-context"
 import {
   buildProductNeededApiFilters,
@@ -8,10 +8,12 @@ import {
   filterProductNeededRows,
   filterQuotationsForProductNeeded,
   isProductNeededCustomRangePending,
+  isQuotationEligibleForProductNeededFileLogin,
   type ProductNeededApiFilters,
   type ProductNeededDateRange,
   type ProductNeededFilterOptions,
   type ProductNeededRow,
+  type ProductNeededScope,
 } from "@/lib/admin-product-needed"
 
 export type AdminProductNeededLoadSource = "admin_product_needed" | "quotations" | "local" | "none"
@@ -35,6 +37,7 @@ export interface AdminProductNeededLoadOptions {
   dateRange: ProductNeededDateRange
   customFrom: string
   customTo: string
+  scope?: ProductNeededScope
 }
 
 function toSharedFilters(
@@ -46,6 +49,7 @@ function toSharedFilters(
     dateRange: filters.dateRange,
     customFrom: filters.customFrom,
     customTo: filters.customTo,
+    scope: filters.scope,
   }
 }
 
@@ -66,20 +70,28 @@ function applyClientFiltersToApiRows(
   return filterProductNeededRows(rows, toSharedFilters(filters))
 }
 
+function apiResponseMatchesScope(
+  extracted: ReturnType<typeof extractProductNeededFromApiResponse>,
+  expected: ProductNeededScope,
+): boolean {
+  const returned = String(extracted.scope || "").toLowerCase()
+  if (expected === "installation_pending") {
+    return !returned || returned === "installation_pending"
+  }
+  return returned === expected
+}
+
 async function tryAdminProductNeededEndpoint(
   filters: ProductNeededApiFilters,
 ): Promise<ReturnType<typeof extractProductNeededFromApiResponse> | null> {
   try {
-    const response = await api.admin.productNeeded.getAll(filters)
-    return extractProductNeededFromApiResponse(response)
-  } catch (error) {
-    if (
-      error instanceof ApiError &&
-      (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
-    ) {
-      return null
-    }
-    throw error
+    const response = await api.admin.productNeeded.getAll(filters, { suppressErrorLog: true })
+    const extracted = extractProductNeededFromApiResponse(response)
+    const expected = filters.scope === "file_login" ? "file_login" : "installation_pending"
+    if (!apiResponseMatchesScope(extracted, expected)) return null
+    return extracted
+  } catch {
+    return null
   }
 }
 
@@ -92,10 +104,22 @@ function loadFromLocalStorage(
   return buildRowsFromQuotations(allQuotations, options, options.getDealerName)
 }
 
-async function fetchQuotationListFallback(existing: Quotation[]): Promise<Quotation[]> {
-  if (existing.length > 0) return existing
+async function fetchQuotationListFallback(
+  existing: Quotation[],
+  scope: ProductNeededScope = "installation_pending",
+): Promise<Quotation[]> {
+  if (existing.length > 0) {
+    if (scope !== "file_login") return existing
+    if (existing.some((quotation) => isQuotationEligibleForProductNeededFileLogin(quotation))) {
+      return existing
+    }
+  }
   try {
-    const response = await api.admin.quotations.getAll({ page: 1, limit: 2000 })
+    const response = await api.admin.quotations.getAll({
+      page: 1,
+      limit: 2000,
+      ...(scope === "file_login" ? { status: "pending" } : {}),
+    })
     const raw = (response as Record<string, unknown>)?.quotations
     return Array.isArray(raw)
       ? (raw.map((q) => ({
@@ -140,32 +164,31 @@ export async function loadAdminProductNeededRows(
     }
   }
 
-  let quotationList = quotations
-
   const fromAdmin = await tryAdminProductNeededEndpoint(apiFilters)
-  if (fromAdmin !== null) {
-    quotationList = await fetchQuotationListFallback(quotationList)
-    // Prefer quotation list so panel/inverter totals use structured product fields
-    // and the installation-pending gate matches Admin → Pending Installation.
-    const rows =
-      quotationList.length > 0
-        ? buildRowsFromQuotations(quotationList, filters, getDealerName)
-        : applyClientFiltersToApiRows(fromAdmin.rows, filters)
-
+  if (fromAdmin && fromAdmin.rows.length > 0) {
     return {
-      rows,
-      source: quotationList.length > 0 ? "quotations" : "admin_product_needed",
+      rows: applyClientFiltersToApiRows(fromAdmin.rows, filters),
+      source: "admin_product_needed",
       unavailable: false,
       customRangePending: false,
     }
   }
 
-  quotationList = await fetchQuotationListFallback(quotationList)
-
-  if (quotationList.length > 0) {
+  const quotationList = await fetchQuotationListFallback(quotations, filters.scope)
+  const quotationRows = buildRowsFromQuotations(quotationList, filters, getDealerName)
+  if (quotationRows.length > 0) {
     return {
-      rows: buildRowsFromQuotations(quotationList, filters, getDealerName),
+      rows: quotationRows,
       source: "quotations",
+      unavailable: false,
+      customRangePending: false,
+    }
+  }
+
+  if (fromAdmin) {
+    return {
+      rows: applyClientFiltersToApiRows(fromAdmin.rows, filters),
+      source: "admin_product_needed",
       unavailable: false,
       customRangePending: false,
     }
@@ -174,7 +197,7 @@ export async function loadAdminProductNeededRows(
   return {
     rows: [],
     source: "none",
-    unavailable: true,
+    unavailable: false,
     customRangePending: false,
   }
 }

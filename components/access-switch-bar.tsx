@@ -11,8 +11,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SolarLogo } from "@/components/solar-logo"
-import { ChevronDown, LogOut } from "lucide-react"
-import { getAccessOptions, type UserAccessKey } from "@/lib/user-access"
+import { ChevronDown, LogOut, PhoneCall } from "lucide-react"
+import { canOpenSection, getAccessOptions, type UserAccessKey } from "@/lib/user-access"
 import { cn } from "@/lib/utils"
 
 type Props = {
@@ -45,8 +45,10 @@ function isSectionActive(key: UserAccessKey, pathname: string, current?: UserAcc
 export function AccessSwitchBar({ current, title }: Props) {
   const router = useRouter()
   const pathname = usePathname()
-  const { access, logout } = useAuth()
+  const { access, logout, role } = useAuth()
   const options = getAccessOptions(access)
+  const canUseDealer = canOpenSection(access, role, "quotation") || role === "dealer"
+  const callingActive = pathname.startsWith("/dashboard/calling-data")
 
   if (options.length <= 1) return null
 
@@ -73,7 +75,7 @@ export function AccessSwitchBar({ current, title }: Props) {
               </span>
             ) : null}
 
-            {/* Mobile: Quotation / HR / Visitor in dropdown */}
+            {/* Mobile: Dealer / HR / Visitor in dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -82,7 +84,7 @@ export function AccessSwitchBar({ current, title }: Props) {
                   size="sm"
                   className="md:hidden h-8 gap-1.5 shrink-0 text-xs"
                 >
-                  {currentLabel}
+                  {callingActive ? "Calling Data" : currentLabel}
                   <ChevronDown className="w-3.5 h-3.5 opacity-70" />
                 </Button>
               </DropdownMenuTrigger>
@@ -93,19 +95,27 @@ export function AccessSwitchBar({ current, title }: Props) {
                     <DropdownMenuItem
                       key={item.key}
                       onSelect={() => router.push(item.href)}
-                      className={cn(active && "bg-accent")}
+                      className={cn(active && !callingActive && "bg-accent")}
                     >
                       {item.label}
                     </DropdownMenuItem>
                   )
                 })}
+                {canUseDealer ? (
+                  <DropdownMenuItem
+                    onSelect={() => router.push("/dashboard/calling-data")}
+                    className={cn(callingActive && "bg-accent")}
+                  >
+                    Calling Data
+                  </DropdownMenuItem>
+                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
 
             {/* Desktop: pill switcher */}
             <nav className="hidden md:flex items-center gap-0.5 rounded-lg border border-border/70 bg-muted/30 p-0.5 overflow-x-auto min-w-0">
               {options.map((item) => {
-                const active = isSectionActive(item.key, pathname, current)
+                const active = isSectionActive(item.key, pathname, current) && !callingActive
                 return (
                   <Button
                     key={item.key}
@@ -118,6 +128,19 @@ export function AccessSwitchBar({ current, title }: Props) {
                   </Button>
                 )
               })}
+              {canUseDealer ? (
+                <Button
+                  asChild
+                  size="sm"
+                  variant={callingActive ? "default" : "ghost"}
+                  className={cn("h-8 text-xs px-2.5 shrink-0 gap-1", callingActive && "shadow-sm")}
+                >
+                  <Link href="/dashboard/calling-data">
+                    <PhoneCall className="w-3 h-3" />
+                    Calling Data
+                  </Link>
+                </Button>
+              ) : null}
             </nav>
           </div>
           <Button

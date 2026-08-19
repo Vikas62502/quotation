@@ -38,6 +38,9 @@ import {
   panelQuantityForNominalSystemKw,
   bestPanelConfigWithinSystemKw,
   COMMON_PANEL_SIZES_WATTS,
+  PANEL_CAPACITY_DEFAULT_QTY,
+  PANEL_CAPACITY_EXTENDED_QTY,
+  canUse3480WPanelOption,
   clampPanelQuantityToNominalSystemKw,
   maxAllowedWattsForNominalSystemKw,
   parsePanelSizeWatts,
@@ -123,6 +126,42 @@ function earthingBrandFromSelectValue(selectValue: string, previous?: string): s
     return ""
   }
   return selectValue
+}
+
+function PanelCapacity2900Or3480Options({
+  visible,
+  allow3480W,
+  onChange,
+}: {
+  visible: boolean
+  allow3480W: boolean
+  onChange: (allow3480W: boolean) => void
+}) {
+  if (!visible) return null
+  return (
+    <div className="mt-3 rounded-lg border border-border/70 bg-muted/20 p-3 space-y-2">
+      <p className="text-xs text-muted-foreground">
+        For 580W on a 3kW package: default is 2,900W (5 panels). Check 3,480W to use 6 panels.
+      </p>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <Checkbox checked={!allow3480W} onCheckedChange={() => onChange(false)} />
+        <span>
+          <span className="font-medium">2,900W</span>
+          <span className="text-muted-foreground"> (5 panels)</span>
+        </span>
+      </label>
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <Checkbox
+          checked={allow3480W}
+          onCheckedChange={(value) => onChange(value === true)}
+        />
+        <span>
+          <span className="font-medium">3,480W</span>
+          <span className="text-muted-foreground"> (6 panels)</span>
+        </span>
+      </label>
+    </div>
+  )
 }
 
 type QuotationSystemTypeOption = "dcr" | "non-dcr" | "both"
@@ -276,6 +315,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       pdfDcrPanelRangeKey: "",
       pdfNonDcrPanelRangeKey: "",
       pdfCommercialSet: false,
+      allow3480W: false,
+      allowNonDcr3480W: false,
     }
 
   const [formData, setFormData] = useState<ProductSelection>(() =>
@@ -321,6 +362,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       initialData.systemPrice,
       initialData.pdfPanelRangeKey,
       initialData.pdfCommercialSet,
+      initialData.allow3480W,
+      initialData.allowNonDcr3480W,
     ].join("|")
   }, [initialData])
 
@@ -559,6 +602,35 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     return Number.isFinite(kw) && kw > 0 ? kw : 0
   }
 
+  const applyPanelCapacityOption = (
+    side: "primary" | "dcr" | "nonDcr",
+    allow3480W: boolean,
+  ) => {
+    setFormData((prev) => {
+      const size =
+        side === "nonDcr" ? prev.nonDcrPanelSize : side === "dcr" ? prev.dcrPanelSize : prev.panelSize
+      const nominalKw = parseNominalKwFromContext(prev)
+      const qty = allow3480W ? PANEL_CAPACITY_EXTENDED_QTY : PANEL_CAPACITY_DEFAULT_QTY
+      const capped =
+        nominalKw > 0 && size
+          ? clampPanelQuantityToNominalSystemKw(nominalKw, size, qty, { allow3480W })
+          : qty
+      if (side === "nonDcr") {
+        return { ...prev, allowNonDcr3480W: allow3480W, nonDcrPanelQuantity: capped }
+      }
+      if (side === "dcr") {
+        return { ...prev, allow3480W, dcrPanelQuantity: capped }
+      }
+      return {
+        ...prev,
+        allow3480W,
+        panelQuantity: capped,
+        ...(prev.systemType === "dcr" ? { dcrPanelQuantity: capped } : {}),
+      }
+    })
+    setError("")
+  }
+
   const updatePanelSizeWithAutoQuantity = (
     field: "panelSize" | "dcrPanelSize" | "nonDcrPanelSize",
     rawSize: string,
@@ -571,31 +643,39 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const parsedPanelW = parsePanelSizeWatts(rawSize)
       if (parsedPanelW <= 0) return next
 
-      const suggestedQty = panelQuantityForNominalSystemKw(nominalKw, rawSize)
+      const suggestedQty = panelQuantityForNominalSystemKw(nominalKw, rawSize, {
+        allow3480W: Boolean(prev.allow3480W || prev.allowNonDcr3480W),
+      })
       if (suggestedQty <= 0) return next
 
       // Keep dealer-entered quantity when already set; only auto-fill when empty.
       if (field === "panelSize") {
         const keepQty = Number(prev.panelQuantity) > 0 ? Number(prev.panelQuantity) : suggestedQty
+        const allow3480W = Boolean(prev.allow3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         const capped =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
             : keepQty
         next.panelQuantity = capped
+        next.allow3480W = allow3480W
         if (next.systemType === "dcr") next.dcrPanelQuantity = capped
       } else if (field === "dcrPanelSize") {
         const keepQty = Number(prev.dcrPanelQuantity) > 0 ? Number(prev.dcrPanelQuantity) : suggestedQty
+        const allow3480W = Boolean(prev.allow3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         next.dcrPanelQuantity =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
             : keepQty
+        next.allow3480W = allow3480W
       } else {
         const keepQty =
           Number(prev.nonDcrPanelQuantity) > 0 ? Number(prev.nonDcrPanelQuantity) : suggestedQty
+        const allow3480W = Boolean(prev.allowNonDcr3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         next.nonDcrPanelQuantity =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty)
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
             : keepQty
+        next.allowNonDcr3480W = allow3480W
       }
       return next
     })
@@ -1446,7 +1526,21 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         type="number"
                         min="1"
                         value={formData.dcrPanelQuantity || ""}
-                        onChange={(e) => updateFormData("dcrPanelQuantity", Number.parseInt(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const raw = Number.parseInt(e.target.value, 10)
+                          if (Number.isNaN(raw) || raw < 0) {
+                            updateFormData("dcrPanelQuantity", 0)
+                            return
+                          }
+                          const nominalKw = parseNominalKwFromContext(formData)
+                          const qty =
+                            nominalKw > 0 && formData.dcrPanelSize
+                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.dcrPanelSize, raw, {
+                                  allow3480W: Boolean(formData.allow3480W),
+                                })
+                              : raw
+                          updateFormData("dcrPanelQuantity", qty)
+                        }}
                         placeholder="Enter quantity"
                       />
                       {(() => {
@@ -1464,6 +1558,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     </div>
                   )}
                 </div>
+                <PanelCapacity2900Or3480Options
+                  visible={canUse3480WPanelOption(
+                    parseNominalKwFromContext(formData),
+                    formData.dcrPanelSize,
+                  )}
+                  allow3480W={Boolean(formData.allow3480W)}
+                  onChange={(allow) => applyPanelCapacityOption("dcr", allow)}
+                />
                 <PanelPdfRangeOptions
                   panelBrand={formData.dcrPanelBrand || ""}
                   selectedKey={formData.pdfDcrPanelRangeKey}
@@ -1537,9 +1639,21 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         type="number"
                         min="1"
                         value={formData.nonDcrPanelQuantity || ""}
-                        onChange={(e) =>
-                          updateFormData("nonDcrPanelQuantity", Number.parseInt(e.target.value) || 0)
-                        }
+                        onChange={(e) => {
+                          const raw = Number.parseInt(e.target.value, 10)
+                          if (Number.isNaN(raw) || raw < 0) {
+                            updateFormData("nonDcrPanelQuantity", 0)
+                            return
+                          }
+                          const nominalKw = parseNominalKwFromContext(formData)
+                          const qty =
+                            nominalKw > 0 && formData.nonDcrPanelSize
+                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.nonDcrPanelSize, raw, {
+                                  allow3480W: Boolean(formData.allowNonDcr3480W),
+                                })
+                              : raw
+                          updateFormData("nonDcrPanelQuantity", qty)
+                        }}
                         placeholder="Enter quantity"
                       />
                       {(() => {
@@ -1557,6 +1671,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     </div>
                   )}
                 </div>
+                <PanelCapacity2900Or3480Options
+                  visible={canUse3480WPanelOption(
+                    parseNominalKwFromContext(formData),
+                    formData.nonDcrPanelSize,
+                  )}
+                  allow3480W={Boolean(formData.allowNonDcr3480W)}
+                  onChange={(allow) => applyPanelCapacityOption("nonDcr", allow)}
+                />
                 <PanelPdfRangeOptions
                   panelBrand={formData.nonDcrPanelBrand || ""}
                   selectedKey={formData.pdfNonDcrPanelRangeKey}
@@ -2145,7 +2267,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                           )
                           const qty =
                             nominalKw > 0 && formData.panelSize && raw > 0
-                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.panelSize, raw)
+                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.panelSize, raw, {
+                                  allow3480W: Boolean(formData.allow3480W),
+                                })
                               : raw
                           setFormData((prev) => ({
                             ...prev,
@@ -2163,7 +2287,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         const nominalKw = Number.parseFloat(
                           String(formData.inverterSize || formData.structureSize || "").replace(/kW/i, ""),
                         )
-                        const maxW = nominalKw > 0 ? maxAllowedWattsForNominalSystemKw(nominalKw) : 0
+                        const maxW =
+                          nominalKw > 0
+                            ? maxAllowedWattsForNominalSystemKw(nominalKw, {
+                                allow3480W: Boolean(formData.allow3480W),
+                                panelSize: formData.panelSize,
+                              })
+                            : 0
                         const overMax = maxW > 0 && totalW > maxW
                         return totalW > 0 ? (
                           <p
@@ -2177,6 +2307,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     </div>
                   )}
                 </div>
+                <PanelCapacity2900Or3480Options
+                  visible={canUse3480WPanelOption(
+                    Number.parseFloat(String(formData.structureSize || formData.inverterSize || "").replace(/kW/i, "")),
+                    formData.panelSize,
+                  )}
+                  allow3480W={Boolean(formData.allow3480W)}
+                  onChange={(allow) => applyPanelCapacityOption("primary", allow)}
+                />
                 <PanelPdfRangeOptions
                   panelBrand={formData.panelBrand || ""}
                   selectedKey={formData.pdfPanelRangeKey}

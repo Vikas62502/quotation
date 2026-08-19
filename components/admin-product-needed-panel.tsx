@@ -6,10 +6,11 @@ import type { Dealer } from "@/lib/auth-context"
 import {
   aggregateProductNeededDashboard,
   formatProductNeededDate,
-  productNeededDashboardToCsv,
   type ProductNeededDateRange,
   type ProductNeededRow,
+  type ProductNeededScope,
 } from "@/lib/admin-product-needed"
+import { downloadProductNeededExcel } from "@/lib/admin-product-needed-excel"
 import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { loadAdminProductNeededRows } from "@/lib/load-admin-product-needed"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -17,7 +18,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
 import { Download, Loader2, Package, RotateCcw, Search, Zap } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
@@ -40,6 +40,11 @@ const DATE_RANGE_OPTIONS: { value: ProductNeededDateRange; label: string }[] = [
   { value: "custom", label: "Custom range" },
 ]
 
+const SCOPE_OPTIONS: { value: ProductNeededScope; label: string }[] = [
+  { value: "installation_pending", label: "Installation pending" },
+  { value: "file_login", label: "File login (not approved)" },
+]
+
 export function AdminProductNeededPanel({
   quotations,
   dealers,
@@ -53,6 +58,7 @@ export function AdminProductNeededPanel({
   const [searchDebounced, setSearchDebounced] = useState("")
   const [dealerFilter, setDealerFilter] = useState("all")
   const [dateRange, setDateRange] = useState<ProductNeededDateRange>("all")
+  const [scope, setScope] = useState<ProductNeededScope>("installation_pending")
   const [customFrom, setCustomFrom] = useState("")
   const [customTo, setCustomTo] = useState("")
   const [rows, setRows] = useState<ProductNeededRow[]>([])
@@ -62,6 +68,7 @@ export function AdminProductNeededPanel({
   const [customRangePending, setCustomRangePending] = useState(false)
   const [loadSource, setLoadSource] = useState<string | null>(null)
   const [showJobs, setShowJobs] = useState(false)
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     if (dateRange !== "custom") return
@@ -95,6 +102,7 @@ export function AdminProductNeededPanel({
           dateRange,
           customFrom,
           customTo,
+          scope,
         })
         setRows(result.rows)
         setUnavailable(result.unavailable)
@@ -104,7 +112,6 @@ export function AdminProductNeededPanel({
         console.error("Error loading product needed rows:", error)
         if (!options?.background) {
           setRows([])
-          setUnavailable(true)
           setLoadSource(null)
         }
       } finally {
@@ -118,6 +125,7 @@ export function AdminProductNeededPanel({
       dateRange,
       dealerFilter,
       dealers,
+      scope,
       enabled,
       getDealerName,
       quotations,
@@ -138,30 +146,35 @@ export function AdminProductNeededPanel({
 
   const dashboard = useMemo(() => aggregateProductNeededDashboard(rows), [rows])
 
-  const downloadCsv = () => {
+  const downloadExcel = async () => {
     if (dashboard.jobCount === 0) {
       toast({
         title: "No data to export",
-        description: "Adjust filters to include at least one installation-pending job.",
+        description:
+          scope === "file_login"
+            ? "Adjust filters to include at least one file-login job that is not approved."
+            : "Adjust filters to include at least one installation-pending job.",
         variant: "destructive",
       })
       return
     }
-    const csv = productNeededDashboardToCsv(dashboard)
-    const blob = new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement("a")
-    const stamp = new Date().toISOString().slice(0, 10)
-    link.href = url
-    link.download = `product-needed-installation-pending-${stamp}.csv`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    URL.revokeObjectURL(url)
-    toast({
-      title: "Download started",
-      description: `Exported ${dashboard.panels.length} panel brand(s), ${dashboard.inverters.length} inverter brand(s), ${dashboard.jobCount} job(s).`,
-    })
+    setExporting(true)
+    try {
+      await downloadProductNeededExcel(dashboard)
+      toast({
+        title: "Excel downloaded",
+        description: `Created brand-wise sheets and DCR, Non-DCR, Both customer sheets for ${dashboard.jobCount} job(s).`,
+      })
+    } catch (error) {
+      console.error("Error exporting Product Needed Excel:", error)
+      toast({
+        title: "Could not export Excel",
+        description: "Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setExporting(false)
+    }
   }
 
   const sourceHint = useMemo(() => {
@@ -182,8 +195,10 @@ export function AdminProductNeededPanel({
               {refreshing ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : null}
             </CardTitle>
             <CardDescription className="mt-1">
-              Procurement dashboard for installation-pending jobs only. Totals are rolled up by panel
-              brand + wattage and inverter brand + rating.
+              {scope === "file_login"
+                ? "Procurement dashboard for file-login jobs that are not yet approved. Rejected quotations are excluded."
+                : "Procurement dashboard for installation-pending jobs."}{" "}
+              Totals are rolled up by panel brand + wattage and inverter brand + rating.
               {sourceHint ? (
                 <span className="block text-xs mt-1 text-muted-foreground/80">{sourceHint}</span>
               ) : null}
@@ -200,23 +215,24 @@ export function AdminProductNeededPanel({
               <RotateCcw className="w-4 h-4 mr-2" />
               Refresh
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={downloadCsv}>
-              <Download className="w-4 h-4 mr-2" />
-              Export CSV
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void downloadExcel()}
+              disabled={exporting}
+            >
+              {exporting ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4 mr-2" />
+              )}
+              Download Excel
             </Button>
           </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-5">
-        {unavailable ? (
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-200">
-            Product Needed API is not available yet. Deploy{" "}
-            <code className="text-xs">GET /admin/product-needed</code> (see{" "}
-            <code className="text-xs">BACKEND_ADMIN_PRODUCT_NEEDED.ts</code>) or load quotations
-            first so the panel can build totals client-side.
-          </div>
-        ) : null}
-
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div className="relative sm:col-span-2 lg:col-span-1">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -242,7 +258,11 @@ export function AdminProductNeededPanel({
           </Select>
           <Select value={dateRange} onValueChange={(v) => setDateRange(v as ProductNeededDateRange)}>
             <SelectTrigger>
-              <SelectValue placeholder="Filter by release date" />
+              <SelectValue
+                placeholder={
+                  scope === "file_login" ? "Filter by file login date" : "Filter by release date"
+                }
+              />
             </SelectTrigger>
             <SelectContent>
               {DATE_RANGE_OPTIONS.map((option) => (
@@ -254,9 +274,18 @@ export function AdminProductNeededPanel({
           </Select>
           <div className="flex items-center gap-2">
             {loading ? <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" /> : null}
-            <Badge variant="secondary" className="text-xs">
-              Installation pending
-            </Badge>
+            <Select value={scope} onValueChange={(v) => setScope(v as ProductNeededScope)}>
+              <SelectTrigger>
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                {SCOPE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -286,10 +315,15 @@ export function AdminProductNeededPanel({
         ) : !loading && dashboard.jobCount === 0 ? (
           <div className="text-center py-12 text-muted-foreground border rounded-lg border-dashed">
             <Package className="w-10 h-10 mx-auto mb-3 opacity-40" />
-            <p>No installation-pending jobs match these filters.</p>
+            <p>
+              {scope === "file_login"
+                ? "No file-login (not approved) jobs match these filters."
+                : "No installation-pending jobs match these filters."}
+            </p>
             <p className="text-xs mt-2">
-              Only jobs still in Pending Installation (sent to installer, not yet approved) are
-              counted.
+              {scope === "file_login"
+                ? "Only jobs with file login recorded, and quotation status not approved or rejected, are counted."
+                : "Only jobs still in Pending Installation (sent to installer, not yet approved) are counted."}
             </p>
           </div>
         ) : (
@@ -439,7 +473,9 @@ export function AdminProductNeededPanel({
                         <th className="p-3 font-medium whitespace-nowrap">kW</th>
                         <th className="p-3 font-medium min-w-[200px]">Panels</th>
                         <th className="p-3 font-medium min-w-[140px]">Inverter</th>
-                        <th className="p-3 font-medium whitespace-nowrap">Released</th>
+                        <th className="p-3 font-medium whitespace-nowrap">
+                          {scope === "file_login" ? "File login" : "Released"}
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -455,7 +491,11 @@ export function AdminProductNeededPanel({
                           <td className="p-3 text-xs leading-relaxed">{row.panels}</td>
                           <td className="p-3 text-xs whitespace-nowrap">{row.inverter}</td>
                           <td className="p-3 text-xs whitespace-nowrap">
-                            {formatProductNeededDate(row.installationReleasedAt)}
+                            {formatProductNeededDate(
+                              scope === "file_login"
+                                ? row.fileLoginAt || row.installationReleasedAt
+                                : row.installationReleasedAt,
+                            )}
                           </td>
                         </tr>
                       ))}

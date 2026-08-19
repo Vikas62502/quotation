@@ -1576,32 +1576,69 @@ export const COMMON_PANEL_SIZES_WATTS = [
 /** Max watts above nominal package kW before reducing panel count (e.g. 8kW → up to 8400W). */
 export const MAX_PACKAGE_OVERSHOOT_WATTS = 400
 
-export function maxAllowedWattsForNominalSystemKw(systemKw: number): number {
+/** 3kW + 580W default (5 panels) vs optional 6-panel total. */
+export const PANEL_CAPACITY_580W = 580
+export const PANEL_CAPACITY_DEFAULT_W = 2900
+export const PANEL_CAPACITY_EXTENDED_W = 3480
+export const PANEL_CAPACITY_DEFAULT_QTY = 5
+export const PANEL_CAPACITY_EXTENDED_QTY = 6
+
+export type PanelQuantityCapOptions = {
+  allow3480W?: boolean
+  panelSize?: string | number | null
+}
+
+export function isThreeKwPackage(systemKw: number): boolean {
+  return Number.isFinite(systemKw) && systemKw >= 2.9 && systemKw <= 3.15
+}
+
+/** 5×580W (2,900W) vs 6×580W (3,480W) on 3kW packages. */
+export function canUse3480WPanelOption(
+  systemKw: number,
+  panelSize: string | number | undefined | null,
+): boolean {
+  return isThreeKwPackage(systemKw) && parsePanelSizeWatts(panelSize) === PANEL_CAPACITY_580W
+}
+
+export function maxAllowedWattsForNominalSystemKw(
+  systemKw: number,
+  options?: PanelQuantityCapOptions,
+): number {
   if (!Number.isFinite(systemKw) || systemKw <= 0) return 0
-  return systemKw * 1000 + MAX_PACKAGE_OVERSHOOT_WATTS
+  const base = systemKw * 1000 + MAX_PACKAGE_OVERSHOOT_WATTS
+  if (options?.allow3480W && canUse3480WPanelOption(systemKw, options.panelSize ?? PANEL_CAPACITY_580W)) {
+    return Math.max(base, PANEL_CAPACITY_EXTENDED_W)
+  }
+  return base
 }
 
 export function isPanelCapacityWithinPackageTolerance(
   systemKw: number,
   panelSize: string | number | undefined | null,
   panelQuantity: number,
+  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
 ): boolean {
   const panelW = parsePanelSizeWatts(panelSize)
   if (panelW <= 0 || panelQuantity <= 0) return false
-  return panelW * panelQuantity <= maxAllowedWattsForNominalSystemKw(systemKw) + 0.5
+  return (
+    panelW * panelQuantity <=
+    maxAllowedWattsForNominalSystemKw(systemKw, { ...options, panelSize }) + 0.5
+  )
 }
 
 /**
  * Panel count for a pricing slab: actual DC watts may exceed nominal by at most {@link MAX_PACKAGE_OVERSHOOT_WATTS}.
  * Example: 8kW + 610W → 13 panels (7930W), not 14 (8540W).
+ * 3kW + 580W defaults to 5 panels (2,900W); pass allow3480W for 6 panels (3,480W).
  */
 export function panelQuantityForNominalSystemKw(
   systemKw: number,
   panelSize: string | number | undefined | null,
+  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
 ): number {
   const panelW = parsePanelSizeWatts(panelSize)
   if (!Number.isFinite(systemKw) || systemKw <= 0 || panelW <= 0) return 0
-  const maxAllowedW = maxAllowedWattsForNominalSystemKw(systemKw)
+  const maxAllowedW = maxAllowedWattsForNominalSystemKw(systemKw, { ...options, panelSize })
   const qty = Math.floor(maxAllowedW / panelW)
   return Math.max(1, qty)
 }
@@ -1611,8 +1648,9 @@ export function clampPanelQuantityToNominalSystemKw(
   systemKw: number,
   panelSize: string | number | undefined | null,
   panelQuantity: number,
+  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
 ): number {
-  const capped = panelQuantityForNominalSystemKw(systemKw, panelSize)
+  const capped = panelQuantityForNominalSystemKw(systemKw, panelSize, options)
   if (capped <= 0) return panelQuantity
   return Math.min(Math.max(1, panelQuantity), capped)
 }

@@ -27,14 +27,14 @@
  *
  * | Param      | Type   | Description |
  * |------------|--------|-------------|
- * | scope      | string | `installation_pending` (default). Ignore legacy `tab=file_login|login_approved`. |
+ * | scope      | string | `installation_pending` (default) or `file_login`. Rejected quotations never included. |
  * | page       | int    | Default 1 |
  * | limit      | int    | Default 500, max 2000 (frontend sends 2000) |
  * | dealerId   | string | Filter by quotation.dealer_id |
  * | search     | string | ILIKE on quotation id, customer name, mobile, panel/inverter brand text |
  * | startDate  | YYYY-MM-DD | Inclusive lower bound |
  * | endDate    | YYYY-MM-DD | Inclusive upper bound |
- * | dateField  | string | `installation_released` (default) or `created` |
+ * | dateField  | string | `installation_released` (default for installation_pending) or `file_login` (default for file_login) or `created` |
  *
  * -----------------------------------------------------------------------------
  * Eligibility — MUST match Admin → Pending Installation
@@ -59,6 +59,19 @@
  *
  * Also ensure GET /admin/quotations returns the same release + status fields so the
  * SPA fallback stays correct if this route is missing.
+ *
+ * -----------------------------------------------------------------------------
+ * Eligibility — scope=file_login (not approved)
+ * -----------------------------------------------------------------------------
+ *
+ * INCLUDE when ALL true:
+ *   1. File login recorded:
+ *        file_login_status IN ('already_login', 'login_now')
+ *        OR file_login_at IS NOT NULL
+ *   2. Quotation status is NOT approved and NOT rejected (typically pending)
+ *   3. Never include rejected / reject / completed
+ *
+ * dateField defaults to file_login (file_login_at) for this scope.
  *
  * -----------------------------------------------------------------------------
  * Response envelope

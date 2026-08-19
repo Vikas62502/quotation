@@ -53,22 +53,22 @@ const dealerNavItems = [
 ]
 
 const getNavItems = (isAdmin: boolean, role: string | null, access: UserAccessKey[], pathname: string) => {
-  // Admin chrome: logo + profile only (no Workspace / Quotation / Admin links)
+  // Admin chrome: logo + profile only (no Workspace / Dealer / Admin links)
   if (isAdmin) {
     return []
   }
 
-  const canUseQuotation = canOpenSection(access, role, "quotation") || role === "dealer"
+  const canUseDealer = canOpenSection(access, role, "quotation") || role === "dealer"
 
-  // On Quotation surfaces, always show dealer tools when Quotation access is granted
+  // On Dealer surfaces, always show dealer tools when Dealer access is granted
   // (even if primary role is HR / metering / etc.)
-  if (canUseQuotation && isQuotationAppPath(pathname)) {
+  if (canUseDealer && isQuotationAppPath(pathname)) {
     return dealerNavItems
   }
 
   const options = getAccessOptions(access)
   if (options.length > 1) {
-    return [
+    const items = [
       { href: "/dashboard/workspace", label: "Workspace", icon: Home },
       ...options.map((o) => ({
         href: o.href,
@@ -83,6 +83,10 @@ const getNavItems = (isAdmin: boolean, role: string | null, access: UserAccessKe
                 : Users,
       })),
     ]
+    if (canUseDealer && !items.some((item) => item.href === "/dashboard/calling-data")) {
+      items.push({ href: "/dashboard/calling-data", label: "Calling Data", icon: PhoneCall })
+    }
+    return items
   }
 
   // Account Management users should not see regular navigation (they have their own header)
@@ -116,7 +120,7 @@ export function DashboardNav() {
   const [pricingViewScope, setPricingViewScope] = useState<PricingPdfScope | null>(null)
   usePricingTables()
 
-  const canUseQuotation = canOpenSection(access, role, "quotation") || role === "dealer"
+  const canUseDealer = canOpenSection(access, role, "quotation") || role === "dealer"
   const onQuotationSurface = isQuotationAppPath(pathname)
 
   // Ops dashboards have their own headers / AccessSwitchBar
@@ -132,7 +136,7 @@ export function DashboardNav() {
     return null
   }
 
-  // Hide dealer nav for ops-only sessions that are not on Quotation
+  // Hide dealer nav for ops-only sessions that are not on Dealer
   if (
     !isAdmin &&
     (role === "account-management" ||
@@ -142,7 +146,7 @@ export function DashboardNav() {
       role === "baldev" ||
       role === "hr" ||
       accountManager) &&
-    !(onQuotationSurface && canUseQuotation)
+    !(onQuotationSurface && canUseDealer)
   ) {
     return null
   }
@@ -155,8 +159,8 @@ export function DashboardNav() {
     router.push("/")
   }
 
-  const showDealerActions = !isAdmin && canUseQuotation && onQuotationSurface && navItems.length > 0
-  // Admin stays on Admin Panel only — no multi-access switcher / Quotation entry
+  const showDealerActions = !isAdmin && canUseDealer && onQuotationSurface && navItems.length > 0
+  // Admin stays on Admin Panel only — no multi-access switcher / Dealer entry
   const showAccessSwitcher = !isAdmin && accessOptions.length > 1
   const currentAccessLabel =
     accessOptions.find((o) => isAccessSectionActive(o.key, pathname))?.label || "Workspace"

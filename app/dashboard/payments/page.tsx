@@ -30,6 +30,10 @@ import {
   type DealerPaymentRow,
   type DealerPaymentStatus,
 } from "@/lib/dealer-payment-summary"
+import {
+  extractQuotationListFromApiResponse,
+  flattenWrappedQuotationRow,
+} from "@/lib/operational-install-queue"
 import { cn } from "@/lib/utils"
 
 function formatInr(amount: number): string {
@@ -74,16 +78,8 @@ export default function DealerPaymentsPage() {
       } catch {
         response = await api.quotations.getAll({ page: 1, limit: 1000 })
       }
-      let list: Quotation[] = []
-      if (Array.isArray(response)) {
-        list = response as Quotation[]
-      } else if (Array.isArray((response as { quotations?: Quotation[] })?.quotations)) {
-        list = (response as { quotations: Quotation[] }).quotations
-      } else if (Array.isArray((response as { data?: { quotations?: Quotation[] } })?.data?.quotations)) {
-        list = (response as { data: { quotations: Quotation[] } }).data.quotations
-      } else if (Array.isArray((response as { items?: Quotation[] })?.items)) {
-        list = (response as { items: Quotation[] }).items
-      }
+      const rawList = extractQuotationListFromApiResponse(response)
+      const list = rawList.map((row) => flattenWrappedQuotationRow(row) as Quotation)
 
       const dealerId = String(dealer?.id || "").trim()
       const scoped = list.filter((q) => {
@@ -291,6 +287,7 @@ export default function DealerPaymentsPage() {
                     </div>
                     <div className="min-w-0">
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                      {row.installments.length > 0 ? (
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <p
@@ -305,15 +302,11 @@ export default function DealerPaymentsPage() {
                         <TooltipContent side="top" className="max-w-[300px]">
                           <div className="space-y-1.5">
                             <p className="font-semibold">Installments</p>
-                            {row.installments.length === 0 ? (
-                              <p>No installments yet</p>
-                            ) : (
-                              row.installments.map((phase) => (
-                                <p key={`${row.quotationId}-paid-${phase.phaseNumber}`}>
-                                  {formatInstallmentHoverLine(phase)}
-                                </p>
-                              ))
-                            )}
+                            {row.installments.map((phase) => (
+                              <p key={`${row.quotationId}-paid-${phase.phaseNumber}`}>
+                                {formatInstallmentHoverLine(phase)}
+                              </p>
+                            ))}
                             {row.paymentType === "mix" ? (
                               <div className="border-t border-border/40 pt-1.5 mt-1 space-y-0.5">
                                 <p>Loan paid: {formatInr(row.loanPaid)}</p>
@@ -323,6 +316,16 @@ export default function DealerPaymentsPage() {
                           </div>
                         </TooltipContent>
                       </Tooltip>
+                      ) : (
+                        <p
+                          className={cn(
+                            "text-sm font-semibold tabular-nums inline-block",
+                            statusAccentTextClass(row.paymentStatus),
+                          )}
+                        >
+                          {formatInr(row.paidAmount)}
+                        </p>
+                      )}
                       {row.paymentType === "mix" ? (
                         <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
                           L {formatInr(row.loanPaid)} · C {formatInr(row.cashPaid)}

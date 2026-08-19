@@ -107,6 +107,10 @@ export interface ProductSelection {
   panelType?: string
   /** True when dealer selected INA DCR package (survives catalog brand alias on API). */
   inaDcrPackage?: boolean
+  /** 3kW + 580W: false = 2,900W (5 panels), true = 3,480W (6 panels). */
+  allow3480W?: boolean
+  /** BOTH Non-DCR 3kW + 580W: 6 panels / 3,480W. */
+  allowNonDcr3480W?: boolean
 }
 
 export type QuotationStatus = "pending" | "approved" | "rejected" | "completed"

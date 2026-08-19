@@ -29,8 +29,8 @@ export const USER_ACCESS_OPTIONS: UserAccessOption[] = [
   },
   {
     key: "quotation",
-    label: "Quotation",
-    description: "Customers, quotations, payments, calling data",
+    label: "Dealer",
+    description: "Dealer dashboard: customers, quotations, payments, calling data",
     href: "/dashboard",
   },
   {

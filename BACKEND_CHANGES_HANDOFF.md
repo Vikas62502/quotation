@@ -2167,14 +2167,15 @@ Frontend already aggregates client-side from `GET /admin/quotations` when this r
 
 | Param | Notes |
 |-------|--------|
-| `scope` | `installation_pending` (default). **Do not** require legacy `tab=file_login` |
+| `scope` | `installation_pending` (default) or `file_login`. Rejected never included. |
 | `dealerId`, `search`, `startDate`, `endDate` | Optional filters |
-| `dateField` | `installation_released` (default) or `created` |
+| `dateField` | `installation_released` (default) or `file_login` or `created` |
 | `page`, `limit` | Default limit 500, max 2000 |
 
-3. **Eligibility** (must match Pending Installation):
-   - Released / sent to installer (`installation_ready_for_installer` / `installation_released_at` / `pending_installer` / `installer_in_progress`)
-   - **Exclude** partial approved, `installer_approved`, metering stages, baldev/completed, `installer_approved_at`
+3. **Eligibility**
+   - `scope=installation_pending`: same gate as Pending Installation (approved, released to installer, not yet installer-approved)
+   - `scope=file_login`: file login recorded (`already_login` / `login_now` or `file_login_at`), quotation **not approved**, **never rejected**
+   - **Always exclude** `status=rejected`
 4. Each row must include structured **`panelLines`** + **`inverterBrand` / `inverterSize` / `inverterQuantity`** (not summary strings alone)
 5. Optionally return **`data.aggregates`** (brand cards) computed on the **full filtered set** before pagination — see `buildBrandAggregates` in `BACKEND_ADMIN_PRODUCT_NEEDED.ts`
 6. Ensure **`GET /admin/quotations`** still returns release flags + products so SPA fallback works

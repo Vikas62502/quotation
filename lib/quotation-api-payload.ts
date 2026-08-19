@@ -559,7 +559,9 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
     next.panelSize?.trim() &&
     !isAsPerTheSetLabel(next.panelSize)
   ) {
-    const qty = panelQuantityForNominalSystemKw(nominalKw, next.panelSize)
+    const qty = panelQuantityForNominalSystemKw(nominalKw, next.panelSize, {
+      allow3480W: Boolean(next.allow3480W),
+    })
     if (qty > 0) {
       next = { ...next, panelQuantity: qty }
       if (next.systemType === "dcr") {
@@ -582,7 +584,9 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
             next.structureSize,
           ) || nominalKw / 2
         : nominalKw
-    const qty = panelQuantityForNominalSystemKw(dcrKw > 0 ? dcrKw : nominalKw, next.dcrPanelSize)
+    const qty = panelQuantityForNominalSystemKw(dcrKw > 0 ? dcrKw : nominalKw, next.dcrPanelSize, {
+      allow3480W: Boolean(next.allow3480W),
+    })
     if (qty > 0) {
       next = { ...next, dcrPanelQuantity: qty }
     }
@@ -603,7 +607,9 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
             next.structureSize,
           ) || nominalKw / 2
         : nominalKw
-    const qty = panelQuantityForNominalSystemKw(nonDcrKw > 0 ? nonDcrKw : nominalKw, next.nonDcrPanelSize)
+    const qty = panelQuantityForNominalSystemKw(nonDcrKw > 0 ? nonDcrKw : nominalKw, next.nonDcrPanelSize, {
+      allow3480W: Boolean(next.allowNonDcr3480W),
+    })
     if (qty > 0) {
       next = { ...next, nonDcrPanelQuantity: qty }
     }

@@ -22,6 +22,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { openQuotationDocumentPreview } from "@/lib/open-quotation-document-preview"
 import { formatPersonName } from "@/lib/name-display"
 import { canOpenSection, getPostLoginPath } from "@/lib/user-access"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
@@ -167,15 +168,7 @@ export default function DashboardPage() {
   }
 
   const openDocumentPreview = (value: unknown) => {
-    if (value instanceof File) {
-      const objectUrl = URL.createObjectURL(value)
-      window.open(objectUrl, "_blank", "noopener,noreferrer")
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
-      return
-    }
-    if (typeof value === "string" && value.trim()) {
-      window.open(value, "_blank", "noopener,noreferrer")
-    }
+    openQuotationDocumentPreview(value, documentsQuotation?.id)
   }
 
   const openDocumentsDialogForQuotation = (quotation: Quotation) => {

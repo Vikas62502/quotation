@@ -121,6 +121,7 @@ import {
 import { mergeQuotationProductSources, omitEmptyProductsField } from "@/lib/merge-quotation-products"
 import { applyQuotationDetailToRow } from "@/lib/apply-quotation-detail-to-row"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
+import { openQuotationDocumentPreview } from "@/lib/open-quotation-document-preview"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
 import { matchesCityFilter } from "@/lib/service-cities"
 import { cn } from "@/lib/utils"
@@ -3342,20 +3343,38 @@ export default function AdminPanelPage() {
     emailVerified?: boolean
     roleLabel: string
     access: UserAccessKey[]
+    accessLabelList?: string[]
+    searchText?: string
     dealer?: Dealer
     operations?: AccountManager & { role?: string }
     visitor?: Visitor
   }
 
   const managedUsers = useMemo((): ManagedUserRow[] => {
-    const dealerRows: ManagedUserRow[] = dealers.map((d) => {
-      const access = resolveUserAccess({
-        username: d.username,
-        role: d.username === ADMIN_USERNAME ? "admin" : "dealer",
-        access: d.access,
-        permissions: d.permissions,
-      })
+    const finishRow = (
+      row: Omit<ManagedUserRow, "accessLabelList" | "searchText">,
+    ): ManagedUserRow => {
+      const accessLabelList = accessLabels(row.access)
       return {
+        ...row,
+        accessLabelList,
+        searchText: [
+          row.firstName,
+          row.lastName,
+          row.email,
+          row.mobile,
+          row.username,
+          row.roleLabel,
+          row.visitor?.employeeId,
+          ...accessLabelList,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase(),
+      }
+    }
+    const dealerRows: ManagedUserRow[] = dealers.map((d) =>
+      finishRow({
         id: `dealer:${d.id}`,
         kind: "dealer",
         username: d.username,
@@ -3366,10 +3385,15 @@ export default function AdminPanelPage() {
         isActive: d.isActive,
         emailVerified: d.emailVerified,
         roleLabel: d.username === ADMIN_USERNAME ? "Admin" : "Dealer",
-        access,
+        access: resolveUserAccess({
+          username: d.username,
+          role: d.username === ADMIN_USERNAME ? "admin" : "dealer",
+          access: d.access,
+          permissions: d.permissions,
+        }),
         dealer: d,
-      }
-    })
+      }),
+    )
 
     const dealerUsernames = new Set(dealers.map((d) => d.username.trim().toLowerCase()))
     const opsRows: ManagedUserRow[] = accountManagers
@@ -3382,7 +3406,7 @@ export default function AdminPanelPage() {
           access: am.access,
           permissions: am.permissions,
         })
-        return {
+        return finishRow({
           id: `ops:${am.id}`,
           kind: "operations",
           username: am.username,
@@ -3395,7 +3419,7 @@ export default function AdminPanelPage() {
           roleLabel: roleValue.replace(/-/g, " "),
           access,
           operations: am,
-        }
+        })
       })
 
     const takenUsernames = new Set([
@@ -3411,7 +3435,7 @@ export default function AdminPanelPage() {
           access: v.access,
           permissions: v.permissions,
         })
-        return {
+        return finishRow({
           id: `visitor:${v.id}`,
           kind: "visitor" as const,
           username: v.username,
@@ -3423,7 +3447,7 @@ export default function AdminPanelPage() {
           roleLabel: "Visitor",
           access,
           visitor: v,
-        }
+        })
       })
 
     return [...dealerRows, ...opsRows, ...visitorRows].sort((a, b) => {
@@ -3432,6 +3456,44 @@ export default function AdminPanelPage() {
       return an.localeCompare(bn)
     })
   }, [dealers, accountManagers, visitors])
+
+  const dealerQuotationStatsById = useMemo(() => {
+    const map = new Map<string, { count: number; revenue: number }>()
+    for (const q of quotations) {
+      const id = String(q.dealerId || "").trim()
+      if (!id) continue
+      const amount = getQuotationDisplayAmount(q)
+      const prev = map.get(id)
+      if (prev) {
+        prev.count += 1
+        prev.revenue += amount
+      } else {
+        map.set(id, { count: 1, revenue: amount })
+      }
+    }
+    return map
+  }, [quotations])
+
+  const filteredManagedUsers = useMemo(() => {
+    const search = dealerSearchTerm.trim().toLowerCase()
+    if (!search) return managedUsers
+    return managedUsers.filter((u) => u.searchText?.includes(search))
+  }, [managedUsers, dealerSearchTerm])
+
+  const managedUsersListResetKey = `${dealerSearchTerm}|${filteredManagedUsers.length}|${filteredManagedUsers[0]?.id ?? ""}`
+
+  const {
+    visibleItems: visibleManagedUsers,
+    hasMore: hasMoreManagedUsers,
+    loadMore: loadMoreManagedUsers,
+    sentinelRef: managedUsersSentinelRef,
+    visibleCount: visibleManagedUsersCount,
+    totalCount: filteredManagedUsersTotal,
+  } = useIncrementalList(filteredManagedUsers, {
+    batchSize: 15,
+    resetKey: managedUsersListResetKey,
+    enabled: activeTab === "dealers",
+  })
 
   /** Visitors tab / visit filters: anyone with Visitor checkbox (dealers + ops + visitors). */
   const visitorAccessUsers = useMemo(() => {
@@ -6905,6 +6967,9 @@ export default function AdminPanelPage() {
 
   const getExistingFileRef = (documents: Record<string, any>, key: string) => {
     const candidates = [
+      documents[`${key}PublicUrl`],
+      documents[`${key}publicUrl`],
+      documents[`${key}_public_url`],
       documents[key],
       documents[`${key}Url`],
       documents[`${key}_url`],
@@ -6967,15 +7032,7 @@ export default function AdminPanelPage() {
   }
 
   const openDocumentPreview = (value: unknown) => {
-    if (value instanceof File) {
-      const objectUrl = URL.createObjectURL(value)
-      window.open(objectUrl, "_blank", "noopener,noreferrer")
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
-      return
-    }
-    if (typeof value === "string" && value.trim()) {
-      window.open(value, "_blank", "noopener,noreferrer")
-    }
+    openQuotationDocumentPreview(value, documentsQuotation?.id)
   }
 
   const openDocumentsDialog = async (quotation: Quotation) => {
@@ -10542,36 +10599,19 @@ export default function AdminPanelPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {(() => {
-                    const filteredUsers = managedUsers.filter((u) => {
-                      if (!dealerSearchTerm.trim()) return true
-                      const search = dealerSearchTerm.toLowerCase()
-                      return (
-                        u.firstName.toLowerCase().includes(search) ||
-                        u.lastName.toLowerCase().includes(search) ||
-                        u.email.toLowerCase().includes(search) ||
-                        u.mobile.includes(search) ||
-                        u.username.toLowerCase().includes(search) ||
-                        u.roleLabel.toLowerCase().includes(search) ||
-                        (u.visitor?.employeeId || "").toLowerCase().includes(search) ||
-                        accessLabels(u.access).some((label) => label.toLowerCase().includes(search))
-                      )
-                    })
-
-                    if (filteredUsers.length === 0) {
-                      return (
-                        <div className="text-center py-12 text-muted-foreground">
-                          <Building className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                          <p>No users found</p>
-                        </div>
-                      )
-                    }
-
-                    return filteredUsers.map((row) => {
+                  {filteredManagedUsers.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground">
+                      <Building className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <p>No users found</p>
+                    </div>
+                  ) : (
+                    <>
+                      {visibleManagedUsers.map((row) => {
                       const d = row.dealer
                       const v = row.visitor
-                      const dealerQuotations = d ? quotations.filter((q) => q.dealerId === d.id) : []
-                      const dealerRevenue = dealerQuotations.reduce((sum, q) => sum + q.finalAmount, 0)
+                      const dealerStats = d ? dealerQuotationStatsById.get(d.id) : undefined
+                      const dealerRevenue = dealerStats?.revenue ?? 0
+                      const dealerQuotationCount = dealerStats?.count ?? 0
                       const visitCount = v ? Number((v as any).visitCount || 0) : 0
                       const isPending = row.kind === "dealer" && row.isActive === false
                       const isInactive = row.isActive === false
@@ -10599,7 +10639,7 @@ export default function AdminPanelPage() {
                                 ) : (
                                   <Badge className="bg-green-500">Active</Badge>
                                 )}
-                                {accessLabels(row.access).map((label) => (
+                                {row.accessLabelList?.map((label) => (
                                   <Badge key={label} variant="secondary" className="text-xs">
                                     {label}
                                   </Badge>
@@ -10642,7 +10682,7 @@ export default function AdminPanelPage() {
                               {row.kind === "dealer" ? (
                                 <div>
                                   <div className="text-lg font-semibold">₹{(dealerRevenue / 100000).toFixed(1)}L</div>
-                                  <div className="text-sm text-muted-foreground">{dealerQuotations.length} quotations</div>
+                                  <div className="text-sm text-muted-foreground">{dealerQuotationCount} quotations</div>
                                 </div>
                               ) : null}
                               {row.kind === "visitor" ? (
@@ -10708,8 +10748,16 @@ export default function AdminPanelPage() {
                           </div>
                         </div>
                       )
-                    })
-                  })()}
+                      })}
+                      <IncrementalListSentinel
+                        sentinelRef={managedUsersSentinelRef}
+                        visibleCount={visibleManagedUsersCount}
+                        totalCount={filteredManagedUsersTotal}
+                        hasMore={hasMoreManagedUsers}
+                        onLoadMore={loadMoreManagedUsers}
+                      />
+                    </>
+                  )}
                 </div>
               </CardContent>
             </Card>

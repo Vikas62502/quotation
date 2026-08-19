@@ -85,17 +85,34 @@ export function buildDocumentsMultipartFormData(form: Record<string, any>): Form
 export function parseQuotationDocumentUploadUrl(payload: any, field: string): string | null {
   const root = payload?.data ?? payload
   if (!root || typeof root !== "object") return null
-  if (typeof root.url === "string" && root.url.trim()) return root.url.trim()
-  if (typeof root.fileUrl === "string" && root.fileUrl.trim()) return root.fileUrl.trim()
-  if (typeof root[field] === "string" && root[field].trim()) return root[field].trim()
+  const firstString = (...values: unknown[]) => {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim()) return value.trim()
+    }
+    return null
+  }
   const camelUrl = `${field}Url`
-  if (typeof root[camelUrl] === "string" && root[camelUrl].trim()) return root[camelUrl].trim()
+  const camelPublic = `${field}PublicUrl`
   const snake = field.replace(/[A-Z]/g, (l) => `_${l.toLowerCase()}`)
   const snakeUrl = `${snake}_url`
-  if (typeof root[snakeUrl] === "string" && root[snakeUrl].trim()) return root[snakeUrl].trim()
-  const docs = root.documents
-  if (docs && typeof docs === "object" && typeof docs[field] === "string" && docs[field].trim()) {
-    return docs[field].trim()
-  }
-  return null
+  const snakePublic = `${snake}_public_url`
+  const docs = root.documents && typeof root.documents === "object" ? root.documents : null
+  return firstString(
+    root.publicUrl,
+    root.public_url,
+    root[camelPublic],
+    root[snakePublic],
+    docs?.[camelPublic],
+    docs?.[snakePublic],
+    root.url,
+    root.fileUrl,
+    root.file_url,
+    root.location,
+    root[field],
+    root[camelUrl],
+    root[snakeUrl],
+    docs?.[field],
+    docs?.[camelUrl],
+    docs?.[snakeUrl],
+  )
 }

@@ -18,13 +18,18 @@ export async function resolvePublicOpenMediaUrl(
   if (!initial) return raw
 
   if (isPresignedS3Url(initial)) return initial
+
+  const fromApi = await api.media.resolvePublicUrl(initial, quotationId)
+  if (fromApi) {
+    const opened = toPublicOpenHref(fromApi) || fromApi
+    if (isPresignedS3Url(opened) || !isAmazonS3ObjectUrl(opened)) return opened
+    return opened
+  }
+
   if (!isAmazonS3ObjectUrl(initial)) return initial
 
   const cdn = s3UrlToPublicCdnUrl(initial)
   if (cdn) return cdn
-
-  const fromApi = await api.media.resolvePublicUrl(initial, quotationId)
-  if (fromApi) return toPublicOpenHref(fromApi) || fromApi
 
   return initial
 }

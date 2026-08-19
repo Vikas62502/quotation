@@ -110,8 +110,8 @@ function extractPaymentPhases(q: Quotation): DealerPaymentInstallment[] {
     qx.quotation_payment_phases,
   ]
   for (const candidate of candidates) {
-    if (!Array.isArray(candidate)) continue
-    return candidate
+    if (!Array.isArray(candidate) || candidate.length === 0) continue
+    const phases = candidate
       .map((phase, index) => {
         const row = asRecord(phase) || {}
         const phaseNumber = Math.max(
@@ -125,7 +125,7 @@ function extractPaymentPhases(q: Quotation): DealerPaymentInstallment[] {
         )
         const amount = Math.max(
           0,
-          Math.round(pickFinite(row.amount, row.installmentAmount, row.installment_amount, paidAmount)),
+          Math.round(pickFinite(row.amount, row.installmentAmount, row.installment_amount)),
         )
         const paymentMode = String(
           row.paymentMode || row.payment_mode || row.mode || "",
@@ -134,6 +134,7 @@ function extractPaymentPhases(q: Quotation): DealerPaymentInstallment[] {
         return { phaseNumber, phaseName, paidAmount, amount, paymentMode, status }
       })
       .sort((a, b) => a.phaseNumber - b.phaseNumber)
+    if (phases.some((phase) => phase.paidAmount > 0 || phase.amount > 0)) return phases
   }
   return []
 }
@@ -190,7 +191,9 @@ export function formatInstallmentHoverLine(phase: DealerPaymentInstallment): str
 
 /**
  * Read-only paid / remaining summary for dealer Payments tab.
- * Prefers installment paidAmounts when present; otherwise uses API remaining.
+ * Same math as Account Management: paid = sum of installment paidAmounts only.
+ * Do not infer paid from API remaining — that field is often after-subsidy
+ * (e.g. ₹1,90,000 − ₹73,000 subsidy → remaining ₹1,17,000 looks like ₹73,000 paid).
  */
 export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
   const qx = q as Quotation & Record<string, unknown>
@@ -226,28 +229,8 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
     0,
   )
 
-  const apiRemaining =
-    optionalFinite(qx.remaining) ??
-    optionalFinite(qx.remainingAmount) ??
-    optionalFinite(qx.remaining_amount)
-
-  let paidAmount = phasePaid
-  let remainingAmount: number
-
-  if (isFinalSettlementApplied(q)) {
-    remainingAmount = 0
-    if (paidAmount <= 0 && apiRemaining != null) {
-      paidAmount = Math.max(0, cap - Math.max(0, apiRemaining))
-    }
-  } else if (phases.length > 0) {
-    remainingAmount = Math.max(0, cap - phasePaid)
-  } else if (apiRemaining != null) {
-    remainingAmount = Math.max(0, Math.round(apiRemaining))
-    paidAmount = Math.max(0, cap - remainingAmount)
-  } else {
-    remainingAmount = cap
-    paidAmount = 0
-  }
+  const paidAmount = phasePaid
+  const remainingAmount = isFinalSettlementApplied(q) ? 0 : Math.max(0, cap - phasePaid)
 
   const loanRemaining =
     paymentType === "mix" || paymentType === "loan"
@@ -263,11 +246,6 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
     paymentStatus = "completed"
   } else if (paidAmount > 0) {
     paymentStatus = "partial"
-  } else {
-    const apiStatus = String(qx.paymentStatus || qx.payment_status || "").toLowerCase()
-    if (apiStatus === "completed" || apiStatus === "partial" || apiStatus === "pending") {
-      paymentStatus = apiStatus
-    }
   }
 
   return {

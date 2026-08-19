@@ -101,9 +101,49 @@ export function normalizeMediaUrl(raw: unknown): string | undefined {
     }
   }
 
-  const mediaBase = String(process.env.NEXT_PUBLIC_MEDIA_BASE_URL || "").trim().replace(/\/+$/, "")
-  if (mediaBase) return `${mediaBase}/${value.replace(/^\/+/, "")}`
+  const mediaBase = getS3PublicObjectBase()
+  if (looksLikeS3ObjectKey(value) && mediaBase) {
+    return `${mediaBase}/${value.replace(/^\/+/, "")}`
+  }
+  if (mediaBase && !value.includes("://") && value.includes("/")) {
+    return `${mediaBase}/${value.replace(/^\/+/, "")}`
+  }
   return `${apiOrigin}/${value.replace(/^\/+/, "")}`
+}
+
+function getS3PublicObjectBase(): string {
+  return String(
+    process.env.NEXT_PUBLIC_S3_PUBLIC_BASE_URL ||
+      process.env.NEXT_PUBLIC_MEDIA_BASE_URL ||
+      "https://cbpl-bajaj-node.s3.ap-south-1.amazonaws.com",
+  )
+    .trim()
+    .replace(/\/+$/, "")
+}
+
+function looksLikeS3ObjectKey(value: string): boolean {
+  return (
+    value.startsWith("quotation-documents/") ||
+    value.startsWith("visits/") ||
+    value.startsWith("photos/") ||
+    value.startsWith("uploads/")
+  )
+}
+
+/** Public S3 object URL (no presign query). Use this for “View uploaded file”. */
+export function toPublicS3ObjectHref(raw: unknown): string | undefined {
+  const normalized = toPublicOpenHref(raw)
+  if (!normalized) return undefined
+  if (normalized.startsWith("blob:") || normalized.startsWith("data:")) return normalized
+  try {
+    const parsed = new URL(normalized)
+    if (!parsed.hostname.toLowerCase().includes("amazonaws.com")) return normalized
+    parsed.search = ""
+    parsed.hash = ""
+    return parsed.toString()
+  } catch {
+    return normalized
+  }
 }
 
 /** Same URL used for thumbnail `src` and “Open link” href. */

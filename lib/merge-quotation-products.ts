@@ -28,6 +28,8 @@ const PRODUCT_FIELD_KEYS = [
   "pdfCommercialSet",
   "panelType",
   "inaDcrPackage",
+  "allow3480W",
+  "allowNonDcr3480W",
   "earthingWireSize",
   "earthingWireBrand",
   "acCableBrand",
@@ -64,6 +66,8 @@ const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string
   pdfCommercialSet: "pdf_commercial_set",
   panelType: "panel_type",
   inaDcrPackage: "ina_dcr_package",
+  allow3480W: "allow_3480_w",
+  allowNonDcr3480W: "allow_non_dcr_3480_w",
   earthingWireSize: "earthing_wire_size",
   earthingWireBrand: "earthing_wire_brand",
   acCableBrand: "ac_cable_brand",
@@ -195,6 +199,16 @@ function normalizePdfDisplayFields(out: RecordLike): void {
   } else if (commercial === false || commercial === null || commercial === "") {
     out.pdfCommercialSet = false
     out.pdf_commercial_set = false
+  }
+  const allow3480 = out.allow3480W ?? out.allow_3480_w
+  if (allow3480 === true || String(allow3480).toLowerCase() === "true") {
+    out.allow3480W = true
+    out.allow_3480_w = true
+  }
+  const allowNonDcr3480 = out.allowNonDcr3480W ?? out.allow_non_dcr_3480_w
+  if (allowNonDcr3480 === true || String(allowNonDcr3480).toLowerCase() === "true") {
+    out.allowNonDcr3480W = true
+    out.allow_non_dcr_3480_w = true
   }
 }
 

@@ -24,6 +24,9 @@ export type ProductNeededDateRange =
   | "last_month"
   | "custom"
 
+/** Installation pending jobs, or file-login jobs that are not yet approved. Rejected never included. */
+export type ProductNeededScope = "installation_pending" | "file_login"
+
 export type ProductNeededPanelLine = {
   brand: string
   size: string
@@ -35,6 +38,7 @@ export type ProductNeededRow = {
   dealerId?: string
   customerName: string
   customerMobile: string
+  customerAddress?: string
   dealerName: string
   systemKw: string
   systemType: string
@@ -86,10 +90,43 @@ export type ProductNeededDashboard = {
   rows: ProductNeededRow[]
 }
 
-/** Installation pending only — same gate as Admin → Pending Installation. */
-export function isQuotationEligibleForProductNeeded(
+function quotationStatusValue(quotation: Quotation | Record<string, unknown>): string {
+  const q = quotation as Record<string, unknown>
+  return String(q.status ?? q.quotationStatus ?? q.quotation_status ?? "").trim().toLowerCase()
+}
+
+export function isProductNeededRejected(
   quotation: Quotation | Record<string, unknown>,
 ): boolean {
+  const status = quotationStatusValue(quotation)
+  return status === "rejected" || status === "reject"
+}
+
+export function hasProductNeededFileLogin(
+  quotation: Quotation | Record<string, unknown>,
+): boolean {
+  const q = quotation as Record<string, unknown>
+  const status = String(q.fileLoginStatus ?? q.file_login_status ?? "").trim().toLowerCase()
+  if (status === "already_login" || status === "login_now") return true
+  const at = q.fileLoginAt ?? q.file_login_at
+  return typeof at === "string" ? Boolean(at.trim()) : Boolean(at)
+}
+
+/** File login recorded, quotation not approved, and never rejected. */
+export function isQuotationEligibleForProductNeededFileLogin(
+  quotation: Quotation | Record<string, unknown>,
+): boolean {
+  if (isProductNeededRejected(quotation)) return false
+  const status = quotationStatusValue(quotation)
+  if (status === "approved" || status === "completed") return false
+  return hasProductNeededFileLogin(quotation)
+}
+
+/** Installation pending only — same gate as Admin → Pending Installation. */
+export function isQuotationEligibleForProductNeededInstallation(
+  quotation: Quotation | Record<string, unknown>,
+): boolean {
+  if (isProductNeededRejected(quotation)) return false
   const record = quotation as OperationalQuotationRecord
   if (!shouldShowInAdminInstallationTab(record)) return false
   if (isInstallationPartialApproved(record)) return false
@@ -98,6 +135,15 @@ export function isQuotationEligibleForProductNeeded(
   if (isInstallationApprovedForAdminTab(record, { imageUrlCount })) return false
 
   return true
+}
+
+export function isQuotationEligibleForProductNeeded(
+  quotation: Quotation | Record<string, unknown>,
+  scope: ProductNeededScope = "installation_pending",
+): boolean {
+  if (isProductNeededRejected(quotation)) return false
+  if (scope === "file_login") return isQuotationEligibleForProductNeededFileLogin(quotation)
+  return isQuotationEligibleForProductNeededInstallation(quotation)
 }
 
 function normalizePanelSize(size?: string): string {
@@ -111,6 +157,16 @@ function normalizePanelSize(size?: string): string {
 function normalizeBrand(brand?: string): string {
   const raw = String(brand || "").trim()
   return raw || "—"
+}
+
+function formatCustomerAddress(address: unknown): string {
+  if (typeof address === "string") return address.trim() || "—"
+  if (!address || typeof address !== "object" || Array.isArray(address)) return "—"
+  const value = address as Record<string, unknown>
+  const parts = [value.street, value.city, value.state, value.pincode]
+    .map((part) => String(part || "").trim())
+    .filter(Boolean)
+  return parts.join(", ") || "—"
 }
 
 function formatPanelLine(brand?: string, size?: string, quantity?: number): string {
@@ -275,16 +331,34 @@ function fileLoginStatusLabel(status?: string): string {
   return raw ? raw : "—"
 }
 
+function readIsoDate(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim()
+  return undefined
+}
+
+function readFileLoginAt(quotation: Quotation | Record<string, unknown>): string | undefined {
+  const q = quotation as Record<string, unknown>
+  return readIsoDate(q.fileLoginAt ?? q.file_login_at)
+}
+
 function readInstallationReleasedAt(quotation: Quotation | Record<string, unknown>): string | undefined {
   const q = quotation as Record<string, unknown>
-  const raw =
+  return readIsoDate(
     q.installationReleasedAt ??
-    q.installation_released_at ??
-    q.statusApprovedAt ??
-    q.status_approved_at ??
-    q.createdAt ??
-    q.created_at
-  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined
+      q.installation_released_at ??
+      q.statusApprovedAt ??
+      q.status_approved_at ??
+      q.createdAt ??
+      q.created_at,
+  )
+}
+
+export function readProductNeededFilterDate(
+  quotation: Quotation | Record<string, unknown>,
+  scope: ProductNeededScope = "installation_pending",
+): string | undefined {
+  if (scope === "file_login") return readFileLoginAt(quotation) || readInstallationReleasedAt(quotation)
+  return readInstallationReleasedAt(quotation)
 }
 
 export function buildProductNeededRow(
@@ -308,6 +382,7 @@ export function buildProductNeededRow(
       "Unknown",
     ),
     customerMobile: quotation.customer?.mobile || "—",
+    customerAddress: formatCustomerAddress(quotation.customer?.address),
     dealerName: dealerName || "—",
     systemKw: kw > 0 ? `${kw}kW` : "—",
     systemType,
@@ -331,6 +406,7 @@ export type ProductNeededFilterOptions = {
   dateRange?: ProductNeededDateRange
   customFrom?: string
   customTo?: string
+  scope?: ProductNeededScope
 }
 
 export function getProductNeededDateBounds(
@@ -398,6 +474,7 @@ export function filterQuotationsForProductNeeded(
     dateRange = "all",
     customFrom = "",
     customTo = "",
+    scope = "installation_pending",
   } = options
 
   if (isProductNeededCustomRangePending(dateRange, customFrom, customTo)) {
@@ -407,10 +484,10 @@ export function filterQuotationsForProductNeeded(
   const normalizedSearch = search.trim().toLowerCase()
 
   return quotations.filter((quotation) => {
-    if (!isQuotationEligibleForProductNeeded(quotation)) return false
+    if (!isQuotationEligibleForProductNeeded(quotation, scope)) return false
     if (dealerId !== "all" && quotation.dealerId !== dealerId) return false
 
-    const dateIso = readInstallationReleasedAt(quotation)
+    const dateIso = readProductNeededFilterDate(quotation, scope)
     if (!matchesDateRange(dateIso, dateRange, customFrom, customTo)) return false
 
     if (!normalizedSearch) return true
@@ -443,6 +520,7 @@ export function filterProductNeededRows(
     dateRange = "all",
     customFrom = "",
     customTo = "",
+    scope = "installation_pending",
   } = options
 
   if (isProductNeededCustomRangePending(dateRange, customFrom, customTo)) {
@@ -453,8 +531,16 @@ export function filterProductNeededRows(
 
   return rows.filter((row) => {
     if (dealerId !== "all" && row.dealerId !== dealerId) return false
+    if (isProductNeededRejected(row)) return false
+    if (scope === "file_login") {
+      const status = String(row.quotationStatus || "").trim().toLowerCase()
+      if (status === "approved" || status === "completed") return false
+    }
 
-    const dateIso = row.installationReleasedAt || row.statusApprovedAt || row.fileLoginAt
+    const dateIso =
+      scope === "file_login"
+        ? row.fileLoginAt || row.installationReleasedAt || row.statusApprovedAt
+        : row.installationReleasedAt || row.statusApprovedAt || row.fileLoginAt
     if (!matchesDateRange(dateIso, dateRange, customFrom, customTo)) return false
 
     if (!normalizedSearch) return true
@@ -730,12 +816,13 @@ export function formatProductNeededDate(value?: string): string {
 }
 
 export type ProductNeededApiFilters = {
-  scope?: "installation_pending"
+  scope?: ProductNeededScope
+  tab?: "file_login"
   dealerId?: string
   search?: string
   startDate?: string
   endDate?: string
-  dateField?: "installation_released" | "created"
+  dateField?: "installation_released" | "created" | "file_login" | "approved"
   page?: number
   limit?: number
 }
@@ -756,20 +843,23 @@ export function buildProductNeededApiFilters(options: {
   dateRange: ProductNeededDateRange
   customFrom: string
   customTo: string
+  scope?: ProductNeededScope
 }): ProductNeededApiFilters {
   const { startDate, endDate } = buildProductNeededDateBounds(
     options.dateRange,
     options.customFrom,
     options.customTo,
   )
+  const scope = options.scope === "file_login" ? "file_login" : "installation_pending"
 
   return {
-    scope: "installation_pending",
+    scope,
+    tab: scope === "file_login" ? "file_login" : undefined,
     dealerId: options.dealerId !== "all" ? options.dealerId : undefined,
     search: options.search.trim() || undefined,
     startDate,
     endDate,
-    dateField: "installation_released",
+    dateField: scope === "file_login" ? "file_login" : "installation_released",
     page: 1,
     limit: 2000,
   }
@@ -794,6 +884,9 @@ export function mapProductNeededRowFromApi(raw: Record<string, unknown>): Produc
     dealerId: String(raw.dealerId ?? raw.dealer_id ?? "") || undefined,
     customerName: String(raw.customerName ?? raw.customer_name ?? "Unknown"),
     customerMobile: String(raw.customerMobile ?? raw.customer_mobile ?? "—"),
+    customerAddress: formatCustomerAddress(
+      raw.customerAddress ?? raw.customer_address ?? raw.address,
+    ),
     dealerName: String(raw.dealerName ?? raw.dealer_name ?? "—"),
     systemKw: String(raw.systemKw ?? raw.system_kw ?? "—"),
     systemType: String(raw.systemType ?? raw.system_type ?? "—").toUpperCase(),
@@ -821,6 +914,7 @@ export function mapProductNeededRowFromApi(raw: Record<string, unknown>): Produc
 export function extractProductNeededFromApiResponse(response: unknown): {
   rows: ProductNeededRow[]
   total?: number
+  scope?: string
 } {
   const body = (response ?? {}) as Record<string, unknown>
   const nested =
@@ -833,15 +927,18 @@ export function extractProductNeededFromApiResponse(response: unknown): {
     ? rowsRaw
         .filter((row) => row && typeof row === "object")
         .map((row) => mapProductNeededRowFromApi(row as Record<string, unknown>))
+        .filter((row) => !isProductNeededRejected(row))
     : []
 
   const pagination = data.pagination as Record<string, unknown> | undefined
   const total = Number(
     pagination?.total ?? data.total ?? data.totalRows ?? data.total_rows ?? rows.length,
   )
+  const scope = String(data.scope ?? data.tab ?? "").trim().toLowerCase()
 
   return {
     rows,
     total: Number.isFinite(total) ? total : rows.length,
+    scope: scope || undefined,
   }
 }

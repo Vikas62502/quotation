@@ -4165,9 +4165,8 @@ export const api = {
 
     productNeeded: {
       getAll: async (params?: {
-        scope?: "installation_pending"
-        /** @deprecated Prefer scope=installation_pending; kept for older backends */
-        tab?: "file_login" | "login_approved"
+        scope?: "installation_pending" | "file_login"
+        tab?: "file_login"
         page?: number
         limit?: number
         dealerId?: string
@@ -4175,7 +4174,7 @@ export const api = {
         startDate?: string
         endDate?: string
         dateField?: "installation_released" | "created" | "file_login" | "approved"
-      }) => {
+      }, options?: { suppressErrorLog?: boolean }) => {
         const queryParams = new URLSearchParams()
         if (params) {
           Object.entries(params).forEach(([key, value]) => {
@@ -4183,7 +4182,9 @@ export const api = {
           })
         }
         const query = queryParams.toString()
-        return apiRequest(`/admin/product-needed${query ? `?${query}` : ""}`)
+        return apiRequest(`/admin/product-needed${query ? `?${query}` : ""}`, {
+          suppressErrorLog: Boolean(options?.suppressErrorLog),
+        })
       },
     },
 

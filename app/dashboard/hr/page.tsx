@@ -1348,7 +1348,7 @@ export default function HrDashboardPage() {
     if (selectedIds.length === 0) {
       toast({
         title: "Select dealers",
-        description: "Only dealers with Quotation access can be in the pool.",
+        description: "Only users with Dealer access can be in the pool.",
         variant: "destructive",
       })
       return
@@ -1582,7 +1582,7 @@ export default function HrDashboardPage() {
                   <p className="text-sm text-muted-foreground">Loading dealers...</p>
                 ) : quotationDealers.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No dealers with Quotation access. Enable Quotation in Admin → Users.
+                    No dealers with Dealer access. Enable Dealer in Admin → Users.
                   </p>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
@@ -2164,7 +2164,7 @@ export default function HrDashboardPage() {
               {addDealersBatch.unassignedCount > 0 || addDealersBatch.assignedCount > 0 ? (
                 <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
                   After save, each selected dealer keeps at most 1 active lead. Extra Assigned leads return to
-                  Unassigned; Completed is unchanged. Only dealers with Quotation access are listed.
+                  Unassigned; Completed is unchanged. Only dealers with Dealer access are listed.
                   {addDealersBatch.unassignedCount > 0
                     ? ` Currently ${addDealersBatch.unassignedCount} unassigned.`
                     : ""}
@@ -2174,7 +2174,7 @@ export default function HrDashboardPage() {
               <div className="overflow-y-auto max-h-[42vh] space-y-2 pr-1">
                 {quotationDealers.length === 0 ? (
                   <p className="text-sm text-muted-foreground py-6 text-center">
-                    No dealers with Quotation access. Enable Quotation in Admin → Users.
+                    No dealers with Dealer access. Enable Dealer in Admin → Users.
                   </p>
                 ) : (
                   quotationDealers.map((dealer) => (

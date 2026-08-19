@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, ArrowRight } from "lucide-react"
+import { LogOut, ArrowRight, PhoneCall } from "lucide-react"
 import { getAccessOptions, getPostLoginPath } from "@/lib/user-access"
 
 export default function WorkspacePage() {
@@ -103,6 +103,25 @@ export default function WorkspacePage() {
               </CardContent>
             </Card>
           ))}
+          {options.some((item) => item.key === "quotation") ? (
+            <Card
+              className="cursor-pointer border-border/70 hover:border-primary/40 hover:bg-muted/30 transition-colors"
+              onClick={() => router.push("/dashboard/calling-data")}
+            >
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex items-center justify-between gap-2">
+                  Calling Data
+                  <PhoneCall className="w-4 h-4 text-muted-foreground" />
+                </CardTitle>
+                <CardDescription>Open the calling queue for your Dealer access.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button size="sm" className="w-full" onClick={() => router.push("/dashboard/calling-data")}>
+                  Open Calling Data
+                </Button>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       </main>
     </div>

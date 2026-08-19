@@ -452,6 +452,9 @@ function formatInstallmentShortLabel(phase: PaymentPhase): string {
 
 type PaymentInstallmentFilter = "all" | "1" | "2" | "3" | "4" | "5"
 
+/** Yes = already sent (badge). No = still shows Send to Installer button. */
+type SendToInstallationFilter = "all" | "yes" | "no"
+
 type PaymentTypeFilterValue = "loan" | "cash" | "mix" | "unknown"
 
 const PAYMENT_TYPE_FILTER_OPTIONS: { value: PaymentTypeFilterValue; label: string }[] = [
@@ -947,6 +950,8 @@ export default function AccountManagementPage() {
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
   const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
   const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>("all")
+  const [sendToInstallationFilter, setSendToInstallationFilter] =
+    useState<SendToInstallationFilter>("all")
   const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
   /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
@@ -1605,6 +1610,14 @@ export default function AccountManagementPage() {
       const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
       const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
       const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatus)
+      const sentToInstaller = isQuotationSentToInstaller(
+        payment.quotation as unknown as Record<string, unknown>,
+        installerReleaseMapForPayments,
+      )
+      const matchesSendToInstallation =
+        sendToInstallationFilter === "all" ||
+        (sendToInstallationFilter === "yes" && sentToInstaller) ||
+        (sendToInstallationFilter === "no" && !sentToInstaller)
       const matchesDealer =
         paymentDealerFilter === "all" ||
         (paymentDealerFilter === "__unassigned__"
@@ -1616,6 +1629,7 @@ export default function AccountManagementPage() {
         matchesPaymentStatus &&
         matchesInstallment &&
         matchesFileStatus &&
+        matchesSendToInstallation &&
         matchesDealer &&
         matchesApproveDateRange
       )
@@ -1628,6 +1642,7 @@ export default function AccountManagementPage() {
       paymentStatusFilter,
       paymentInstallmentFilter,
       fileStatusFilter,
+      sendToInstallationFilter,
       paymentDealerFilter,
       approveDateRange,
     ],
@@ -1881,6 +1896,7 @@ export default function AccountManagementPage() {
     paymentStatusFilter,
     paymentInstallmentFilter,
     fileStatusFilter,
+    sendToInstallationFilter,
     paymentDealerFilter,
     approveDateRange?.from?.toISOString() ?? "",
     approveDateRange?.to?.toISOString() ?? "",
@@ -3184,6 +3200,7 @@ export default function AccountManagementPage() {
                           (paymentStatusFilter !== "all" ? 1 : 0) +
                           (paymentInstallmentFilter !== "all" ? 1 : 0) +
                           (fileStatusFilter !== "all" ? 1 : 0) +
+                          (sendToInstallationFilter !== "all" ? 1 : 0) +
                           (paymentDealerFilter !== "all" ? 1 : 0) +
                           (approveDateRange?.from || approveDateRange?.to ? 1 : 0)
                         return activeCount > 0 ? (
@@ -3399,6 +3416,7 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                                {payment.phases.length > 0 ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <p
@@ -3413,23 +3431,19 @@ export default function AccountManagementPage() {
                                   <TooltipContent side="top" className="max-w-[300px]">
                                     <div className="space-y-1.5">
                                       <p className="font-semibold">Breakdown</p>
-                                      {payment.phases.length === 0 ? (
-                                        <p>No installments yet</p>
-                                      ) : (
-                                        payment.phases
-                                          .slice()
-                                          .sort((a, b) => a.phaseNumber - b.phaseNumber)
-                                          .map((phase) => (
-                                            <p key={`${payment.quotationId}-${phase.phaseNumber}`}>
-                                              {formatInstallmentShortLabel(phase).toLowerCase()}
-                                              {phase.paymentMode
-                                                ? ` (${String(phase.paymentMode)})`
-                                                : ""}
-                                              : ₹
-                                              {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
-                                            </p>
-                                          ))
-                                      )}
+                                      {payment.phases
+                                        .slice()
+                                        .sort((a, b) => a.phaseNumber - b.phaseNumber)
+                                        .map((phase) => (
+                                          <p key={`${payment.quotationId}-${phase.phaseNumber}`}>
+                                            {formatInstallmentShortLabel(phase).toLowerCase()}
+                                            {phase.paymentMode
+                                              ? ` (${String(phase.paymentMode)})`
+                                              : ""}
+                                            : ₹
+                                            {Math.round(phase.paidAmount || 0).toLocaleString("en-IN")}
+                                          </p>
+                                        ))}
                                       {paymentType === "mix" ? (
                                         <div className="border-t border-border/40 pt-1.5 mt-1 space-y-0.5">
                                           <p>
@@ -3445,6 +3459,16 @@ export default function AccountManagementPage() {
                                     </div>
                                   </TooltipContent>
                                 </Tooltip>
+                                ) : (
+                                  <p
+                                    className={cn(
+                                      "text-sm font-semibold tabular-nums inline-block",
+                                      paidAmount <= 0 ? "text-rose-700" : "text-foreground",
+                                    )}
+                                  >
+                                    ₹{paidAmount.toLocaleString()}
+                                  </p>
+                                )}
                                 {paymentType === "mix" ? (
                                   <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
                                     L ₹{getTotalPaidForSide(payment.phases, "loan").toLocaleString("en-IN")}
@@ -3793,6 +3817,24 @@ export default function AccountManagementPage() {
               </Select>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Send to installation</Label>
+              <Select
+                value={sendToInstallationFilter}
+                onValueChange={(value) =>
+                  setSendToInstallationFilter(value as SendToInstallationFilter)
+                }
+              >
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Send to installation" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="no">No</SelectItem>
+                  <SelectItem value="yes">Yes</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Dealer</Label>
               <Select value={paymentDealerFilter} onValueChange={setPaymentDealerFilter}>
                 <SelectTrigger className="h-9 text-sm">
@@ -3820,6 +3862,7 @@ export default function AccountManagementPage() {
                   setPaymentStatusFilter("all")
                   setPaymentInstallmentFilter("all")
                   setFileStatusFilter("all")
+                  setSendToInstallationFilter("all")
                   setPaymentDealerFilter("all")
                 }}
               >
