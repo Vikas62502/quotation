@@ -678,6 +678,45 @@ LIMIT 1;
 4. Dealer B cannot see A while A is `in_progress` for dealer A.
 5. HR upload pool lead: first **Start** assigns to dealer; no `LEAD_004`.
 
+### 4.5.3 Queue priority — finish in-progress, then Social Media (Sep 2026)
+
+**Product:** Before **Start Call**, Current Lead must be **Google Sheet / Social Media** when available; raw CSV only when no social lead exists. After Submit, same priority for the next lead.
+
+**Frontend (shipped):** `dealerAssignedQueue` + `loadLeads` prefer social when not `in_progress` — `app/dashboard/calling-data/page.tsx` (`isSocialMediaCallingLead`).
+
+1. `in_progress` first (finish started call)
+2. Social / sheet **assigned** to this dealer
+3. Social / sheet **pool** (claimable)
+4. Other assigned (raw CSV)
+5. Other pool  
+Then FIFO by `queuedAt` / `assignedAt`.
+
+**Backend (P0):** Mirror on `GET /calling-queue/next` and `/current` (`BACKEND_CALLING_QUEUE_CURRENT.ts`):
+
+- Assigned head: in_progress → social → raw → time
+- Pool claim: **social before raw CSV**, then oldest `queued_at`
+
+```sql
+ORDER BY
+  CASE WHEN LOWER(status) = 'in_progress' THEN 0 ELSE 1 END,
+  CASE
+    WHEN sheet_source_id IS NOT NULL THEN 0
+    WHEN LOWER(COALESCE(source_type,'')) IN ('google_sheet','social_media','social','meta') THEN 0
+    ELSE 1
+  END,
+  COALESCE(assigned_at, queued_at, created_at) ASC
+```
+
+#### QA
+
+1. Dealer has `in_progress` raw lead + newer social assigned → Current = `in_progress` until Submit.
+2. **Start Call not done** + social in assigned/pool + older raw → Current = **social / Google Sheet** (not raw).
+3. After Submit → next Current = social assigned lead (even if older CSV assigned remains).
+4. Social in pool + older raw assigned → prefer social (claim/show) before raw when no `in_progress`.
+5. No social → fall back to oldest assigned / pool as today.
+
+---
+
 ### 4.5.2 Reschedule / Decision Pending — fix 500 on Submit (Jun 2026)
 
 **Symptom:** Dealer on **Calling Data → Current Lead** selects **Connected → Decision Pending → Callback Scheduled** (or other hold reason), sets **Reschedule date and time**, clicks **Submit** → toast **“Action failed — Internal server error”** (HTTP 500).
@@ -2584,7 +2623,7 @@ On `PATCH /api/quotations/{quotationId}/documents` (KYC / customer documents):
 | Brand | Key | Label |
 |-------|-----|-------|
 | Renew Energy | `renew_energy_600_630` | 600W - 630W |
-| Waaree | `waaree_580_630` | 580W - 630W |
+| Waaree | `waaree_580_620` | 580W - 620W N-Type Bifacial Topcon |
 | Adani | `adani_600_630` | 600W - 630W |
 
 ### Other
@@ -3644,10 +3683,11 @@ Undo Account Management **Send to Installer**. Row disappears from Admin **Insta
 | **Column map (P0)** | **Required:** `phone_number`→mobile (10 digits), `id`→external_id, `full_name`→name, `lead_status`. **Ignore:** ad_id/adset_*/campaign_id/form_id/is_organic. **Optional:** platform, campaign_name, ad_name, created_time, final decision/remarks. See MD “Sheet columns”. |
 | **Dedupe** | By `external_id` and/or mobile per sheet source |
 | **Assign** | From `dealer_ids` on source via `BACKEND_ASSIGN_UNASSIGNED.ts` — **not** from sheet columns |
-| **Socket** | `calling:uploads-updated` after sync |
-| **Auto-sync (P0)** | Cron every **15 min** → `POST /hr/sheet-sources/sync-all` (enabled tabs only) + emit socket. Do **not** rely on socket alone to pull from Google Sheets. |
+| **Socket** | `calling:uploads-updated` after sync — emit to **stream:hr** + **stream:dealers** (+ optional `backend:mutation` domain=hr). SPA Social Media listens for this. |
+| **Auto-sync (P0)** | Cron every **30 min** → `POST /hr/sheet-sources/sync-all` (enabled tabs only) + emit socket. Do **not** rely on socket alone to pull from Google Sheets. |
 | **Manual** | Keep `POST /hr/sheet-sources/:id/sync` for **Sync now** |
 | **Lead fields** | Echo `leadStatus`, `finalDecision`, remarks, mobile, name, assignedDealer* (status filter chips are client-side) |
+| **Write-back (P0)** | DB → Sheet: assigned dealer + calling status/remarks/final decision + **Address** after assign & calling actions. Scope `spreadsheets` (write). See MD “DB → Google Sheet write-back”. Pull must not wipe CRM fields. Match truncated headers (`Assignment Stat`, `1st Call Respon`). |
 
 ### Security
 
@@ -3664,7 +3704,7 @@ Undo Account Management **Send to Installer**. Row disappears from Admin **Insta
 6. HR Social Media shows coloured status cards + New/Pending/Not interested/Interested filters.
 7. Dealer Calling Data shows assigned social leads.
 8. `GET /hr/leads/uploads` includes `google_sheet` batches.
-9. Cron every 15 min syncs enabled tabs; HR UI updates without clicking Sync now (socket or soft refresh).
+9. Cron every 30 min syncs enabled tabs; HR UI updates without clicking Sync now (socket or SPA auto-sync).
 
 ---
 
@@ -3763,7 +3803,7 @@ Spec: **`BACKEND_WORKFLOW_DASHBOARD_PARITY.md`**, **`BACKEND_WORKFLOW_DASHBOARD_
 
 **Auth:** `hr` · **Env:** `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS` · `CRON_SECRET` · `GOOGLE_SHEETS_SPREADSHEET_ID` · share sheet with SA email as Editor.
 
-**Cron (P0):** every 15 min → `POST /hr/sheet-sources/sync-all` with `x-cron-secret` → then `calling:uploads-updated`. Copy-paste: `postHrSheetSourcesSyncAll` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`.
+**Cron (P0):** every 30 min → `POST /hr/sheet-sources/sync-all` with `x-cron-secret` → then `calling:uploads-updated`. Copy-paste: `postHrSheetSourcesSyncAll` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`.
 
 **Discover prune (copy from `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` → `discoverHrSheetTabs`):**
 
@@ -3797,7 +3837,9 @@ Spec: **`BACKEND_WORKFLOW_DASHBOARD_PARITY.md`**, **`BACKEND_WORKFLOW_DASHBOARD_
 | `assignedDealerId` / `assignedDealerName` | Who got the lead |
 | `source_type=google_sheet` on upload batch | Uploaded Data + Calling Data |
 
-**Socket:** `calling:uploads-updated` after sync.
+**Socket:** `calling:uploads-updated` after sync — must reach HR clients on `stream:hr` (and dealers on `stream:dealers`). See REQUIRED **§AP**.
+
+**Write-back (P0):** After assign + calling updates, push dealer name / status / remarks / final decision / **Address** into the same Google Sheet row (`writeBackHrLeadToSheet`). Creates `Address` column if missing. See REQUIRED **§AQ**.
 
 ### Frontend-only (no backend)
 
@@ -3812,6 +3854,125 @@ Spec: **`BACKEND_WORKFLOW_DASHBOARD_PARITY.md`**, **`BACKEND_WORKFLOW_DASHBOARD_
 3. Social Media lead cards colour correctly; status filter counts match.
 4. Assigned leads appear in dealer Calling Data.
 5. Credentials never in frontend repo.
+
+---
+
+## 45. Proposal PDF — dynamic inverter warranty + Hybrid system type (Sep 2026)
+
+**Frontend (shipped):** `lib/quotation-proposal-document.ts`  
+- Warranty: `GTI Inverter (${inverterBrand})` — same brand as Solar Inverter row (e.g. Crompton), not hardcoded Vsol/Xwatt  
+- System Type: if `inverterType` contains `Hybrid` → label **`Hybrid Solar system`** (customer details + yellow Type line)
+
+### Backend must do (P0 — no new routes)
+
+PDF is generated in the SPA from `GET /quotations/{id}` products. Backend only needs correct persistence/echo.
+
+| Field | Rule |
+|-------|------|
+| `products.inverterBrand` | Persist dealer choice (**Crompton**, GoodWe, `Vsole/Xwatt`, `As per the set`, …). **Do not** rewrite to `Vsole/Xwatt` on save/GET |
+| `products.inverterType` | Persist `String Inverter` / `Hybrid Inverter` / `Micro Inverter` (and catalog values). Round-trip on GET |
+| `products.inverterSize` | Unchanged rules (incl. `As per the set` for Tata) |
+
+### Do not
+
+- Hardcode warranty inverter brand on any server-side PDF (if you generate one) — use stored `inverterBrand`
+- Strip or normalize `Hybrid Inverter` → `String Inverter`
+- Force `inverterBrand` back to Vsole/Xwatt when dealer selected Crompton (etc.)
+
+### QA
+
+1. Quotation with `inverterBrand: "Crompton"` → GET returns Crompton → PDF warranty shows `GTI Inverter (Crompton)`
+2. Quotation with `inverterType: "Hybrid Inverter"` → GET returns Hybrid → PDF Type shows `Hybrid Solar system`
+3. Tata `As per the set` still round-trips unchanged
+
+---
+
+## 46. Admin Users — Active-only + Update User 403 + Metering read-only (Sep 2026)
+
+**Symptom:** Admin → Users → Edit user → set **Metering** (or Accounts / Installation) to **Read only** → **Update User** → toast `Insufficient permissions. Admin access required.` (`AUTH_004`)
+
+Same 403 on any Update User (address, access checkboxes, etc.) — not caused by read-only itself. SPA calls `PUT /admin/dealers/:id`; middleware rejects the whole request.
+
+**Frontend:** Users Active-only list; on AUTH_004 still saves module permissions locally in that browser only. Server persist requires this fix.
+
+### Backend (P0) — fix auth first
+
+**Routes:**
+- `PUT /admin/dealers/:id`
+- `PUT /admin/account-managers/:id`
+- `PUT /admin/visitors/:id`
+
+| Item | Detail |
+|------|--------|
+| **Remove** | `if (req.user.role !== "admin") return 403` |
+| **Use** | `requireAdminAccess()` / `canAccessSection(req.user, "admin")` |
+| **Allow** | JWT `role` ∈ `admin` \| `super-admin` **OR** `access` includes `"admin"` |
+| **Persist on PUT** | `access`, `officeLocation`, **`moduleFieldPermissions`** (e.g. `metering: { level: "read", scope, selectedUserIds }`) — REQUIRED **§AV** |
+| **Zod `access` enum** | Must include **`visitor_reports`** + **`calling_reports`** (else Update User → `Invalid option: expected one of "admin"\|"quotation"\|…`) — REQUIRED **§AU** |
+| **Zod `moduleFieldPermissions`** | Module keys include reports; `level` `none`\|`read`\|`write`; do not strip on PUT — **§AV** |
+| **Echo on GET/login** | Same `moduleFieldPermissions` + `officeLocation` so Field access + Metering read-only survive reopen/login |
+
+```js
+router.put("/admin/dealers/:id", auth, requireAdminAccess(), updateDealer)
+// In updateDealer body:
+if (body.moduleFieldPermissions != null || body.modulePermissions != null) {
+  dealer.moduleFieldPermissions = body.moduleFieldPermissions || body.modulePermissions
+}
+if (body.officeLocation != null || body.office_location != null) {
+  dealer.officeLocation = body.officeLocation || body.office_location
+}
+// publicDealer / login MUST echo moduleFieldPermissions + officeLocation
+```
+
+**Example PUT body (Field access Write on checked modules):**
+
+```json
+{
+  "access": ["quotation", "accounts", "installation", "metering"],
+  "moduleFieldPermissions": {
+    "accounts": { "level": "write", "scope": "everyone", "selectedUserIds": [] },
+    "installation": { "level": "write", "scope": "everyone", "selectedUserIds": [] },
+    "metering": { "level": "write", "scope": "everyone", "selectedUserIds": [] }
+  }
+}
+```
+
+**Copy-paste:** `BACKEND_USER_ACCESS.ts` → `canAccessSection`, `requireAdminAccess`, `updateDealer`, `publicDealer`  
+Also: `BACKEND_USER_FIELD_PERMISSIONS.ts`
+
+### QA
+
+1. Admin User → Edit AMIT → Metering **Read only** → Update User → **200**
+2. Re-open Edit → Field access still **Read only** / **Write** as saved (from API)
+3. AMIT login → JWT/user includes `moduleFieldPermissions.metering.level = "read"`
+4. AMIT Metering dashboard: view OK, save/mutate → **403**
+5. Visitor/Calling Reports checked → Update User **200** (Zod includes those access keys)
+6. Login as that user → `access` includes `visitor_reports` / `calling_reports` → workspace shows both cards (**§AW**)
+7. Calling Reports as that user → `GET /admin/calling-actions` **200** (allow `calling_reports`) — **§AX**
+8. `super-admin` Update User → **200**
+
+**Refs:** REQUIRED **§AR**, **§AU**, **§AV**, **§AW**, **§AX**
+
+---
+
+## 47. Dealer Call Analytics live + HR sheet auto-sync 30 min — Sep 2026
+
+### 47.1 Call Analytics after Current Lead action (**§AY**)
+
+**Frontend (shipped):** Calling Data analytics cards refresh on Submit (optimistic + `GET …/calling-actions`) and on `calling:actions-updated`.
+
+**Backend (P0):**
+1. `PATCH …/calling-queue/{leadId}/action` — persist one canonical action row; echo it in response.
+2. Emit `calling:actions-updated` to **stream:dealers** + **stream:hr** after every dealer outcome submit.
+3. `GET /dealers/calling-actions?dealerId=&range=all&limit=2000` — complete, fresh rows (ISO `actionAt`, stable `id`).
+
+### 47.2 HR Social Media auto-sync (**§AZ** / **§AP**)
+
+**Frontend (shipped):** SPA calls `POST /hr/sheet-sources/sync-all` every **30 min** while HR page open; socket reloads list.
+
+**Backend (P0):** Cron `*/30 * * * *` → `POST /hr/sheet-sources/sync-all` (`x-cron-secret`) → emit `calling:uploads-updated` (`sheet_auto_sync`) to **stream:hr** + **stream:dealers**.
+
+**Refs:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`, REQUIRED **§AY** / **§AZ** / **§AP**, HANDOFF **§5** / **§41**
 
 ---
 

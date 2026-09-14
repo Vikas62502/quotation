@@ -126,16 +126,108 @@ All paths are under your API prefix (e.g. `/api/hr/...`). Frontend calls without
 
 ---
 
-## Auto-sync every 15 minutes (recommended) + socket for UI
+## Auto-sync every 30 minutes (recommended) + socket for UI
 
 Google Sheets **cannot push** into our app. A WebSocket alone cannot replace polling the sheet.
 
 | Layer | Role |
 |-------|------|
-| **Backend cron (every 15 min)** | Pulls enabled tabs via `POST /hr/sheet-sources/sync-all` |
+| **Backend cron (every 30 min)** | Pulls enabled tabs via `POST /hr/sheet-sources/sync-all` |
 | **Socket `calling:uploads-updated`** | After cron/manual sync → HR + dealer UIs refresh instantly |
 | **Manual Sync now** | Immediate pull when HR needs it now |
-| **SPA 15‑min soft refresh** | Fallback if socket was missed |
+| **SPA 30‑min auto sync** | While HR page open: calls `syncAll` + reload (fallback if cron/socket missed) |
+
+### Socket contract (P0 — Social Media UI)
+
+SPA listens for **`calling:uploads-updated`** on HR Social Media + Dealer Calling Data.
+
+| Rule | Detail |
+|------|--------|
+| **When** | After `POST …/:id/sync`, `POST …/sync-all`, and assign-unassigned for sheet batches |
+| **Who** | Broadcast to **`stream:hr`** and **`stream:dealers`** (same rooms as CSV upload) |
+| **Event name** | Exactly `calling:uploads-updated` (not a custom sheet-only event) |
+| **Payload (recommended)** | `{ reason: "sheet_sync" \| "sheet_auto_sync", spreadsheetId, syncedAt, sourceId? }` |
+
+```js
+// After syncSheetTabSource / sync-all commit:
+io.to("stream:hr").to("stream:dealers").emit("calling:uploads-updated", {
+  reason: "sheet_auto_sync", // or "sheet_sync" for manual
+  spreadsheetId,
+  syncedAt: new Date().toISOString(),
+})
+// Also emit backend:mutation if your gateway uses it:
+io.to("stream:backend").emit("backend:mutation", {
+  domain: "hr",
+  path: "/hr/sheet-sources/sync",
+  reason: "sheet_sync",
+})
+```
+
+**Do not:** emit only to admin; skip emit after cron; use a different event name the SPA does not listen for.
+
+---
+
+## DB → Google Sheet write-back (P0) — assigned dealer + calling status
+
+When CRM updates assignment or calling status, the **same values must appear in the Google Sheet row**.
+
+### Direction
+
+| Direction | What |
+|-----------|------|
+| Sheet → DB | Pull **new** Meta leads only (`id`, `phone_number`, `full_name`, `platform`, …) |
+| DB → Sheet | Push **Assigned Dealer**, assignment/call status, remarks, final decision |
+
+For existing `external_id` rows, **do not** overwrite CRM fields from the sheet on pull (DB is source of truth).
+
+### Scope change
+
+Service account needs **write** access:
+
+```text
+https://www.googleapis.com/auth/spreadsheets   (not .readonly)
+```
+
+Spreadsheet already shared as **Editor** with SA email.
+
+### Sheet columns to write (create header if missing)
+
+| Sheet column | DB / CRM field |
+|--------------|----------------|
+| `Assigned Dealer` (or `NAME`) | `assigned_dealer_name` |
+| `Assignment Status` / `Assignment Stat` / `Call Status` | `status` (`assigned` / `queued` / `completed` / …) |
+| `lead_status` | Map: CREATED → IN_PROGRESS → COMPLETED from CRM status |
+| `Remarks` / `Remarks 2` | `remarks` / `remarks_2` |
+| `1st Call Response` / `2nd Call Response` (truncated OK) | call response fields |
+| `Final Decision` / `Final Decison` | `final_decision` |
+| `Reason of Final Decision` | `final_decision_reason` |
+| **`Address`** (create column if missing) | `address` / street+city+state+pincode |
+
+Do **not** rewrite Meta columns: `id`, `created_time`, `ad_*`, `campaign_*`, `form_*`, `phone_number`, `full_name`, `platform`.
+
+### When to write back
+
+| Trigger | Action |
+|---------|--------|
+| Round-robin assign (`assignUnassignedWithActiveCap`) | Write dealer name + `assigned` |
+| Dealer Calling Data submit / complete / reschedule / not interested | Write status + remarks + final decision |
+| Any PATCH on `hr_leads` that changes those fields (sheet leads only) | Write back that row |
+
+Match row by `external_id` (= sheet `id`) or stored `sheet_row_index`.
+
+### Reference
+
+`writeBackHrLeadToSheet` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`.
+
+### Pull sync rule (important)
+
+```text
+IF lead already exists by (sheet_source_id, external_id):
+  skip import OR only update empty Meta display fields
+  NEVER clear assigned_dealer_id / status / remarks / final_decision from sheet blanks
+ELSE:
+  insert new lead as today
+```
 
 ### New route
 
@@ -150,7 +242,7 @@ Behaviour: sync every `hr_sheet_sources` row with `enabled=true` for that spread
 ### Cron example
 
 ```bash
-*/15 * * * * curl -sS -X POST "$API_BASE/hr/sheet-sources/sync-all" \
+*/30 * * * * curl -sS -X POST "$API_BASE/hr/sheet-sources/sync-all" \
   -H "x-cron-secret: $CRON_SECRET" -H "Content-Type: application/json" -d '{}'
 ```
 

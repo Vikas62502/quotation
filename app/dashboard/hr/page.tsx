@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api, ApiError } from "@/lib/api"
-import { getRealtime } from "@/lib/realtime"
+import { getRealtime, initRealtime } from "@/lib/realtime"
 import { SolarLogo } from "@/components/solar-logo"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -826,7 +826,12 @@ export default function HrDashboardPage() {
   }, [dealers, useApi, realtimeTick, callingRange, callingDealerFilter, callingCustomFromDate, callingCustomToDate])
 
   useEffect(() => {
-    const socket = getRealtime()
+    if (!isAuthenticated) return
+    const token = typeof window !== "undefined" ? localStorage.getItem("authToken") : null
+    if (!token) return
+
+    // Ensure socket exists (auth may init later than first HR mount).
+    const socket = initRealtime(token) || getRealtime()
     if (!socket) return
 
     const triggerRealtimeRefetch = () => {
@@ -836,30 +841,38 @@ export default function HrDashboardPage() {
     const onBackendMutation = (evt: any) => {
       const domain = String(evt?.domain || "").toLowerCase()
       const path = String(evt?.path || "").toLowerCase()
+      const reason = String(evt?.reason || evt?.type || "").toLowerCase()
       if (
         domain === "hr" ||
         domain === "admin" ||
         domain === "dealers" ||
         domain === "dealer" ||
         path.includes("calling") ||
-        path.includes("leads")
+        path.includes("leads") ||
+        path.includes("sheet") ||
+        reason.includes("sheet") ||
+        reason.includes("upload")
       ) {
         triggerRealtimeRefetch()
       }
     }
 
+    const onUploadsUpdated = () => {
+      triggerRealtimeRefetch()
+    }
+
     socket.on("dealer:directory-updated", triggerRealtimeRefetch)
     socket.on("calling:actions-updated", triggerRealtimeRefetch)
-    socket.on("calling:uploads-updated", triggerRealtimeRefetch)
+    socket.on("calling:uploads-updated", onUploadsUpdated)
     socket.on("backend:mutation", onBackendMutation)
 
     return () => {
       socket.off("dealer:directory-updated", triggerRealtimeRefetch)
       socket.off("calling:actions-updated", triggerRealtimeRefetch)
-      socket.off("calling:uploads-updated", triggerRealtimeRefetch)
+      socket.off("calling:uploads-updated", onUploadsUpdated)
       socket.off("backend:mutation", onBackendMutation)
     }
-  }, [])
+  }, [isAuthenticated])
 
   const toggleDealer = (dealerId: string) => {
     setSelectedDealerIds((prev) => (prev.includes(dealerId) ? prev.filter((id) => id !== dealerId) : [...prev, dealerId]))

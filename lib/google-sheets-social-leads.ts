@@ -261,12 +261,18 @@ export type SocialMediaCallingLeadLike = {
 export function isSocialMediaCallingLead(lead: SocialMediaCallingLeadLike | null | undefined): boolean {
   if (!lead) return false
 
-  const sourceType = String(lead.sourceType || lead.source_type || "").toLowerCase()
+  const sourceType = String(lead.sourceType || lead.source_type || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
   if (
     sourceType === "google_sheet" ||
     sourceType === "social_media" ||
     sourceType === "social" ||
-    sourceType === "meta"
+    sourceType === "meta" ||
+    sourceType.includes("sheet") ||
+    sourceType.includes("social") ||
+    sourceType.includes("meta")
   ) {
     return true
   }
@@ -278,7 +284,16 @@ export function isSocialMediaCallingLead(lead: SocialMediaCallingLeadLike | null
       lead.file_name ||
       "",
   ).toLowerCase()
-  if (fileName.includes("google sheet")) return true
+  if (
+    fileName.includes("google sheet") ||
+    fileName.includes("google_sheet") ||
+    fileName.includes("social") ||
+    fileName.includes("meta") ||
+    fileName.includes("facebook") ||
+    fileName.includes("instagram")
+  ) {
+    return true
+  }
 
   if (lead.sheetSourceId || lead.sheet_source_id) return true
 
@@ -286,7 +301,18 @@ export function isSocialMediaCallingLead(lead: SocialMediaCallingLeadLike | null
   if (externalId.startsWith("l:") || externalId.startsWith("ag:")) return true
 
   const platform = String(lead.platform || "").toLowerCase()
-  if (platform === "ig" || platform === "fb" || platform === "facebook" || platform === "instagram") return true
+  if (
+    platform === "ig" ||
+    platform === "fb" ||
+    platform === "facebook" ||
+    platform === "instagram" ||
+    platform === "meta"
+  ) {
+    return true
+  }
+
+  const campaign = String(lead.campaignName || lead.campaign_name || "").trim()
+  if (campaign) return true
 
   const sheetStatus = String(lead.sheetLeadStatus || lead.lead_status || lead.leadStatus || "").toUpperCase()
   if (sheetStatus === "CREATED") return true
@@ -294,7 +320,9 @@ export function isSocialMediaCallingLead(lead: SocialMediaCallingLeadLike | null
   const raw = lead.raw || lead.raw_json
   if (raw && typeof raw === "object") {
     const keys = Object.keys(raw)
-    if (keys.some((k) => k.includes("campaign") || k.includes("ad_name") || k.includes("phone_number"))) return true
+    if (keys.some((k) => k.includes("campaign") || k.includes("ad_name") || k.includes("phone_number"))) {
+      return true
+    }
   }
 
   const note = String(lead.customerNote || "").toLowerCase()

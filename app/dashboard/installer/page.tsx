@@ -365,7 +365,7 @@ export default function InstallerDashboardPage() {
               role === "installation-team" && installationTeamUser?.teamId
                 ? String(installationTeamUser.teamId)
                 : undefined,
-            getQuotationById: (id) => api.quotations.getById(id),
+            getQuotationById: (id) => api.quotations.getById(id, { suppressErrorLog: true }),
           })
           setInstallerQueueApprovedIds(approvedIds)
           setQuotations(rows.map((row) => installerQuotationFromApiRecord(row)) as InstallerQuotation[])

@@ -30,6 +30,14 @@
  * =============================================================================
  */
 
+/**
+ * P0 — Zod / Joi for PUT body `access` / `permissions` MUST allow every key below.
+ * Live error if missing: `Invalid option: expected one of "admin"|"quotation"|…`
+ * (Admin → Users → Update User with Visitor Reports / Calling Reports checked.)
+ *
+ *   access: z.array(z.enum(ACCESS_KEYS)).min(1)
+ *   // or: z.array(z.enum(["admin","quotation",…,"visitor_reports","calling_reports"]))
+ */
 export const ACCESS_KEYS = [
   "admin",
   "quotation",
@@ -39,6 +47,8 @@ export const ACCESS_KEYS = [
   "final_confirmation",
   "hr",
   "visitor",
+  "visitor_reports",
+  "calling_reports",
 ] as const
 
 export type AccessKey = (typeof ACCESS_KEYS)[number]
@@ -54,6 +64,9 @@ const ACCESS_TO_ROLE: Record<AccessKey, string> = {
   final_confirmation: "baldev",
   hr: "hr",
   visitor: "visitor",
+  // Reports are dashboard grants, not primary roles — keep dealer/ops role intact
+  visitor_reports: "dealer",
+  calling_reports: "dealer",
 }
 
 const PRIMARY_PRIORITY: AccessKey[] = [
@@ -65,6 +78,9 @@ const PRIMARY_PRIORITY: AccessKey[] = [
   "hr",
   "visitor",
   "quotation",
+  // visitor_reports / calling_reports last — never preferred as primary role
+  "visitor_reports",
+  "calling_reports",
 ]
 
 /** Normalize FE / DB values into canonical access keys. */
@@ -81,6 +97,8 @@ export function normalizeAccess(raw: unknown): AccessKey[] {
     if (key === "installer" || key === "install") key = "installation"
     if (key === "baldev" || key === "final" || key === "confirmation") key = "final_confirmation"
     if (key === "dealer" || key === "quotations") key = "quotation"
+    if (key === "visitor_report" || key === "visitorreports") key = "visitor_reports"
+    if (key === "calling_report" || key === "callingreports") key = "calling_reports"
     if (!ACCESS_SET.has(key as AccessKey) || seen.has(key)) continue
     seen.add(key)
     out.push(key as AccessKey)
@@ -310,6 +328,40 @@ export function requireAccess(key: AccessKey) {
   }
 }
 
+/**
+ * P0 — Admin Users tab (Update User) failing with:
+ *   "Insufficient permissions. Admin access required."
+ *
+ * Cause: routes like PUT /admin/dealers/:id use strict `role === "admin"` only.
+ *
+ * Fix: use requireAccess("admin") OR canAccessSection(user, "admin") so JWT with
+ *   role=admin OR access includes "admin" can update users.
+ *
+ * Also apply on:
+ *   GET/PUT/POST /admin/dealers*
+ *   GET/PUT/POST /admin/account-managers*
+ *   GET/PUT/POST /admin/visitors*
+ *
+ * Default list filter: isActive=true (Active only). `?includeInactive=true` for admin toggle.
+ *
+ * Read vs write (moduleFieldPermissions.level):
+ *   read  → GET/list/view only (403 on PATCH/POST mutations)
+ *   write → GET + mutations for that module
+ *   none  → no module access
+ * Scope (everyone / selected_users / office_only) filters WHICH rows are returned.
+ *
+ * Report dashboards (P0 — REQUIRED §AX):
+ *   GET /admin/calling-actions  → requireAnyAccess(["admin","calling_reports","hr"])
+ *   GET admin visits / visitor reports → requireAnyAccess(["admin","visitor_reports"])
+ *   Do not use role==="admin" only — Calling Reports users get AUTH_004 otherwise.
+ *
+ * See BACKEND_USER_FIELD_PERMISSIONS.ts + REQUIRED §AR / §AX.
+ */
+export function requireAdminAccess() {
+  return requireAccess("admin")
+}
+
+
 /** Allow several sections (OR). */
 export function requireAnyAccess(keys: AccessKey[]) {
   return (req, res, next) => {
@@ -381,6 +433,11 @@ export function publicDealer(dealer) {
     role: dealer.role || "dealer",
     access: finalAccess,
     permissions: finalAccess,
+    officeLocation: dealer.officeLocation || dealer.office_location || null,
+    office_location: dealer.officeLocation || dealer.office_location || null,
+    // MUST echo — SPA reopens Update User from this (Field access Write/Read only).
+    moduleFieldPermissions: dealer.moduleFieldPermissions || dealer.modulePermissions || {},
+    modulePermissions: dealer.moduleFieldPermissions || dealer.modulePermissions || {},
     isActive: dealer.isActive !== false,
     emailVerified: !!dealer.emailVerified,
     createdAt: dealer.createdAt,
@@ -388,8 +445,12 @@ export function publicDealer(dealer) {
 }
 
 export async function listDealers(req, res) {
-  // Auth: admin
-  const dealers = await Dealer.findAll(/* pagination from query */)
+  // Auth: requireAccess("admin") — NOT role===admin only
+  // Default: Active only. Pass includeInactive=true to include pending/inactive.
+  const includeInactive =
+    String(req.query.includeInactive || req.query.include_inactive || "").toLowerCase() === "true"
+  const where = includeInactive ? {} : { isActive: true }
+  const dealers = await Dealer.findAll({ where /* + pagination */ })
   return res.json({
     success: true,
     dealers: dealers.map(publicDealer),
@@ -398,7 +459,7 @@ export async function listDealers(req, res) {
 }
 
 export async function updateDealer(req, res) {
-  // Auth: admin
+  // Auth: requireAccess("admin") — allow access[] containing "admin"
   const dealer = await Dealer.findById(req.params.id)
   if (!dealer) {
     return res.status(404).json({
@@ -423,6 +484,12 @@ export async function updateDealer(req, res) {
   if (body.address != null) dealer.address = body.address
   if (body.isActive != null) dealer.isActive = !!body.isActive
   if (body.emailVerified != null) dealer.emailVerified = !!body.emailVerified
+  if (body.officeLocation != null || body.office_location != null) {
+    dealer.officeLocation = body.officeLocation || body.office_location
+  }
+  if (body.moduleFieldPermissions != null || body.modulePermissions != null) {
+    dealer.moduleFieldPermissions = body.moduleFieldPermissions || body.modulePermissions
+  }
 
   // Access checkboxes from Admin → Users → Edit
   const nextAccess = normalizeAccess(body.access ?? body.permissions)

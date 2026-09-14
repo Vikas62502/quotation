@@ -4,13 +4,17 @@
  * BACKEND — Admin Calling Reports counts (date filter) — Aug 2026
  * =============================================================================
  *
- * UI: Admin → Calling Reports → Employee Calling Actions
- * Cards: Total Calls, Not Connected, Connected, Connected — Not Interested /
- *        Interested / Follow Up
+ * UI: Admin → Calling Reports OR dedicated `/dashboard/calling-reports`
+ *     (users with access key `calling_reports`, not full admin)
+ *
+ * Auth (P0 — REQUIRED §AX):
+ *   Allow JWT if role ∈ admin|super-admin|hr OR access includes
+ *   `admin` | `calling_reports` | `hr`.
+ *   Do NOT require role === "admin" only — report dashboards get AUTH_004 otherwise.
  *
  * Frontend: `app/dashboard/admin/page.tsx` (`loadCallingActionsForReports`),
  *           `lib/calling-report-date-range.ts`, `lib/calling-action-summary.ts`
- * Docs: REQUIRED §AI, HANDOFF §36, also §J / HANDOFF §4.8
+ * Docs: REQUIRED §AI / §AX, HANDOFF §4.8 / §46
  *
  * Symptom:
  *   Monthly/Weekly Total Calls stuck at 1000 or does not match the selected

@@ -93,7 +93,7 @@ export function buildMeterBrandDropdownOptions(catalogBrands?: string[]): string
 export type PdfPanelRangeKey =
   | "waaree_540_560_bifacial"
   | "waaree_580_700_bifacial_topcon"
-  | "waaree_580_630"
+  | "waaree_580_620"
   | "adani_540_580_bifacial"
   | "adani_610_625_bifacial_topcon"
   | "adani_600_630"
@@ -114,7 +114,7 @@ export const INA_DCR_PANEL_RANGE_KEY: PdfPanelRangeKey = "ina_500_600_bifacial"
 /** 80kW Non-DCR Vsole/Xwatt commercial set — panel ranges on PDF. */
 export const NON_DCR_80KW_PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey> = {
   renewenergy: "renew_energy_600_630",
-  waaree: "waaree_580_630",
+  waaree: "waaree_580_620",
   adani: "adani_600_630",
 }
 
@@ -139,7 +139,14 @@ export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): Pdf
 
 export function isTopconPdfPanelRangeKey(key?: string | null): boolean {
   const normalized = String(key ?? "").toLowerCase()
-  return normalized.includes("topcon") || normalized === "premier_energy_600_610"
+  return (
+    normalized.includes("topcon") ||
+    normalized === "premier_energy_600_610" ||
+    // Waaree 580–620 PDF range is N-Type Bifacial Topcon (key has no "topcon" suffix).
+    normalized === "waaree_580_620" ||
+    // Legacy key before rename to waaree_580_620
+    normalized === "waaree_580_630"
+  )
 }
 
 /** True when stored PDF range keys indicate a TOPCon package (Adani Topcon, Premier, Waaree 580+, etc.). */
@@ -167,13 +174,13 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
   },
   {
     key: "waaree_580_700_bifacial_topcon",
-    label: "580-700W Bifacial Topcon",
-    pdfSpecification: "580-700W Bifacial Topcon",
+    label: "580-700W N-Type Bifacial Topcon",
+    pdfSpecification: "580-700W N-Type Bifacial Topcon",
   },
   {
-    key: "waaree_580_630",
-    label: "580W - 630W",
-    pdfSpecification: "580W - 630W",
+    key: "waaree_580_620",
+    label: "580W - 620W N-Type Bifacial Topcon",
+    pdfSpecification: "580W - 620W N-Type Bifacial Topcon",
   },
   {
     key: "adani_540_580_bifacial",
@@ -182,8 +189,8 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
   },
   {
     key: "adani_610_625_bifacial_topcon",
-    label: "610-625W Bifacial Topcon",
-    pdfSpecification: "610-625W Bifacial Topcon",
+    label: "610-625W N-Type Bifacial Topcon",
+    pdfSpecification: "610-625W N-Type Bifacial Topcon",
   },
   {
     key: "adani_600_630",
@@ -192,13 +199,13 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
   },
   {
     key: "premier_600_625_bifacial_topcon",
-    label: "600-625W Bifacial Topcon",
-    pdfSpecification: "600-625W Bifacial Topcon",
+    label: "600-625W N-Type Bifacial Topcon",
+    pdfSpecification: "600-625W N-Type Bifacial Topcon",
   },
   {
     key: "premier_energy_600_610",
-    label: "600W - 610W Topcon Bifacial",
-    pdfSpecification: "600W - 610W Topcon Bifacial",
+    label: "600W - 610W N-Type Topcon Bifacial",
+    pdfSpecification: "600W - 610W N-Type Topcon Bifacial",
   },
   {
     key: "ina_500_600_bifacial",
@@ -217,8 +224,8 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
   },
   {
     key: "renewsys_600_630_bifacial_topcon",
-    label: "600-630W Bifacial Topcon",
-    pdfSpecification: "600-630W Bifacial Topcon",
+    label: "600-630W N-Type Bifacial Topcon",
+    pdfSpecification: "600-630W N-Type Bifacial Topcon",
   },
   {
     key: "renew_energy_600_630",
@@ -228,7 +235,7 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
 ]
 
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
-  waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon", "waaree_580_630"],
+  waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon", "waaree_580_620"],
   adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon", "adani_600_630"],
   premierenergies: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
   premier: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
@@ -407,6 +414,10 @@ function pickPdfPanelRangeKey(
   let raw = products[field] ?? products[snakeField]
   if (typeof raw === "string" && raw.trim() === "renewsys_600_630") {
     raw = "renewsys_600_630_bifacial_topcon"
+  }
+  // Legacy Waaree range key → current 580–620 N-Type Topcon key
+  if (typeof raw === "string" && raw.trim() === "waaree_580_630") {
+    raw = "waaree_580_620"
   }
   const brand = brandForPdfRangeField(products, field)
 

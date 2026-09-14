@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   getScopeOptionsForModule,
+  isAlwaysReadOnlyWorkflowModule,
   OFFICE_LOCATIONS,
   normalizeModulePermissionScope,
   type ModuleFieldPermissions,
@@ -27,15 +28,20 @@ export function patchModuleFieldPermission(
     scope: "everyone" as ModulePermissionScope,
     selectedUserIds: [],
   }
+  const next = { ...current, ...patch }
+  // Visitor / Calling reports stay view-only.
+  if (isAlwaysReadOnlyWorkflowModule(module) && next.level === "write") {
+    next.level = "read"
+  }
   return {
     ...permissions,
-    [module]: { ...current, ...patch },
+    [module]: next,
   }
 }
 
-function defaultRule(): ModulePermissionRule {
+function defaultRule(module?: WorkflowModuleKey): ModulePermissionRule {
   return {
-    level: "none",
+    level: module && isAlwaysReadOnlyWorkflowModule(module) ? "read" : "none",
     scope: "everyone",
     selectedUserIds: [],
   }
@@ -87,7 +93,9 @@ export function WorkflowModuleInlineControls({
   userOptions: UserOption[]
   enabled: boolean
 }) {
-  const rule = permissions[module] ?? defaultRule()
+  const alwaysReadOnly = isAlwaysReadOnlyWorkflowModule(module)
+  const rule = permissions[module] ?? defaultRule(module)
+  const level = alwaysReadOnly && rule.level !== "none" ? "read" : rule.level
   const scopeOptions = getScopeOptionsForModule(module)
 
   return (
@@ -95,22 +103,33 @@ export function WorkflowModuleInlineControls({
       <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <Label className="text-[11px] text-muted-foreground shrink-0">Field access</Label>
-          <Select
-            value={rule.level}
-            onValueChange={(value) =>
-              onChange(patchModuleFieldPermission(permissions, module, { level: value as ModulePermissionLevel }))
-            }
-            disabled={!enabled}
-          >
-            <SelectTrigger className="h-8 w-full sm:w-[140px] text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">No access</SelectItem>
-              <SelectItem value="read">Read only</SelectItem>
-              <SelectItem value="write">Read &amp; write</SelectItem>
-            </SelectContent>
-          </Select>
+          {alwaysReadOnly ? (
+            <Select value="read" disabled={!enabled}>
+              <SelectTrigger className="h-8 w-full sm:w-[140px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="read">Read only</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : (
+            <Select
+              value={rule.level}
+              onValueChange={(value) =>
+                onChange(patchModuleFieldPermission(permissions, module, { level: value as ModulePermissionLevel }))
+              }
+              disabled={!enabled}
+            >
+              <SelectTrigger className="h-8 w-full sm:w-[140px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No access</SelectItem>
+                <SelectItem value="read">Read only</SelectItem>
+                <SelectItem value="write">Read &amp; write</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="flex items-center gap-2 min-w-0">
           <Label className="text-[11px] text-muted-foreground shrink-0">Which to access</Label>
@@ -121,10 +140,11 @@ export function WorkflowModuleInlineControls({
                 patchModuleFieldPermission(permissions, module, {
                   scope: value as ModulePermissionScope,
                   selectedUserIds: value === "selected_users" ? rule.selectedUserIds : [],
+                  ...(alwaysReadOnly ? { level: "read" as const } : {}),
                 }),
               )
             }
-            disabled={!enabled || rule.level === "none"}
+            disabled={!enabled || (!alwaysReadOnly && rule.level === "none")}
           >
             <SelectTrigger className="h-8 w-full sm:w-[180px] text-xs">
               <SelectValue />
@@ -137,11 +157,11 @@ export function WorkflowModuleInlineControls({
           </Select>
         </div>
       </div>
-      {enabled && rule.scope === "selected_users" && rule.level !== "none" ? (
+      {enabled && rule.scope === "selected_users" && (alwaysReadOnly || level !== "none") ? (
         <div className="space-y-1 max-h-28 overflow-y-auto rounded border border-border/40 p-2 sm:ml-6">
           <p className="text-[10px] text-muted-foreground">Selected one</p>
           {userOptions.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No users loaded.</p>
+            <p className="text-xs text-muted-foreground">No active users loaded.</p>
           ) : (
             userOptions.map((user) => {
               const checked = rule.selectedUserIds.includes(user.id)
@@ -157,7 +177,12 @@ export function WorkflowModuleInlineControls({
                       const ids = on
                         ? [...rule.selectedUserIds, user.id]
                         : rule.selectedUserIds.filter((id) => id !== user.id)
-                      onChange(patchModuleFieldPermission(permissions, module, { selectedUserIds: ids }))
+                      onChange(
+                        patchModuleFieldPermission(permissions, module, {
+                          selectedUserIds: ids,
+                          ...(alwaysReadOnly ? { level: "read" as const } : {}),
+                        }),
+                      )
                     }}
                   />
                   <span className="truncate">{user.label}</span>
@@ -176,6 +201,8 @@ export function isWorkflowAccessKey(key: string): key is WorkflowModuleKey {
     key === "accounts" ||
     key === "installation" ||
     key === "metering" ||
-    key === "final_confirmation"
+    key === "final_confirmation" ||
+    key === "visitor_reports" ||
+    key === "calling_reports"
   )
 }

@@ -230,22 +230,255 @@ function normalizeAssigneeId(value) {
 //   computeHrUploadLeadCounts(leads)
 
 
-function getSheetsClient() {
+function getSheetsClient({ writable = false } = {}) {
+  const scope = writable
+    ? "https://www.googleapis.com/auth/spreadsheets"
+    : "https://www.googleapis.com/auth/spreadsheets.readonly"
   const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
   if (json) {
     const credentials = JSON.parse(json)
     const auth = new google.auth.GoogleAuth({
       credentials,
-      scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+      scopes: [scope],
     })
     return google.sheets({ version: "v4", auth })
   }
   const auth = new google.auth.GoogleAuth({
     keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+    scopes: [scope],
   })
   return google.sheets({ version: "v4", auth })
 }
+
+/**
+ * Columns the app WRITES back to Google Sheets (create header if missing).
+ * Meta import columns (id, phone_number, full_name, …) stay read-only from Meta.
+ * Aliases include truncated sheet titles (e.g. "Assignment Stat", "1st Call Respon").
+ */
+export const SHEET_WRITEBACK_HEADERS = {
+  assignedDealer: ["Assigned Dealer", "assigned_dealer", "NAME"],
+  assignmentStatus: [
+    "Assignment Status",
+    "Assignment Stat",
+    "assignment_status",
+    "Call Status",
+  ],
+  leadStatus: ["lead_status"],
+  remarks: ["Remarks", "remarks"],
+  remarks2: ["Remarks 2", "remarks2"],
+  firstCallResponse: [
+    "1st Call Response",
+    "1st Call Respon",
+    "1st call response",
+  ],
+  secondCallResponse: [
+    "2nd Call Response",
+    "2nd Call Respon",
+    "2nd call response",
+  ],
+  finalDecision: ["Final Decision", "Final Decison", "final decision"],
+  finalDecisionReason: ["Reason of Final Decision", "reason of final decision"],
+  /** CRM address / visit location — create "Address" column on Ajmer/Jaipur tabs if missing. */
+  address: ["Address", "address", "street_address", "Street Address"],
+}
+
+/** Find column index; allow truncated headers (sheet title cut off in UI). */
+function findHeaderIndex(headers, aliases) {
+  const normalized = headers.map((h) => normalizeHeader(h))
+  for (const a of aliases) {
+    const want = normalizeHeader(a)
+    if (!want) continue
+    const exact = normalized.indexOf(want)
+    if (exact >= 0) return exact
+  }
+  // Prefix match: "Assignment Stat" ↔ "Assignment Status", "1st Call Respon" ↔ "…Response"
+  for (const a of aliases) {
+    const want = normalizeHeader(a)
+    if (want.length < 6) continue
+    const idx = normalized.findIndex(
+      (h) => h === want || h.startsWith(want) || want.startsWith(h),
+    )
+    if (idx >= 0) return idx
+  }
+  return -1
+}
+
+/**
+ * DB → Google Sheet write-back (P0).
+ * Call after: assign-unassigned, dealer calling submit/complete/reschedule,
+ * any PATCH that updates assigned_dealer_id / status / remarks / final_decision / address
+ * on a lead with sheet_source_id set.
+ *
+ * Match row by external_id (column `id`) or sheet_row_index.
+ * Never overwrite Meta columns (ad_*, campaign_*, phone_number, full_name, created_time).
+ */
+function formatLeadAddressForSheet(lead) {
+  const raw =
+    lead?.address ||
+    lead?.street_address ||
+    lead?.streetAddress ||
+    lead?.customer_address ||
+    lead?.customerAddress ||
+    ""
+  if (typeof raw === "string") return raw.trim()
+  if (raw && typeof raw === "object") {
+    return [raw.street, raw.city, raw.state, raw.pincode || raw.pinCode]
+      .map((x) => String(x || "").trim())
+      .filter(Boolean)
+      .join(", ")
+  }
+  const parts = [
+    lead?.street,
+    lead?.city,
+    lead?.state,
+    lead?.pincode || lead?.pinCode || lead?.post_code || lead?.postCode,
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean)
+  return parts.join(", ")
+}
+
+export async function writeBackHrLeadToSheet(lead, { dealerNameById } = {}) {
+  if (!lead?.sheet_source_id && !lead?.sheetSourceId) return { ok: false, skipped: "not_sheet_lead" }
+
+  const source =
+    lead.sheetSource ||
+    (await HrSheetSource.findByPk(lead.sheet_source_id || lead.sheetSourceId))
+  if (!source) return { ok: false, skipped: "no_source" }
+
+  const sheets = getSheetsClient({ writable: true })
+  const spreadsheetId = source.spreadsheet_id
+  const tab = source.sheet_tab_name
+
+  const meta = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `'${tab}'!1:1`,
+  })
+  let headers = (meta.data.values && meta.data.values[0]) || []
+  if (!headers.length) return { ok: false, error: "no_headers" }
+
+  // Ensure write-back columns exist (append to header row if missing).
+  const ensureHeader = (aliases, preferred) => {
+    const idx = findHeaderIndex(headers, aliases)
+    if (idx >= 0) return idx
+    headers = [...headers, preferred]
+    return headers.length - 1
+  }
+
+  const colAssigned = ensureHeader(SHEET_WRITEBACK_HEADERS.assignedDealer, "Assigned Dealer")
+  const colAssignStatus = ensureHeader(SHEET_WRITEBACK_HEADERS.assignmentStatus, "Assignment Status")
+  const colLeadStatus = ensureHeader(SHEET_WRITEBACK_HEADERS.leadStatus, "lead_status")
+  const colRemarks = ensureHeader(SHEET_WRITEBACK_HEADERS.remarks, "Remarks")
+  const colRemarks2 = ensureHeader(SHEET_WRITEBACK_HEADERS.remarks2, "Remarks 2")
+  const colFirst = ensureHeader(SHEET_WRITEBACK_HEADERS.firstCallResponse, "1st Call Response")
+  const colSecond = ensureHeader(SHEET_WRITEBACK_HEADERS.secondCallResponse, "2nd Call Response")
+  const colFinal = ensureHeader(SHEET_WRITEBACK_HEADERS.finalDecision, "Final Decision")
+  const colReason = ensureHeader(SHEET_WRITEBACK_HEADERS.finalDecisionReason, "Reason of Final Decision")
+  const colAddress = ensureHeader(SHEET_WRITEBACK_HEADERS.address, "Address")
+
+  // Persist any newly appended headers
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'${tab}'!1:1`,
+    valueInputOption: "RAW",
+    requestBody: { values: [headers] },
+  })
+
+  // Resolve row index: prefer sheet_row_index; else find by external id in column `id`
+  let rowIndex = Number(lead.sheet_row_index || lead.sheetRowIndex || 0)
+  const externalId = lead.external_id || lead.externalId
+  if (!rowIndex || rowIndex < 2) {
+    if (!externalId) return { ok: false, skipped: "no_row_match" }
+    const idCol = headers.findIndex((h) => normalizeHeader(h) === "id")
+    if (idCol < 0) return { ok: false, skipped: "no_id_column" }
+    const colLetter = sheetsColumnLetter(idCol)
+    const idVals = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${tab}'!${colLetter}:${colLetter}`,
+    })
+    const cells = idVals.data.values || []
+    for (let i = 1; i < cells.length; i++) {
+      if (String(cells[i]?.[0] || "").trim() === String(externalId).trim()) {
+        rowIndex = i + 1 // 1-based
+        break
+      }
+    }
+  }
+  if (!rowIndex || rowIndex < 2) return { ok: false, skipped: "row_not_found" }
+
+  const dealerId = normalizeAssigneeId(lead.assigned_dealer_id || lead.assignedDealerId)
+  const dealerName =
+    (dealerId && (dealerNameById?.[dealerId] || lead.assigned_dealer_name || lead.assignedDealerName)) ||
+    lead.assigned_person_name ||
+    ""
+
+  const status = String(lead.status || lead.assignmentStatus || "").trim()
+  const leadStatus = String(lead.lead_status || lead.leadStatus || "").trim()
+  // Prefer CRM calling status for lead_status when completed / in progress
+  const sheetLeadStatus =
+    /complete|done/i.test(status) ? "COMPLETED"
+    : /progress|assigned|calling/i.test(status) ? "IN_PROGRESS"
+    : leadStatus || "CREATED"
+
+  const addressText = formatLeadAddressForSheet(lead)
+
+  const updates = [
+    { col: colAssigned, value: dealerName },
+    { col: colAssignStatus, value: status || (dealerId ? "assigned" : "unassigned") },
+    { col: colLeadStatus, value: sheetLeadStatus },
+    { col: colRemarks, value: lead.remarks || "" },
+    { col: colRemarks2, value: lead.remarks_2 || lead.remarks2 || "" },
+    { col: colFirst, value: lead.first_call_response || lead.firstCallResponse || "" },
+    { col: colSecond, value: lead.second_call_response || lead.secondCallResponse || "" },
+    { col: colFinal, value: lead.final_decision || lead.finalDecision || "" },
+    {
+      col: colReason,
+      value: lead.final_decision_reason || lead.finalDecisionReason || "",
+    },
+    { col: colAddress, value: addressText },
+  ]
+
+  const data = updates.map(({ col, value }) => ({
+    range: `'${tab}'!${sheetsColumnLetter(col)}${rowIndex}`,
+    values: [[value == null ? "" : String(value)]],
+  }))
+
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: "RAW", data },
+  })
+
+  // Keep cursor accurate if we resolved row by id
+  if (lead.id && rowIndex) {
+    await HrLead.update(
+      { sheet_row_index: rowIndex },
+      { where: { id: lead.id } },
+    ).catch(() => {})
+  }
+
+  return { ok: true, rowIndex, tab }
+}
+
+function sheetsColumnLetter(index0) {
+  let n = index0 + 1
+  let s = ""
+  while (n > 0) {
+    const r = (n - 1) % 26
+    s = String.fromCharCode(65 + r) + s
+    n = Math.floor((n - 1) / 26)
+  }
+  return s
+}
+
+/**
+ * Hook points (call writeBackHrLeadToSheet):
+ * 1. After assignUnassignedWithActiveCap — for each newly assigned sheet lead
+ * 2. After dealer calling-queue action (submit / complete / reschedule / not_interested)
+ * 3. After HR/admin PATCH that changes assignment or calling fields on sheet leads
+ *
+ * Pull sync (syncSheetTabSource) MUST NOT overwrite these DB fields from empty sheet cells
+ * for existing external_id rows — DB is source of truth for assignment + calling status.
+ */
 
 // -----------------------------------------------------------------------------
 // Column mapping (Meta export headers)
@@ -431,7 +664,18 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
     })
   }
 
-  emitSocket("calling:uploads-updated")
+  // SPA: HR Social Media + Calling Data listen for this (rooms: stream:hr + stream:dealers).
+  emitSocket("calling:uploads-updated", {
+    reason: "sheet_sync",
+    sourceId: sourceRow.id,
+    spreadsheetId: sourceRow.spreadsheet_id,
+    syncedAt: new Date().toISOString(),
+  })
+  emitSocket("backend:mutation", {
+    domain: "hr",
+    path: "/hr/sheet-sources/sync",
+    reason: "sheet_sync",
+  })
 
   return { imported, skipped, uploadId: upload.id }
 }
@@ -557,7 +801,7 @@ export async function postHrSheetSourceSync(req, res) {
 /**
  * POST /api/hr/sheet-sources/sync-all
  * Cron / ops: sync every **enabled** sheet source for the default spreadsheet.
- * Recommended schedule: every 15 minutes.
+ * Recommended schedule: every 30 minutes.
  * Emits `calling:uploads-updated` once at the end (and per syncSheetTabSource).
  *
  * Auth: HR JWT, or internal cron secret header `x-cron-secret` matching CRON_SECRET env.
@@ -596,6 +840,11 @@ export async function postHrSheetSourcesSyncAll(req, res) {
     syncedAt: new Date().toISOString(),
     count: results.length,
   })
+  emitSocket("backend:mutation", {
+    domain: "hr",
+    path: "/hr/sheet-sources/sync-all",
+    reason: "sheet_auto_sync",
+  })
 
   return res.json({
     success: true,
@@ -610,8 +859,8 @@ export async function postHrSheetSourcesSyncAll(req, res) {
 /**
  * Cron entry (node-cron / agenda / system crontab):
  *
- *   // every 15 minutes
- *   cron.schedule("*/15 * * * *", async () => {
+ *   // every 30 minutes
+ *   cron.schedule("*/30 * * * *", async () => {
  *     await fetch(`${API_BASE}/hr/sheet-sources/sync-all`, {
  *       method: "POST",
  *       headers: { "x-cron-secret": process.env.CRON_SECRET, "Content-Type": "application/json" },
@@ -662,8 +911,11 @@ router.post("/hr/sheet-sources/:id/sync", authHr, postHrSheetSourceSync)
 router.get("/hr/sheet-sources/:id/leads", authHr, getHrSheetSourceLeads)
 
 Cron (required for auto-sync — Google Sheets cannot push via socket):
-  */15 * * * *  POST /hr/sheet-sources/sync-all  (header x-cron-secret)
+  */30 * * * *  POST /hr/sheet-sources/sync-all  (header x-cron-secret)
   After each run emit calling:uploads-updated so HR/dealer UIs refresh.
+
+Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLeadToSheet
+  Sheets scope must be spreadsheets (read-write). Pull must not wipe CRM fields.
 */
 
 // -----------------------------------------------------------------------------

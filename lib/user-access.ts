@@ -12,6 +12,8 @@ export type UserAccessKey =
   | "final_confirmation"
   | "hr"
   | "visitor"
+  | "visitor_reports"
+  | "calling_reports"
 
 export type UserAccessOption = {
   key: UserAccessKey
@@ -69,6 +71,18 @@ export const USER_ACCESS_OPTIONS: UserAccessOption[] = [
     description: "Visitor site visits dashboard",
     href: "/visitor/dashboard",
   },
+  {
+    key: "visitor_reports",
+    label: "Visitor Reports",
+    description: "View-only visitor site visit reports",
+    href: "/dashboard/admin?tab=visitor-reports",
+  },
+  {
+    key: "calling_reports",
+    label: "Calling Reports",
+    description: "View-only calling action reports",
+    href: "/dashboard/admin?tab=calling-reports",
+  },
 ]
 
 /** Admin → Users create/edit checkboxes. Admin access is not granted from this form. */
@@ -89,6 +103,8 @@ const PRIMARY_ROLE_PRIORITY: UserAccessKey[] = [
   "final_confirmation",
   "hr",
   "visitor",
+  "visitor_reports",
+  "calling_reports",
   "quotation",
 ]
 
@@ -100,6 +116,7 @@ const ACCESS_TO_BACKEND_ROLE: Partial<Record<UserAccessKey, string>> = {
   final_confirmation: "baldev",
   hr: "hr",
   visitor: "visitor",
+  // visitor_reports / calling_reports are not primary roles — omit so they never become role "admin"
   quotation: "dealer",
 }
 
@@ -121,12 +138,35 @@ export function normalizeAccessList(raw: unknown): UserAccessKey[] {
             ? "final_confirmation"
             : key === "dealer" || key === "quotations"
               ? "quotation"
-              : key
+              : key === "visitor_report" || key === "visitorreports" || key === "visitor_reports_tab"
+                ? "visitor_reports"
+                : key === "calling_report" || key === "callingreports" || key === "calling_reports_tab"
+                  ? "calling_reports"
+                  : key
     if (!ACCESS_SET.has(mapped) || seen.has(mapped)) continue
     seen.add(mapped)
     out.push(mapped as UserAccessKey)
   }
   return out
+}
+
+/** New SPA keys — older API Zod enums often omit these and return "Invalid option: expected one of …". */
+export const REPORT_ONLY_ACCESS_KEYS: readonly UserAccessKey[] = [
+  "visitor_reports",
+  "calling_reports",
+]
+
+/** Access safe to send when the live API has not shipped report keys yet. */
+export function accessWithoutReportOnlyKeys(access: UserAccessKey[]): UserAccessKey[] {
+  return normalizeAccessList(access).filter((k) => !REPORT_ONLY_ACCESS_KEYS.includes(k))
+}
+
+/** True when API rejected `access` / enum (Zod: Invalid option: expected one of "admin"|…). */
+export function looksLikeAccessEnumValidationMessage(text: string): boolean {
+  const m = String(text || "")
+  if (/Invalid option:\s*expected one of/i.test(m)) return true
+  if (/visitor_reports|calling_reports/i.test(m) && /invalid|expected one of|enum/i.test(m)) return true
+  return false
 }
 
 export function getAccessOverrides(): Record<string, UserAccessKey[]> {
@@ -203,7 +243,7 @@ function isPrimaryAdminAccount(role?: string | null, username?: string | null): 
 
 /**
  * Resolve granted access for a user.
- * Order: local override → API access/permissions → role fallback.
+ * Union of local override + API access/permissions (so report keys saved locally are not lost).
  * Primary admin accounts always get Admin Panel only (no Quotation / workspace).
  */
 export function resolveUserAccess(input: {
@@ -217,10 +257,9 @@ export function resolveUserAccess(input: {
   }
 
   const fromOverride = getAccessOverride(input.username)
-  if (fromOverride.length > 0) return fromOverride
-
   const fromApi = normalizeAccessList(input.access ?? input.permissions)
-  if (fromApi.length > 0) return fromApi
+  const merged = normalizeAccessList([...fromOverride, ...fromApi])
+  if (merged.length > 0) return merged
 
   return accessFromRole(input.role)
 }
@@ -263,6 +302,45 @@ export function canOpenSection(
 export function getAccessOptions(access: UserAccessKey[]): UserAccessOption[] {
   const set = new Set(access)
   return USER_ACCESS_OPTIONS.filter((o) => set.has(o.key))
+}
+
+/**
+ * When Admin grants Visitor/Calling Reports via Field access but the API Zod
+ * stripped those keys from `access[]`, restore them from moduleFieldPermissions.
+ */
+export function mergeAccessFromModulePermissions(
+  access: UserAccessKey[],
+  modulePermissions: Partial<
+    Record<"visitor_reports" | "calling_reports", { level?: string } | null | undefined>
+  > | null | undefined,
+): UserAccessKey[] {
+  const next = normalizeAccessList(access)
+  if (!modulePermissions) return next
+  const add = (key: UserAccessKey) => {
+    if (!next.includes(key)) next.push(key)
+  }
+  const visitorLevel = String(modulePermissions.visitor_reports?.level || "")
+    .trim()
+    .toLowerCase()
+  const callingLevel = String(modulePermissions.calling_reports?.level || "")
+    .trim()
+    .toLowerCase()
+  if (visitorLevel && visitorLevel !== "none") add("visitor_reports")
+  if (callingLevel && callingLevel !== "none") add("calling_reports")
+  return next
+}
+
+/** Session access for nav / workspace: resolve + restore report keys from Field access. */
+export function resolveEffectiveAccess(input: {
+  username?: string | null
+  role?: string | null
+  access?: unknown
+  permissions?: unknown
+  modulePermissions?: Partial<
+    Record<"visitor_reports" | "calling_reports", { level?: string } | null | undefined>
+  > | null
+}): UserAccessKey[] {
+  return mergeAccessFromModulePermissions(resolveUserAccess(input), input.modulePermissions)
 }
 
 /** Backend single-role field for create API compatibility. */

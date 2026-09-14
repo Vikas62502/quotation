@@ -1,7 +1,8 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { api, ApiError } from "@/lib/api"
+import { getRealtime, initRealtime } from "@/lib/realtime"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -51,8 +52,8 @@ type HrSocialMediaSheetsPanelProps = {
 const SPREADSHEET_URL =
   "https://docs.google.com/spreadsheets/d/18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0/edit"
 
-/** Soft UI refresh if backend cron ran but socket was missed. */
-const SHEET_AUTO_REFRESH_MS = 15 * 60 * 1000
+/** Pull from Google Sheet + reload UI (fallback when backend cron/socket missed). */
+const SHEET_AUTO_SYNC_MS = 30 * 60 * 1000
 
 const isRealSheetSourceId = (id: string) => id && !id.startsWith("local-")
 
@@ -74,11 +75,22 @@ export function HrSocialMediaSheetsPanel({
   const [apiUnavailable, setApiUnavailable] = useState(false)
   const [googleCredentialsPending, setGoogleCredentialsPending] = useState(false)
   const [pendingDealerIds, setPendingDealerIds] = useState<Record<string, string[]>>({})
+  const [isAutoSyncing, setIsAutoSyncing] = useState(false)
+  const [lastAutoSyncAt, setLastAutoSyncAt] = useState<string | null>(null)
 
   const activeSource = useMemo(
     () => sources.find((s) => s.sheetTabName === activeSheetTab) ?? sources[0],
     [sources, activeSheetTab],
   )
+  const activeSheetTabRef = useRef(activeSheetTab)
+  activeSheetTabRef.current = activeSheetTab
+  const lastAutoSyncAttemptRef = useRef(0)
+  const syncingIdRef = useRef(syncingId)
+  syncingIdRef.current = syncingId
+  const apiUnavailableRef = useRef(apiUnavailable)
+  apiUnavailableRef.current = apiUnavailable
+  const googleCredentialsPendingRef = useRef(googleCredentialsPending)
+  googleCredentialsPendingRef.current = googleCredentialsPending
 
   /** Keep spreadsheet tab order from Discover / defaults. */
   const orderedSources = useMemo(() => {
@@ -211,18 +223,121 @@ export function HrSocialMediaSheetsPanel({
     [loadLeadsFromUploadBatch, resolveUploadIdForSource],
   )
 
+  const refreshSourcesAndLeads = useCallback(async () => {
+    const list = await loadSources()
+    const tab = activeSheetTabRef.current
+    const next = list.find((s) => s.sheetTabName === tab) ?? list[0]
+    if (next) await loadLeads(next)
+    return list
+  }, [loadSources, loadLeads])
+
+  /** Same as Sync now, but for timer / socket follow-up — pulls Google Sheet → DB → reload list. */
+  const runAutoSyncAll = useCallback(
+    async (options?: { silent?: boolean; reason?: string }) => {
+      if (typeof window === "undefined") return false
+      if (apiUnavailableRef.current || googleCredentialsPendingRef.current) return false
+      if (syncingIdRef.current) return false
+
+      const now = Date.now()
+      if (now - lastAutoSyncAttemptRef.current < 60_000) return false
+      lastAutoSyncAttemptRef.current = now
+
+      setIsAutoSyncing(true)
+      try {
+        await api.hr.sheetSources.syncAll(DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID)
+        await refreshSourcesAndLeads()
+        const syncedAt = new Date().toISOString()
+        setLastAutoSyncAt(syncedAt)
+        onSyncComplete?.()
+        if (!options?.silent) {
+          toast({
+            title: "Sheet data updated",
+            description: "Latest leads loaded from Google Sheet.",
+          })
+        }
+        return true
+      } catch (error) {
+        if (!options?.silent) {
+          toast({
+            title: "Auto-sync failed",
+            description: error instanceof ApiError ? error.message : "Could not pull from Google Sheet.",
+            variant: "destructive",
+          })
+        }
+        await refreshSourcesAndLeads().catch(() => undefined)
+        return false
+      } finally {
+        setIsAutoSyncing(false)
+      }
+    },
+    [onSyncComplete, refreshSourcesAndLeads, toast],
+  )
+
   useEffect(() => {
     void loadSources()
   }, [loadSources, realtimeTick])
 
-  // Fallback refresh every 15 min — primary path is backend cron + calling:uploads-updated socket.
+  // Live refresh: backend cron / manual sync emits calling:uploads-updated (also driven by parent realtimeTick).
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const token = localStorage.getItem("authToken")
+    const socket = (token ? initRealtime(token) : null) || getRealtime()
+    if (!socket) return
+
+    const refreshFromSocket = () => {
+      void refreshSourcesAndLeads()
+    }
+
+    const onUploadsUpdated = () => {
+      refreshFromSocket()
+    }
+
+    const onBackendMutation = (evt?: { domain?: string; path?: string; reason?: string }) => {
+      const domain = String(evt?.domain || "").toLowerCase()
+      const path = String(evt?.path || "").toLowerCase()
+      const reason = String(evt?.reason || "").toLowerCase()
+      if (
+        domain === "hr" ||
+        path.includes("sheet") ||
+        path.includes("leads") ||
+        path.includes("calling") ||
+        reason.includes("sheet")
+      ) {
+        refreshFromSocket()
+      }
+    }
+
+    socket.on("calling:uploads-updated", onUploadsUpdated)
+    socket.on("calling:actions-updated", refreshFromSocket)
+    socket.on("backend:mutation", onBackendMutation)
+
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return
+      const elapsed = Date.now() - lastAutoSyncAttemptRef.current
+      if (elapsed >= SHEET_AUTO_SYNC_MS) {
+        void runAutoSyncAll({ silent: true, reason: "visibility" })
+      } else {
+        refreshFromSocket()
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible)
+
+    return () => {
+      socket.off("calling:uploads-updated", onUploadsUpdated)
+      socket.off("calling:actions-updated", refreshFromSocket)
+      socket.off("backend:mutation", onBackendMutation)
+      document.removeEventListener("visibilitychange", onVisible)
+    }
+  }, [refreshSourcesAndLeads, runAutoSyncAll])
+
+  // Auto-sync every 30 min while HR page is open — same as clicking Sync now on all enabled tabs.
   useEffect(() => {
     if (typeof window === "undefined") return
     const timer = window.setInterval(() => {
-      void loadSources()
-    }, SHEET_AUTO_REFRESH_MS)
+      void runAutoSyncAll({ silent: true, reason: "interval" })
+    }, SHEET_AUTO_SYNC_MS)
     return () => window.clearInterval(timer)
-  }, [loadSources])
+  }, [runAutoSyncAll])
 
   useEffect(() => {
     setLeadStatusFilter("all")
@@ -497,10 +612,11 @@ export function HrSocialMediaSheetsPanel({
             Meta / Social Media Leads (Google Sheet)
           </CardTitle>
           <CardDescription>
-            Sub-tabs match the live spreadsheet. Enable a tab, pick dealers, then sync once — backend should
-            auto-sync enabled tabs about every <span className="font-medium text-foreground">15 minutes</span> and
-            push updates over socket (<span className="font-medium text-foreground">calling:uploads-updated</span>).
-            Use <span className="font-medium text-foreground">Sync now</span> for an immediate pull.
+            Sub-tabs match the live spreadsheet. Enable a tab, pick dealers, then sync once — data refreshes
+            automatically every <span className="font-medium text-foreground">30 minutes</span> (same as Sync now)
+            and instantly when the backend emits{" "}
+            <span className="font-medium text-foreground">calling:uploads-updated</span> over socket. Use{" "}
+            <span className="font-medium text-foreground">Sync now</span> for an immediate pull.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-2">
@@ -523,7 +639,11 @@ export function HrSocialMediaSheetsPanel({
             Open spreadsheet
           </a>
           <Badge variant="outline" className="text-xs font-normal text-muted-foreground">
-            Auto-sync ~15 min + socket refresh
+            {isAutoSyncing
+              ? "Auto-syncing from sheet…"
+              : lastAutoSyncAt
+                ? `Auto-sync ${new Date(lastAutoSyncAt).toLocaleTimeString()}`
+                : "Auto-sync every 30 min + socket"}
           </Badge>
           {googleCredentialsPending ? (
             <Badge variant="outline" className="text-sky-800 border-sky-200 bg-sky-50">
@@ -663,10 +783,21 @@ export function HrSocialMediaSheetsPanel({
 
               <Card className="border-border/60">
                 <CardHeader>
-                  <CardTitle className="text-base">Leads from sheet</CardTitle>
-                  <CardDescription>
-                    Filter by status: New (sky), Pending (amber), Not interested (rose), Interested / Visit (green).
-                  </CardDescription>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div>
+                      <CardTitle className="text-base">Leads from sheet</CardTitle>
+                      <CardDescription>
+                        Filter by status: New (sky), Pending (amber), Not interested (rose), Interested / Visit
+                        (green). List updates every 30 minutes and on socket sync.
+                      </CardDescription>
+                    </div>
+                    {isAutoSyncing || isLoadingLeads ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        {isAutoSyncing ? "Syncing sheet…" : "Loading…"}
+                      </span>
+                    ) : null}
+                  </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex flex-wrap gap-1.5">

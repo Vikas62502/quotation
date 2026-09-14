@@ -20,16 +20,26 @@ export function mapBackendRoleToAdminUserRole(raw: unknown): "admin" | "super-ad
   return null
 }
 
-/** True when the signed-in user may use Admin Panel + Super Admin Inventory. */
+/** True when the signed-in user may use Admin Panel (+ report-only access keys). */
 export function isQuotationAdminAccess(opts: {
   role?: UserRole | string | null
   username?: string | null
+  access?: string[] | null
 }): boolean {
   const role = String(opts.role || "")
     .toLowerCase()
     .replace(/_/g, "-")
   if (role === "admin" || role === "super-admin" || role === "superadmin") return true
   if (String(opts.username || "").toLowerCase() === "admin") return true
+  const access = (opts.access || []).map((k) =>
+    String(k || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, "_"),
+  )
+  if (access.includes("admin")) return true
+  // View-only report dashboards granted from Users → Dashboard access
+  if (access.includes("visitor_reports") || access.includes("calling_reports")) return true
   return false
 }
 

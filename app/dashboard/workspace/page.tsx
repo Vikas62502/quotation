@@ -1,20 +1,60 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { SolarLogo } from "@/components/solar-logo"
-import { LogOut, ArrowRight, PhoneCall } from "lucide-react"
-import { getAccessOptions, getPostLoginPath } from "@/lib/user-access"
+import { LogOut, ArrowRight } from "lucide-react"
+import {
+  getAccessOptions,
+  getPostLoginPath,
+  resolveEffectiveAccess,
+} from "@/lib/user-access"
 
 export default function WorkspacePage() {
   const router = useRouter()
-  const { isAuthenticated, access, logout, dealer, accountManager, installer, meteringUser, baldev, hrUser, visitor } =
-    useAuth()
+  const {
+    isAuthenticated,
+    access,
+    modulePermissions,
+    role,
+    logout,
+    refreshEffectiveAccess,
+    dealer,
+    accountManager,
+    installer,
+    meteringUser,
+    baldev,
+    hrUser,
+    visitor,
+  } = useAuth()
 
-  const options = getAccessOptions(access)
+  const username =
+    dealer?.username ||
+    accountManager?.username ||
+    installer?.username ||
+    meteringUser?.username ||
+    baldev?.username ||
+    hrUser?.username ||
+    visitor?.username ||
+    ""
+
+  // Always re-resolve so Visitor/Calling Reports from Admin overrides appear even if session was stale.
+  const effectiveAccess = useMemo(
+    () =>
+      resolveEffectiveAccess({
+        username,
+        role,
+        access,
+        permissions: access,
+        modulePermissions,
+      }),
+    [username, role, access, modulePermissions],
+  )
+
+  const options = getAccessOptions(effectiveAccess)
   const displayName =
     dealer?.firstName ||
     accountManager?.firstName ||
@@ -26,12 +66,17 @@ export default function WorkspacePage() {
     "User"
 
   useEffect(() => {
+    if (!isAuthenticated) return
+    refreshEffectiveAccess()
+  }, [isAuthenticated, refreshEffectiveAccess])
+
+  useEffect(() => {
     if (!isAuthenticated) {
       router.push("/login")
       return
     }
     // Admin never uses the workspace chooser
-    if (access.includes("admin")) {
+    if (effectiveAccess.includes("admin")) {
       router.replace("/dashboard/admin")
       return
     }
@@ -42,9 +87,9 @@ export default function WorkspacePage() {
     if (options.length === 1) {
       router.replace(options[0].href)
     }
-  }, [isAuthenticated, access, options, router])
+  }, [isAuthenticated, effectiveAccess, options, router])
 
-  if (!isAuthenticated || access.includes("admin") || options.length <= 1) {
+  if (!isAuthenticated || effectiveAccess.includes("admin") || options.length <= 1) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center text-sm text-muted-foreground">
         Loading workspace...
@@ -56,7 +101,11 @@ export default function WorkspacePage() {
     <div className="min-h-screen bg-background">
       <header className="border-b border-border bg-card">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <button type="button" onClick={() => router.push(getPostLoginPath(access))} className="flex items-center">
+          <button
+            type="button"
+            onClick={() => router.push(getPostLoginPath(effectiveAccess))}
+            className="flex items-center"
+          >
             <SolarLogo size="md" />
           </button>
           <Button
@@ -103,25 +152,6 @@ export default function WorkspacePage() {
               </CardContent>
             </Card>
           ))}
-          {options.some((item) => item.key === "quotation") ? (
-            <Card
-              className="cursor-pointer border-border/70 hover:border-primary/40 hover:bg-muted/30 transition-colors"
-              onClick={() => router.push("/dashboard/calling-data")}
-            >
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center justify-between gap-2">
-                  Calling Data
-                  <PhoneCall className="w-4 h-4 text-muted-foreground" />
-                </CardTitle>
-                <CardDescription>Open the calling queue for your Dealer access.</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button size="sm" className="w-full" onClick={() => router.push("/dashboard/calling-data")}>
-                  Open Calling Data
-                </Button>
-              </CardContent>
-            </Card>
-          ) : null}
         </div>
       </main>
     </div>

@@ -88,7 +88,7 @@ function serializeLead(row) {
  * Adapt table/column names to your schema.
  */
 async function findOldestUnassignedForDealer(db, dealerId) {
-  // Pseudocode SQL — implement with your ORM:
+  // Prefer Social Media / Google Sheet pool leads over older raw CSV.
   //
   // SELECT l.*
   // FROM hr_leads l
@@ -97,10 +97,16 @@ async function findOldestUnassignedForDealer(db, dealerId) {
   //   AND (l.assigned_dealer_id IS NULL OR TRIM(l.assigned_dealer_id) = ''
   //        OR LOWER(TRIM(l.assigned_dealer_id)) IN ('unassigned','null','none','-','na','n/a','pool','open'))
   //   AND (
-  //     u.dealer_ids @> ARRAY[dealerId]::uuid[]   -- or JSON contains
+  //     u.dealer_ids @> ARRAY[dealerId]::uuid[]
   //     OR l.eligible_dealer_ids @> ARRAY[dealerId]
   //   )
-  // ORDER BY COALESCE(l.queued_at, l.created_at) ASC
+  // ORDER BY
+  //   CASE
+  //     WHEN l.sheet_source_id IS NOT NULL THEN 0
+  //     WHEN LOWER(COALESCE(l.source_type,'')) IN ('google_sheet','social_media','social','meta') THEN 0
+  //     ELSE 1
+  //   END,
+  //   COALESCE(l.queued_at, l.created_at) ASC
   // LIMIT 1
   // FOR UPDATE SKIP LOCKED;
   void db
@@ -109,13 +115,25 @@ async function findOldestUnassignedForDealer(db, dealerId) {
 }
 
 async function findOpenAssignedToDealer(db, dealerId) {
-  // CRITICAL: this is why Harshita sees empty Current Lead while Assigned=37.
-  // Must return rows already assigned to THIS dealer — not only pool unassigned.
+  // CRITICAL: return rows already assigned to THIS dealer — not only pool unassigned.
+  //
+  // Priority (product): Social Media before raw CSV
+  //   1) status = in_progress (finish started call first)
+  //   2) social / Google Sheet (sheet_source_id / source_type)
+  //   3) other assigned / queued (raw CSV)
+  // then oldest assigned_at / queued_at
   //
   // SELECT * FROM hr_leads
   // WHERE assigned_dealer_id = dealerId
   //   AND LOWER(status) IN ('assigned','in_progress','queued','pending')
-  // ORDER BY COALESCE(assigned_at, queued_at, created_at) ASC
+  // ORDER BY
+  //   CASE WHEN LOWER(status) = 'in_progress' THEN 0 ELSE 1 END,
+  //   CASE
+  //     WHEN sheet_source_id IS NOT NULL THEN 0
+  //     WHEN LOWER(COALESCE(source_type,'')) IN ('google_sheet','social_media','social','meta') THEN 0
+  //     ELSE 1
+  //   END,
+  //   COALESCE(assigned_at, queued_at, created_at) ASC
   // LIMIT 1;
   void db
   void dealerId

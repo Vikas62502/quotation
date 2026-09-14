@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useContext, useState, useEffect, type ReactNode } from "react"
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react"
 import {
   api,
   ApiError,
@@ -15,9 +15,11 @@ import { authService as inventoryAuthService } from "@/inventory-sa/lib/auth"
 import {
   type UserAccessKey,
   clearSessionAccess,
+  mergeAccessFromModulePermissions,
   primaryAppRoleFromAccess,
   readSessionAccess,
   resolveUserAccess,
+  resolveEffectiveAccess,
   writeSessionAccess,
 } from "./user-access"
 import {
@@ -194,6 +196,8 @@ interface AuthContextType {
   loginHr: (username: string, password: string) => Promise<boolean>
   logout: () => Promise<void>
   register: (dealerData: Dealer & { password: string }) => Promise<boolean>
+  /** Re-read Admin access overrides + Field access into session (e.g. workspace mount). */
+  refreshEffectiveAccess: () => UserAccessKey[]
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -266,18 +270,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const commitSessionAccess = (username: string, backendRole: string, user: any): UserAccessKey[] => {
-    const granted = resolveUserAccess({
+    const baseGranted = resolveUserAccess({
       username,
       role: backendRole,
       access: user?.access,
       permissions: user?.permissions,
     })
-    writeSessionAccess(granted)
-    setAccess(granted)
     const perms = resolveUserModulePermissions(
       username,
       user?.moduleFieldPermissions ?? user?.modulePermissions,
     )
+    // Restore Visitor/Calling Reports if Field access was saved but access[] was stripped by API Zod.
+    const granted = mergeAccessFromModulePermissions(baseGranted, perms)
+    writeSessionAccess(granted)
+    setAccess(granted)
     const office = resolveUserOfficeLocation(username, user?.officeLocation ?? user?.office_location)
     setModulePermissions(perms)
     setOfficeLocation(office)
@@ -315,20 +321,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token && savedUser) {
       try {
         const user = JSON.parse(savedUser)
-        const sessionAccess = resolveUserAccess({
-          username: user.username,
-          role: savedRole || user.role,
-          access: user.access,
-          permissions: user.permissions,
-        })
-        if (sessionAccess.length > 0) {
-          writeSessionAccess(sessionAccess)
-          setAccess(sessionAccess)
-        }
         const perms = resolveUserModulePermissions(
           user.username,
           user.moduleFieldPermissions ?? user.modulePermissions,
         )
+        const sessionAccess = mergeAccessFromModulePermissions(
+          resolveUserAccess({
+            username: user.username,
+            role: savedRole || user.role,
+            access: user.access,
+            permissions: user.permissions,
+          }),
+          perms,
+        )
+        if (sessionAccess.length > 0) {
+          writeSessionAccess(sessionAccess)
+          setAccess(sessionAccess)
+        }
         const office = resolveUserOfficeLocation(user.username, user.officeLocation ?? user.office_location)
         setModulePermissions(perms)
         setOfficeLocation(office)
@@ -1450,6 +1459,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const refreshEffectiveAccess = useCallback((): UserAccessKey[] => {
+    const username =
+      dealer?.username ||
+      accountManager?.username ||
+      installer?.username ||
+      meteringUser?.username ||
+      baldev?.username ||
+      hrUser?.username ||
+      visitor?.username ||
+      ""
+    let savedAccess: unknown = []
+    let savedMfp: unknown = {}
+    let savedRole: string | null = null
+    try {
+      const raw = localStorage.getItem("user")
+      if (raw) {
+        const user = JSON.parse(raw)
+        savedAccess = user.access ?? user.permissions ?? []
+        savedMfp = user.moduleFieldPermissions ?? user.modulePermissions ?? {}
+        savedRole = user.role || null
+      }
+      if (!savedRole) {
+        savedRole = localStorage.getItem("userRole")
+      }
+    } catch {
+      /* ignore */
+    }
+    const perms = resolveUserModulePermissions(username, savedMfp)
+    const granted = resolveEffectiveAccess({
+      username,
+      role: savedRole,
+      access: savedAccess,
+      permissions: savedAccess,
+      modulePermissions: perms,
+    })
+    setModulePermissions(perms)
+    setAccess(granted)
+    writeSessionAccess(granted)
+    try {
+      const raw = localStorage.getItem("user")
+      if (raw) {
+        const user = JSON.parse(raw)
+        localStorage.setItem("user", JSON.stringify({ ...user, access: granted, moduleFieldPermissions: perms }))
+      }
+    } catch {
+      /* ignore */
+    }
+    return granted
+  }, [
+    dealer?.username,
+    accountManager?.username,
+    installer?.username,
+    meteringUser?.username,
+    baldev?.username,
+    hrUser?.username,
+    visitor?.username,
+  ])
+
   return (
     <AuthContext.Provider
       value={{
@@ -1476,6 +1543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginHr,
         logout,
         register,
+        refreshEffectiveAccess,
       }}
     >
       {children}

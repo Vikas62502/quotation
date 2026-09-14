@@ -440,19 +440,20 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     rangeKey: PdfPanelRangeKey | null,
     brand?: string,
   ) => {
+    // Checked PDF range checkbox always wins (e.g. N-Type Topcon 580-700W).
+    if (rangeKey) {
+      const rangeLabel = getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
+      return `${rangeLabel}, ${grade}`
+    }
     const brandLower = String(brand || "").trim().toLowerCase()
     const panelWatts = Number.parseFloat(String(size || "").replace(/[^0-9.]/g, "")) || 0
-    // Waaree above 580W → Topcon Bifacial on PDF, keep the selected wattage (e.g. 705W).
+    // No range checked: Waaree above 580W → Topcon Bifacial with exact wattage (e.g. 705W).
     if (brandLower.includes("waaree") && panelWatts > 580) {
       const rawSize = String(size || "").trim()
       const sizeLabel = rawSize
         ? rawSize.replace(/w$/i, "W")
         : `${Math.round(panelWatts)}W`
       return `${sizeLabel} Topcon Bifacial, ${grade}`
-    }
-    if (rangeKey) {
-      const rangeLabel = getPanelPdfRangeLabel(rangeKey) ?? QUOTATION_AS_PER_THE_SET_LABEL
-      return `${rangeLabel}, ${grade}`
     }
     if (isAsPerTheSetLabel(size)) return `${QUOTATION_AS_PER_THE_SET_LABEL}, ${grade}`
     return `${size || "—"} Mono PERC Bifacial Technology, ${grade}`
@@ -811,7 +812,7 @@ export function buildWarrantyRows(panelBrand: string, inverterBrand?: string): W
     {
       component: "Complete System",
       period: "5 Years",
-      coverage: "Comprehensive System Warranty",
+      coverage: "Comprehensive System Warranty by Chairbord Solar",
     },
   ]
 }

@@ -19,7 +19,7 @@
 | Waaree set price | **₹25,90,000** |
 | Adani set price | **₹25,90,000** |
 | Renew Energy panel range (PDF) | **600W - 630W** |
-| Waaree panel range (PDF) | **580W - 630W** |
+| Waaree panel range (PDF) | **580W - 620W N-Type Bifacial Topcon** |
 | Adani panel range (PDF) | **600W - 630W** |
 | ≥20kW PDF distribution labels | Component **CT / BT**; brand **As per the set / As per the set** |
 
@@ -46,7 +46,7 @@ Store on quotation products (camelCase + snake_case aliases):
 | Key | Brand | PDF label |
 |-----|--------|-----------|
 | `renew_energy_600_630` | Renew Energy | 600W - 630W |
-| `waaree_580_630` | Waaree | 580W - 630W |
+| `waaree_580_620` | Waaree | 580W - 620W N-Type Bifacial Topcon |
 | `adani_600_630` | Adani | 600W - 630W |
 
 Also still valid (existing): `waaree_*`, `adani_*`, `renewsys_*`, `tata_530_570`, `ina_500_600_bifacial`, etc.
@@ -144,7 +144,7 @@ Content-Type: application/json
 
 Pricing / subtotal should match set price (**2510000** for Renew Energy). Prefer client-sent `systemPrice` / `pricing.subtotal` if you already accept them; otherwise resolve from Non-DCR table.
 
-Same pattern for Waaree (`pdfPanelRangeKey: "waaree_580_630"`, price **2590000**) and Adani (`"adani_600_630"`, **2590000**).
+Same pattern for Waaree (`pdfPanelRangeKey: "waaree_580_620"`, price **2590000**) and Adani (`"adani_600_630"`, **2590000**).
 
 ---
 
@@ -175,4 +175,4 @@ No dedicated API field required for CT/BT — derived from system kW on the clie
 ## Frontend source of truth (until API sync)
 
 Fallback when pricing-tables API missing: `lib/pricing-tables.ts` (`nonDcrPricing` + Non-DCR system presets).  
-Range catalog: `lib/quotation-pdf-display.ts` (`renew_energy_600_630`, `waaree_580_630`, `adani_600_630`).
+Range catalog: `lib/quotation-pdf-display.ts` (`renew_energy_600_630`, `waaree_580_620`, `adani_600_630`).

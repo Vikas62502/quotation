@@ -29,6 +29,7 @@ import {
 import { isInstallationUploadCompleteWithMedia } from "@/lib/installation-public-images"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
 import { useAuth } from "@/lib/auth-context"
+import { isWorkflowModuleReadOnly } from "@/lib/module-field-permissions"
 import {
   filterQuotationsByWorkflowPermission,
   shouldLoadAllWorkflowQuotations,
@@ -236,7 +237,7 @@ export type MeteringWorkflowPanelProps = {
   description?: string | null
   /** Set false when the host page already renders its own heading/intro. */
   showDescription?: boolean
-  /** Read-only mode hides every stage-transition and save action. */
+  /** Read-only mode disables every stage-transition and save action (Details stays viewable). */
   readOnly?: boolean
 }
 
@@ -262,6 +263,10 @@ export function MeteringWorkflowPanel({
     }),
     [sessionUserId, officeLocation, role],
   )
+  /** Prop + session moduleFieldPermissions.metering.level === "read" */
+  const effectiveReadOnly =
+    readOnly || isWorkflowModuleReadOnly(modulePermissions, "metering", permissionCtx)
+  const actionsLockedTitle = "Metering is read-only — actions are disabled"
   const [isLoading, setIsLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<MeteringStage>("processing")
   const [searchByTab, setSearchByTab] = useState<Record<MeteringStage, string>>(EMPTY_SEARCH_BY_TAB)
@@ -512,6 +517,7 @@ export function MeteringWorkflowPanel({
   }
 
   const moveToWccPending = async (id: string) => {
+    if (effectiveReadOnly) return
     if (!confirmSave("Move this file to WCC Pending and save?")) return
     try {
       await api.admin.quotations.setMeteringWccAfterDiscom(id, true)
@@ -533,6 +539,7 @@ export function MeteringWorkflowPanel({
   }
 
   const markBankProcessDone = (id: string) => {
+    if (effectiveReadOnly) return
     if (!confirmSave("Mark bank process done and save?")) return
     setQuotations((prev) =>
       prev.map((q) =>
@@ -550,6 +557,7 @@ export function MeteringWorkflowPanel({
     id: string,
     stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">,
   ) => {
+    if (effectiveReadOnly) return
     if (!useApi) return
     if (!confirmSave(`Move this file to the next stage (${stage.replaceAll("_", " ")}) and save?`)) return
 
@@ -685,6 +693,7 @@ export function MeteringWorkflowPanel({
   }
 
   const saveMeteringDetails = async () => {
+    if (effectiveReadOnly) return
     if (!detailsQuotationId) return
     if (!confirmSave("Save metering details?")) return
 
@@ -867,6 +876,7 @@ export function MeteringWorkflowPanel({
   }
 
   const saveMcoDocuments = async () => {
+    if (effectiveReadOnly) return
     if (!mcoDocsQuotationId) return
     const workFile = workCompleteReportByQuotation[mcoDocsQuotationId] || null
     const meterFile = meterInstalledPhotoByQuotation[mcoDocsQuotationId] || null
@@ -960,6 +970,7 @@ export function MeteringWorkflowPanel({
   }
 
   const moveToBaldevConfirmation = async (quotationId: string) => {
+    if (effectiveReadOnly) return
     if (!hasRequiredMeteringDetails(quotationId) || !hasRequiredMcoDocuments(quotationId)) {
       toast({
         title: "Required uploads missing",
@@ -1257,58 +1268,108 @@ export function MeteringWorkflowPanel({
           className={`px-3 py-2.5 align-middle text-right md:sticky md:right-0 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)] ${overdueUi.sticky || ""}`.trim()}
         >
           <div className="flex flex-nowrap items-center justify-end gap-1.5">
-            <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => openDetailsModal(q.id)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 shrink-0"
+              onClick={() => openDetailsModal(q.id)}
+              title={effectiveReadOnly ? "View details (read-only)" : "Metering details"}
+            >
               Details
             </Button>
-            {!readOnly && tab === "processing" && (
-              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "approved")}>
+            {tab === "processing" && (
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={effectiveReadOnly}
+                title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                onClick={() => void setStage(q.id, "approved")}
+              >
                 <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
                 To Discom
               </Button>
             )}
-            {!readOnly && tab === "approved" && (
+            {tab === "approved" && (
               <>
                 <Button
                   variant="outline"
                   size="sm"
                   className="h-8 shrink-0"
+                  disabled={effectiveReadOnly}
+                  title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => void setStage(q.id, "processing")}
                 >
                   To Pending
                 </Button>
-                <Button size="sm" className="h-8 shrink-0" onClick={() => void moveToWccPending(q.id)}>
+                <Button
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={effectiveReadOnly}
+                  title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                  onClick={() => void moveToWccPending(q.id)}
+                >
                   To WCC Pending
                 </Button>
               </>
             )}
-            {!readOnly && tab === "wcc" && (
-              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "meter_install")}>
+            {tab === "wcc" && (
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={effectiveReadOnly}
+                title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                onClick={() => void setStage(q.id, "meter_install")}
+              >
                 <Wrench className="w-3.5 h-3.5 mr-1" />
                 To Meter Install
               </Button>
             )}
-            {!readOnly && tab === "meter_install" && (
-              <Button size="sm" className="h-8 shrink-0" onClick={() => void setStage(q.id, "mco")}>
+            {tab === "meter_install" && (
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={effectiveReadOnly}
+                title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                onClick={() => void setStage(q.id, "mco")}
+              >
                 <FileCheck className="w-3.5 h-3.5 mr-1" />
                 To Final Step
               </Button>
             )}
-            {!readOnly && tab === "bank_process" && (
-              <Button size="sm" className="h-8 shrink-0" onClick={() => markBankProcessDone(q.id)}>
+            {tab === "bank_process" && (
+              <Button
+                size="sm"
+                className="h-8 shrink-0"
+                disabled={effectiveReadOnly}
+                title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                onClick={() => markBankProcessDone(q.id)}
+              >
                 <Wallet className="w-3.5 h-3.5 mr-1" />
                 To Pending Payment
               </Button>
             )}
-            {!readOnly && tab === "mco" && (
+            {tab === "mco" && (
               <>
-                <Button variant="outline" size="sm" className="h-8 shrink-0" onClick={() => openMcoDocsModal(q.id)}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 shrink-0"
+                  disabled={effectiveReadOnly}
+                  title={effectiveReadOnly ? actionsLockedTitle : undefined}
+                  onClick={() => openMcoDocsModal(q.id)}
+                >
                   MCO Docs
                 </Button>
                 <Button
                   size="sm"
                   className="h-8 shrink-0"
                   onClick={() => void moveToBaldevConfirmation(q.id)}
-                  disabled={!hasRequiredMeteringDetails(q.id) || !hasRequiredMcoDocuments(q.id)}
+                  disabled={
+                    effectiveReadOnly ||
+                    !hasRequiredMeteringDetails(q.id) ||
+                    !hasRequiredMcoDocuments(q.id)
+                  }
+                  title={effectiveReadOnly ? actionsLockedTitle : undefined}
                 >
                   To Confirmation
                 </Button>
@@ -1316,13 +1377,15 @@ export function MeteringWorkflowPanel({
                   variant="outline"
                   size="sm"
                   className="h-8 shrink-0"
+                  disabled={effectiveReadOnly}
+                  title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => void setStage(q.id, "meter_install")}
                 >
                   To Meter Install
                 </Button>
               </>
             )}
-            {!readOnly && tab === "pending_payment" && (
+            {tab === "pending_payment" && (
               <Badge variant="outline" className="text-[10px] border-amber-300 bg-amber-50 text-amber-900">
                 Awaiting payment
               </Badge>
@@ -1377,6 +1440,12 @@ export function MeteringWorkflowPanel({
 
   return (
     <div className="space-y-4">
+      {effectiveReadOnly ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          Metering is <span className="font-semibold">read-only</span> — stage actions (To Discom, etc.) are disabled.
+          You can still open Details to view.
+        </div>
+      ) : null}
       {showDescription && description !== null && (
         <p className="text-sm text-muted-foreground">
           {description ||
@@ -1536,7 +1605,7 @@ export function MeteringWorkflowPanel({
                 onChange={(e) => setDetailsDraft((prev) => ({ ...prev, discomName: e.target.value }))}
                 placeholder="Enter DISCOM name"
                 className="h-9 text-sm"
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
               />
             </div>
             <div className="space-y-1">
@@ -1550,7 +1619,7 @@ export function MeteringWorkflowPanel({
                   }))
                 }
                 className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
               >
                 <option value="">Select meter type</option>
                 <option value="solar">Solar Meter</option>
@@ -1567,7 +1636,7 @@ export function MeteringWorkflowPanel({
                     onChange={(e) => setDetailsDraft((prev) => ({ ...prev, solarMeterNo: e.target.value }))}
                     placeholder="Enter solar meter number"
                     className="h-9 text-sm"
-                    disabled={readOnly}
+                    disabled={effectiveReadOnly}
                   />
                 </div>
                 <div className="space-y-1">
@@ -1577,7 +1646,7 @@ export function MeteringWorkflowPanel({
                     onChange={(e) => setDetailsDraft((prev) => ({ ...prev, netMeterNo: e.target.value }))}
                     placeholder="Enter net meter number"
                     className="h-9 text-sm"
-                    disabled={readOnly}
+                    disabled={effectiveReadOnly}
                   />
                 </div>
               </>
@@ -1595,7 +1664,7 @@ export function MeteringWorkflowPanel({
                   onChange={(e) => setDetailsDraft((prev) => ({ ...prev, meterNo: e.target.value }))}
                   placeholder="Enter meter number"
                   className="h-9 text-sm"
-                  disabled={readOnly}
+                  disabled={effectiveReadOnly}
                 />
               </div>
             )}
@@ -1606,7 +1675,7 @@ export function MeteringWorkflowPanel({
                 onChange={(e) => setDetailsDraft((prev) => ({ ...prev, authorizedRepresentative: e.target.value }))}
                 placeholder="Enter authorized representative"
                 className="h-9 text-sm"
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
               />
             </div>
             <div className="space-y-1 md:col-span-2">
@@ -1617,7 +1686,7 @@ export function MeteringWorkflowPanel({
                 placeholder="Enter remarks"
                 rows={3}
                 className="resize-y min-h-[72px] text-sm"
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
               />
             </div>
             <div className="space-y-1 md:col-span-2">
@@ -1626,7 +1695,7 @@ export function MeteringWorkflowPanel({
                 type="file"
                 accept="image/*,.heic,.heif"
                 className="h-9 text-sm"
-                disabled={readOnly}
+                disabled={effectiveReadOnly}
                 onChange={(e) => {
                   if (!detailsQuotationId) return
                   const file = e.target.files?.[0] || null
@@ -1694,9 +1763,9 @@ export function MeteringWorkflowPanel({
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDetailsModalOpen(false)} disabled={savingDetails}>
-              {readOnly ? "Close" : "Cancel"}
+              {effectiveReadOnly ? "Close" : "Cancel"}
             </Button>
-            {!readOnly && (
+            {!effectiveReadOnly && (
               <Button onClick={saveMeteringDetails} disabled={savingDetails || !detailsQuotationId}>
                 {savingDetails ? "Saving..." : "Save Details"}
               </Button>
@@ -1759,7 +1828,7 @@ export function MeteringWorkflowPanel({
                     type="file"
                     accept={item.accept}
                     className="h-9 text-sm"
-                    disabled={readOnly}
+                    disabled={effectiveReadOnly}
                     onChange={(e) => {
                       if (!mcoDocsQuotationId) return
                       const file = e.target.files?.[0] || null
@@ -1821,9 +1890,9 @@ export function MeteringWorkflowPanel({
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setMcoDocsModalOpen(false)} disabled={savingMcoDocs}>
-              {readOnly ? "Close" : "Cancel"}
+              {effectiveReadOnly ? "Close" : "Cancel"}
             </Button>
-            {!readOnly && (
+            {!effectiveReadOnly && (
               <Button onClick={saveMcoDocuments} disabled={savingMcoDocs || !mcoDocsQuotationId}>
                 {savingMcoDocs ? "Saving..." : "Save Documents"}
               </Button>

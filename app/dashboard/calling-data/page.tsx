@@ -1347,6 +1347,28 @@ export default function CallingDataPage() {
       response?.nextLead ||
       queueCandidates[0] ||
       null
+
+    // Before Start Call: if API head is raw CSV but queue lists include Google Sheet / Social, prefer social.
+    if (!pinned) {
+      const normalizedHead = rawLead ? normalizeApiLead(rawLead) : null
+      const headIsInProgress =
+        String(normalizedHead?.status || "").trim().toLowerCase() === "in_progress"
+      if (!headIsInProgress) {
+        const socialFromLists = queueCandidates
+          .map((row) => {
+            try {
+              return normalizeApiLead(row)
+            } catch {
+              return null
+            }
+          })
+          .find((lead) => lead && isSocialMediaCallingLead(lead))
+        if (socialFromLists && (!normalizedHead || !isSocialMediaCallingLead(normalizedHead))) {
+          rawLead = socialFromLists
+        }
+      }
+    }
+
     // While a call is in progress, never swap the current lead for API `nextLead`.
     if (pinned) {
       const rawId = String(
@@ -1534,6 +1556,7 @@ export default function CallingDataPage() {
     if (submittingLeadIdsRef.current.size > 0) return
     const preservePinned = !!pinnedCurrentLeadRef.current
     void loadLeads({ preservePinnedLead: preservePinned })
+    void loadDealerAnalyticsActions()
   }
 
   const loadLeads = async (options?: { preservePinnedLead?: boolean }) => {
@@ -1617,14 +1640,67 @@ export default function CallingDataPage() {
         if (merged.length > 0) mergedResponse[key] = merged
       })
 
-      mergedResponse.lead =
-        (nextResponse as any)?.lead ||
-        (nextResponse as any)?.nextLead ||
-        (nextResponse as any)?.currentLead ||
-        (currentResponse as any)?.lead ||
-        (currentResponse as any)?.nextLead ||
-        (currentResponse as any)?.currentLead ||
-        mergedResponse.lead
+      // Before Start Call: prefer Google Sheet / Social Media over raw CSV from /next|/current.
+      // Only keep a non-social head when a call is already in_progress (Start done).
+      const collectLeadCandidates = (): any[] => {
+        const out: any[] = []
+        const push = (v: any) => {
+          if (!v) return
+          if (Array.isArray(v)) {
+            v.forEach(push)
+            return
+          }
+          out.push(v)
+        }
+        push((currentResponse as any)?.lead)
+        push((currentResponse as any)?.currentLead)
+        push((currentResponse as any)?.activeLead)
+        push((currentResponse as any)?.nextLead)
+        push((nextResponse as any)?.lead)
+        push((nextResponse as any)?.currentLead)
+        push((nextResponse as any)?.activeLead)
+        push((nextResponse as any)?.nextLead)
+        ;["leads", "queue", "pendingLeads", "assignedLeads", "currentQueue"].forEach((key) => {
+          push((currentResponse as any)?.[key])
+          push((nextResponse as any)?.[key])
+          push(mergedResponse[key])
+        })
+        return out
+      }
+
+      const normalizedCandidates = collectLeadCandidates()
+        .map((row) => {
+          try {
+            return normalizeApiLead(row)
+          } catch {
+            return null
+          }
+        })
+        .filter((lead): lead is CallingLead => Boolean(lead?.id))
+
+      const inProgressLead = normalizedCandidates.find(
+        (lead) => String(lead.status || "").trim().toLowerCase() === "in_progress",
+      )
+      const socialLead = normalizedCandidates.find((lead) => isSocialMediaCallingLead(lead))
+
+      const preferredHead =
+        preservePinnedLead && pinnedCurrentLeadRef.current
+          ? pinnedCurrentLeadRef.current
+          : inProgressLead || socialLead || normalizedCandidates[0] || null
+
+      mergedResponse.lead = preferredHead
+        ? preferredHead
+        : (nextResponse as any)?.lead ||
+          (nextResponse as any)?.nextLead ||
+          (nextResponse as any)?.currentLead ||
+          (currentResponse as any)?.lead ||
+          (currentResponse as any)?.nextLead ||
+          (currentResponse as any)?.currentLead ||
+          mergedResponse.lead
+      if (preferredHead) {
+        mergedResponse.currentLead = preferredHead
+        mergedResponse.nextLead = preferredHead
+      }
 
       if (preservePinnedLead && pinnedCurrentLeadRef.current) {
         applyQueueMetadataFromResponse(mergedResponse)
@@ -1701,21 +1777,25 @@ export default function CallingDataPage() {
     }
 
     const fromApi = apiRows.map((entry) => normalizeActionLog(entry))
-    // Prefer API rows; keep local cache only to fill gaps the queue history omitted.
-    const merged = mergeActionLogEntries([...fromApi, ...localActions])
-    setAnalyticsActions(merged.length > 0 ? merged : localActions)
+    // Prefer API rows; keep local cache + in-memory optimistic submits so dashboard
+    // counts do not drop while the backend catches up.
+    setAnalyticsActions((prev) => {
+      const merged = mergeActionLogEntries([...fromApi, ...localActions, ...prev])
+      return merged.length > 0 ? merged : prev.length > 0 ? prev : localActions
+    })
 
-    if (merged.length > 0) {
-      const dialledFromHistory = merged.filter(isDialledHistoryAction)
-      const connectedFromHistory = merged.filter((item) => {
+    const mergedForTabs = mergeActionLogEntries([...fromApi, ...localActions])
+    if (mergedForTabs.length > 0) {
+      const dialledFromHistory = mergedForTabs.filter(isDialledHistoryAction)
+      const connectedFromHistory = mergedForTabs.filter((item) => {
         const parsed = parseTaggedCallRemark(item.callRemark)
         return Boolean(parsed.status) && !NOT_CONNECTED_REASONS.includes(parsed.status)
       })
-      const notConnectedFromHistory = merged.filter((item) => {
+      const notConnectedFromHistory = mergedForTabs.filter((item) => {
         const parsed = parseTaggedCallRemark(item.callRemark)
         return Boolean(parsed.status) && NOT_CONNECTED_REASONS.includes(parsed.status)
       })
-      setRecentActions((prev) => mergeActionLogEntries([...prev, ...merged]))
+      setRecentActions((prev) => mergeActionLogEntries([...prev, ...mergedForTabs]))
       setDialledActions((prev) => mergeActionLogEntries([...prev, ...dialledFromHistory]))
       setConnectedActionItems((prev) => mergeActionLogEntries([...prev, ...connectedFromHistory]))
       setNotConnectedActionItems((prev) => mergeActionLogEntries([...prev, ...notConnectedFromHistory]))
@@ -1933,7 +2013,26 @@ export default function CallingDataPage() {
         return false
       })
       .sort((a, b) => {
-        // FIFO: oldest queued/assigned first (first-come-first-serve)
+        // Priority (product): Social Media before raw CSV — after finishing in_progress.
+        // 1) in_progress (finish started call first)
+        // 2) social / Google Sheet (assigned to me)
+        // 3) social / Google Sheet (pool / claimable)
+        // 4) other assigned (raw CSV)
+        // 5) other pool unassigned
+        // then FIFO by queuedAt / assignedAt
+        const queueRank = (lead: CallingLead) => {
+          const st = getNormalizedStatus(lead)
+          if (st === "in_progress") return 0
+          const social = isSocialMediaCallingLead(lead)
+          const assignedToMe = callingLeadAssignedToDealer(lead, currentDealerIdentity)
+          if (social && assignedToMe) return 1
+          if (social) return 2
+          if (assignedToMe) return 3
+          return 4
+        }
+        const rankDiff = queueRank(a) - queueRank(b)
+        if (rankDiff !== 0) return rankDiff
+
         const aQueued = a.queuedAt ? new Date(a.queuedAt).getTime() : NaN
         const bQueued = b.queuedAt ? new Date(b.queuedAt).getTime() : NaN
         const aTime = Number.isFinite(aQueued) ? aQueued : getLeadSortTime(a)
@@ -2035,7 +2134,20 @@ export default function CallingDataPage() {
     })
   }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter, filterCities])
 
-  const currentLead = pinnedCurrentLead || dealerAssignedQueue[0] || null
+  const currentLead = useMemo(() => {
+    // Start Call done → keep pinned / in_progress lead until Submit.
+    if (pinnedCurrentLead && getNormalizedStatus(pinnedCurrentLead) === "in_progress") {
+      return pinnedCurrentLead
+    }
+    const inProgress = dealerAssignedQueue.find((lead) => getNormalizedStatus(lead) === "in_progress")
+    if (inProgress) return inProgress
+
+    // Start Call not done → Google Sheet / Social Media before raw CSV.
+    const socialHead = dealerAssignedQueue.find((lead) => isSocialMediaCallingLead(lead))
+    if (socialHead) return socialHead
+
+    return dealerAssignedQueue[0] || null
+  }, [pinnedCurrentLead, dealerAssignedQueue])
 
   const isSocialMediaCurrentLead = useMemo(
     () => isSocialMediaCallingLead(currentLead),
@@ -2467,6 +2579,8 @@ export default function CallingDataPage() {
       applyQueueResponse(response)
     }
     void loadLeads()
+    // Keep Call Analytics cards in sync with the action just submitted (no manual reload).
+    void loadDealerAnalyticsActions()
     if (wasCurrentQueueHead) {
       setFlowTab("current_lead")
     }
@@ -2540,6 +2654,10 @@ export default function CallingDataPage() {
       const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
       return [actionItem, ...withoutDup]
     })
+    // Optimistic analytics update so dashboard numbers move immediately on Submit.
+    if (isDialledHistoryAction(actionItem)) {
+      setAnalyticsActions((prev) => mergeActionLogEntries([actionItem, ...prev]))
+    }
     const dialAction = String(payload.action || "").toLowerCase()
     if (["called", "follow_up", "not_interested", "rescheduled"].includes(dialAction)) {
       setDialledActions((prev) => {
@@ -2696,6 +2814,8 @@ export default function CallingDataPage() {
           )
         }
         applyQueueMetadataFromResponse(response)
+        // Start does not change outcome counts, but keep history/analytics in sync if API echoed actions.
+        void loadDealerAnalyticsActions()
         return
       }
 
@@ -2833,8 +2953,10 @@ export default function CallingDataPage() {
           />
         </div>
         <p className="text-sm text-muted-foreground">
-          One lead at a time. After Start Call, submit the outcome before the next lead appears — repeated Start
-          will not skip leads. The queue refreshes in the background every 5 minutes (and when you return to this tab).
+          One lead at a time. If Start Call is not done yet, Google Sheet / Social Media leads show first; raw
+          CSV comes after. After Start Call, submit the outcome before the next lead appears — repeated Start
+          will not skip leads. Analytics update as soon as you submit an action; the queue also refreshes every 5 minutes
+          (and when you return to this tab).
         </p>
 
         <Card className={isSocialMediaCurrentLead ? "border-sky-200/60" : undefined}>

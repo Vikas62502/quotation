@@ -34,6 +34,7 @@ import { canOpenSection, getAccessOptions, getPostLoginPath } from "@/lib/user-a
 import {
   filterQuotationsByWorkflowPermission,
   isWorkflowModuleReadOnly,
+  canWriteWorkflowModule,
   shouldLoadAllAccountsQuotations,
 } from "@/lib/module-field-permissions"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
@@ -1100,25 +1101,25 @@ export default function AccountManagementPage() {
    */
   const siteCostSessionRef = useRef<Record<string, number>>({})
   const sessionUserId = accountManager?.id ?? dealer?.id
-  const accountsReadOnly = isWorkflowModuleReadOnly(modulePermissions, "accounts", {
+  const accountsPermissionCtx = {
     userId: sessionUserId,
     officeLocation,
     viewerIsDealer: role === "dealer",
     viewerIsAdmin: role === "admin" || role === "super-admin",
-  })
+  }
+  const accountsReadOnly = isWorkflowModuleReadOnly(modulePermissions, "accounts", accountsPermissionCtx)
+  const canWriteAccounts = canWriteWorkflowModule(modulePermissions, "accounts", accountsPermissionCtx)
+  /** Cost of site / profit are write-side fields — hide for Accounts read-only. */
+  const showAccountsSiteProfit = canWriteAccounts && !accountsReadOnly
   const permissionVisibleQuotations = useMemo(
     () =>
       filterQuotationsByWorkflowPermission(
         quotations as unknown as Record<string, unknown>[],
         modulePermissions,
         "accounts",
-        {
-          userId: sessionUserId,
-          officeLocation,
-          viewerIsDealer: role === "dealer",
-          viewerIsAdmin: role === "admin" || role === "super-admin",
-        },
+        accountsPermissionCtx,
       ) as unknown as Quotation[],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ctx fields listed below
     [quotations, modulePermissions, sessionUserId, officeLocation, role],
   )
   const [subsidyDraftDetails, setSubsidyDraftDetails] = useState("")
@@ -1498,10 +1499,9 @@ export default function AccountManagementPage() {
     }
   }, [isAuthenticated, role, dealer, access, router, isInitialLoad, loadApprovedQuotations])
 
-  // Initialize payment phases for quotations
+  // Initialize payment phases for quotations (permission-scoped — Selected one / office / everyone)
   useEffect(() => {
-    if (quotations.length > 0) {
-      const payments: CustomerPayment[] = quotations.map((q) => {
+    const payments: CustomerPayment[] = permissionVisibleQuotations.map((q) => {
         const qx = q as Quotation & { remaining?: number; remainingAmount?: number }
         const flatQx = quotationListRowToFlatRecord(qx as unknown)
         const subtotal = pickFirstFiniteNumber(
@@ -1629,8 +1629,7 @@ export default function AccountManagementPage() {
         }
       })
       setCustomerPayments(payments)
-    }
-  }, [quotations, useApi])
+  }, [permissionVisibleQuotations, useApi])
 
   const paymentDealerOptions = useMemo(() => {
     const byId = new Map<string, string>()
@@ -1820,11 +1819,22 @@ export default function AccountManagementPage() {
     [permissionVisibleQuotations],
   )
 
+  const permissionScopedCustomerPayments = useMemo(
+    () => customerPayments.filter((payment) => visibleQuotationIds.has(payment.quotationId)),
+    [customerPayments, visibleQuotationIds],
+  )
+
   const filteredCustomerPayments = useMemo(
     () =>
-      customerPayments
-        .filter((payment) => visibleQuotationIds.has(payment.quotationId))
-        .filter((payment) => paymentMatchesRowFilters(payment, fileStatusFilter))
+      permissionScopedCustomerPayments
+        .filter((payment) => {
+          // Installation-completed shortcut is pending/partial only (matches the summary card).
+          if (fileStatusFilter === "installation:completed") {
+            const status = getEffectivePaymentStatus(payment)
+            if (status !== "pending" && status !== "partial") return false
+          }
+          return paymentMatchesRowFilters(payment, fileStatusFilter)
+        })
         // Recent approve date first; missing dates at the bottom
         .sort((a, b) => {
           const aTime = a.statusApprovedAt ? new Date(a.statusApprovedAt).getTime() : 0
@@ -1836,7 +1846,7 @@ export default function AccountManagementPage() {
           if (bValid) return 1
           return 0
         }),
-    [customerPayments, visibleQuotationIds, paymentMatchesRowFilters, fileStatusFilter],
+    [permissionScopedCustomerPayments, paymentMatchesRowFilters, fileStatusFilter],
   )
 
   const paymentSectionBuckets = useMemo(
@@ -1865,10 +1875,13 @@ export default function AccountManagementPage() {
       totalProfit += getPaymentSiteProfit(payment, liveSiteCost)
     }
 
-    // Remaining only for Installation · Approved (completed), independent of File status filter.
+    // Remaining only for Installation · Approved among Pending & Partial (same mapped pool as
+    // "No. of Customers" / tab count — never payment-completed, never unmapped dealers).
     let installationCompletedRemaining = 0
     let installationCompletedCount = 0
-    for (const payment of customerPayments) {
+    for (const payment of permissionScopedCustomerPayments) {
+      const status = getEffectivePaymentStatus(payment)
+      if (status !== "pending" && status !== "partial") continue
       if (!paymentMatchesRowFilters(payment, "installation:completed")) continue
       installationCompletedRemaining += getDisplayRemaining(payment)
       installationCompletedCount += 1
@@ -1882,7 +1895,12 @@ export default function AccountManagementPage() {
       installationCompletedRemaining,
       installationCompletedCount,
     }
-  }, [displayedCustomerPayments, customerPayments, paymentMatchesRowFilters, siteCostDrafts])
+  }, [
+    displayedCustomerPayments,
+    permissionScopedCustomerPayments,
+    paymentMatchesRowFilters,
+    siteCostDrafts,
+  ])
 
   const updatePaymentSiteCost = async (quotationId: string, raw: string) => {
     const siteCost = parseSiteCostInput(raw)
@@ -2162,8 +2180,7 @@ export default function AccountManagementPage() {
       "File login date",
       "File login status",
       "Subtotal",
-      "Cost of Site",
-      "Profit",
+      ...(showAccountsSiteProfit ? (["Cost of Site", "Profit"] as const) : []),
       "Loan Amount",
       "Cash Amount",
       "Discount",
@@ -2207,8 +2224,9 @@ export default function AccountManagementPage() {
         payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
         fileLoginStatusLabel(payment.fileLoginStatus) || "",
         getPaymentOriginalSubtotal(payment),
-        payment.siteCost || 0,
-        getPaymentSiteProfit(payment),
+        ...(showAccountsSiteProfit
+          ? [payment.siteCost || 0, getPaymentSiteProfit(payment)]
+          : []),
         loanAmt,
         cashAmt,
         getPaymentDiscountAmount(payment),
@@ -3259,7 +3277,7 @@ export default function AccountManagementPage() {
       </header>
       ) : null}
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-5">
+      <main className="w-full max-w-[1600px] mx-auto px-3 sm:px-4 py-4 sm:py-5">
         <div className="mb-5">
           <div className="flex items-center gap-2.5 mb-1.5">
             <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
@@ -3614,8 +3632,13 @@ export default function AccountManagementPage() {
                         : "All pending and partial payments — not limited to the last 30 days."}
                   </p>
                 </Tabs>
-                {!isLoading && customerPayments.length > 0 && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+                {!isLoading && permissionScopedCustomerPayments.length > 0 && (
+                  <div
+                    className={cn(
+                      "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3",
+                      showAccountsSiteProfit ? "xl:grid-cols-5" : "xl:grid-cols-4",
+                    )}
+                  >
                     <Card className="border-border/60 bg-card shadow-sm">
                       <CardContent className="p-4 flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
@@ -3652,16 +3675,20 @@ export default function AccountManagementPage() {
                       role="button"
                       tabIndex={0}
                       onClick={() => {
-                        setFileStatusFilter((prev) =>
-                          prev === "installation:completed" ? "all" : "installation:completed",
-                        )
+                        setFileStatusFilter((prev) => {
+                          const next = prev === "installation:completed" ? "all" : "installation:completed"
+                          if (next === "installation:completed") setPaymentSectionTab("active")
+                          return next
+                        })
                       }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault()
-                          setFileStatusFilter((prev) =>
-                            prev === "installation:completed" ? "all" : "installation:completed",
-                          )
+                          setFileStatusFilter((prev) => {
+                            const next = prev === "installation:completed" ? "all" : "installation:completed"
+                            if (next === "installation:completed") setPaymentSectionTab("active")
+                            return next
+                          })
                         }
                       }}
                     >
@@ -3675,13 +3702,14 @@ export default function AccountManagementPage() {
                             ₹{paymentDashboardStats.installationCompletedRemaining.toLocaleString()}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            Remaining · {paymentDashboardStats.installationCompletedCount.toLocaleString()}{" "}
+                            Pending remaining · {paymentDashboardStats.installationCompletedCount.toLocaleString()}{" "}
                             {paymentDashboardStats.installationCompletedCount === 1 ? "customer" : "customers"}
                             {fileStatusFilter === "installation:completed" ? " · filter on" : " · click to filter"}
                           </p>
                         </div>
                       </CardContent>
                     </Card>
+                    {showAccountsSiteProfit ? (
                     <Card className="border-border/60 bg-card shadow-sm">
                       <CardContent className="p-4 flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
@@ -3704,6 +3732,7 @@ export default function AccountManagementPage() {
                         </div>
                       </CardContent>
                     </Card>
+                    ) : null}
                     <Card className="border-border/60 bg-card shadow-sm">
                       <CardContent className="p-4 flex items-center gap-3">
                         <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
@@ -3727,13 +3756,15 @@ export default function AccountManagementPage() {
                     </div>
                     <p className="font-medium text-foreground">Loading payment data...</p>
                   </div>
-                ) : customerPayments.length === 0 ? (
+                ) : permissionScopedCustomerPayments.length === 0 ? (
                   <div className="text-center py-12 text-muted-foreground">
                     <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
                       <Wallet className="w-8 h-8 opacity-50" />
                     </div>
                     <p className="font-medium">No payment data available</p>
-                    <p className="text-sm mt-1">Approved quotations will appear here for payment management</p>
+                    <p className="text-sm mt-1">
+                      Approved quotations mapped to your Accounts access will appear here
+                    </p>
                   </div>
                 ) : (
                   <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-2.5 overflow-y-auto overscroll-y-contain pr-1">
@@ -3783,7 +3814,14 @@ export default function AccountManagementPage() {
                                     : "border-l-border bg-card",
                             )}
                           >
-                            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-[minmax(10rem,1.15fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,auto)_minmax(6rem,auto)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)] gap-x-2 gap-y-2 items-center">
+                            <div
+                              className={cn(
+                                "grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full",
+                                showAccountsSiteProfit
+                                  ? "xl:grid-cols-[minmax(10rem,1.2fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,1.1fr)_minmax(6rem,0.85fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)]"
+                                  : "xl:grid-cols-[minmax(10rem,1.35fr)_minmax(4.5rem,0.65fr)_minmax(4.5rem,0.65fr)_minmax(5rem,0.7fr)_minmax(5.5rem,0.75fr)_minmax(6rem,0.8fr)_minmax(10rem,1.25fr)_minmax(7rem,1fr)_minmax(6.75rem,7.25rem)]",
+                              )}
+                            >
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
                                 <p className="text-sm font-semibold leading-tight break-words">
                                   {payment.customerName}
@@ -3997,13 +4035,15 @@ export default function AccountManagementPage() {
                                 </div>
                               </div>
 
-                              <div className="min-w-0 max-w-[9rem]">
+                              <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
                                 <p className="text-[10px] font-medium leading-snug break-words text-muted-foreground">
                                   {getFinancingBankDisplay(payment)}
                                 </p>
                               </div>
 
+                              {showAccountsSiteProfit ? (
+                              <>
                               <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                                   Cost of site
@@ -4026,6 +4066,8 @@ export default function AccountManagementPage() {
                                   ₹{getPaymentSiteProfit(payment).toLocaleString("en-IN")}
                                 </p>
                               </div>
+                              </>
+                              ) : null}
 
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end">
                                 <div className="flex flex-col items-stretch gap-1 w-full max-w-[7.25rem] min-w-0">
@@ -4083,7 +4125,14 @@ export default function AccountManagementPage() {
                                     type="button"
                                     size="sm"
                                     className="h-6 px-1.5 text-[10px] leading-none w-full font-medium"
+                                    disabled={accountsReadOnly || !canWriteAccounts}
+                                    title={
+                                      accountsReadOnly || !canWriteAccounts
+                                        ? "Read-only Accounts access — Manage is disabled"
+                                        : "Manage installments and payment plan"
+                                    }
                                     onClick={async () => {
+                                      if (accountsReadOnly || !canWriteAccounts) return
                                       if (useApi) {
                                         await loadApprovedQuotations()
                                       }
@@ -4870,6 +4919,7 @@ export default function AccountManagementPage() {
                   )}
                 </div>
               )}
+              {showAccountsSiteProfit ? (
               <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="min-w-0">
@@ -4941,8 +4991,11 @@ export default function AccountManagementPage() {
                     })()}
                   </div>
                 </div>
+              </div>
+              ) : null}
 
-                <div className="border-t border-border/50 pt-3 space-y-2">
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
+                <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">PI upload</p>

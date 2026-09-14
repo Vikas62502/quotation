@@ -3059,6 +3059,7 @@ If `currentLead` is missing but an `in_progress` row exists for this dealer in D
 - [ ] Completion PATCH → `nextLead` only after closing current lead
 - [ ] `callRemark` / `statusCategory` / `statusText` persisted on completion
 - [ ] `customerNote` on lead echoed on GET during open call
+- [ ] After completion, prefer Social Media assigned leads as next head — **§AT** / HANDOFF **§4.5.3**
 
 #### QA
 
@@ -3066,7 +3067,7 @@ If `currentLead` is missing but an `in_progress` row exists for this dealer in D
 2. Submit → lead B appears.
 3. Two dealers: B never sees A as current while A is `in_progress` for dealer A.
 
-**Reference:** `BACKEND_CHANGES_HANDOFF.md` §4.5, §4.5.1; `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`.
+**Reference:** `BACKEND_CHANGES_HANDOFF.md` §4.5, §4.5.1, §4.5.3; `BACKEND_ADMIN_QUOTATION_STATUS.ts` → `patchDealerCallingQueueAction`.
 
 ### E.2 Reschedule / Decision Pending — `action: rescheduled` must not 500 (Jun 2026)
 
@@ -4347,7 +4348,7 @@ Optional fields on `products` and quotation `dealer` support the **client-genera
 | `pdfDcrPanelRangeKey` | `both` — DCR panels |
 | `pdfNonDcrPanelRangeKey` | `both` — Non-DCR panels |
 
-**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, **`waaree_580_630`** (80kW Non-DCR), `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, **`adani_600_630`** (80kW Non-DCR), `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 — 530W–570W range on proposal PDF), `renewsys_540_580`, `renewsys_600_630_bifacial_topcon`, **`renew_energy_600_630`** (Renew Energy 80kW Non-DCR — 600W–630W). See **`BACKEND_NON_DCR_80KW.md`** / HANDOFF **§19**.
+**Values:** `waaree_540_560_bifacial`, `waaree_580_700_bifacial_topcon`, **`waaree_580_620`** (580W–620W N-Type Topcon; legacy alias `waaree_580_630`), `adani_540_580_bifacial`, `adani_610_625_bifacial_topcon`, **`adani_600_630`** (80kW Non-DCR), `premier_600_625_bifacial_topcon`, **`tata_530_570`** (Tata DCR Jun 2026 — 530W–570W range on proposal PDF), `renewsys_540_580`, `renewsys_600_630_bifacial_topcon`, **`renew_energy_600_630`** (Renew Energy 80kW Non-DCR — 600W–630W). See **`BACKEND_NON_DCR_80KW.md`** / HANDOFF **§19**.
 
 **Snake_case:** `pdf_panel_range_key`, `pdf_dcr_panel_range_key`, `pdf_non_dcr_panel_range_key`.
 
@@ -5315,13 +5316,24 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Retrieve from Metering** — `installer_approved`, clear metering fields | **§AL**, HANDOFF **§39** | `retrieveQuotationFromMetering` |
 | **High** | **Retrieve from Installation** — clear release flags | **§AM**, HANDOFF **§40** | `retrieveQuotationFromInstallation` |
 | **High** | **Google Sheets social leads** — Meta tab sync + round-robin | **§AN**, HANDOFF **§41** | `api.hr.sheetSources.*` |
+| **High** | **Sheet Social Media socket** — emit `calling:uploads-updated` to stream:hr + dealers after sync/cron | **§AP** / **§AZ**, HANDOFF **§41** / **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
+| **High** | **Sheet write-back** — assigned dealer + calling status → Google Sheet row | **§AQ**, HANDOFF **§41** | `writeBackHrLeadToSheet` |
+| **High** | **Users Update 403 + Active-only + read/write** | **§AR**, HANDOFF **§46** | `BACKEND_USER_ACCESS.ts`, `requireAccess("admin")` |
+| **High** | **Update User Zod** — allow `visitor_reports` \| `calling_reports` in `access` | **§AU**, HANDOFF **§46** | `BACKEND_USER_ACCESS.ts` `ACCESS_KEYS` |
+| **High** | **Field access round-trip** — persist + echo `moduleFieldPermissions` on Update User | **§AV**, HANDOFF **§46** | `BACKEND_USER_ACCESS.ts` `publicDealer` / `updateDealer` |
+| **High** | **Workspace cards** — login/`user.access` must include `visitor_reports` \| `calling_reports` | **§AW**, HANDOFF **§46** | `BACKEND_USER_ACCESS.ts` login + `publicDealer` |
+| **High** | **Calling/Visitor Reports API auth** — `calling_reports` / `visitor_reports` may GET report routes (not admin-only) | **§AX**, HANDOFF **§46** | `GET /admin/calling-actions`, visits list |
+| **High** | **Dealer Call Analytics live** — emit `calling:actions-updated` after PATCH action; calling-actions GET complete | **§AY**, HANDOFF **§47** / **§5** | dealer action PATCH + `GET …/calling-actions` |
+| **High** | **Sheet auto-sync cron** — every **30 min** `POST …/sync-all` + socket | **§AZ**, HANDOFF **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
+| **High** | **Calling queue priority** — finish `in_progress`, then Social Media assigned | **§AT**, HANDOFF **§4.5.3** | `BACKEND_CALLING_QUEUE_CURRENT.ts` |
+| Medium | **PDF warranty inverter + Hybrid Type** — round-trip `inverterBrand` / `inverterType` (SPA PDF) | **§AO**, HANDOFF **§45** | `lib/quotation-proposal-document.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
 | **High** | **Meter in Discom → WCC → Meter Installation Pending** — persist `meter_installation_pending` + **required** `meteringWccAfterDiscom` on GET (no localStorage) | **§L.2** | `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md`, `setMeteringWccAfterDiscom` |
 | **High** | **Admin Metering list complete row** — Discom, remarks, assigned person, address, amount fields on `GET /admin/quotations` | **§L.3** | `BACKEND_METERING_DISCOM_WCC_METER_INSTALL.md` §8 |
 
 **HR counts — do not:** map `POST` upload `assigned` → `assignedCount` on GET. **Do:** aggregate from `hr_leads.assigned_dealer_id` + `status` per §7.8 SQL.
 
-**PDF / products — do not:** use `pdf*PanelRangeKey` in pricing; do not rewrite Tata `As per the set` to `Vsole/Xwatt`. **Do:** store on `products`, allow PATCH after create, return `dealer` on GET, allow combined + catalog `inverterBrand`, persist Tata package-set strings verbatim.
+**PDF / products — do not:** use `pdf*PanelRangeKey` in pricing; do not rewrite Tata `As per the set` to `Vsole/Xwatt`; do not force `inverterBrand` to Vsole/Xwatt when dealer picked Crompton/etc.; do not strip `Hybrid Inverter`. **Do:** store on `products`, allow PATCH after create, return `dealer` on GET, allow combined + catalog `inverterBrand`, persist Tata package-set strings verbatim; round-trip `inverterType` for Hybrid PDF Type label (HANDOFF **§45** / **§AO**).
 
 ---
 
@@ -5924,8 +5936,8 @@ Header example:
 | Env | `GOOGLE_SERVICE_ACCOUNT_JSON` or `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_SHEETS_SPREADSHEET_ID`, `CRON_SECRET` |
 | Assign | `active_cap`, default 1/dealer; same as CSV — **from dealer pool, not sheet** |
 | Dedupe | `external_id` and/or mobile per sheet source |
-| Socket | `calling:uploads-updated` after sync / sync-all |
-| Auto-sync | Cron every **15 min** → `POST …/sync-all` (Sheets cannot push via socket alone) |
+| Socket | `calling:uploads-updated` after sync / sync-all — emit to **`stream:hr` + `stream:dealers`** (same as CSV). Payload `{ reason: "sheet_sync"|"sheet_auto_sync", … }`. Also `backend:mutation` `{ domain: "hr", path: "…/sheet-sources/…" }` |
+| Auto-sync | Cron every **30 min** → `POST …/sync-all` (Sheets cannot push via socket alone) |
 | Discover prune | DELETE sources whose `sheet_tab_name` is gone from Google |
 
 ### API echo (status chips + cards)
@@ -5946,12 +5958,519 @@ Without these, dealer page stays **Calling Data** (orange). With them → title 
 - [ ] PATCH saves enabled + dealer pool + mirrors `dealer_ids` on linked upload
 - [ ] Sync maps **required** Meta columns (`phone_number`, `id`, `full_name`, `lead_status`); ignores ad/adset/campaign/form ids
 - [ ] **Sync calls assign-unassigned / active_cap after import** (1 lead per dealer) from `dealer_ids`
-- [ ] `POST /hr/sheet-sources/sync-all` + cron every 15 min + `CRON_SECRET`
+- [ ] `POST /hr/sheet-sources/sync-all` + cron every 30 min + `CRON_SECRET`
 - [ ] `GET /hr/sheet-sources/:id/leads` returns social fields + `assignedDealerName`
 - [ ] `GET /hr/leads/uploads` lists batch (`source_type=google_sheet`)
 - [ ] Dealer `calling-queue/current` echoes social fields → **Social Media** title + coloured card
-- [ ] `calling:uploads-updated` socket after sync + assign
+- [ ] `calling:uploads-updated` socket after sync + assign — rooms **stream:hr** + **stream:dealers**
+- [ ] **Write-back** assigned dealer + calling status to sheet (`writeBackHrLeadToSheet`); pull does not wipe CRM fields
 - [ ] Credentials not in frontend bundle
 
+---
 
+## §AP — **Sheet Social Media socket refresh** — Sep 2026
+
+**Problem:** HR Social Media did not live-update after sheet sync/cron.
+
+**Frontend (shipped):**  
+- `lib/realtime.ts` — re-subscribe streams on every reconnect  
+- `app/dashboard/hr/page.tsx` — init socket after auth; listen `calling:uploads-updated`  
+- `components/hr-social-media-sheets-panel.tsx` — socket reload + **auto `syncAll` every 30 min** while HR page open (same as Sync now)  
+
+**Backend (P0):**
+
+After every sheet sync (`/:id/sync` and `/sync-all`):
+
+```js
+io.to("stream:hr").to("stream:dealers").emit("calling:uploads-updated", {
+  reason: "sheet_sync", // or sheet_auto_sync for cron
+  spreadsheetId,
+  syncedAt: new Date().toISOString(),
+})
+```
+
+Optional companion: `backend:mutation` with `domain: "hr"` and path containing `sheet`.
+
+**Do not:** skip emit on cron; emit only to admin; rename the event.
+
+**HANDOFF:** §41 / §44 · Spec: `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.md` (Socket contract)
+
+---
+
+## §AQ — **Google Sheet write-back (assigned dealer + calling status + address)** — Sep 2026
+
+**Need:** Values updated in DB (assigned dealer, calling status, remarks, final decision, **address**) must appear on the **same Google Sheet row** (Ajmer Leads / Jaipur Leads / etc.).
+
+**Reference:** `writeBackHrLeadToSheet` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · MD section **DB → Google Sheet write-back**.
+
+### Backend must
+
+1. Sheets scope: `https://www.googleapis.com/auth/spreadsheets` (write), SA = **Editor** on spreadsheet.
+2. After **assign** and after **calling-queue actions** (and any lead PATCH) for leads with `sheet_source_id`:
+   - Update sheet columns: `Assigned Dealer`, `Assignment Status` (also truncated `Assignment Stat`), `lead_status`, `Remarks`, call responses, `Final Decision`, reason, **`Address`**.
+3. If **`Address`** header is missing, **append** it to row 1 and write the CRM address there.
+4. Match row by `external_id` (`id` column) or `sheet_row_index`.
+5. On **pull** sync: for existing `external_id`, **do not** clear CRM assignment/status/address from blank sheet cells.
+
+### Checklist
+
+- [ ] Assign dealer in app → sheet `Assigned Dealer` updates within seconds
+- [ ] Dealer completes / not interested / remarks → sheet status + remarks + final decision update
+- [ ] Address saved in CRM / calling → sheet **Address** column filled (create column if needed)
+- [ ] Truncated headers (`Assignment Stat`, `1st Call Respon`) still match
+- [ ] Re-sync / cron does **not** wipe those columns back to empty/CREATED incorrectly
+- [ ] Meta columns (`phone_number`, `full_name`, ads) unchanged by write-back
+
+---
+
+## §AO — **Proposal PDF inverter warranty + Hybrid type** — Sep 2026
+
+**Frontend (shipped):** `lib/quotation-proposal-document.ts` (`resolveInverterBrandForPdf`, `getSystemTypeLabel`, `buildWarrantyRows`).  
+**HANDOFF:** **§45**.
+
+### Behaviour (SPA)
+
+| PDF place | Rule |
+|-----------|------|
+| Warranty `GTI Inverter (…)` | Use stored `products.inverterBrand` (same as Solar Inverter Brand/Model row) |
+| System Type / Type: | If `products.inverterType` matches Hybrid → **`Hybrid Solar system`**; else existing On-Grid DCR / Non-DCR labels |
+
+### Backend (P0 — persistence only)
+
+No new endpoints. On `POST`/`PATCH`/`GET` quotations:
+
+| Field | Must |
+|-------|------|
+| `inverterBrand` | Round-trip dealer value (`Crompton`, catalog brands, `Vsole/Xwatt`, `As per the set`) — **never overwrite** to Vsole/Xwatt |
+| `inverterType` | Round-trip `Hybrid Inverter` / `String Inverter` / etc. |
+
+If backend also renders proposal PDFs, mirror the same two rules (do not hardcode Vsol/Xwatt; Hybrid → `Hybrid Solar system`).
+
+### Checklist
+
+- [ ] GET quotation after Crompton save returns `products.inverterBrand: "Crompton"`
+- [ ] GET after Hybrid save returns `products.inverterType` containing `Hybrid`
+- [ ] No server rewrite of inverter brand/type on PATCH
+
+---
+
+## §AR — **Users: Active-only + Update User 403 + Metering read-only** — Sep 2026
+
+**Symptom:** Admin → Users → set **Metering** (or Accounts / Installation) to **Read only** → **Update User** → `Insufficient permissions. Admin access required.` (`AUTH_004` on `PUT /admin/dealers/:id`)
+
+**Not** caused by read-only UI — admin auth middleware blocks the entire PUT (same for address / access changes).
+
+**Frontend (shipped):** Active-only Users list; SPA gates Metering with `moduleFieldPermissions`. On AUTH_004, read-only is saved **browser-local only** until backend auth is fixed.
+
+### Backend must (P0)
+
+#### 1. Fix Update User 403 (do this first)
+
+**Delete** strict checks like `if (req.user.role !== "admin") return 403`.
+
+**Replace** on `PUT /admin/dealers/:id`, `PUT /admin/account-managers/:id`, `PUT /admin/visitors/:id`:
+
+```js
+router.put("/admin/dealers/:id", auth, requireAdminAccess(), updateDealer)
+```
+
+**Allow when:** JWT `role` is `admin` or `super-admin`, **or** `access` includes `"admin"`.
+
+Copy-paste: **`BACKEND_USER_ACCESS.ts`** → `canAccessSection`, `requireAdminAccess`.
+
+#### 2. Persist + echo `moduleFieldPermissions`
+
+On PUT save e.g. `metering: { level: "read", scope, selectedUserIds }`.  
+On **GET** dealers and **login** user/JWT: echo the same so Metering is read-only after login.  
+Also persist: `access`, `officeLocation`, address (**§AS**).
+
+#### 3. Enforce read vs write + Active-only list
+
+| `level` | Behaviour |
+|---------|-----------|
+| `read` | GET/view only — module mutations → **403** |
+| `write` | View + mutations |
+| `none` | No module access |
+
+`scope` (`everyone` / `selected_users` / `office_only`) filters rows.  
+`GET /admin/dealers`: default Active only; `?includeInactive=true` for toggle.
+
+**Refs:** HANDOFF **§46**, `BACKEND_USER_ACCESS.ts`, `BACKEND_USER_FIELD_PERMISSIONS.ts`
+
+### Checklist
+
+- [ ] Admin → Metering Read only → Update User → **200** (no AUTH_004)
+- [ ] Login as that user → `moduleFieldPermissions.metering.level === "read"`
+- [ ] Metering: view OK; mutate → **403**
+- [ ] `super-admin` Update User → **200**
+- [ ] GET dealers default Active only
+
+---
+
+## §AT — **Calling queue priority: in_progress → Social Media** — Sep 2026
+
+**Product:** When Social Media (Google Sheet) leads are assigned to a dealer:
+1. If a call is already **started** (`in_progress`) on any lead (CSV/raw or social) → that lead stays Current until Submit.
+2. **Start Call not done** (`status` ≠ `in_progress`) → Current / `nextLead` must be **Social / Google Sheet** when any exist for this dealer — not older raw CSV.
+3. After Submit, the **next** Current Lead should prefer **Social Media / sheet** over older raw/CSV assigned rows.
+
+**Frontend (shipped):** `dealerAssignedQueue` sort in `app/dashboard/calling-data/page.tsx` (`isSocialMediaCallingLead`):
+1. `in_progress` → 2. social assigned → 3. social pool → 4. raw assigned → 5. raw pool → FIFO time.
+
+### Backend must (P0)
+
+Apply on `GET /api/dealers/me/calling-queue/next` and `/current`:
+
+**Assigned head** (`findOpenAssignedToDealer`):
+
+```sql
+SELECT * FROM hr_leads
+WHERE assigned_dealer_id = :dealerId
+  AND LOWER(status) IN ('assigned','in_progress','queued','pending')
+ORDER BY
+  CASE WHEN LOWER(status) = 'in_progress' THEN 0 ELSE 1 END,
+  CASE
+    WHEN sheet_source_id IS NOT NULL THEN 0
+    WHEN LOWER(COALESCE(source_type,'')) IN ('google_sheet','social_media','social','meta') THEN 0
+    ELSE 1
+  END,
+  COALESCE(assigned_at, queued_at, created_at) ASC
+LIMIT 1;
+```
+
+**Pool claim** (`findOldestUnassignedForDealer`) — same social CASE **before** `queued_at ASC` so Social Media is claimed before older raw CSV.
+
+Still obey **§E.1**: never advance past an open `in_progress` (no different `nextLead` on `start`).
+
+Echo social fields on leads (`sheet_source_id`, `source_type`, `platform`, …) so SPA can detect them — **§AN**.
+
+**Copy-paste:** `BACKEND_CALLING_QUEUE_CURRENT.ts` · HANDOFF **§4.5.3**
+
+### Checklist
+
+- [ ] `in_progress` always returned as Current while open
+- [ ] **Start Call not done** + social assigned/pool exists → `lead` / `nextLead` is social (not raw CSV)
+- [ ] After completion → next head is social/sheet assigned when present
+- [ ] Pool claim picks social before raw CSV (`findOldestUnassignedForDealer`)
+- [ ] No social assigned → oldest assigned / pool as before
+- [ ] Social fields echoed on every lead row (`sheet_source_id`, `source_type`, `platform`, …) — **§AN**
+
+---
+
+## §AU — **Update User Zod: `visitor_reports` + `calling_reports`** — Sep 2026
+
+**Symptom (Admin → Users → Update User):** toast  
+`Invalid option: expected one of "admin"|"quotation"|"accounts"|"installation"|"metering"|…`
+
+**Cause:** SPA sends Dashboard Access keys **`visitor_reports`** and/or **`calling_reports`**. Live Zod/Joi `access` enum still omits them.
+
+### Backend must (P0)
+
+```ts
+// PUT /admin/dealers/:id  (+ account-managers / visitors)
+access: z.array(
+  z.enum([
+    "admin",
+    "quotation",
+    "accounts",
+    "installation",
+    "metering",
+    "final_confirmation",
+    "hr",
+    "visitor",
+    "visitor_reports",  // NEW
+    "calling_reports",  // NEW
+  ]),
+).optional()
+```
+
+Also accept these keys on `permissions` (alias of `access`), persist JSONB, echo on GET/login.
+
+Prefer `normalizeAccess()` from `BACKEND_USER_ACCESS.ts` (already maps aliases) over a hard-coded short enum.
+
+### Checklist
+
+- [ ] Update User with Visitor Reports and/or Calling Reports checked → **200**
+- [ ] GET dealer / login returns those keys in `access`
+- [ ] Report-only user (no full `admin`) can open Admin → Visitor/Calling Reports tabs
+- [ ] After login, `/dashboard/workspace` shows **Visitor Reports** + **Calling Reports** cards when those keys are in `access` — **§AW**
+
+**Refs:** HANDOFF **§46**, `BACKEND_USER_ACCESS.ts` → `ACCESS_KEYS`
+
+---
+
+## §AV — **Field access round-trip (`moduleFieldPermissions`)** — Sep 2026
+
+**Product:** Admin → Users → Dashboard access: when Accounts / Installation / Metering / Final confirmation / Visitor Reports / Calling Reports are checked, **Field access** (Write / Read only / No access) + **Which to access** must **save** and **come back** on reopen + after login.
+
+**Frontend (shipped):** Syncs checkbox → default Write (reports → Read only); sends `moduleFieldPermissions` on PUT; merges GET + local override.
+
+### Backend must (P0)
+
+#### 1. Accept on PUT (do not strip)
+
+`PUT /admin/dealers/:id` · `PUT /admin/account-managers/:id` · `PUT /admin/visitors/:id`
+
+```json
+{
+  "access": ["quotation", "accounts", "installation", "metering"],
+  "permissions": ["quotation", "accounts", "installation", "metering"],
+  "officeLocation": "Jaipur",
+  "moduleFieldPermissions": {
+    "accounts": { "level": "write", "scope": "everyone", "selectedUserIds": [] },
+    "installation": { "level": "write", "scope": "everyone", "selectedUserIds": [] },
+    "metering": { "level": "read", "scope": "everyone", "selectedUserIds": [] },
+    "visitor_reports": { "level": "read", "scope": "everyone", "selectedUserIds": [] },
+    "calling_reports": { "level": "read", "scope": "selected_users", "selectedUserIds": ["<uuid>"] }
+  }
+}
+```
+
+Alias: `modulePermissions` → same field. Persist JSONB (replace whole object when sent).
+
+#### 2. Zod for `moduleFieldPermissions` modules
+
+Allow keys: `accounts` | `installation` | `metering` | `final_confirmation` | `visitor_reports` | `calling_reports`  
+`level`: `none` | `read` | `write`  
+`scope`: `everyone` | `selected_users` | `office_only`  
+`selectedUserIds`: `string[]`
+
+Do **not** reject unknown-looking nested objects with a short enum that omits reports.
+
+#### 3. Echo on GET list + GET one + login
+
+`publicDealer` / account-manager / visitor / login `user` must include:
+
+```ts
+moduleFieldPermissions: dealer.moduleFieldPermissions || {}
+modulePermissions: dealer.moduleFieldPermissions || {}  // alias
+officeLocation: dealer.officeLocation || null
+```
+
+#### 4. Enforce after login
+
+| `level` | Behavior |
+|---------|----------|
+| `write` | View + mutate module |
+| `read` | View only; mutations → **403** |
+| `none` | No module access (even if `access[]` has the key — prefer aligning: if `access` includes module, level should be read\|write) |
+
+`scope` filters which rows (everyone / selected_users / office_only).
+
+**Copy-paste:** `BACKEND_USER_ACCESS.ts` · `BACKEND_USER_FIELD_PERMISSIONS.ts` · HANDOFF **§46**
+
+### Checklist
+
+- [ ] Update User with Accounts+Installation+Metering **Write** → **200**
+- [ ] Re-open Edit → Field access still **Write** / **Read only** as saved (from API, not only localStorage)
+- [ ] Login echo includes same `moduleFieldPermissions`
+- [ ] Metering `level: "read"` → mutate **403**
+- [ ] `visitor_reports` / `calling_reports` in `access` + mfp → **200** (**§AU**)
+
+---
+
+## §AW — **Workspace: Visitor Reports + Calling Reports cards** — Sep 2026
+
+**Product:** After Admin checks **Visitor Reports** / **Calling Reports** on a user, that user’s `/dashboard/workspace` and the Dealer workspace dropdown must show those two dashboards (alongside Dealer, Accounts, …).
+
+**Frontend (shipped):** Cards come from `user.access` / login `access[]` via `getAccessOptions`. SPA also merges local overrides + `moduleFieldPermissions` as a fallback until API persists keys.
+
+### Backend must (P0) — same as §AU + login echo
+
+1. **Zod** allow `visitor_reports` | `calling_reports` on PUT `access` / `permissions` (**§AU**).
+2. **Persist** those keys on the user/dealer row (do not drop after save).
+3. **Login** `POST /auth/login` and **GET** dealer/account-manager must return them in `user.access` (and `permissions` alias).
+4. **Do not** set primary `role` to `admin` only because reports are present — reports are grants, not a role (`BACKEND_USER_ACCESS.ts`: map reports away from primary `admin`).
+5. Echo `moduleFieldPermissions.visitor_reports` / `calling_reports` with `level: "read"` when set (**§AV**).
+
+```json
+// login / GET user
+{
+  "access": ["quotation", "accounts", "visitor_reports", "calling_reports"],
+  "moduleFieldPermissions": {
+    "visitor_reports": { "level": "read", "scope": "everyone", "selectedUserIds": [] },
+    "calling_reports": { "level": "read", "scope": "everyone", "selectedUserIds": [] }
+  }
+}
+```
+
+SPA hrefs: `/dashboard/admin?tab=visitor-reports` · `/dashboard/admin?tab=calling-reports`  
+(also `/dashboard/visitor-reports` · `/dashboard/calling-reports` redirect to those tabs)
+
+**Calling Data** is Dealer-only in the SPA — no separate workspace API.
+
+
+### Checklist
+
+- [ ] Update User with both report checkboxes → **200**, GET returns both keys in `access`
+- [ ] AMIT login → `access` includes `visitor_reports` + `calling_reports`
+- [ ] Workspace shows **Visitor Reports** + **Calling Reports** cards (no browser-local override needed)
+- [ ] Opening a card reaches the Admin report tab (read-only)
+
+**Refs:** HANDOFF **§46**, REQUIRED **§AU** / **§AV**, `BACKEND_USER_ACCESS.ts`
+
+---
+
+## §AX — **Calling / Visitor Reports API auth** (`AUTH_004`) — Sep 2026
+
+**Symptom:** User with **Calling Reports** (no full Admin) opens Calling Reports →  
+`Insufficient permissions. Admin access required.` on `GET /admin/calling-actions`  
+(`loadCallingActionsForReports` → `api.admin.callingActions.getAll`).
+
+**Cause:** Route middleware is `role === "admin"` only. Report dashboards use access key `calling_reports` / `visitor_reports`.
+
+### Backend must (P0)
+
+#### Calling Reports
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/admin/calling-actions` (+ `/admin/calling-queue/actions`, `/admin/leads/actions`) |
+| `GET` | `/api/admin/calling-actions/summary` (if used) |
+| `GET` | `/api/hr/calling-actions` (optional alias — same data) |
+
+**Allow if any:**
+
+- `role` ∈ `admin` \| `super-admin` \| `hr`
+- **or** `access` / JWT includes `admin` \| `calling_reports` \| `hr`
+
+```js
+// Prefer canAccessSection / requireAnyAccess from BACKEND_USER_ACCESS.ts
+router.get(
+  "/admin/calling-actions",
+  auth,
+  requireAnyAccess(["admin", "calling_reports", "hr"]),
+  listCallingActions,
+)
+```
+
+Read-only for `calling_reports` (GET only — no mutations). Honour date/`dealerId` filters — **§J** / **§AI**.
+
+**Scope (P0):** When viewer’s `moduleFieldPermissions.calling_reports.scope` is:
+- `selected_users` → only return actions where `dealer_id` ∈ `selectedUserIds`
+- `office_only` → only dealers/actions in the viewer’s `officeLocation`
+- `everyone` → all (subject to auth)
+
+SPA also filters client-side; API must enforce the same so totals cannot leak.
+
+Also allow **read-only** `GET /admin/dealers` (or a slim directory) for the Employee filter when `access` includes `calling_reports` — limited to the same scoped dealer ids — or ensure each action row always includes `dealerName`.
+
+#### Visitor Reports
+
+| Method | Path |
+|--------|------|
+| `GET` | Admin visits list used by `loadAdminVisitorReportRows` (e.g. `/admin/visits`, `/visits`, …) |
+
+**Allow if:** `admin` \| `super-admin` **or** `access` includes `admin` \| `visitor_reports`.
+
+### Checklist
+
+- [ ] Login as user with only `calling_reports` (+ dealer OK) → Calling Reports loads actions (**200**, not AUTH_004)
+- [ ] Same for `visitor_reports` → Visitor Reports list **200**
+- [ ] Full admin still works
+- [ ] Report users cannot mutate admin Users / quotations (GET-only)
+
+**Refs:** `BACKEND_CALLING_REPORTS_COUNTS.ts`, HANDOFF **§4.8** / **§46**, `BACKEND_USER_ACCESS.ts` → `requireAnyAccess`
+
+---
+
+## §AY — **Dealer Call Analytics live update after Current Lead action** — Sep 2026
+
+**Product:** After any submit on **Current Lead** (or Dialled / Scheduled follow-up), **Social Media / Dealer Call Analytics** cards (Total Calls, Connected, Not Connected, Interested, …) must update **without** hard refresh.
+
+**Frontend (shipped):** `app/dashboard/calling-data/page.tsx`
+- Optimistic merge into `analyticsActions` on Submit
+- Refetch `GET …/calling-actions` after every successful action + on queue refresh / socket
+- Listens for `calling:actions-updated`, `calling:uploads-updated`, `backend:mutation`
+
+### Backend must (P0)
+
+#### 1) Persist action + return it on PATCH
+
+`PATCH /api/dealers/me/calling-queue/{leadId}/action`
+
+On completion actions (`called` | `follow_up` | `not_interested` | `rescheduled`):
+
+1. Insert **one** canonical calling-action row (stable `id`, `leadId`, `dealerId`, `action`, `callRemark`, `actionAt` ISO UTC, `statusText` / `statusCategory` if available).
+2. Response should include that row (and ideally updated history arrays) so SPA can merge immediately.
+3. No duplicate rows for the same submit (idempotent on `(lead_id, action, action_at)` or client `actionAt`).
+
+#### 2) Emit socket after every dealer calling action
+
+```js
+io.to("stream:dealers").to("stream:hr").emit("calling:actions-updated", {
+  reason: "dealer_action",
+  dealerId,
+  leadId,
+  action,
+  actionAt,
+})
+// Optional companion:
+io.to("stream:backend").emit("backend:mutation", {
+  domain: "dealer",
+  path: "/dealers/me/calling-queue/action",
+  reason: "dealer_action",
+})
+```
+
+Also emit after HR/admin edits that change calling outcomes.
+
+#### 3) Dealer analytics GET must be fresh + complete
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/dealers/calling-actions` (or `/api/dealers/me/calling-actions`) |
+| Params | `dealerId` (self), `limit` (SPA uses up to **2000**), `range=all` |
+
+- Auth: the logged-in dealer (or HR/admin scoped).
+- Return **all** outcome rows for that dealer (not truncated to last page of queue).
+- Each row: `{ id, leadId, dealerId, action, callRemark, actionAt, nextFollowUpAt?, statusText?, statusCategory?, name, mobile }`.
+- `actionAt` = ISO-8601 UTC.
+- Do **not** omit social/sheet leads — include `sourceType` / `sheet_source_id` when present.
+
+Queue `/next` + `/current` should still echo `recentActions` / dialled / connected / notConnected for tabs (**HANDOFF §5**).
+
+### Checklist
+
+- [ ] Submit one Connected / Not Connected outcome → PATCH **200** + action row persisted
+- [ ] Immediately `GET …/calling-actions?dealerId=…&range=all&limit=2000` includes that row (counts +1)
+- [ ] Emit `calling:actions-updated` to **stream:dealers** (+ hr) after PATCH
+- [ ] Second browser tab for same dealer refreshes analytics without hard reload
+- [ ] No double-count on refresh (stable unique action `id`)
+
+**Refs:** HANDOFF **§5** (analytics source of truth), `BACKEND_ADMIN_QUOTATION_STATUS.ts` (queue refresh / socket notes), REQUIRED **§E** (action PATCH)
+
+---
+
+## §AZ — **HR Social Media auto-sync every 30 min** — Sep 2026
+
+**Product:** HR **Leads from sheet** stays current with Google Sheet. Manual **Sync now** remains; backend cron + socket keep data fresh even when HR is away.
+
+**Frontend (shipped):** `components/hr-social-media-sheets-panel.tsx`
+- While HR page open: `POST /hr/sheet-sources/sync-all` every **30 minutes** + reload leads
+- Socket reload on `calling:uploads-updated` / `backend:mutation`
+- Manual **Sync now** → `POST /hr/sheet-sources/:id/sync`
+
+### Backend must (P0)
+
+| Item | Detail |
+|------|--------|
+| Route | `POST /api/hr/sheet-sources/sync-all` — enabled tabs only |
+| Auth | HR JWT **or** `x-cron-secret: $CRON_SECRET` |
+| Cron | `*/30 * * * *` → sync-all |
+| After sync | Emit `calling:uploads-updated` `{ reason: "sheet_auto_sync" }` to **stream:hr** + **stream:dealers** |
+| Manual | Keep `POST /hr/sheet-sources/:id/sync` + same socket with `reason: "sheet_sync"` |
+
+Google Sheets **cannot** push via WebSocket alone — cron (or SPA sync-all) must pull; socket only notifies UIs.
+
+**Copy-paste:** `postHrSheetSourcesSyncAll` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · Spec **§AP** / HANDOFF **§41** / **§44**
+
+### Checklist
+
+- [ ] Cron every 30 min hits sync-all with `CRON_SECRET`
+- [ ] New sheet rows appear in DB + `GET …/:id/leads` without HR clicking Sync now
+- [ ] Socket reaches HR Social Media + dealer Calling Data
+- [ ] Manual Sync now still works
+
+---
 

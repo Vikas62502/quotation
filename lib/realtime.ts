@@ -67,16 +67,16 @@ export const initRealtime = (token: string) => {
   if (!connectedSocket) return null
 
   const subscribeAllStreams = () => {
-    if (subscribed) return
     connectedSocket.emit("realtime:subscribe", "stream:backend")
     connectedSocket.emit("realtime:subscribe", ["stream:hr", "stream:admin", "stream:dealers"])
     subscribed = true
   }
 
+  // Always (re)subscribe on connect — rooms are lost after disconnect/reconnect.
+  connectedSocket.off("connect", subscribeAllStreams)
+  connectedSocket.on("connect", subscribeAllStreams)
   if (connectedSocket.connected) {
     subscribeAllStreams()
-  } else {
-    connectedSocket.once("connect", subscribeAllStreams)
   }
 
   return connectedSocket

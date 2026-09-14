@@ -24,9 +24,9 @@ import { SolarLogo } from "@/components/solar-logo"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import { Menu, Home, Users, FileText, LogOut, User, Shield, PhoneCall, Eye, ChevronDown, Wallet, Route } from "lucide-react"
+import { Menu, Home, Users, FileText, LogOut, User, Shield, PhoneCall, Eye, ChevronDown, Wallet, Route, ClipboardList } from "lucide-react"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
-import { canOpenSection, getAccessOptions, type UserAccessKey } from "@/lib/user-access"
+import { canOpenSection, getAccessOptions, resolveEffectiveAccess, type UserAccessKey } from "@/lib/user-access"
 import { cn } from "@/lib/utils"
 
 const isQuotationAppPath = (pathname: string) =>
@@ -40,9 +40,19 @@ const isQuotationAppPath = (pathname: string) =>
 
 const isAccessSectionActive = (key: UserAccessKey, pathname: string) => {
   if (key === "quotation") return isQuotationAppPath(pathname)
+  if (key === "calling_reports" || key === "visitor_reports") {
+    if (pathname.startsWith("/dashboard/calling-reports")) return key === "calling_reports"
+    if (pathname.startsWith("/dashboard/visitor-reports")) return key === "visitor_reports"
+    if (!pathname.startsWith("/dashboard/admin")) return false
+    if (typeof window === "undefined") return key === "calling_reports" || key === "visitor_reports"
+    const tab = new URLSearchParams(window.location.search).get("tab")
+    if (key === "calling_reports") return tab === "calling-reports"
+    return tab === "visitor-reports"
+  }
   const href = getAccessOptions([key])[0]?.href
   if (!href) return false
-  return pathname === href || pathname.startsWith(href + "/")
+  const pathOnly = href.split("?")[0]
+  return pathname === pathOnly || pathname.startsWith(pathOnly + "/")
 }
 
 const dealerNavItems = [
@@ -82,12 +92,12 @@ const getNavItems = (isAdmin: boolean, role: string | null, access: UserAccessKe
               ? FileText
               : o.key === "accounts"
                 ? Wallet
-                : Users,
+                : o.key === "calling_reports" || o.key === "visitor_reports"
+                  ? ClipboardList
+                  : Users,
       })),
     ]
-    if (canUseDealer && !items.some((item) => item.href === "/dashboard/calling-data")) {
-      items.push({ href: "/dashboard/calling-data", label: "Calling Data", icon: PhoneCall })
-    }
+    // Calling Data stays under Dealer nav only — not a separate workspace item
     return items
   }
 
@@ -115,14 +125,21 @@ const getNavItems = (isAdmin: boolean, role: string | null, access: UserAccessKe
 export function DashboardNav() {
   const router = useRouter()
   const pathname = usePathname()
-  const { dealer, logout, role, accountManager, access } = useAuth()
+  const { dealer, logout, role, accountManager, access, modulePermissions } = useAuth()
   const isAdmin = isQuotationAdminAccess({ role, username: dealer?.username })
-  const navItems = getNavItems(isAdmin, role, access, pathname)
-  const accessOptions = getAccessOptions(access)
+  const effectiveAccess = resolveEffectiveAccess({
+    username: dealer?.username || accountManager?.username,
+    role,
+    access,
+    permissions: access,
+    modulePermissions,
+  })
+  const navItems = getNavItems(isAdmin, role, effectiveAccess, pathname)
+  const accessOptions = getAccessOptions(effectiveAccess)
   const [pricingViewScope, setPricingViewScope] = useState<PricingPdfScope | null>(null)
   usePricingTables()
 
-  const canUseDealer = canOpenSection(access, role, "quotation") || role === "dealer"
+  const canUseDealer = canOpenSection(effectiveAccess, role, "quotation") || role === "dealer"
   const onQuotationSurface = isQuotationAppPath(pathname)
 
   // Ops dashboards have their own headers / AccessSwitchBar
@@ -133,6 +150,8 @@ export function DashboardNav() {
     pathname.startsWith("/dashboard/baldev") ||
     pathname.startsWith("/dashboard/hr") ||
     pathname.startsWith("/dashboard/workspace") ||
+    pathname.startsWith("/dashboard/calling-reports") ||
+    pathname.startsWith("/dashboard/visitor-reports") ||
     pathname.startsWith("/visitor/")
   ) {
     return null

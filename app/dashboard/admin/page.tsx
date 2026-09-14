@@ -1,9 +1,11 @@
 "use client"
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
+import { AccessSwitchBar } from "@/components/access-switch-bar"
+import { SolarLogo } from "@/components/solar-logo"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -40,6 +42,7 @@ import {
   Gauge,
   ClipboardList,
   MapPin,
+  LogOut,
   Upload,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
@@ -64,9 +67,12 @@ import { isQuotationAdminAccess } from "@/lib/admin-access"
 import {
   ASSIGNABLE_USER_ACCESS_OPTIONS,
   accessLabels,
+  accessWithoutReportOnlyKeys,
+  getAccessOptions,
   getAccessOverride,
   hasAccess,
   listedUserHasAccess,
+  looksLikeAccessEnumValidationMessage,
   normalizeAccessList,
   primaryBackendRoleFromAccess,
   resolveUserAccess,
@@ -78,6 +84,10 @@ import {
   resolveUserOfficeLocation,
   saveModulePermissionOverride,
   saveOfficeLocationOverride,
+  syncModuleFieldPermissionsWithAccess,
+  isAlwaysReadOnlyWorkflowModule,
+  filterEntitiesByModuleScope,
+  isEntityIdAllowedByModuleScope,
   type ModuleFieldPermissions,
   type OfficeLocation,
 } from "@/lib/module-field-permissions"
@@ -110,6 +120,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useIncrementalList } from "@/hooks/use-incremental-list"
 import { IncrementalListSentinel } from "@/components/incremental-list-sentinel"
 import { formatPersonName } from "@/lib/name-display"
+import { normalizePersonAddress } from "@/lib/format-customer-address"
 import {
   callingActionRowKey,
   extractCallingActionsFromApiResponse,
@@ -1417,9 +1428,24 @@ function createEmptyDocumentsForm(): Record<string, any> {
 }
 
 export default function AdminPanelPage() {
-  const { isAuthenticated, dealer, role } = useAuth()
+  const { isAuthenticated, dealer, role, access, logout, modulePermissions, officeLocation, accountManager } =
+    useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const reportTabFromUrl = searchParams.get("tab")
   const { toast } = useToast()
+  const canUseAdminPanel = isQuotationAdminAccess({
+    role,
+    username: dealer?.username,
+    access,
+  })
+  const isFullAdmin =
+    role === "admin" ||
+    role === "super-admin" ||
+    access.includes("admin") ||
+    String(dealer?.username || "").toLowerCase() === "admin"
+  /** Users granted only Visitor/Calling Reports (no Admin checkbox) see those tabs only. */
+  const reportsOnlyAccess = canUseAdminPanel && !isFullAdmin
   const [quotations, setQuotations] = useState<Quotation[]>([])
   /** Server-side total when list fetch is paginated (e.g. limit 1000). */
   const [quotationsListTotal, setQuotationsListTotal] = useState<number | null>(null)
@@ -1713,6 +1739,7 @@ export default function AdminPanelPage() {
   })
   const [newAccountManager, setNewAccountManager] = useState(emptyUnifiedUserForm)
   const [dealerSearchTerm, setDealerSearchTerm] = useState("")
+  const [showInactiveManagedUsers, setShowInactiveManagedUsers] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<any | null>(null)
   const [customerEditDialogOpen, setCustomerEditDialogOpen] = useState(false)
   const [customerEditForm, setCustomerEditForm] = useState({
@@ -2145,7 +2172,16 @@ export default function AdminPanelPage() {
       setCallingActionsUnavailable(false)
     } catch (error) {
       if (requestId !== callingActionsRequestRef.current) return
-      console.error("Calling actions endpoint unavailable:", error)
+      const isAuthBlocked =
+        error instanceof ApiError && (error.code === "AUTH_004" || error.code === "HTTP_403")
+      if (isAuthBlocked) {
+        // Expected until backend allows calling_reports on GET /admin/calling-actions — REQUIRED §AX
+        console.warn(
+          "Calling Reports: API requires Admin. Grant calling_reports (or admin/hr) on GET /admin/calling-actions — BACKEND §AX.",
+        )
+      } else {
+        console.error("Calling actions endpoint unavailable:", error)
+      }
       setCallingActions([])
       setCallingActionsUnavailable(true)
     } finally {
@@ -2317,7 +2353,7 @@ export default function AdminPanelPage() {
     }
 
     // Admin or Super Admin may use the Admin Panel (not username===admin only)
-    if (!isQuotationAdminAccess({ role, username: dealer?.username })) {
+    if (!isQuotationAdminAccess({ role, username: dealer?.username, access })) {
       router.push("/dashboard")
       return
     }
@@ -2328,7 +2364,30 @@ export default function AdminPanelPage() {
     return () => {
       adminLoadRequestRef.current += 1
     }
-  }, [isAuthenticated, router, dealer, role])
+  }, [isAuthenticated, router, dealer, role, access])
+
+  // Deep-link / switcher: keep activeTab in sync with ?tab= (Visitor ↔ Calling Reports)
+  useEffect(() => {
+    if (reportTabFromUrl === "calling-reports" || reportTabFromUrl === "visitor-reports") {
+      setActiveTab(reportTabFromUrl)
+    }
+  }, [reportTabFromUrl])
+
+  useEffect(() => {
+    if (!reportsOnlyAccess) return
+    const allowed: string[] = []
+    if (access.includes("calling_reports")) allowed.push("calling-reports")
+    if (access.includes("visitor_reports")) allowed.push("visitor-reports")
+    if (allowed.length === 0) return
+    // Prefer URL tab so Visitor Reports is not overwritten by Calling Reports default
+    if (reportTabFromUrl && allowed.includes(reportTabFromUrl)) {
+      if (activeTab !== reportTabFromUrl) setActiveTab(reportTabFromUrl)
+      return
+    }
+    if (!allowed.includes(activeTab)) {
+      setActiveTab(allowed[0])
+    }
+  }, [reportsOnlyAccess, access, activeTab, reportTabFromUrl])
 
   useEffect(() => {
     if (!isAuthenticated || !useApi) return
@@ -3495,6 +3554,34 @@ export default function AdminPanelPage() {
     )
   }, [dealers])
 
+  /** Calling Reports: only dealers in Field access (Selected one / Only there). Full admin → all. */
+  const reportPermissionCtx = useMemo(
+    () => ({
+      userId: dealer?.id ?? accountManager?.id,
+      username: dealer?.username ?? accountManager?.username,
+      officeLocation,
+      viewerIsAdmin: isFullAdmin,
+      viewerIsDealer: role === "dealer",
+    }),
+    [accountManager?.id, accountManager?.username, dealer?.id, dealer?.username, isFullAdmin, officeLocation, role],
+  )
+
+  const callingReportsDealers = useMemo(() => {
+    if (isFullAdmin) return activeDealers
+    return filterEntitiesByModuleScope(activeDealers, modulePermissions, "calling_reports", reportPermissionCtx)
+  }, [activeDealers, isFullAdmin, modulePermissions, reportPermissionCtx])
+
+  const callingReportsAllowedDealerIds = useMemo(() => {
+    if (isFullAdmin) return null
+    const rule = modulePermissions?.calling_reports
+    if (!rule || rule.level === "none") return new Set<string>()
+    if (rule.scope === "everyone") return null
+    if (rule.scope === "selected_users") {
+      return new Set((rule.selectedUserIds || []).map(String))
+    }
+    return new Set(callingReportsDealers.map((d) => String(d.id)))
+  }, [callingReportsDealers, isFullAdmin, modulePermissions?.calling_reports])
+
   /** Users tab: dealers + operations users + visitors. */
   type ManagedUserRow = {
     id: string
@@ -3622,14 +3709,26 @@ export default function AdminPanelPage() {
     })
   }, [dealers, accountManagers, visitors])
 
-  const modulePermissionUserOptions = useMemo(
-    () =>
-      managedUsers.map((row) => ({
+  const modulePermissionUserOptions = useMemo(() => {
+    // "Selected one" picker: Active users only.
+    // Keep already-selected (possibly inactive) ids so admin can still uncheck them.
+    const selectedIds = new Set<string>()
+    for (const rule of Object.values(newAccountManager.moduleFieldPermissions || {})) {
+      for (const id of rule?.selectedUserIds || []) {
+        if (id) selectedIds.add(String(id))
+      }
+    }
+    return managedUsers
+      .filter((row) => {
+        const id = row.dealer?.id ?? row.operations?.id ?? row.visitor?.id ?? row.id
+        if (selectedIds.has(String(id))) return true
+        return row.isActive !== false
+      })
+      .map((row) => ({
         id: row.dealer?.id ?? row.operations?.id ?? row.visitor?.id ?? row.id,
         label: `${row.firstName || ""} ${row.lastName || ""}`.trim() || row.username || row.id,
-      })),
-    [managedUsers],
-  )
+      }))
+  }, [managedUsers, newAccountManager.moduleFieldPermissions])
 
   const dealerQuotationStatsById = useMemo(() => {
     const map = new Map<string, { count: number; revenue: number }>()
@@ -3650,11 +3749,15 @@ export default function AdminPanelPage() {
 
   const filteredManagedUsers = useMemo(() => {
     const search = dealerSearchTerm.trim().toLowerCase()
-    if (!search) return managedUsers
-    return managedUsers.filter((u) => u.searchText?.includes(search))
-  }, [managedUsers, dealerSearchTerm])
+    // Default: only Active users (Pending/Inactive hidden unless toggled).
+    const base = showInactiveManagedUsers
+      ? managedUsers
+      : managedUsers.filter((u) => u.isActive !== false)
+    if (!search) return base
+    return base.filter((u) => u.searchText?.includes(search))
+  }, [managedUsers, dealerSearchTerm, showInactiveManagedUsers])
 
-  const managedUsersListResetKey = `${dealerSearchTerm}|${filteredManagedUsers.length}|${filteredManagedUsers[0]?.id ?? ""}`
+  const managedUsersListResetKey = `${dealerSearchTerm}|${showInactiveManagedUsers}|${filteredManagedUsers.length}|${filteredManagedUsers[0]?.id ?? ""}`
 
   const {
     visibleItems: visibleManagedUsers,
@@ -3687,8 +3790,42 @@ export default function AdminPanelPage() {
         kind: u.kind,
         managed: u,
         visitCount: (u.visitor as any)?.visitCount || 0,
+        officeLocation:
+          (u.dealer as any)?.officeLocation ||
+          (u.operations as any)?.officeLocation ||
+          (u.visitor as any)?.officeLocation ||
+          "",
       }))
   }, [managedUsers])
+
+  /** Visitor Reports: only people in Field access Selected one / Only there. */
+  const visitorReportsAccessUsers = useMemo(() => {
+    if (isFullAdmin) return visitorAccessUsers
+    const asEntities = visitorAccessUsers.map((v) => ({
+      id: v.entityId,
+      officeLocation: v.officeLocation,
+      ...v,
+    }))
+    const allowed = filterEntitiesByModuleScope(
+      asEntities,
+      modulePermissions,
+      "visitor_reports",
+      reportPermissionCtx,
+    )
+    const allowedIds = new Set(allowed.map((v) => String(v.id)))
+    return visitorAccessUsers.filter((v) => allowedIds.has(String(v.entityId)))
+  }, [isFullAdmin, modulePermissions, reportPermissionCtx, visitorAccessUsers])
+
+  const visitorReportsAllowedIds = useMemo(() => {
+    if (isFullAdmin) return null
+    const rule = modulePermissions?.visitor_reports
+    if (!rule || rule.level === "none") return new Set<string>()
+    if (rule.scope === "everyone") return null
+    if (rule.scope === "selected_users") {
+      return new Set((rule.selectedUserIds || []).map(String))
+    }
+    return new Set(visitorReportsAccessUsers.map((v) => String(v.entityId)))
+  }, [isFullAdmin, modulePermissions?.visitor_reports, visitorReportsAccessUsers])
 
   // Keep Schedule Visit + HR dealer lists in sync with Admin access checkboxes
   useEffect(() => {
@@ -3708,15 +3845,6 @@ export default function AdminPanelPage() {
     syncAssignableVisitorsFromUsers(profiles)
     syncAssignableQuotationFromUsers(profiles)
   }, [managedUsers])
-
-  useEffect(() => {
-    if (
-      visitorReportVisitorFilter !== "all" &&
-      !visitorAccessUsers.some((v) => v.entityId === visitorReportVisitorFilter)
-    ) {
-      setVisitorReportVisitorFilter("all")
-    }
-  }, [visitorReportVisitorFilter, visitorAccessUsers])
 
   const openManagedUserEdit = (row: ManagedUserRow) => {
     const base = emptyUnifiedUserForm()
@@ -3757,9 +3885,12 @@ export default function AdminPanelPage() {
           am.username,
           (am as any).officeLocation ?? (am as any).office_location,
         ),
-        moduleFieldPermissions: resolveUserModulePermissions(
-          am.username,
-          (am as any).moduleFieldPermissions ?? (am as any).modulePermissions,
+        moduleFieldPermissions: syncModuleFieldPermissionsWithAccess(
+          access,
+          resolveUserModulePermissions(
+            am.username,
+            (am as any).moduleFieldPermissions ?? (am as any).modulePermissions,
+          ),
         ),
       })
       setAccountManagerDialogOpen(true)
@@ -3801,9 +3932,12 @@ export default function AdminPanelPage() {
           visitor.username,
           (visitor as any).officeLocation ?? (visitor as any).office_location,
         ),
-        moduleFieldPermissions: resolveUserModulePermissions(
-          visitor.username,
-          (visitor as any).moduleFieldPermissions ?? (visitor as any).modulePermissions,
+        moduleFieldPermissions: syncModuleFieldPermissionsWithAccess(
+          access.length ? access : (["visitor"] as UserAccessKey[]),
+          resolveUserModulePermissions(
+            visitor.username,
+            (visitor as any).moduleFieldPermissions ?? (visitor as any).modulePermissions,
+          ),
         ),
       })
       setAccountManagerDialogOpen(true)
@@ -3845,9 +3979,12 @@ export default function AdminPanelPage() {
         d.username,
         (d as any).officeLocation ?? (d as any).office_location,
       ),
-      moduleFieldPermissions: resolveUserModulePermissions(
-        d.username,
-        (d as any).moduleFieldPermissions ?? (d as any).modulePermissions,
+      moduleFieldPermissions: syncModuleFieldPermissionsWithAccess(
+        access,
+        resolveUserModulePermissions(
+          d.username,
+          (d as any).moduleFieldPermissions ?? (d as any).modulePermissions,
+        ),
       ),
     })
     setAccountManagerDialogOpen(true)
@@ -3862,6 +3999,7 @@ export default function AdminPanelPage() {
       ...emptyUnifiedUserForm(),
       access: presetAccess,
       role: primaryBackendRoleFromAccess(presetAccess),
+      moduleFieldPermissions: syncModuleFieldPermissionsWithAccess(presetAccess, {}),
     })
     setAccountManagerDialogOpen(true)
   }
@@ -3875,11 +4013,20 @@ export default function AdminPanelPage() {
   useEffect(() => {
     if (
       callingActionDealerFilter !== "all" &&
-      !activeDealers.some((d) => d.id === callingActionDealerFilter)
+      !callingReportsDealers.some((d) => d.id === callingActionDealerFilter)
     ) {
       setCallingActionDealerFilter("all")
     }
-  }, [activeDealers, callingActionDealerFilter])
+  }, [callingReportsDealers, callingActionDealerFilter])
+
+  useEffect(() => {
+    if (
+      visitorReportVisitorFilter !== "all" &&
+      !visitorReportsAccessUsers.some((v) => v.entityId === visitorReportVisitorFilter)
+    ) {
+      setVisitorReportVisitorFilter("all")
+    }
+  }, [visitorReportVisitorFilter, visitorReportsAccessUsers])
 
   useEffect(() => {
     if (topDealersDealerFilter !== "all" && !activeDealers.some((d) => d.id === topDealersDealerFilter)) {
@@ -4998,6 +5145,17 @@ export default function AdminPanelPage() {
   const filteredCallingActions = latestCallingActionPerContact(
     callingActions.filter((item) => {
       if (String(item.action || "").toLowerCase().trim() === "start") return false
+      if (
+        !isEntityIdAllowedByModuleScope(
+          item.dealerId,
+          modulePermissions,
+          "calling_reports",
+          reportPermissionCtx,
+          callingReportsAllowedDealerIds,
+        )
+      ) {
+        return false
+      }
       const matchesEmployee =
         callingActionDealerFilter === "all" ||
         item.dealerId === callingActionDealerFilter ||
@@ -5032,6 +5190,11 @@ export default function AdminPanelPage() {
       visitorReportLoadSource === "local" ||
       visitorReportLoadSource === null
     return visitorReportRows.filter((row) => {
+      const rowVisitorIds = Array.isArray(row.visitorIds) ? row.visitorIds.map(String) : []
+      if (!isFullAdmin && visitorReportsAllowedIds) {
+        if (rowVisitorIds.length === 0) return false
+        if (!rowVisitorIds.some((id) => visitorReportsAllowedIds.has(String(id)))) return false
+      }
       if (!useClientFilters) return true
       if (!visitMatchesVisitorFilter(row, visitorReportVisitorFilter)) return false
       if (!visitMatchesStatusFilter(row, visitorReportStatusFilter)) return false
@@ -5040,12 +5203,14 @@ export default function AdminPanelPage() {
       return true
     })
   }, [
+    isFullAdmin,
     visitorReportDateBounds,
     visitorReportLoadSource,
     visitorReportRows,
     visitorReportSearchDebounced,
     visitorReportStatusFilter,
     visitorReportVisitorFilter,
+    visitorReportsAllowedIds,
   ])
 
   const visitorReportSummary = useMemo(
@@ -5088,7 +5253,7 @@ export default function AdminPanelPage() {
     enabled: activeTab === "visitor-reports",
   })
 
-  if (!isAuthenticated || !isQuotationAdminAccess({ role, username: dealer?.username })) return null
+  if (!isAuthenticated || !isQuotationAdminAccess({ role, username: dealer?.username, access })) return null
 
   // Update quotation status
   const updateQuotationStatus = async (
@@ -7766,15 +7931,67 @@ export default function AdminPanelPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardNav />
+      {reportsOnlyAccess ? (
+        <>
+          <AccessSwitchBar
+            current={activeTab === "visitor-reports" ? "visitor_reports" : "calling_reports"}
+            title={activeTab === "visitor-reports" ? "Visitor Reports" : "Calling Reports"}
+          />
+          {getAccessOptions(access).length <= 1 ? (
+            <header className="border-b border-border bg-card">
+              <div className="container mx-auto px-4 py-4 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => router.push("/dashboard/workspace")}
+                  className="flex items-center"
+                >
+                  <SolarLogo size="md" />
+                </button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={async () => {
+                    await logout()
+                    router.push("/")
+                  }}
+                >
+                  <LogOut className="w-4 h-4" />
+                  Logout
+                </Button>
+              </div>
+            </header>
+          ) : null}
+        </>
+      ) : (
+        <DashboardNav />
+      )}
 
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
-        <div className="mb-6 sm:mb-8">
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Admin Panel</h1>
-          <p className="text-sm sm:text-base text-muted-foreground mt-1 sm:mt-2">View and manage all system data</p>
-        </div>
+        {reportsOnlyAccess ? (
+          <div className="mb-6 sm:mb-8 flex items-start gap-3">
+            <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+              <ClipboardList className="w-4 h-4 text-primary" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-semibold text-foreground">
+                {activeTab === "visitor-reports" ? "Visitor Reports" : "Calling Reports"}
+              </h1>
+              <p className="text-sm text-muted-foreground mt-1">
+                Welcome, {dealer?.firstName || "User"}. View-only reports assigned to you — same layout as your other
+                dashboards.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="mb-6 sm:mb-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Admin Panel</h1>
+            <p className="text-sm sm:text-base text-muted-foreground mt-1 sm:mt-2">View and manage all system data</p>
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={onAdminDesktopTabChange} className="space-y-6">
+          {!reportsOnlyAccess ? (
           <div className="md:hidden">
             <div className="text-xs font-medium text-muted-foreground mb-2">Select Section</div>
             <Select value={adminMobileNavValue} onValueChange={onAdminMobileNavChange}>
@@ -7786,19 +8003,23 @@ export default function AdminPanelPage() {
                 <SelectItem value="customer-journey">Customer Journey</SelectItem>
                 <SelectItem value="calling-reports">Calling Reports</SelectItem>
                 <SelectItem value="visitor-reports">Visitor Reports</SelectItem>
-                <SelectItem value="quotations__all">Quotations (all)</SelectItem>
-                <SelectItem value="payments">Accounts</SelectItem>
-                <SelectItem value="quotations__installation">Installation</SelectItem>
-                <SelectItem value="quotations__metering">Metering</SelectItem>
-                <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
-                <SelectItem value="dealers">Users</SelectItem>
-                <SelectItem value="customers">Customers</SelectItem>
-                <SelectItem value="catalog__products">Catalog — Products</SelectItem>
-                <SelectItem value="catalog__pricing">Catalog — Pricing</SelectItem>
+                <>
+                    <SelectItem value="quotations__all">Quotations (all)</SelectItem>
+                    <SelectItem value="payments">Accounts</SelectItem>
+                    <SelectItem value="quotations__installation">Installation</SelectItem>
+                    <SelectItem value="quotations__metering">Metering</SelectItem>
+                    <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
+                    <SelectItem value="dealers">Users</SelectItem>
+                    <SelectItem value="customers">Customers</SelectItem>
+                    <SelectItem value="catalog__products">Catalog — Products</SelectItem>
+                    <SelectItem value="catalog__pricing">Catalog — Pricing</SelectItem>
+                </>
               </SelectContent>
             </Select>
           </div>
+          ) : null}
 
+          {!reportsOnlyAccess ? (
           <div className="hidden md:block w-full pb-1">
             <TabsList className="flex h-auto min-h-11 w-full flex-wrap gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:shrink-0 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -7847,6 +8068,7 @@ export default function AdminPanelPage() {
             <TabsTrigger value="catalog">Catalog</TabsTrigger>
             </TabsList>
           </div>
+          ) : null}
 
           {/* Overview Tab */}
           <TabsContent value="overview" className="space-y-6">
@@ -8148,8 +8370,10 @@ export default function AdminPanelPage() {
                       <SelectValue placeholder="Filter by employee" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All Employees</SelectItem>
-                      {activeDealers.map((d) => (
+                      <SelectItem value="all">
+                        {isFullAdmin ? "All Employees" : "All assigned employees"}
+                      </SelectItem>
+                      {callingReportsDealers.map((d) => (
                         <SelectItem key={d.id} value={d.id}>
                           {d.firstName} {d.lastName}
                         </SelectItem>
@@ -8338,8 +8562,10 @@ export default function AdminPanelPage() {
                       <SelectValue placeholder="Filter by visitor" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="all">All visitors</SelectItem>
-                      {visitorAccessUsers.map((visitor) => (
+                      <SelectItem value="all">
+                        {isFullAdmin ? "All visitors" : "All assigned visitors"}
+                      </SelectItem>
+                      {visitorReportsAccessUsers.map((visitor) => (
                         <SelectItem key={visitor.entityId} value={visitor.entityId}>
                           {visitor.firstName} {visitor.lastName}
                           {visitor.isActive === false ? " (inactive)" : ""}
@@ -11339,18 +11565,35 @@ export default function AdminPanelPage() {
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                   <div>
-                    <CardTitle>Users ({managedUsers.length})</CardTitle>
+                    <CardTitle>
+                      Users ({filteredManagedUsers.length}
+                      {!showInactiveManagedUsers && managedUsers.length !== filteredManagedUsers.length
+                        ? ` active · ${managedUsers.length} total`
+                        : ""}
+                      )
+                    </CardTitle>
                     <CardDescription className="mt-1">
-                      All dealers, operations users, and visitors. Edit to update details and dashboard access.
+                      Active users only by default. Edit to update details, dashboard access, and read/write field
+                      permissions. Each person only sees data allowed by their access.
                     </CardDescription>
                   </div>
-                  <Button
-                    className="w-full sm:w-auto"
-                    onClick={() => openCreateUnifiedUser(["quotation"])}
-                  >
-                    <UserPlus className="w-4 h-4 mr-2" />
-                    Create User ID
-                  </Button>
+                  <div className="flex w-full sm:w-auto flex-col sm:flex-row gap-2">
+                    <Button
+                      type="button"
+                      variant={showInactiveManagedUsers ? "default" : "outline"}
+                      className="w-full sm:w-auto"
+                      onClick={() => setShowInactiveManagedUsers((v) => !v)}
+                    >
+                      {showInactiveManagedUsers ? "Showing all" : "Show inactive"}
+                    </Button>
+                    <Button
+                      className="w-full sm:w-auto"
+                      onClick={() => openCreateUnifiedUser(["quotation"])}
+                    >
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Create User ID
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-4">
                   <div className="relative">
@@ -14237,8 +14480,10 @@ export default function AdminPanelPage() {
                 <Label className="text-base font-semibold">Dashboard access *</Label>
                 <p className="text-xs text-muted-foreground">
                   Check dashboards to open after login. Accounts, Installation, Metering, and Final confirmation
-                  include field read/write and &quot;Which to access&quot; on the same row. Dealer is checkbox only —
-                  dealers always get full access when that box is checked.
+                  include field read/write and &quot;Which to access&quot; on the same row. Visitor Reports and Calling
+                  Reports are always <span className="font-medium">Read only</span> with the same &quot;Which to
+                  access&quot; / Selected one controls. Dealer is checkbox only — dealers always get full access when
+                  that box is checked.
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {ASSIGNABLE_USER_ACCESS_OPTIONS.map((opt) => {
@@ -14271,7 +14516,12 @@ export default function AdminPanelPage() {
                                       moduleFieldPermissions = patchModuleFieldPermission(
                                         moduleFieldPermissions,
                                         workflowModule,
-                                        { level: "write", scope: "everyone" },
+                                        {
+                                          level: isAlwaysReadOnlyWorkflowModule(workflowModule)
+                                            ? "read"
+                                            : "write",
+                                          scope: "everyone",
+                                        },
                                       )
                                     }
                                   } else {
@@ -14620,6 +14870,10 @@ export default function AdminPanelPage() {
                       })
                       return
                     }
+                    const syncedModulePermissions = syncModuleFieldPermissionsWithAccess(
+                      selectedAccess,
+                      newAccountManager.moduleFieldPermissions,
+                    )
                     const primaryRole = primaryBackendRoleFromAccess(selectedAccess)
                     const isEditing = Boolean(editingManagedKind)
                     const coreMissing =
@@ -14706,8 +14960,63 @@ export default function AdminPanelPage() {
                       emailVerified: newAccountManager.emailVerified,
                       officeLocation: newAccountManager.officeLocation || undefined,
                       office_location: newAccountManager.officeLocation || undefined,
-                      moduleFieldPermissions: newAccountManager.moduleFieldPermissions,
-                      modulePermissions: newAccountManager.moduleFieldPermissions,
+                      moduleFieldPermissions: syncedModulePermissions,
+                      modulePermissions: syncedModulePermissions,
+                    }
+
+                    const persistLocalUserPermissionOverrides = () => {
+                      const username = newAccountManager.username.trim()
+                      if (!username) return
+                      saveAccessOverride(username, selectedAccess)
+                      saveModulePermissionOverride(username, syncedModulePermissions)
+                      saveOfficeLocationOverride(username, newAccountManager.officeLocation)
+                      if (editingManagedKind === "operations") {
+                        saveOperationsRoleOverride(username, primaryRole)
+                      }
+                      // If this user is the current session (or will log in on this browser), keep reports in user blob.
+                      try {
+                        const raw = localStorage.getItem("user")
+                        if (raw) {
+                          const user = JSON.parse(raw)
+                          if (
+                            String(user.username || "")
+                              .trim()
+                              .toLowerCase() === username.toLowerCase()
+                          ) {
+                            localStorage.setItem(
+                              "user",
+                              JSON.stringify({
+                                ...user,
+                                access: selectedAccess,
+                                permissions: selectedAccess,
+                                moduleFieldPermissions: syncedModulePermissions,
+                                modulePermissions: syncedModulePermissions,
+                              }),
+                            )
+                          }
+                        }
+                      } catch {
+                        /* ignore */
+                      }
+                    }
+
+                    /** When PUT is blocked by AUTH_004 or Zod access enum, keep changes in this browser and finish as soft-success. */
+                    let serverAuthBlockedLocalSave = false
+                    let serverAccessEnumCompatSave = false
+
+                    const apiErrorText = (err: unknown) => {
+                      if (!(err instanceof ApiError)) return String((err as Error)?.message || "")
+                      const detail = err.details?.[0]?.message || ""
+                      return `${err.message || ""} ${detail}`
+                    }
+                    const isAccessEnumRejected = (err: unknown) =>
+                      looksLikeAccessEnumValidationMessage(apiErrorText(err))
+
+                    const stripReportModules = (mfp: ModuleFieldPermissions): ModuleFieldPermissions => {
+                      const next = { ...(mfp || {}) }
+                      delete (next as any).visitor_reports
+                      delete (next as any).calling_reports
+                      return next
                     }
 
                     try {
@@ -14715,26 +15024,125 @@ export default function AdminPanelPage() {
                         if (editingManagedKind === "dealer" && editingDealer) {
                           try {
                             await api.admin.dealers.update(editingDealer.id, profilePayload)
-                          } catch {
-                            await api.admin.dealers.update(editingDealer.id, {
-                              firstName: profilePayload.firstName,
-                              lastName: profilePayload.lastName,
-                              email: profilePayload.email,
-                              mobile: profilePayload.mobile,
-                              gender: profilePayload.gender,
-                              dateOfBirth: profilePayload.dateOfBirth,
-                              fatherName: profilePayload.fatherName,
-                              fatherContact: profilePayload.fatherContact,
-                              governmentIdType: profilePayload.governmentIdType,
-                              governmentIdNumber: profilePayload.governmentIdNumber,
-                              address: profilePayload.address,
-                              isActive: profilePayload.isActive,
-                              emailVerified: profilePayload.emailVerified,
-                              access: selectedAccess,
-                              permissions: selectedAccess,
-                            })
+                          } catch (firstError) {
+                            // AUTH_004 = middleware rejected — retrying a smaller body will not help.
+                            if (firstError instanceof ApiError && firstError.code === "AUTH_004") {
+                              persistLocalUserPermissionOverrides()
+                              setDealers((prev) =>
+                                prev.map((d) =>
+                                  d.id === editingDealer.id
+                                    ? {
+                                        ...d,
+                                        firstName: String(profilePayload.firstName || d.firstName),
+                                        lastName: String(profilePayload.lastName || d.lastName),
+                                        email: String(profilePayload.email || d.email),
+                                        mobile: String(profilePayload.mobile || d.mobile),
+                                        gender: String(profilePayload.gender || d.gender || ""),
+                                        dateOfBirth: String(profilePayload.dateOfBirth || d.dateOfBirth || ""),
+                                        fatherName: String(profilePayload.fatherName || d.fatherName || ""),
+                                        fatherContact: String(profilePayload.fatherContact || d.fatherContact || ""),
+                                        governmentIdType: String(
+                                          profilePayload.governmentIdType || d.governmentIdType || "",
+                                        ),
+                                        governmentIdNumber: String(
+                                          profilePayload.governmentIdNumber || d.governmentIdNumber || "",
+                                        ),
+                                        address: normalizePersonAddress({
+                                          ...d,
+                                          address: profilePayload.address,
+                                        }),
+                                        isActive: profilePayload.isActive ?? d.isActive,
+                                        emailVerified: profilePayload.emailVerified ?? d.emailVerified,
+                                        access: selectedAccess,
+                                        permissions: selectedAccess,
+                                        officeLocation: newAccountManager.officeLocation || (d as any).officeLocation,
+                                        moduleFieldPermissions: syncedModulePermissions,
+                                      }
+                                    : d,
+                                ),
+                              )
+                              try {
+                                const allDealers = JSON.parse(localStorage.getItem("dealers") || "[]")
+                                const updated = allDealers.map((d: any) =>
+                                  d.id === editingDealer.id
+                                    ? { ...d, ...profilePayload, username: d.username, password: d.password }
+                                    : d,
+                                )
+                                localStorage.setItem("dealers", JSON.stringify(updated))
+                              } catch {
+                                /* ignore */
+                              }
+                              serverAuthBlockedLocalSave = true
+                            } else if (isAccessEnumRejected(firstError)) {
+                              // Live Zod still missing visitor_reports / calling_reports — strip & retry.
+                              const serverAccess = accessWithoutReportOnlyKeys(selectedAccess)
+                              const mfp = stripReportModules(syncedModulePermissions)
+                              if (serverAccess.length === 0) {
+                                persistLocalUserPermissionOverrides()
+                                serverAccessEnumCompatSave = true
+                              } else {
+                                try {
+                                  await api.admin.dealers.update(editingDealer.id, {
+                                    ...profilePayload,
+                                    access: serverAccess,
+                                    permissions: serverAccess,
+                                    moduleFieldPermissions: mfp,
+                                    modulePermissions: mfp,
+                                  })
+                                } catch {
+                                  await api.admin.dealers.update(editingDealer.id, {
+                                    firstName: profilePayload.firstName,
+                                    lastName: profilePayload.lastName,
+                                    email: profilePayload.email,
+                                    mobile: profilePayload.mobile,
+                                    gender: profilePayload.gender,
+                                    dateOfBirth: profilePayload.dateOfBirth,
+                                    fatherName: profilePayload.fatherName,
+                                    fatherContact: profilePayload.fatherContact,
+                                    governmentIdType: profilePayload.governmentIdType,
+                                    governmentIdNumber: profilePayload.governmentIdNumber,
+                                    address: profilePayload.address,
+                                    isActive: profilePayload.isActive,
+                                    emailVerified: profilePayload.emailVerified,
+                                    access: serverAccess,
+                                    permissions: serverAccess,
+                                  })
+                                }
+                                persistLocalUserPermissionOverrides()
+                                serverAccessEnumCompatSave = true
+                              }
+                            } else {
+                              // Compatibility: older APIs reject unknown fields (office/module permissions).
+                              const serverAccess = accessWithoutReportOnlyKeys(selectedAccess)
+                              const accessForApi =
+                                serverAccess.length > 0 ? serverAccess : selectedAccess
+                              await api.admin.dealers.update(editingDealer.id, {
+                                firstName: profilePayload.firstName,
+                                lastName: profilePayload.lastName,
+                                email: profilePayload.email,
+                                mobile: profilePayload.mobile,
+                                gender: profilePayload.gender,
+                                dateOfBirth: profilePayload.dateOfBirth,
+                                fatherName: profilePayload.fatherName,
+                                fatherContact: profilePayload.fatherContact,
+                                governmentIdType: profilePayload.governmentIdType,
+                                governmentIdNumber: profilePayload.governmentIdNumber,
+                                address: profilePayload.address,
+                                isActive: profilePayload.isActive,
+                                emailVerified: profilePayload.emailVerified,
+                                access: accessForApi,
+                                permissions: accessForApi,
+                              })
+                              // Profile saved without module permissions — keep read-only locally.
+                              persistLocalUserPermissionOverrides()
+                              if (serverAccess.length < selectedAccess.length) {
+                                serverAccessEnumCompatSave = true
+                              }
+                            }
                           }
-                          saveAccessOverride(newAccountManager.username, selectedAccess)
+                          if (!serverAuthBlockedLocalSave) {
+                            saveAccessOverride(newAccountManager.username, selectedAccess)
+                          }
                         } else if (editingManagedKind === "visitor" && editingVisitor) {
                           await api.admin.visitors.update(editingVisitor.id, {
                             ...profilePayload,
@@ -14747,25 +15155,87 @@ export default function AdminPanelPage() {
                         } else if (editingManagedKind === "operations" && editingAccountManager) {
                           try {
                             await api.admin.accountManagers.update(editingAccountManager.id, profilePayload)
-                          } catch {
-                            await api.admin.accountManagers.update(editingAccountManager.id, {
-                              firstName: profilePayload.firstName,
-                              lastName: profilePayload.lastName,
-                              email: profilePayload.email,
-                              mobile: profilePayload.mobile,
-                              access: selectedAccess,
-                              permissions: selectedAccess,
-                              role: primaryRole,
-                            })
+                          } catch (firstError) {
+                            if (firstError instanceof ApiError && firstError.code === "AUTH_004") {
+                              persistLocalUserPermissionOverrides()
+                              setAccountManagers((prev) =>
+                                prev.map((am) =>
+                                  am.id === editingAccountManager.id
+                                    ? {
+                                        ...am,
+                                        firstName: String(profilePayload.firstName || am.firstName),
+                                        lastName: String(profilePayload.lastName || am.lastName),
+                                        email: String(profilePayload.email || am.email),
+                                        mobile: String(profilePayload.mobile || am.mobile),
+                                        access: selectedAccess,
+                                        permissions: selectedAccess,
+                                        role: primaryRole,
+                                        officeLocation:
+                                          newAccountManager.officeLocation || (am as any).officeLocation,
+                                        moduleFieldPermissions: syncedModulePermissions,
+                                      }
+                                    : am,
+                                ),
+                              )
+                              serverAuthBlockedLocalSave = true
+                            } else if (isAccessEnumRejected(firstError)) {
+                              const serverAccess = accessWithoutReportOnlyKeys(selectedAccess)
+                              const mfp = stripReportModules(syncedModulePermissions)
+                              if (serverAccess.length === 0) {
+                                persistLocalUserPermissionOverrides()
+                                serverAccessEnumCompatSave = true
+                              } else {
+                                try {
+                                  await api.admin.accountManagers.update(editingAccountManager.id, {
+                                    ...profilePayload,
+                                    access: serverAccess,
+                                    permissions: serverAccess,
+                                    moduleFieldPermissions: mfp,
+                                    modulePermissions: mfp,
+                                  })
+                                } catch {
+                                  await api.admin.accountManagers.update(editingAccountManager.id, {
+                                    firstName: profilePayload.firstName,
+                                    lastName: profilePayload.lastName,
+                                    email: profilePayload.email,
+                                    mobile: profilePayload.mobile,
+                                    access: serverAccess,
+                                    permissions: serverAccess,
+                                    role: primaryRole,
+                                  })
+                                }
+                                persistLocalUserPermissionOverrides()
+                                serverAccessEnumCompatSave = true
+                              }
+                            } else {
+                              const serverAccess = accessWithoutReportOnlyKeys(selectedAccess)
+                              const accessForApi =
+                                serverAccess.length > 0 ? serverAccess : selectedAccess
+                              await api.admin.accountManagers.update(editingAccountManager.id, {
+                                firstName: profilePayload.firstName,
+                                lastName: profilePayload.lastName,
+                                email: profilePayload.email,
+                                mobile: profilePayload.mobile,
+                                access: accessForApi,
+                                permissions: accessForApi,
+                                role: primaryRole,
+                              })
+                              persistLocalUserPermissionOverrides()
+                              if (serverAccess.length < selectedAccess.length) {
+                                serverAccessEnumCompatSave = true
+                              }
+                            }
                           }
-                          if (newAccountManager.password) {
-                            await api.admin.accountManagers.updatePassword(
-                              editingAccountManager.id,
-                              newAccountManager.password,
-                            )
+                          if (!serverAuthBlockedLocalSave) {
+                            if (newAccountManager.password) {
+                              await api.admin.accountManagers.updatePassword(
+                                editingAccountManager.id,
+                                newAccountManager.password,
+                              )
+                            }
+                            saveAccessOverride(newAccountManager.username, selectedAccess)
+                            saveOperationsRoleOverride(newAccountManager.username, primaryRole)
                           }
-                          saveAccessOverride(newAccountManager.username, selectedAccess)
-                          saveOperationsRoleOverride(newAccountManager.username, primaryRole)
                         } else if (!isEditing) {
                           if (primaryRole === "visitor" || (selectedAccess.length === 1 && selectedAccess[0] === "visitor")) {
                             await api.admin.visitors.create({
@@ -14941,12 +15411,16 @@ export default function AdminPanelPage() {
                           saveAccessOverride(newAccountManager.username, selectedAccess)
                           saveOperationsRoleOverride(newAccountManager.username, primaryRole)
                         }
-                        await loadData()
+                        // Do not reload from API after AUTH_004 local save — that would wipe Metering read-only / profile.
+                        // Access-enum compat already persisted overrides; reload is OK so profile fields refresh.
+                        if (!serverAuthBlockedLocalSave) {
+                          await loadData()
+                        }
                       }
 
                       saveModulePermissionOverride(
                         newAccountManager.username,
-                        newAccountManager.moduleFieldPermissions,
+                        syncedModulePermissions,
                       )
                       saveOfficeLocationOverride(newAccountManager.username, newAccountManager.officeLocation)
 
@@ -14956,10 +15430,24 @@ export default function AdminPanelPage() {
                       setEditingDealer(null)
                       setEditingVisitor(null)
                       setNewAccountManager(emptyUnifiedUserForm())
-                      toast({
-                        title: "Success",
-                        description: isEditing ? "User updated successfully!" : "User created successfully!",
-                      })
+                      if (serverAuthBlockedLocalSave) {
+                        toast({
+                          title: "Saved on this browser",
+                          description:
+                            "Server blocked Update User (Admin access required). Metering read-only and profile changes apply here until backend fixes PUT /admin/dealers/:id with requireAccess(\"admin\") — BACKEND_USER_ACCESS.ts / HANDOFF §46.",
+                        })
+                      } else if (serverAccessEnumCompatSave) {
+                        toast({
+                          title: "Saved (reports access local)",
+                          description:
+                            "Profile saved. Visitor/Calling Reports keys are not on the API Zod enum yet — kept in this browser. Backend: add visitor_reports + calling_reports to access enum — BACKEND_USER_ACCESS.ts / REQUIRED §AU.",
+                        })
+                      } else {
+                        toast({
+                          title: "Success",
+                          description: isEditing ? "User updated successfully!" : "User created successfully!",
+                        })
+                      }
                     } catch (error) {
                       console.error("Error saving user:", error)
                       let detailedMessage = "Failed to save user"

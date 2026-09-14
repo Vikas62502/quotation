@@ -11,8 +11,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SolarLogo } from "@/components/solar-logo"
-import { ChevronDown, LogOut, PhoneCall } from "lucide-react"
-import { canOpenSection, getAccessOptions, type UserAccessKey } from "@/lib/user-access"
+import { ChevronDown, LogOut } from "lucide-react"
+import {
+  getAccessOptions,
+  resolveEffectiveAccess,
+  type UserAccessKey,
+} from "@/lib/user-access"
 import { cn } from "@/lib/utils"
 
 type Props = {
@@ -32,23 +36,39 @@ function isSectionActive(key: UserAccessKey, pathname: string, current?: UserAcc
       pathname.startsWith("/dashboard/new-quotation")
     )
   }
+  if (key === "calling_reports" || key === "visitor_reports") {
+    if (pathname.startsWith("/dashboard/calling-reports")) return key === "calling_reports"
+    if (pathname.startsWith("/dashboard/visitor-reports")) return key === "visitor_reports"
+    if (!pathname.startsWith("/dashboard/admin")) return false
+    if (typeof window === "undefined") return false
+    const tab = new URLSearchParams(window.location.search).get("tab")
+    if (key === "calling_reports") return tab === "calling-reports"
+    return tab === "visitor-reports"
+  }
   const href = getAccessOptions([key])[0]?.href
   if (!href) return false
-  return pathname === href || pathname.startsWith(href + "/")
+  const pathOnly = href.split("?")[0]
+  return pathname === pathOnly || pathname.startsWith(pathOnly + "/")
 }
 
 /**
  * Single primary header for multi-access ops pages (HR, Visitor, Installer, …).
  * Returns null when the user has only one access (page keeps its own header).
  * Do not use together with DashboardNav on Quotation pages — DashboardNav embeds its own switcher.
+ * Calling Data is only under Dealer — not listed here.
  */
 export function AccessSwitchBar({ current, title }: Props) {
   const router = useRouter()
   const pathname = usePathname()
-  const { access, logout, role } = useAuth()
-  const options = getAccessOptions(access)
-  const canUseDealer = canOpenSection(access, role, "quotation") || role === "dealer"
-  const callingActive = pathname.startsWith("/dashboard/calling-data")
+  const { access, logout, role, modulePermissions, dealer, accountManager, visitor, hrUser } = useAuth()
+  const effectiveAccess = resolveEffectiveAccess({
+    username: dealer?.username || accountManager?.username || visitor?.username || hrUser?.username,
+    role,
+    access,
+    permissions: access,
+    modulePermissions,
+  })
+  const options = getAccessOptions(effectiveAccess)
 
   if (options.length <= 1) return null
 
@@ -75,7 +95,7 @@ export function AccessSwitchBar({ current, title }: Props) {
               </span>
             ) : null}
 
-            {/* Mobile: Dealer / HR / Visitor in dropdown */}
+            {/* Mobile: workspace dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -84,7 +104,7 @@ export function AccessSwitchBar({ current, title }: Props) {
                   size="sm"
                   className="md:hidden h-8 gap-1.5 shrink-0 text-xs"
                 >
-                  {callingActive ? "Calling Data" : currentLabel}
+                  {currentLabel}
                   <ChevronDown className="w-3.5 h-3.5 opacity-70" />
                 </Button>
               </DropdownMenuTrigger>
@@ -95,27 +115,19 @@ export function AccessSwitchBar({ current, title }: Props) {
                     <DropdownMenuItem
                       key={item.key}
                       onSelect={() => router.push(item.href)}
-                      className={cn(active && !callingActive && "bg-accent")}
+                      className={cn(active && "bg-accent")}
                     >
                       {item.label}
                     </DropdownMenuItem>
                   )
                 })}
-                {canUseDealer ? (
-                  <DropdownMenuItem
-                    onSelect={() => router.push("/dashboard/calling-data")}
-                    className={cn(callingActive && "bg-accent")}
-                  >
-                    Calling Data
-                  </DropdownMenuItem>
-                ) : null}
               </DropdownMenuContent>
             </DropdownMenu>
 
             {/* Desktop: pill switcher */}
             <nav className="hidden md:flex items-center gap-0.5 rounded-lg border border-border/70 bg-muted/30 p-0.5 overflow-x-auto min-w-0">
               {options.map((item) => {
-                const active = isSectionActive(item.key, pathname, current) && !callingActive
+                const active = isSectionActive(item.key, pathname, current)
                 return (
                   <Button
                     key={item.key}
@@ -128,19 +140,6 @@ export function AccessSwitchBar({ current, title }: Props) {
                   </Button>
                 )
               })}
-              {canUseDealer ? (
-                <Button
-                  asChild
-                  size="sm"
-                  variant={callingActive ? "default" : "ghost"}
-                  className={cn("h-8 text-xs px-2.5 shrink-0 gap-1", callingActive && "shadow-sm")}
-                >
-                  <Link href="/dashboard/calling-data">
-                    <PhoneCall className="w-3 h-3" />
-                    Calling Data
-                  </Link>
-                </Button>
-              ) : null}
             </nav>
           </div>
           <Button
@@ -163,6 +162,13 @@ export function AccessSwitchBar({ current, title }: Props) {
 
 /** True when AccessSwitchBar will render (multi-access). Use to hide duplicate page headers. */
 export function useHasMultiAccessBar() {
-  const { access } = useAuth()
-  return getAccessOptions(access).length > 1
+  const { access, modulePermissions, role, dealer, accountManager, visitor, hrUser } = useAuth()
+  const effectiveAccess = resolveEffectiveAccess({
+    username: dealer?.username || accountManager?.username || visitor?.username || hrUser?.username,
+    role,
+    access,
+    permissions: access,
+    modulePermissions,
+  })
+  return getAccessOptions(effectiveAccess).length > 1
 }

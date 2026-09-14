@@ -1,12 +1,18 @@
 /**
- * Installation / Metering / Final confirmation workflow field permissions (read vs write + scope).
+ * Installation / Metering / Final confirmation / report field permissions (read vs write + scope).
  * Separate from dashboard `access[]` checkboxes in Admin → Users.
  */
 
 export const OFFICE_LOCATIONS = ["Jaipur", "Ajmer", "Chomu"] as const
 export type OfficeLocation = (typeof OFFICE_LOCATIONS)[number]
 
-export type WorkflowModuleKey = "accounts" | "installation" | "metering" | "final_confirmation"
+export type WorkflowModuleKey =
+  | "accounts"
+  | "installation"
+  | "metering"
+  | "final_confirmation"
+  | "visitor_reports"
+  | "calling_reports"
 
 export type ModulePermissionScope =
   | "everyone"
@@ -25,6 +31,16 @@ export type ModuleFieldPermissions = Partial<Record<WorkflowModuleKey, ModulePer
 
 export const MODULE_PERMISSION_STORAGE_KEY = "userModulePermissionOverrides"
 export const OFFICE_LOCATION_STORAGE_KEY = "userOfficeLocationOverrides"
+
+/** Visitor / Calling reports are view-only in Admin → Users (no write level). */
+export const ALWAYS_READ_ONLY_WORKFLOW_MODULES: ReadonlySet<WorkflowModuleKey> = new Set([
+  "visitor_reports",
+  "calling_reports",
+])
+
+export function isAlwaysReadOnlyWorkflowModule(module: WorkflowModuleKey): boolean {
+  return ALWAYS_READ_ONLY_WORKFLOW_MODULES.has(module)
+}
 
 export const MODULE_PERMISSION_SCOPE_OPTIONS: {
   value: ModulePermissionScope
@@ -57,6 +73,8 @@ export const WORKFLOW_MODULE_LABELS: Record<WorkflowModuleKey, string> = {
   installation: "Installation",
   metering: "Metering",
   final_confirmation: "Final confirmation",
+  visitor_reports: "Visitor Reports",
+  calling_reports: "Calling Reports",
 }
 
 export const DEFAULT_MODULE_PERMISSION: ModulePermissionRule = {
@@ -118,6 +136,18 @@ export function normalizeModuleFieldPermissions(raw: unknown): ModuleFieldPermis
   if (o.metering != null) out.metering = normalizeModulePermissionRule(o.metering)
   if (o.final_confirmation != null) out.final_confirmation = normalizeModulePermissionRule(o.final_confirmation)
   if (o.finalConfirmation != null) out.final_confirmation = normalizeModulePermissionRule(o.finalConfirmation)
+  if (o.visitor_reports != null) out.visitor_reports = normalizeModulePermissionRule(o.visitor_reports)
+  if (o.visitorReports != null) out.visitor_reports = normalizeModulePermissionRule(o.visitorReports)
+  if (o.calling_reports != null) out.calling_reports = normalizeModulePermissionRule(o.calling_reports)
+  if (o.callingReports != null) out.calling_reports = normalizeModulePermissionRule(o.callingReports)
+
+  // Reports are always view-only — never persist write.
+  for (const key of ALWAYS_READ_ONLY_WORKFLOW_MODULES) {
+    const rule = out[key]
+    if (rule && rule.level === "write") {
+      out[key] = { ...rule, level: "read" }
+    }
+  }
   return out
 }
 
@@ -135,8 +165,11 @@ export function getModulePermissionOverrides(): Record<string, ModuleFieldPermis
     if (!parsed || typeof parsed !== "object") return {}
     const out: Record<string, ModuleFieldPermissions> = {}
     for (const [username, value] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!username) continue
-      out[username] = normalizeModuleFieldPermissions(value)
+      const key = String(username || "")
+        .trim()
+        .toLowerCase()
+      if (!key) continue
+      out[key] = normalizeModuleFieldPermissions(value)
     }
     return out
   } catch {
@@ -145,14 +178,21 @@ export function getModulePermissionOverrides(): Record<string, ModuleFieldPermis
 }
 
 export function saveModulePermissionOverride(username: string, permissions: ModuleFieldPermissions) {
-  if (!username) return
+  const key = String(username || "")
+    .trim()
+    .toLowerCase()
+  if (!key) return
   const map = getModulePermissionOverrides()
-  map[username] = permissions
+  map[key] = normalizeModuleFieldPermissions(permissions)
   localStorage.setItem(MODULE_PERMISSION_STORAGE_KEY, JSON.stringify(map))
 }
 
 export function getModulePermissionOverride(username: string): ModuleFieldPermissions | undefined {
-  return getModulePermissionOverrides()[username]
+  const key = String(username || "")
+    .trim()
+    .toLowerCase()
+  if (!key) return undefined
+  return getModulePermissionOverrides()[key]
 }
 
 export function getOfficeLocationOverrides(): Record<string, OfficeLocation> {
@@ -163,8 +203,11 @@ export function getOfficeLocationOverrides(): Record<string, OfficeLocation> {
     if (!parsed || typeof parsed !== "object") return {}
     const out: Record<string, OfficeLocation> = {}
     for (const [username, value] of Object.entries(parsed as Record<string, unknown>)) {
+      const key = String(username || "")
+        .trim()
+        .toLowerCase()
       const loc = normalizeOfficeLocation(value)
-      if (username && loc) out[username] = loc
+      if (key && loc) out[key] = loc
     }
     return out
   } catch {
@@ -173,10 +216,13 @@ export function getOfficeLocationOverrides(): Record<string, OfficeLocation> {
 }
 
 export function saveOfficeLocationOverride(username: string, officeLocation: OfficeLocation | "") {
-  if (!username) return
+  const key = String(username || "")
+    .trim()
+    .toLowerCase()
+  if (!key) return
   const map = getOfficeLocationOverrides()
-  if (officeLocation) map[username] = officeLocation
-  else delete map[username]
+  if (officeLocation) map[key] = officeLocation
+  else delete map[key]
   localStorage.setItem(OFFICE_LOCATION_STORAGE_KEY, JSON.stringify(map))
 }
 
@@ -184,15 +230,72 @@ export function resolveUserModulePermissions(
   username: string,
   apiPermissions?: unknown,
 ): ModuleFieldPermissions {
-  const override = getModulePermissionOverride(username)
-  if (override && Object.keys(override).length > 0) return normalizeModuleFieldPermissions(override)
+  const key = String(username || "")
+    .trim()
+    .toLowerCase()
+  const override = key ? getModulePermissionOverride(key) : undefined
   const fromApi = normalizeModuleFieldPermissions(apiPermissions)
-  if (Object.keys(fromApi).length > 0) return fromApi
-  return {}
+  // Per-module: local override wins; otherwise API.
+  const merged: ModuleFieldPermissions = { ...fromApi }
+  if (override) {
+    for (const [mod, rule] of Object.entries(override)) {
+      if (rule) (merged as any)[mod] = rule
+    }
+  }
+  return normalizeModuleFieldPermissions(merged)
+}
+
+/**
+ * Keep Field access in sync with Dashboard access checkboxes.
+ * Checked module + missing/none level → write (or read for report-only modules).
+ * Unchecked module → level none (preserves scope / selected users).
+ */
+export function syncModuleFieldPermissionsWithAccess(
+  access: readonly string[],
+  permissions: ModuleFieldPermissions | null | undefined,
+): ModuleFieldPermissions {
+  const accessSet = new Set(
+    access.map((k) =>
+      String(k || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[\s-]+/g, "_"),
+    ),
+  )
+  const modules: WorkflowModuleKey[] = [
+    "accounts",
+    "installation",
+    "metering",
+    "final_confirmation",
+    "visitor_reports",
+    "calling_reports",
+  ]
+  const next: ModuleFieldPermissions = { ...(permissions || {}) }
+  for (const mod of modules) {
+    const hasAccess = accessSet.has(mod)
+    const current = next[mod]
+    if (hasAccess) {
+      if (!current || current.level === "none") {
+        next[mod] = {
+          level: isAlwaysReadOnlyWorkflowModule(mod) ? "read" : "write",
+          scope: current?.scope || "everyone",
+          selectedUserIds: current?.selectedUserIds || [],
+        }
+      } else if (isAlwaysReadOnlyWorkflowModule(mod) && current.level === "write") {
+        next[mod] = { ...current, level: "read" }
+      }
+    } else if (current && current.level !== "none") {
+      next[mod] = { ...current, level: "none" }
+    }
+  }
+  return next
 }
 
 export function resolveUserOfficeLocation(username: string, apiValue?: unknown): OfficeLocation | "" {
-  const override = getOfficeLocationOverrides()[username]
+  const key = String(username || "")
+    .trim()
+    .toLowerCase()
+  const override = key ? getOfficeLocationOverrides()[key] : undefined
   if (override) return override
   return normalizeOfficeLocation(apiValue)
 }
@@ -319,6 +422,59 @@ export function getModulePermissionRule(
   module: WorkflowModuleKey,
 ): ModulePermissionRule {
   return permissions?.[module] ?? { ...DEFAULT_MODULE_PERMISSION }
+}
+
+/**
+ * Limit dealer / visitor pickers + report rows to Field access scope
+ * (Everyone / Selected one / Only there). Full admin → no filter.
+ */
+export function filterEntitiesByModuleScope<T extends { id: string }>(
+  entities: T[],
+  permissions: ModuleFieldPermissions | undefined,
+  module: WorkflowModuleKey,
+  ctx: ModulePermissionContext,
+): T[] {
+  if (ctx.viewerIsAdmin) return entities
+  const rule = getModulePermissionRule(permissions, module)
+  if (rule.level === "none") return []
+  if (rule.scope === "everyone") return entities
+  if (rule.scope === "selected_users") {
+    const ids = new Set(rule.selectedUserIds.map((id) => String(id)))
+    return entities.filter((e) => ids.has(String(e.id)))
+  }
+  if (rule.scope === "office_only") {
+    const viewerOffice = normalizeOfficeLocation(ctx.officeLocation)
+    const viewerId = String(ctx.userId || "").trim()
+    if (!viewerOffice) {
+      return viewerId ? entities.filter((e) => String(e.id) === viewerId) : []
+    }
+    return entities.filter((e) => {
+      const row = e as T & { officeLocation?: unknown; office_location?: unknown }
+      const loc = normalizeOfficeLocation(row.officeLocation ?? row.office_location)
+      return loc === viewerOffice
+    })
+  }
+  return entities
+}
+
+/** True when a calling-action / visit row’s dealer|visitor id is in the viewer’s Field access scope. */
+export function isEntityIdAllowedByModuleScope(
+  entityId: string | undefined | null,
+  permissions: ModuleFieldPermissions | undefined,
+  module: WorkflowModuleKey,
+  ctx: ModulePermissionContext,
+  /** Precomputed allowed ids when scope is selected_users or office-filtered list. */
+  allowedIds?: ReadonlySet<string> | null,
+): boolean {
+  if (ctx.viewerIsAdmin) return true
+  const rule = getModulePermissionRule(permissions, module)
+  if (rule.level === "none") return false
+  if (rule.scope === "everyone") return true
+  const id = String(entityId || "").trim()
+  if (!id) return false
+  if (allowedIds) return allowedIds.has(id)
+  if (rule.scope === "selected_users") return rule.selectedUserIds.includes(id)
+  return true
 }
 
 export function canViewWorkflowModule(

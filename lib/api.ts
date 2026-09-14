@@ -3949,7 +3949,7 @@ export const api = {
       throw lastError
     },
 
-    /** Backend cron target — sync every enabled sheet tab (every ~15 min). */
+    /** Backend cron target — sync every enabled sheet tab (every ~30 min). */
     syncAll: async (spreadsheetId?: string) => {
       const body = spreadsheetId
         ? { spreadsheetId, spreadsheet_id: spreadsheetId }
@@ -4025,6 +4025,9 @@ export const api = {
           `/admin/calling-actions${querySuffix}`,
           `/admin/calling-queue/actions${querySuffix}`,
           `/admin/leads/actions${querySuffix}`,
+          // Report-only users (access: calling_reports) are not admin — try HR list next.
+          `/hr/calling-actions${querySuffix}`,
+          `/hr/calling-queue/actions${querySuffix}`,
         ]
 
         let lastError: unknown = null
