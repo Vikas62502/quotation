@@ -5325,6 +5325,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Calling/Visitor Reports API auth** — `calling_reports` / `visitor_reports` may GET report routes (not admin-only) | **§AX**, HANDOFF **§46** | `GET /admin/calling-actions`, visits list |
 | **High** | **Dealer Call Analytics live** — emit `calling:actions-updated` after PATCH action; calling-actions GET complete | **§AY**, HANDOFF **§47** / **§5** | dealer action PATCH + `GET …/calling-actions` |
 | **High** | **Sheet auto-sync cron** — every **30 min** `POST …/sync-all` + socket | **§AZ**, HANDOFF **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
+| **High** | **PDF panel range clear** — empty `pdfPanelRangeKey` must clear on save (INA 500–600 / Waaree 580 Topcon) | **§BA**, HANDOFF **§48** | products PATCH + GET echo |
 | **High** | **Calling queue priority** — finish `in_progress`, then Social Media assigned | **§AT**, HANDOFF **§4.5.3** | `BACKEND_CALLING_QUEUE_CURRENT.ts` |
 | Medium | **PDF warranty inverter + Hybrid Type** — round-trip `inverterBrand` / `inverterType` (SPA PDF) | **§AO**, HANDOFF **§45** | `lib/quotation-proposal-document.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
@@ -6471,6 +6472,69 @@ Google Sheets **cannot** push via WebSocket alone — cron (or SPA sync-all) mus
 - [ ] New sheet rows appear in DB + `GET …/:id/leads` without HR clicking Sync now
 - [ ] Socket reaches HR Social Media + dealer Calling Data
 - [ ] Manual Sync now still works
+
+---
+
+## §BA — **PDF panel range unchecked must persist (clear on save)** — Sep 2026
+
+**Product:** Quotation PDF — panel size range checkboxes are **optional**:
+
+| Brand | Optional checkbox examples |
+|-------|----------------------------|
+| INA | `ina_500_600_bifacial` → PDF text **500W - 600W** |
+| Waaree | `waaree_580_620` / `waaree_580_700_bifacial_topcon` → **580W N-Type Topcon** ranges |
+
+- **Unchecked** → PDF shows the **exact** entered size (e.g. **620W**) × quantity.
+- **Checked** → PDF shows the range label; quantity omitted on PDF.
+
+**Bug:** Dealer leaves INA **500-600W** unchecked, enters **620W**, saves → reopen → range comes back selected / PDF still shows 500–600W.
+
+**Frontend (shipped):** Optional defaults (no auto-tick); localStorage caches choice including **explicit clear**. Still needs backend round-trip so other browsers/devices stay correct.
+
+### Backend must (P0)
+
+On `PATCH /quotations/:id/products` (and create body `products`):
+
+1. **Accept and store** (camel or snake):
+
+| Field | When unchecked | When checked |
+|-------|----------------|--------------|
+| `pdfPanelRangeKey` / `pdf_panel_range_key` | `""` or `null` — **clear** stored value | e.g. `ina_500_600_bifacial`, `waaree_580_620`, … |
+| `pdfUsePanelSizeRange` / `pdf_use_panel_size_range` | `false` | `true` |
+| Same for | `pdfDcrPanelRangeKey`, `pdfNonDcrPanelRangeKey` | |
+
+2. **Do not** ignore empty string / null — that leaves the previous key and the checkbox “comes back” on GET.
+3. **Do not** invent a default range for INA / Waaree / Adani when key is missing/empty.
+4. **Allowlist** must include `ina_500_600_bifacial`, `waaree_580_620`, `waaree_580_700_bifacial_topcon`, and existing §X keys.
+5. **GET** quotation / products must echo the saved key **or** null/omitted when cleared — never rehydrate a default.
+
+```json
+// Unchecked (620W exact on PDF)
+{
+  "panelBrand": "INA",
+  "panelSize": "620W",
+  "panelQuantity": 24,
+  "pdfPanelRangeKey": "",
+  "pdf_panel_range_key": null,
+  "pdfUsePanelSizeRange": false,
+  "pdf_use_panel_size_range": false
+}
+
+// Checked
+{
+  "pdfPanelRangeKey": "ina_500_600_bifacial",
+  "pdfUsePanelSizeRange": true
+}
+```
+
+### Checklist
+
+- [ ] Save with range unchecked → GET returns empty/null key + `pdfUsePanelSizeRange: false`
+- [ ] Reopen edit form → checkbox still unchecked; PDF shows **620W** not 500–600W
+- [ ] Save with range checked → GET echoes key; PDF shows range
+- [ ] Toggle checked → unchecked → GET cleared (no stale key)
+
+**Refs:** HANDOFF **§48**, REQUIRED **§X**, `lib/quotation-pdf-display.ts`, `lib/quotation-pdf-flags-local.ts`
 
 ---
 

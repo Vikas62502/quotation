@@ -1,5 +1,6 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import { isInaPanelPackage, restoreDcrPackageDisplayForForm } from "@/lib/quotation-api-payload"
+import { applyLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
   import {
   calculateSystemSize,
@@ -18,9 +19,9 @@ import {
   normalizeInverterBrandForDisplay,
   QUOTATION_AS_PER_THE_SET_LABEL,
   resolvePdfPanelRangeKey,
-  defaultPdfPanelRangeKeyForNonDcr80KwPackage,
   type PdfPanelRangeKey,
   isPdfCommercialSet,
+  stripOptionalPdfRangeUnlessChecked,
 } from "@/lib/quotation-pdf-display"
 
 /** Quotation offer validity from date of issue. */
@@ -424,13 +425,8 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     Number.parseFloat(getSystemKwLabel(p as ProductSelection).replace(/[^0-9.]/g, "")) ||
     Number.parseFloat(String(p.inverterSize || "").replace(/[^0-9.]/g, "")) ||
     0
-  const isNonDcr80KwPackage =
-    systemType.toLowerCase().replace(/_/g, "-") === "non-dcr" && systemKwForPackage >= 79.5
-  const primaryRange =
-    resolvePdfPanelRangeKey(p, "primary") ||
-    (isNonDcr80KwPackage
-      ? defaultPdfPanelRangeKeyForNonDcr80KwPackage(primary.brand || String(p.panelBrand || ""))
-      : null)
+  // PDF panel range ONLY when the optional checkbox set an explicit key — never invent from brand/80kW package.
+  const primaryRange = resolvePdfPanelRangeKey(p, "primary")
   const dcrRange = resolvePdfPanelRangeKey(p, "dcr")
   const nonDcrRange = resolvePdfPanelRangeKey(p, "nonDcr")
 
@@ -447,12 +443,18 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     }
     const brandLower = String(brand || "").trim().toLowerCase()
     const panelWatts = Number.parseFloat(String(size || "").replace(/[^0-9.]/g, "")) || 0
+    const rawSize = String(size || "").trim()
+    const sizeLabel = rawSize
+      ? rawSize.replace(/w$/i, "W")
+      : panelWatts > 0
+        ? `${Math.round(panelWatts)}W`
+        : ""
+    // INA exact size (e.g. 620W) → N-Type Topcon Bifacial (not Mono PERC).
+    if (brandLower === "ina" || brandLower.includes("ina")) {
+      return `${sizeLabel || "—"} N-Type Topcon Bifacial, ${grade}`
+    }
     // No range checked: Waaree above 580W → Topcon Bifacial with exact wattage (e.g. 705W).
     if (brandLower.includes("waaree") && panelWatts > 580) {
-      const rawSize = String(size || "").trim()
-      const sizeLabel = rawSize
-        ? rawSize.replace(/w$/i, "W")
-        : `${Math.round(panelWatts)}W`
       return `${sizeLabel} Topcon Bifacial, ${grade}`
     }
     if (isAsPerTheSetLabel(size)) return `${QUOTATION_AS_PER_THE_SET_LABEL}, ${grade}`
@@ -915,8 +917,11 @@ export function buildQuotationProposalDocumentData(params: {
   quotationDate?: Date
   validityDate?: Date
 }): QuotationProposalDocumentData {
-  const products = restoreDcrPackageDisplayForForm(
+  const restored = restoreDcrPackageDisplayForForm(
     (params.products || { systemType: "dcr", phase: "1-Phase" }) as ProductSelection,
+  )
+  const products = stripOptionalPdfRangeUnlessChecked(
+    applyLocalQuotationPdfFlags(params.quotationId, restored),
   ) as ProductsLike
   const quotationDate = params.quotationDate ?? new Date()
   const validityDate =

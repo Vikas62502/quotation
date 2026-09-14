@@ -3,14 +3,14 @@ import { isPdfCommercialSet, sanitizePdfPanelRangesForBrands } from "@/lib/quota
 
 const STORAGE_PREFIX = "quotation_pdf_flags_"
 
-export type StoredQuotationPdfFlags = Pick<
-  ProductSelection,
-  | "pdfPanelRangeKey"
-  | "pdfDcrPanelRangeKey"
-  | "pdfNonDcrPanelRangeKey"
-  | "pdfCommercialSet"
-  | "pdfUsePanelSizeRange"
-> & {
+export type StoredQuotationPdfFlags = {
+  pdfPanelRangeKey: string
+  pdfDcrPanelRangeKey: string
+  pdfNonDcrPanelRangeKey: string
+  pdfCommercialSet: boolean
+  pdfUsePanelSizeRange: boolean
+  /** True once dealer saved — empty range must stay empty on reopen (not re-defaulted). */
+  pdfPanelRangeChoiceSaved: boolean
   /** Exact panel size/qty for PDF when API catalog snaps wattage (e.g. 625W). */
   panelSize?: string
   panelQuantity?: number
@@ -22,14 +22,48 @@ function storageKey(quotationId: string): string {
   return `${STORAGE_PREFIX}${quotationId}`
 }
 
+function clearPrimaryPdfRange(products: ProductSelection): ProductSelection {
+  const next = {
+    ...products,
+    pdfPanelRangeKey: "",
+    pdfUsePanelSizeRange: false,
+  } as ProductSelection & Record<string, unknown>
+  next.pdf_panel_range_key = null
+  next.pdf_use_panel_size_range = false
+  return next as ProductSelection
+}
+
+function setPrimaryPdfRange(products: ProductSelection, key: string): ProductSelection {
+  const next = {
+    ...products,
+    pdfPanelRangeKey: key,
+    pdfUsePanelSizeRange: true,
+  } as ProductSelection & Record<string, unknown>
+  next.pdf_panel_range_key = key
+  next.pdf_use_panel_size_range = true
+  return next as ProductSelection
+}
+
 /** Read PDF display flags cached for a quotation (survives API round-trips until backend persists them). */
 export function readLocalQuotationPdfFlags(quotationId: string): StoredQuotationPdfFlags | null {
   if (typeof window === "undefined" || !quotationId.trim()) return null
   try {
     const raw = localStorage.getItem(storageKey(quotationId))
     if (!raw) return null
-    const parsed = JSON.parse(raw) as StoredQuotationPdfFlags
-    return parsed && typeof parsed === "object" ? parsed : null
+    const parsed = JSON.parse(raw) as Partial<StoredQuotationPdfFlags>
+    if (!parsed || typeof parsed !== "object") return null
+    return {
+      pdfPanelRangeKey: String(parsed.pdfPanelRangeKey || "").trim(),
+      pdfDcrPanelRangeKey: String(parsed.pdfDcrPanelRangeKey || "").trim(),
+      pdfNonDcrPanelRangeKey: String(parsed.pdfNonDcrPanelRangeKey || "").trim(),
+      pdfCommercialSet: parsed.pdfCommercialSet === true,
+      pdfUsePanelSizeRange: parsed.pdfUsePanelSizeRange === true,
+      pdfPanelRangeChoiceSaved: parsed.pdfPanelRangeChoiceSaved === true || "pdfUsePanelSizeRange" in parsed,
+      panelSize: parsed.panelSize,
+      panelQuantity: parsed.panelQuantity,
+      dcrPanelSize: parsed.dcrPanelSize,
+      dcrPanelQuantity: parsed.dcrPanelQuantity,
+    }
   } catch {
     return null
   }
@@ -44,21 +78,20 @@ export function writeLocalQuotationPdfFlags(quotationId: string, products: Produ
   const dcrPanelSize = String(sanitized.dcrPanelSize || raw.dcr_panel_size || "").trim() || undefined
   const panelQuantity = Number(sanitized.panelQuantity ?? raw.panel_quantity)
   const dcrPanelQuantity = Number(sanitized.dcrPanelQuantity ?? raw.dcr_panel_quantity)
+  const primaryKey = String(sanitized.pdfPanelRangeKey || raw.pdf_panel_range_key || "").trim()
+  const dcrKey = String(sanitized.pdfDcrPanelRangeKey || raw.pdf_dcr_panel_range_key || "").trim()
+  const nonDcrKey = String(
+    sanitized.pdfNonDcrPanelRangeKey || raw.pdf_non_dcr_panel_range_key || "",
+  ).trim()
+
   const payload: StoredQuotationPdfFlags = {
-    pdfPanelRangeKey:
-      String(sanitized.pdfPanelRangeKey || raw.pdf_panel_range_key || "").trim() || undefined,
-    pdfDcrPanelRangeKey:
-      String(sanitized.pdfDcrPanelRangeKey || raw.pdf_dcr_panel_range_key || "").trim() || undefined,
-    pdfNonDcrPanelRangeKey:
-      String(sanitized.pdfNonDcrPanelRangeKey || raw.pdf_non_dcr_panel_range_key || "").trim() ||
-      undefined,
+    // Keep empty string (not omit) so reopen knows the dealer left the box unchecked.
+    pdfPanelRangeKey: primaryKey,
+    pdfDcrPanelRangeKey: dcrKey,
+    pdfNonDcrPanelRangeKey: nonDcrKey,
     pdfCommercialSet: isPdfCommercialSet(sanitized),
-    pdfUsePanelSizeRange: Boolean(
-      sanitized.pdfUsePanelSizeRange ||
-        raw.pdf_use_panel_size_range ||
-        sanitized.pdfPanelRangeKey ||
-        raw.pdf_panel_range_key,
-    ),
+    pdfUsePanelSizeRange: Boolean(primaryKey),
+    pdfPanelRangeChoiceSaved: true,
     panelSize,
     dcrPanelSize,
     ...(Number.isFinite(panelQuantity) && panelQuantity > 0 ? { panelQuantity } : {}),
@@ -91,17 +124,35 @@ export function applyLocalQuotationPdfFlags(
     ;(next as ProductSelection & Record<string, unknown>).pdf_commercial_set = false
   }
 
-  if (!String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim() && stored.pdfPanelRangeKey) {
-    next = { ...next, pdfPanelRangeKey: stored.pdfPanelRangeKey, pdfUsePanelSizeRange: true }
+  // Local choice always wins on reopen (checked key OR explicit unchecked).
+  if (stored.pdfPanelRangeChoiceSaved) {
+    if (stored.pdfPanelRangeKey) {
+      next = setPrimaryPdfRange(next, stored.pdfPanelRangeKey)
+    } else {
+      next = clearPrimaryPdfRange(next)
+    }
+  } else if (stored.pdfPanelRangeKey) {
+    next = setPrimaryPdfRange(next, stored.pdfPanelRangeKey)
   }
-  if (!String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim() && stored.pdfDcrPanelRangeKey) {
+
+  if (
+    !String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim() &&
+    stored.pdfDcrPanelRangeKey
+  ) {
     next = { ...next, pdfDcrPanelRangeKey: stored.pdfDcrPanelRangeKey }
+  } else if (stored.pdfPanelRangeChoiceSaved && !stored.pdfDcrPanelRangeKey) {
+    next = { ...next, pdfDcrPanelRangeKey: "" }
+    ;(next as ProductSelection & Record<string, unknown>).pdf_dcr_panel_range_key = null
   }
+
   if (
     !String(next.pdfNonDcrPanelRangeKey || record.pdf_non_dcr_panel_range_key || "").trim() &&
     stored.pdfNonDcrPanelRangeKey
   ) {
     next = { ...next, pdfNonDcrPanelRangeKey: stored.pdfNonDcrPanelRangeKey }
+  } else if (stored.pdfPanelRangeChoiceSaved && !stored.pdfNonDcrPanelRangeKey) {
+    next = { ...next, pdfNonDcrPanelRangeKey: "" }
+    ;(next as ProductSelection & Record<string, unknown>).pdf_non_dcr_panel_range_key = null
   }
 
   // Prefer dealer-entered size/qty over catalog-snapped API values (e.g. 625W × 8).

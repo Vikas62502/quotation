@@ -60,6 +60,7 @@ import {
   defaultPdfPanelRangeKeyForNonDcr80KwPackage,
   applyDefaultPdfPanelRanges,
   getPanelPdfRangeLabel,
+  stripOptionalPdfRangeUnlessChecked,
   TATA_DCR_PANEL_RANGE_KEY,
   type PdfPanelRangeKey,
 } from "@/lib/quotation-pdf-display"
@@ -204,8 +205,8 @@ function PanelPdfRangeOptions({
     <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
       <p className="text-xs font-medium text-muted-foreground">Quotation PDF — panel size range (optional)</p>
       <p className="text-xs text-muted-foreground">
-        Leave unchecked to show the exact panel size you entered (e.g. 625W) and system kW from panel × quantity.
-        Check a range to show that range on the PDF instead (panel quantity is then omitted).
+        <strong>Checked</strong> → PDF shows this range (e.g. 500W – 600W).{" "}
+        <strong>Unchecked</strong> → PDF shows the exact size you entered (e.g. 620W) × quantity.
       </p>
       {options.map((option) => (
         <label key={option.key} className="flex items-start gap-2 text-sm cursor-pointer">
@@ -410,9 +411,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     }
   }, [initialDataSyncKey])
 
-  // Auto-select default PDF panel range when brand supports it (INA, Premier, Adani, etc.)
+  // Auto-select default PDF panel range only when brand has a required package range (e.g. Tata).
+  // Never re-tick INA / Waaree optional boxes after the dealer left them unchecked.
   useEffect(() => {
     setFormData((prev) => {
+      if (prev.pdfUsePanelSizeRange === false && !String(prev.pdfPanelRangeKey || "").trim()) {
+        return prev
+      }
       const next = applyDefaultPdfPanelRanges(prev)
       if (
         next.pdfPanelRangeKey === prev.pdfPanelRangeKey &&
@@ -686,13 +691,27 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
     key: PdfPanelRangeKey | "",
   ) => {
-    setFormData((prev) => ({
-      ...prev,
-      [field]: key,
-      ...(field === "pdfPanelRangeKey"
-        ? { pdfUsePanelSizeRange: Boolean(key) }
-        : {}),
-    }))
+    setFormData((prev) => {
+      const checked = Boolean(key)
+      const next = {
+        ...prev,
+        [field]: key,
+        ...(field === "pdfPanelRangeKey"
+          ? {
+              pdfUsePanelSizeRange: checked,
+              pdf_panel_range_key: key || null,
+              pdf_use_panel_size_range: checked,
+            }
+          : {}),
+        ...(field === "pdfDcrPanelRangeKey"
+          ? { pdf_dcr_panel_range_key: key || null }
+          : {}),
+        ...(field === "pdfNonDcrPanelRangeKey"
+          ? { pdf_non_dcr_panel_range_key: key || null }
+          : {}),
+      } as ProductSelection
+      return next
+    })
     setError("")
   }
 
@@ -1350,14 +1369,19 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       }
     }
 
-    const normalizedProducts = backfillPanelQuantityForPdfRange(
-      restoreDcrPackageDisplayForForm({
-        ...formData,
-        systemType: effectiveSystemType,
-        phase: formData.phase || currentPhase,
-        stateSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.stateSubsidy) || 0,
-        centralSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.centralSubsidy) || 0,
-      }),
+    const normalizedProducts = stripOptionalPdfRangeUnlessChecked(
+      backfillPanelQuantityForPdfRange(
+        restoreDcrPackageDisplayForForm({
+          ...formData,
+          systemType: effectiveSystemType,
+          phase: formData.phase || currentPhase,
+          stateSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.stateSubsidy) || 0,
+          centralSubsidy: formData.pdfCommercialSet ? 0 : Number(formData.centralSubsidy) || 0,
+          // Persist unchecked explicitly so reopen / PDF never revive INA 500–600W.
+          pdfPanelRangeKey: formData.pdfPanelRangeKey || "",
+          pdfUsePanelSizeRange: Boolean(formData.pdfPanelRangeKey),
+        }),
+      ),
     )
 
     setFormData(normalizedProducts)

@@ -3976,4 +3976,21 @@ Also: `BACKEND_USER_FIELD_PERMISSIONS.ts`
 
 ---
 
+## 48. PDF panel range optional + clear on save (**§BA**) — Sep 2026
+
+**Frontend (shipped):** INA 500–600W / Waaree 580W N-Topcon ranges are optional checkboxes. Unchecked → exact W on PDF. Local cache stores explicit clear so reopen stays unchecked.
+
+**Backend (P0):**
+1. Persist `pdfPanelRangeKey` / `pdf_panel_range_key` (and DCR/Non-DCR twins) on products PATCH.
+2. Empty string or `null` **must clear** the stored key (do not keep previous value).
+3. Persist `pdfUsePanelSizeRange: false` when unchecked.
+4. GET must echo cleared state — do not default INA to `ina_500_600_bifacial`.
+5. Allowlist: `ina_500_600_bifacial`, `waaree_580_620`, `waaree_580_700_bifacial_topcon`, plus existing §X keys.
+
+**QA:** INA + 620W + range unchecked → save → reopen → still unchecked → PDF **620W**.
+
+**Refs:** REQUIRED **§BA** / **§X**
+
+---
+
 

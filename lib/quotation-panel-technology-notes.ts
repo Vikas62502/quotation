@@ -69,6 +69,14 @@ function getPanelTechnologyNoteBody(
     )
   }
 
+  if (key === "ina") {
+    const gradeLabel = grade === "dcr" ? "DCR" : "Non-DCR"
+    return (
+      `INA ${gradeLabel}-grade N-Type Topcon bifacial modules deliver high efficiency from front and rear surfaces — ` +
+      "optimized for on-grid installations with manufacturer performance warranty as per BOM."
+    )
+  }
+
   if (key === "premierenergies" || key === "premier") {
     return (
       "Premier Energies DCR-grade bifacial TOPCon modules (600–625W class) deliver high efficiency with domestic content compliance — " +
@@ -109,7 +117,15 @@ function formatNoteLine(
 }
 
 function topconForBrandScope(products: ProductsLike, scope: "primary" | "dcr" | "nonDcr"): boolean {
-  return isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(products, scope))
+  if (isTopconPdfPanelRangeKey(resolvePdfPanelRangeKey(products, scope))) return true
+  // INA exact-wattage lines use N-Type Topcon even when the optional range checkbox is off.
+  const brand =
+    scope === "dcr"
+      ? pickNonEmpty(products.dcrPanelBrand, products.panelBrand, products.panelType, products.panel_type)
+      : scope === "nonDcr"
+        ? pickNonEmpty(products.nonDcrPanelBrand, products.panelBrand)
+        : pickNonEmpty(products.panelBrand, products.dcrPanelBrand, products.panelType, products.panel_type)
+  return normalizeBrandKey(brand) === "ina"
 }
 
 function resolvePanelBrandsForNotes(products: ProductsLike): {

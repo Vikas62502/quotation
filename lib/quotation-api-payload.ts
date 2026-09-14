@@ -11,6 +11,7 @@ import {
   TATA_DCR_PANEL_RANGE_KEY,
   INA_DCR_PANEL_RANGE_KEY,
   applyDefaultPdfPanelRanges,
+  stripOptionalPdfRangeUnlessChecked,
 } from "@/lib/quotation-pdf-display"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
 import { applyLocalQuotationPdfFlags, writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
@@ -268,13 +269,14 @@ function withInaApiCatalogMarkers(products: ProductSelection): ProductSelection 
   next.panel_type = "INA"
   next.inaDcrPackage = true
   next.ina_dcr_package = true
-  const inaRange = primaryRange || dcrRange || INA_DCR_PANEL_RANGE_KEY
+  // Keep dealer choice: empty range → PDF shows exact entered W (e.g. 620W), not 500–600W.
+  const inaRange = primaryRange || dcrRange || ""
   next.pdfPanelRangeKey = inaRange
-  next.pdfDcrPanelRangeKey = dcrRange || primaryRange || INA_DCR_PANEL_RANGE_KEY
-  next.pdf_panel_range_key = inaRange
-  next.pdf_dcr_panel_range_key = dcrRange || primaryRange || INA_DCR_PANEL_RANGE_KEY
-  next.pdfUsePanelSizeRange = true
-  next.pdf_use_panel_size_range = true
+  next.pdfDcrPanelRangeKey = dcrRange || primaryRange || ""
+  next.pdf_panel_range_key = inaRange || null
+  next.pdf_dcr_panel_range_key = dcrRange || primaryRange || null
+  next.pdfUsePanelSizeRange = Boolean(inaRange)
+  next.pdf_use_panel_size_range = Boolean(inaRange)
   return next as ProductSelection
 }
 
@@ -362,8 +364,17 @@ export function restoreInaPanelBrandForForm(products: ProductSelection): Product
   if (!isInaPanelPackage(products)) return products
 
   const record = products as ProductSelection & Record<string, unknown>
-  const range = String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
-  const dcrRange = String(products.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  const useRange =
+    products.pdfUsePanelSizeRange === true ||
+    record.pdf_use_panel_size_range === true ||
+    record.pdf_use_panel_size_range === "true"
+  const range = useRange
+    ? String(products.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+    : ""
+  const dcrRange = useRange
+    ? String(products.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+    : ""
+  const resolvedRange = range || dcrRange || ""
 
   return {
     ...products,
@@ -371,8 +382,9 @@ export function restoreInaPanelBrandForForm(products: ProductSelection): Product
     dcrPanelBrand: "INA",
     panelType: "INA",
     inaDcrPackage: true,
-    pdfPanelRangeKey: range || dcrRange || INA_DCR_PANEL_RANGE_KEY,
-    pdfUsePanelSizeRange: true,
+    // Only restore range when checkbox was explicitly checked — never invent 500–600W.
+    pdfPanelRangeKey: resolvedRange,
+    pdfUsePanelSizeRange: Boolean(resolvedRange),
   }
 }
 
@@ -462,8 +474,9 @@ export function mergeQuotationProductsForDisplay(raw: unknown): ProductSelection
   const withIna = preserveInaDisplayFromPrior(priorHint, base)
   const withRenew = preserveRenewEnergyDisplayFromPrior(priorHint, withIna)
   const withPdfFlags = preservePdfDisplayFlagsFromPrior(priorDisplay, withRenew)
-  const withLocal = applyLocalQuotationPdfFlags(quotationId || undefined, withPdfFlags)
-  return restoreDcrPackageDisplayForForm(withLocal)
+  // Restore package display first, then local flags last so unchecked range survives reopen.
+  const restored = restoreDcrPackageDisplayForForm(withPdfFlags)
+  return applyLocalQuotationPdfFlags(quotationId || undefined, restored)
 }
 
 /**
@@ -523,20 +536,35 @@ export function preserveInaDisplayFromPrior(
     return restoreDcrPackageDisplayForForm(next)
   }
 
+  const priorRange = String(
+    priorDisplay.pdfPanelRangeKey ||
+      (priorDisplay as ProductSelection & Record<string, unknown>).pdf_panel_range_key ||
+      "",
+  ).trim()
+  const priorDcrRange = String(
+    priorDisplay.pdfDcrPanelRangeKey ||
+      (priorDisplay as ProductSelection & Record<string, unknown>).pdf_dcr_panel_range_key ||
+      "",
+  ).trim()
+  const priorUseRange =
+    priorDisplay.pdfUsePanelSizeRange === true ||
+    (priorDisplay as ProductSelection & Record<string, unknown>).pdf_use_panel_size_range === true
+  const resolvedRange = priorUseRange ? priorRange || priorDcrRange || "" : ""
+
   const merged = {
     ...next,
     panelBrand: "INA",
     dcrPanelBrand: "INA",
     panelType: "INA",
     inaDcrPackage: true,
-    pdfPanelRangeKey: INA_DCR_PANEL_RANGE_KEY,
-    pdfDcrPanelRangeKey: INA_DCR_PANEL_RANGE_KEY,
-    pdfUsePanelSizeRange: true,
+    pdfPanelRangeKey: resolvedRange,
+    pdfDcrPanelRangeKey: priorUseRange ? priorDcrRange || priorRange || "" : "",
+    pdfUsePanelSizeRange: Boolean(resolvedRange),
     panel_type: "INA",
     ina_dcr_package: true,
-    pdf_panel_range_key: INA_DCR_PANEL_RANGE_KEY,
-    pdf_dcr_panel_range_key: INA_DCR_PANEL_RANGE_KEY,
-    pdf_use_panel_size_range: true,
+    pdf_panel_range_key: resolvedRange || null,
+    pdf_dcr_panel_range_key: priorUseRange ? priorDcrRange || priorRange || null : null,
+    pdf_use_panel_size_range: Boolean(resolvedRange),
   } as ProductSelection
 
   return restoreDcrPackageDisplayForForm(merged)
@@ -710,14 +738,27 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
   const withIna = restoreInaPanelBrandForForm(products)
   const withRenew = restoreRenewEnergyPanelBrandForForm(withIna)
   const withCrompton = restoreCromptonSetForForm(withRenew)
+  // INA / Waaree / etc.: drop stale 500–600W keys unless checkbox was explicitly checked.
+  const normalized = stripOptionalPdfRangeUnlessChecked(withCrompton)
+  const record = normalized as ProductSelection & Record<string, unknown>
+  const existingRange = String(normalized.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
 
-  if (String(withCrompton.systemType || "").toLowerCase() !== "dcr") {
-    return applyDefaultPdfPanelRanges(withCrompton)
+  // No optional range selected — keep cleared (do not auto-tick INA 500–600W on reopen).
+  if (!existingRange) {
+    return {
+      ...normalized,
+      pdfPanelRangeKey: "",
+      pdfUsePanelSizeRange: false,
+      pdf_panel_range_key: null,
+      pdf_use_panel_size_range: false,
+    } as ProductSelection
   }
 
-  const record = withCrompton as ProductSelection & Record<string, unknown>
-  const brand = (withCrompton.panelBrand || withCrompton.dcrPanelBrand || "").trim().toLowerCase()
-  const existingRange = String(withCrompton.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  if (String(normalized.systemType || "").toLowerCase() !== "dcr") {
+    return applyDefaultPdfPanelRanges(normalized)
+  }
+
+  const brand = (normalized.panelBrand || normalized.dcrPanelBrand || "").trim().toLowerCase()
   const pdfPanelRangeKey = existingRange
 
   const isTataDcrPackage =
@@ -726,23 +767,23 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
     String(record.tata_dcr_panel_range || "").trim() === "true"
 
   const asPerSetPackage =
-    isAsPerTheSetLabel(withCrompton.panelSize) ||
-    isAsPerTheSetLabel(withCrompton.dcrPanelSize) ||
-    isAsPerTheSetLabel(withCrompton.inverterSize) ||
-    isAsPerTheSetLabel(withCrompton.inverterBrand) ||
+    isAsPerTheSetLabel(normalized.panelSize) ||
+    isAsPerTheSetLabel(normalized.dcrPanelSize) ||
+    isAsPerTheSetLabel(normalized.inverterSize) ||
+    isAsPerTheSetLabel(normalized.inverterBrand) ||
     isTataDcrPackage
 
-  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(withCrompton)
+  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(normalized)
 
-  const panelBrand = withCrompton.panelBrand || withCrompton.dcrPanelBrand || ""
+  const panelBrand = normalized.panelBrand || normalized.dcrPanelBrand || ""
 
   return applyDefaultPdfPanelRanges({
-    ...withCrompton,
+    ...normalized,
     panelBrand,
-    pdfPanelRangeKey: pdfPanelRangeKey || withCrompton.pdfPanelRangeKey,
+    pdfPanelRangeKey: pdfPanelRangeKey || normalized.pdfPanelRangeKey,
     panelSize: DCR_AS_PER_THE_SET,
     panelQuantity: 0,
-    dcrPanelBrand: withCrompton.dcrPanelBrand || panelBrand,
+    dcrPanelBrand: normalized.dcrPanelBrand || panelBrand,
     dcrPanelSize: DCR_AS_PER_THE_SET,
     dcrPanelQuantity: 0,
     inverterBrand: DCR_AS_PER_THE_SET,

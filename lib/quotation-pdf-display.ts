@@ -129,11 +129,12 @@ export function defaultPdfPanelRangeKeyForNonDcr80KwPackage(
 /** Default PDF panel range when a DCR browse package column is selected. */
 export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): PdfPanelRangeKey | null {
   const normalized = panelType.trim().toLowerCase()
-  // Optional brands (Waaree / Adani / Premier): leave unchecked — PDF uses entered W × qty for size + system kW.
-  if (normalized === "ina") return INA_DCR_PANEL_RANGE_KEY
+  // Optional brands (INA / Waaree Topcon / Adani / Premier): leave unchecked — PDF uses entered W × qty
+  // (e.g. 620W) until the dealer ticks a range checkbox (500–600W or 580W N-Type Topcon).
+  if (normalized === "ina") return null
   if (normalized === "tata") return TATA_DCR_PANEL_RANGE_KEY
   if (normalized.includes("crompton")) return "premier_energy_600_610"
-  if (normalized === "waaree topcon") return "waaree_580_700_bifacial_topcon"
+  if (normalized === "waaree topcon") return null
   return null
 }
 
@@ -142,6 +143,7 @@ export function isTopconPdfPanelRangeKey(key?: string | null): boolean {
   return (
     normalized.includes("topcon") ||
     normalized === "premier_energy_600_610" ||
+    normalized === "ina_500_600_bifacial" ||
     // Waaree 580–620 PDF range is N-Type Bifacial Topcon (key has no "topcon" suffix).
     normalized === "waaree_580_620" ||
     // Legacy key before rename to waaree_580_620
@@ -209,8 +211,8 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
   },
   {
     key: "ina_500_600_bifacial",
-    label: "500-600W Bifacial",
-    pdfSpecification: "500W - 600W",
+    label: "500-600W N-Type Topcon Bifacial",
+    pdfSpecification: "500W - 600W N-Type Topcon Bifacial",
   },
   {
     key: "tata_530_570",
@@ -259,12 +261,12 @@ export function getPanelPdfRangeOptionsForBrand(panelBrand?: string): PanelPdfRa
   return PANEL_RANGE_CATALOG.filter((option) => keys.includes(option.key))
 }
 
-/** Default PDF range checkbox when a panel brand is chosen (INA, Tata package sets, etc.). */
-export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPanelRangeKey | "" {
+/** Brands whose PDF range is optional (checkbox) — never invent a range without an explicit check. */
+export function isOptionalPdfPanelRangeBrand(panelBrand?: string, panelType?: string): boolean {
   const brandKey = normalizePanelBrandKey(panelBrand)
-  // Optional ranges (Waaree / Adani / Premier / RenewSys): leave unchecked so the entered
-  // panel size (e.g. 625W) and quantity drive PDF text + system kW until a range is chosen.
-  if (
+  const typeKey = normalizePanelBrandKey(panelType)
+  if (typeKey === "ina" || brandKey === "ina") return true
+  return (
     brandKey === "renewsys" ||
     brandKey === "renewenergy" ||
     brandKey === "waaree" ||
@@ -272,7 +274,55 @@ export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPa
     brandKey === "premier" ||
     brandKey === "premierenergies" ||
     brandKey === "premierenergy"
-  ) {
+  )
+}
+
+function isExplicitlyCheckedPdfRange(products: PdfDisplaySource): boolean {
+  const useRange = products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range
+  return useRange === true || useRange === "true" || useRange === 1
+}
+
+/**
+ * INA / Waaree / Adani / etc.: clear stale range keys unless the dealer checked the box.
+ * Stops "500W - 600W" on PDF and re-checked checkbox after save when they entered 620W unchecked.
+ */
+export function stripOptionalPdfRangeUnlessChecked(products: ProductSelection): ProductSelection {
+  const next = { ...products } as ProductSelection & Record<string, unknown>
+  const brand = String(next.panelBrand || next.dcrPanelBrand || next.panel_brand || "")
+  const panelType = String(next.panelType || next.panel_type || "")
+  if (!isOptionalPdfPanelRangeBrand(brand, panelType)) return products
+
+  if (isExplicitlyCheckedPdfRange(next)) {
+    const key = String(next.pdfPanelRangeKey || next.pdf_panel_range_key || "").trim()
+    if (!key) {
+      next.pdfUsePanelSizeRange = false
+      next.pdf_use_panel_size_range = false
+    }
+    return next as ProductSelection
+  }
+
+  next.pdfPanelRangeKey = ""
+  next.pdfDcrPanelRangeKey = ""
+  next.pdfNonDcrPanelRangeKey =
+    isOptionalPdfPanelRangeBrand(String(next.nonDcrPanelBrand || ""))
+      ? ""
+      : next.pdfNonDcrPanelRangeKey
+  next.pdfUsePanelSizeRange = false
+  next.pdf_panel_range_key = null
+  next.pdf_dcr_panel_range_key = null
+  if (isOptionalPdfPanelRangeBrand(String(next.nonDcrPanelBrand || ""))) {
+    next.pdf_non_dcr_panel_range_key = null
+  }
+  next.pdf_use_panel_size_range = false
+  return next as ProductSelection
+}
+
+/** Default PDF range checkbox when a panel brand is chosen (Tata package sets, etc.). */
+export function defaultPdfPanelRangeKeyForPanelBrand(panelBrand?: string): PdfPanelRangeKey | "" {
+  const brandKey = normalizePanelBrandKey(panelBrand)
+  // Optional ranges (INA / Waaree / Adani / Premier / RenewSys): leave unchecked so the entered
+  // panel size (e.g. 620W) and quantity drive PDF text + system kW until a range is chosen.
+  if (isOptionalPdfPanelRangeBrand(panelBrand)) {
     return ""
   }
   const keys = PANEL_RANGE_BY_BRAND[brandKey] || []
@@ -317,7 +367,7 @@ function brandForPdfRangeField(
 
 /** Drop range keys that do not belong to the current brand (e.g. Adani Topcon left on RenewSys). */
 export function sanitizePdfPanelRangesForBrands(products: ProductSelection): ProductSelection {
-  const next = { ...products }
+  const next = stripOptionalPdfRangeUnlessChecked({ ...products })
   const record = next as ProductSelection & Record<string, unknown>
 
   const primaryBrand = brandForPdfRangeField(next as PdfDisplaySource, "pdfPanelRangeKey")
@@ -354,34 +404,45 @@ export function sanitizePdfPanelRangesForBrands(products: ProductSelection): Pro
   return next
 }
 
-/** Backfill empty PDF range keys from panel brand — e.g. INA → 500–600W Bifacial. */
+/**
+ * Backfill empty PDF range keys only for brands that require a package range (e.g. Tata).
+ * INA / Waaree / Adani stay empty until the dealer checks a range — so entered W (620W) shows on PDF.
+ */
 export function applyDefaultPdfPanelRanges(products: ProductSelection): ProductSelection {
   const next = sanitizePdfPanelRangesForBrands({ ...products })
   const record = next as ProductSelection & Record<string, unknown>
   const panelType = String(next.panelType || record.panel_type || "").trim().toLowerCase()
 
-  const brandForPrimaryRange =
-    panelType === "ina"
-      ? "INA"
-      : next.panelBrand || next.dcrPanelBrand || ""
-  const primaryDefault = defaultPdfPanelRangeKeyForPanelBrand(brandForPrimaryRange)
+  // Drop stale non-INA keys left on an INA quotation — do not re-force 500–600W.
   const existingPrimary = String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
-  if (primaryDefault && !existingPrimary) {
+  if (panelType === "ina" && existingPrimary && !existingPrimary.startsWith("ina_")) {
+    next.pdfPanelRangeKey = ""
+    next.pdfUsePanelSizeRange = false
+    record.pdf_panel_range_key = null
+    record.pdf_use_panel_size_range = false
+  }
+
+  const brandForPrimaryRange =
+    panelType === "ina" ? "INA" : next.panelBrand || next.dcrPanelBrand || ""
+  const primaryDefault = defaultPdfPanelRangeKeyForPanelBrand(brandForPrimaryRange)
+  const primaryAfterSanitize = String(next.pdfPanelRangeKey || record.pdf_panel_range_key || "").trim()
+  if (primaryDefault && !primaryAfterSanitize) {
     next.pdfPanelRangeKey = primaryDefault
     next.pdfUsePanelSizeRange = true
-  } else if (panelType === "ina" && existingPrimary && !existingPrimary.startsWith("ina_")) {
-    next.pdfPanelRangeKey = INA_DCR_PANEL_RANGE_KEY
-    next.pdfUsePanelSizeRange = true
+  }
+
+  const existingDcr = String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  if (panelType === "ina" && existingDcr && !existingDcr.startsWith("ina_")) {
+    next.pdfDcrPanelRangeKey = ""
+    record.pdf_dcr_panel_range_key = null
   }
 
   const dcrBrandForRange =
     panelType === "ina" ? "INA" : next.dcrPanelBrand || next.panelBrand || ""
   const dcrDefault = defaultPdfPanelRangeKeyForPanelBrand(dcrBrandForRange)
-  const existingDcr = String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
-  if (dcrDefault && !existingDcr) {
+  const dcrAfterSanitize = String(next.pdfDcrPanelRangeKey || record.pdf_dcr_panel_range_key || "").trim()
+  if (dcrDefault && !dcrAfterSanitize) {
     next.pdfDcrPanelRangeKey = dcrDefault
-  } else if (panelType === "ina" && existingDcr && !existingDcr.startsWith("ina_")) {
-    next.pdfDcrPanelRangeKey = INA_DCR_PANEL_RANGE_KEY
   }
 
   const nonDcrDefault = defaultPdfPanelRangeKeyForPanelBrand(next.nonDcrPanelBrand)
@@ -409,6 +470,20 @@ function pickPdfPanelRangeKey(
   field: "pdfPanelRangeKey" | "pdfDcrPanelRangeKey" | "pdfNonDcrPanelRangeKey",
   snakeField: string,
 ): PdfPanelRangeKey | null {
+  const brand = brandForPdfRangeField(products, field)
+  const panelType = String(products.panelType || products.panel_type || "")
+
+  // Optional brands (INA, Waaree, …): range on PDF only when checkbox is explicitly checked.
+  if (field === "pdfPanelRangeKey" && isOptionalPdfPanelRangeBrand(brand, panelType)) {
+    if (!isExplicitlyCheckedPdfRange(products)) return null
+  }
+  if (field === "pdfPanelRangeKey") {
+    const useRange = products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range
+    if (useRange === false || useRange === "false" || useRange === 0) {
+      return null
+    }
+  }
+
   const hasCamel = Object.prototype.hasOwnProperty.call(products, field)
   const hasSnake = Object.prototype.hasOwnProperty.call(products, snakeField)
   let raw = products[field] ?? products[snakeField]
@@ -419,7 +494,6 @@ function pickPdfPanelRangeKey(
   if (typeof raw === "string" && raw.trim() === "waaree_580_630") {
     raw = "waaree_580_620"
   }
-  const brand = brandForPdfRangeField(products, field)
 
   if (hasCamel || hasSnake) {
     if (raw === null || raw === undefined || (typeof raw === "string" && !raw.trim())) {
@@ -434,22 +508,8 @@ function pickPdfPanelRangeKey(
     }
   }
 
-  if (field === "pdfPanelRangeKey" && Boolean(products.pdfUsePanelSizeRange ?? products.pdf_use_panel_size_range)) {
-    const brandKey = normalizePanelBrandKey(brand)
-    // Optional-range brands: only an explicit checkbox key drives the PDF — never invent from
-    // the legacy boolean (that left Waaree/Adani showing a range while boxes looked unchecked).
-    if (
-      brandKey === "waaree" ||
-      brandKey === "adani" ||
-      brandKey === "premier" ||
-      brandKey === "premierenergies" ||
-      brandKey === "renewsys"
-    ) {
-      return null
-    }
-    if (brandKey === "ina") return "ina_500_600_bifacial"
-    return null
-  }
+  // Legacy boolean alone must never invent a range (INA 500–600W / Waaree 580W Topcon, etc.).
+  // Only an explicit pdfPanelRangeKey checkbox selection drives the PDF.
   return null
 }
 
