@@ -1287,6 +1287,7 @@ const GOVERNMENT_BANK_OPTIONS = [
   "Punjab & Sind Bank",
   "RMGB Bank",
   "HDFC Bank",
+  "Bajaj Finance Ltd.",
 ] as const
 
 function getOperationalStageForQuotation(quotation: Quotation): AdminOperationalStage | "" {
