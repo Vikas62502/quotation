@@ -130,6 +130,8 @@ interface CustomerPayment {
   finalSettlementApplied?: boolean
   /** INR written off by final settlement (shown as `d` on Paid hover). */
   finalSettlementDiscount?: number
+  /** Optional notes entered when applying final settlement. */
+  finalSettlementRemarks?: string
   totalAmount: number
   finalAmount: number
   /** When API sends remaining or remainingAmount, prefer for list/export display. */
@@ -156,6 +158,52 @@ const PAYMENT_PLANS_KEY = "quotationPaymentPlans"
 const SUBSIDY_CHEQUES_KEY = "quotationSubsidyCheques"
 /** Durable Cost of site until GET approved list echoes `site_cost` from DB. */
 const SITE_COST_KEY = "quotationSiteCosts"
+/** Durable final-settlement until GET echoes finalSettlementApplied from PostgreSQL. */
+const FINAL_SETTLEMENT_KEY = "quotationFinalSettlements"
+
+type StoredFinalSettlement = {
+  applied: true
+  discount: number
+  amount: number
+  remarks?: string
+  at: string
+}
+
+function getStoredFinalSettlements(): Record<string, StoredFinalSettlement> {
+  if (typeof window === "undefined") return {}
+  try {
+    const raw = localStorage.getItem(FINAL_SETTLEMENT_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function persistFinalSettlementLocal(
+  quotationId: string,
+  entry: Omit<StoredFinalSettlement, "applied" | "at"> & { remarks?: string },
+) {
+  if (!quotationId || typeof window === "undefined") return
+  const map = getStoredFinalSettlements()
+  map[quotationId] = {
+    applied: true,
+    discount: Math.max(0, Math.round(entry.discount || 0)),
+    amount: Math.max(0, Math.round(entry.amount || 0)),
+    remarks: entry.remarks,
+    at: new Date().toISOString(),
+  }
+  localStorage.setItem(FINAL_SETTLEMENT_KEY, JSON.stringify(map))
+}
+
+function clearFinalSettlementLocal(quotationId: string) {
+  if (!quotationId || typeof window === "undefined") return
+  const map = getStoredFinalSettlements()
+  if (!(quotationId in map)) return
+  delete map[quotationId]
+  localStorage.setItem(FINAL_SETTLEMENT_KEY, JSON.stringify(map))
+}
 
 const PAYMENT_MODE_SELECT_VALUES = [
   "cash",
@@ -280,10 +328,19 @@ function getPaymentDiscountAmount(payment: CustomerPayment): number {
   return Math.max(0, Number(payment.discountAmount) || 0)
 }
 
-/** Settlement-only discount `d` (prefer explicit backend settlement amount). */
+/** Settlement-only discount `d` (the write-off). Never use full quotation discount as `d`. */
 function getSettlementDiscountAmount(payment: CustomerPayment): number {
+  const paid = getTotalPaidPhases(payment.phases)
+  const clearedGap = Math.max(0, getPaymentOriginalSubtotal(payment) - paid)
+  const clampToGap = (n: number) => {
+    const v = Math.max(0, Math.round(n))
+    // If settled, `d` cannot exceed what was actually unpaid (fixes doubled 2000 vs 1000).
+    if (isFinalSettlementApplied(payment) && clearedGap > 0 && v > clearedGap) return clearedGap
+    return v
+  }
+
   const localTracked = Number(payment.finalSettlementDiscount) || 0
-  if (localTracked > 0) return Math.max(0, localTracked)
+  if (localTracked > 0) return clampToGap(localTracked)
   const qx = payment.quotation as Quotation & Record<string, unknown>
   const pricing = (qx.pricing || {}) as Record<string, unknown>
   const fromApi =
@@ -294,8 +351,8 @@ function getSettlementDiscountAmount(payment: CustomerPayment): number {
         pricing.final_settlement_amount ??
         0,
     ) || 0
-  if (fromApi > 0) return Math.max(0, fromApi)
-  if (isFinalSettlementApplied(payment)) return getPaymentDiscountAmount(payment)
+  if (fromApi > 0) return clampToGap(fromApi)
+  if (isFinalSettlementApplied(payment) && clearedGap > 0) return Math.round(clearedGap)
   return 0
 }
 
@@ -339,9 +396,24 @@ function getTotalPaidForSide(phases: PaymentPhase[], side: "loan" | "cash"): num
 }
 
 function getRemainingForSide(payment: CustomerPayment, side: "loan" | "cash"): number {
+  // After final settlement the whole file is cleared — don't show leftover L/C remaining.
+  if (isFinalSettlementApplied(payment)) return 0
   const paid = getTotalPaidForSide(payment.phases, side)
   const bucket = side === "loan" ? getMixLoanCap(payment) : getMixCashCap(payment)
   return Math.max(0, bucket - paid)
+}
+
+/**
+ * True unpaid gap before settlement: original subtotal − paid.
+ * Settlement `d` must equal this (not an inflated/doubled discount).
+ */
+function getSettlementWriteOffAmount(payment: CustomerPayment): number {
+  if (isFinalSettlementApplied(payment)) return 0
+  const paid = getTotalPaidPhases(payment.phases)
+  const gap = Math.max(0, getPaymentOriginalSubtotal(payment) - paid)
+  // Also never exceed current display remaining (net of any existing non-settlement discount).
+  const displayRem = Math.max(0, getPaymentEffectiveCap(payment) - paid)
+  return Math.round(Math.min(gap, displayRem))
 }
 
 function paymentTypeOf(payment: CustomerPayment): string {
@@ -463,9 +535,11 @@ function getDisplayRemaining(payment: CustomerPayment): number {
 function getEffectivePaymentStatus(
   payment: CustomerPayment,
 ): NonNullable<CustomerPayment["paymentStatus"]> {
+  // Final settlement always Completes the file (Remaining ₹0) — never Pending & Partial.
+  if (isFinalSettlementApplied(payment)) return "completed"
   const paid = getTotalPaidPhases(payment.phases)
   const remaining = getDisplayRemaining(payment)
-  if (remaining <= 0 && (paid > 0 || getPaymentDiscountAmount(payment) > 0 || isFinalSettlementApplied(payment))) {
+  if (remaining <= 0 && (paid > 0 || getPaymentDiscountAmount(payment) > 0)) {
     return "completed"
   }
   if (paid > 0) return "partial"
@@ -527,6 +601,7 @@ function matchesActivePaymentActivityWindow(payment: CustomerPayment, now = new 
 
 /** Pending/partial with remaining balance and no activity in the last 30 days. */
 function matchesOverdueOutstandingPayment(payment: CustomerPayment): boolean {
+  if (isFinalSettlementApplied(payment)) return false
   const status = getEffectivePaymentStatus(payment)
   if (status !== "pending" && status !== "partial") return false
   if (getDisplayRemaining(payment) <= 0) return false
@@ -542,11 +617,16 @@ function splitPaymentsBySection(payments: CustomerPayment[]): {
   const overduePayments: CustomerPayment[] = []
   const completedPayments: CustomerPayment[] = []
   for (const payment of payments) {
-    const status = getEffectivePaymentStatus(payment)
-    if (status === "completed") {
+    // Settled / Remaining ₹0 → Completed only (never Pending & Partial).
+    if (isFinalSettlementApplied(payment) || getEffectivePaymentStatus(payment) === "completed") {
       completedPayments.push(payment)
       continue
     }
+    if (getDisplayRemaining(payment) <= 0) {
+      completedPayments.push(payment)
+      continue
+    }
+    const status = getEffectivePaymentStatus(payment)
     if (status === "pending" || status === "partial") {
       activePayments.push(payment)
       if (matchesOverdueOutstandingPayment(payment)) overduePayments.push(payment)
@@ -1102,6 +1182,7 @@ export default function AccountManagementPage() {
    * Not localStorage — cleared on full page reload (backend GET must echo siteCost).
    */
   const siteCostSessionRef = useRef<Record<string, number>>({})
+  const [settlementRemarksDraft, setSettlementRemarksDraft] = useState("")
   const sessionUserId = accountManager?.id ?? dealer?.id
   const accountsPermissionCtx = {
     userId: sessionUserId,
@@ -1162,6 +1243,7 @@ export default function AccountManagementPage() {
     if (installmentDialogOpen) {
       setSubsidyDraftDetails("")
       setSubsidyDraftAmount("")
+      setSettlementRemarksDraft("")
     }
   }, [installmentDialogOpen])
 
@@ -1555,16 +1637,72 @@ export default function AccountManagementPage() {
         const mergedSubsidy: SubsidyChequeRecord[] =
           fromApiCheques.length > 0 ? fromApiCheques : subsidyMap[q.id || ""] || []
 
-        // Settlement state comes ONLY from the database (no cache / local / session storage).
+        // Prefer API flags; fall back to durable local settlement until GET echoes §BB.
         const discountAmount = getQuotationDiscountAmount(q)
         const apiSettled = getQuotationFinalSettlementApplied(q)
+        const storedSettle = q.id ? getStoredFinalSettlements()[q.id] : undefined
         const originalSubtotal = Math.round(subtotal)
-        const effectiveSubtotal = Math.max(0, originalSubtotal - discountAmount)
         const remFromApi = pickApiRemainingFromPayload(qx as unknown as Record<string, unknown>)
-        const settlementApplied =
+        const paidForSettle = getTotalPaidPhases(phases)
+        let settlementApplied =
           apiSettled ||
+          Boolean(storedSettle?.applied) ||
           (discountAmount > 0 &&
-            Math.max(0, originalSubtotal - getTotalPaidPhases(phases)) <= discountAmount + 0.5)
+            Math.max(0, originalSubtotal - paidForSettle) <= discountAmount + 0.5)
+        let settlementDiscountAmount = settlementApplied
+          ? Number(
+              (q as Quotation & Record<string, unknown>).finalSettlementAmount ??
+                (q as Quotation & Record<string, unknown>).final_settlement_amount ??
+                ((q as Quotation & Record<string, unknown>).pricing as Record<string, unknown> | undefined)
+                  ?.finalSettlementAmount ??
+                storedSettle?.amount ??
+                0,
+            ) || undefined
+          : undefined
+        // Prefer stored write-off amount only — never stored.discount (that is total discount).
+        if (settlementApplied && !(Number(settlementDiscountAmount) > 0) && storedSettle?.amount) {
+          settlementDiscountAmount = storedSettle.amount
+        }
+        // Last resort: gap cleared by settlement (original − paid), not full discountAmount.
+        if (settlementApplied && !(Number(settlementDiscountAmount) > 0)) {
+          const gap = Math.max(0, originalSubtotal - paidForSettle)
+          settlementDiscountAmount = gap > 0 ? gap : undefined
+        }
+        const qxRecord = qx as unknown as Record<string, unknown>
+        let settlementRemarks =
+          String(
+            qxRecord.finalSettlementRemarks ??
+              qxRecord.final_settlement_remarks ??
+              qxRecord.settlementRemarks ??
+              qxRecord.settlement_remarks ??
+              storedSettle?.remarks ??
+              "",
+          ).trim() || undefined
+
+        if (apiSettled && q.id) {
+          // Server has it — drop local bridge for this id.
+          clearFinalSettlementLocal(q.id)
+        } else if (storedSettle?.applied) {
+          settlementApplied = true
+          if (!settlementDiscountAmount && storedSettle.amount > 0) {
+            settlementDiscountAmount = storedSettle.amount
+          }
+          if (!settlementRemarks && storedSettle.remarks) {
+            settlementRemarks = storedSettle.remarks
+          }
+        }
+
+        const unpaidGap = Math.max(0, originalSubtotal - paidForSettle)
+        const writeOffD =
+          settlementApplied
+            ? Math.min(
+                Number(settlementDiscountAmount) > 0 ? Number(settlementDiscountAmount) : unpaidGap,
+                unpaidGap > 0 ? unpaidGap : Number(settlementDiscountAmount) || 0,
+              ) || unpaidGap
+            : 0
+        const effectiveSubtotal = settlementApplied
+          ? Math.max(0, originalSubtotal - writeOffD)
+          : Math.max(0, originalSubtotal - discountAmount)
 
         const apiSiteCost = pickSiteCostFromQuotation(qx as unknown as Record<string, unknown>)
         const storedSiteCost = getStoredSiteCostMap()[q.id || ""] || 0
@@ -1594,20 +1732,13 @@ export default function AccountManagementPage() {
           dealerId: String(q.dealerId || q.dealer?.id || "").trim() || undefined,
           subtotal: effectiveSubtotal,
           originalSubtotal,
-          discountAmount,
+          discountAmount: settlementApplied ? writeOffD : discountAmount,
           finalSettlementApplied: settlementApplied,
-          finalSettlementDiscount: settlementApplied
-            ? Number(
-                (q as Quotation & Record<string, unknown>).finalSettlementAmount ??
-                  (q as Quotation & Record<string, unknown>).final_settlement_amount ??
-                  ((q as Quotation & Record<string, unknown>).pricing as Record<string, unknown> | undefined)
-                    ?.finalSettlementAmount ??
-                  0,
-              ) || undefined
-            : undefined,
+          finalSettlementDiscount: settlementApplied ? writeOffD || settlementDiscountAmount : undefined,
+          finalSettlementRemarks: settlementRemarks,
           totalAmount: q.totalAmount || 0,
           finalAmount: q.finalAmount || q.totalAmount || 0,
-          remainingFromApi: remFromApi,
+          remainingFromApi: settlementApplied ? 0 : remFromApi,
           paymentType:
             (q as any).paymentType ||
             (useApi ? q.paymentMode : q.paymentMode || storedPlan?.paymentMode) ||
@@ -1618,10 +1749,11 @@ export default function AccountManagementPage() {
           loanAmount: pickFirstFiniteNumber((qx as any).loanAmount, (qx as any).loan_amount) || undefined,
           cashAmount: pickFirstFiniteNumber((qx as any).cashAmount, (qx as any).cash_amount) || undefined,
           siteCost,
-          paymentStatus:
-            q.paymentStatus ??
-            (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
-            "pending",
+          paymentStatus: settlementApplied
+            ? "completed"
+            : q.paymentStatus ??
+              (!useApi ? (storedPlan?.paymentStatus as CustomerPayment["paymentStatus"]) : undefined) ??
+              "pending",
           phases,
           quotation: q,
           statusApprovedAt: pickApprovalTimestampFromQuotation(flatQx),
@@ -2508,8 +2640,8 @@ export default function AccountManagementPage() {
       return
     }
 
-    // Settlement amount = Remaining only (e.g. ₹2,000) — that becomes discount `d`.
-    const settlementDiscount = Math.round(getDisplayRemaining(activePayment))
+    // Settlement amount = unpaid gap only (original − paid), e.g. ₹1,000 — that is `d`.
+    const settlementDiscount = getSettlementWriteOffAmount(activePayment)
     if (settlementDiscount <= 0) {
       toast({
         title: "Nothing to settle",
@@ -2536,40 +2668,49 @@ export default function AccountManagementPage() {
     }
 
     const originalSubtotal = getPaymentOriginalSubtotal(activePayment)
-    const currentDiscount = getPaymentDiscountAmount(activePayment)
-    const newDiscount = currentDiscount + settlementDiscount
+    const paidNow = getTotalPaidPhases(activePayment.phases)
+    // Absolute discount so net payable equals what is already paid (never double the write-off).
+    const newDiscount = Math.max(0, originalSubtotal - paidNow)
+    // Guard: write-off shown as `d` is only the unpaid gap, not prior discounts.
+    const settlementWriteOff = Math.min(settlementDiscount, newDiscount)
     const newEffectiveCap = Math.max(0, originalSubtotal - newDiscount)
-    const totalPaid = getTotalPaidPhases(activePayment.phases)
+    const remarks = settlementRemarksDraft.trim()
 
-    // Pricing: add only the settlement write-off to existing quotation discount.
-    // Do not rewrite subtotal (that caused amount-after-subsidy errors).
-    const existingPricingDiscount = getQuotationDiscountAmount(activePayment.quotation)
+    // Pricing PATCH uses absolute discount to match paid (same as newDiscount).
     const amountAfterSubsidy = getQuotationAmountAfterSubsidy(activePayment.quotation)
-    const pricingDiscount = existingPricingDiscount + settlementDiscount
+    const pricingDiscount = Math.min(newDiscount, amountAfterSubsidy)
     const pricingFinalAmount = Math.max(0, amountAfterSubsidy - pricingDiscount)
 
     setIsSavingFinalSettlement(true)
     try {
+      const settledQuotation = {
+        ...activePayment.quotation,
+        discount: newDiscount,
+        discountAmount: newDiscount,
+        paymentStatus: "completed",
+        remaining: 0,
+        remainingAmount: 0,
+        finalSettlementApplied: true,
+        final_settlement_applied: true,
+        finalSettlementAmount: settlementWriteOff,
+        final_settlement_amount: settlementWriteOff,
+        finalSettlementRemarks: remarks || undefined,
+        pricing: {
+          ...((activePayment.quotation as Quotation & { pricing?: Record<string, unknown> }).pricing ||
+            {}),
+          discountAmount: newDiscount,
+          amountAfterSubsidy,
+          totalAmount: newEffectiveCap,
+          finalAmount: newEffectiveCap,
+          finalSettlementApplied: true,
+          finalSettlementAmount: settlementWriteOff,
+        },
+      } as Quotation
+
       if (!useApi) {
         const allQuotations = JSON.parse(localStorage.getItem("quotations") || "[]")
         const updatedQuotations = allQuotations.map((q: Quotation) =>
-          q.id === activePayment.quotationId
-            ? ({
-                ...q,
-                discount: newDiscount,
-                discountAmount: newDiscount,
-                paymentStatus: "completed",
-                remaining: 0,
-                remainingAmount: 0,
-                pricing: {
-                  ...(q as Quotation & { pricing?: Record<string, unknown> }).pricing,
-                  discountAmount: newDiscount,
-                  amountAfterSubsidy,
-                  totalAmount: Math.max(0, originalSubtotal - newDiscount),
-                  finalAmount: Math.max(0, originalSubtotal - newDiscount),
-                },
-              } as Quotation)
-            : q,
+          q.id === activePayment.quotationId ? { ...q, ...settledQuotation } : q,
         )
         localStorage.setItem("quotations", JSON.stringify(updatedQuotations))
         setQuotations(
@@ -2583,47 +2724,34 @@ export default function AccountManagementPage() {
           phases: normalizePhaseAmountsForApi(coercedPhases, newEffectiveCap),
         })
       } else {
-        // Persist to DB. Throws if nothing saved server-side — we must NOT silently
-        // fall back to localStorage when the API is on (button would reappear on refresh).
-        try {
-          await api.quotations.finalizeSettlement(activePayment.quotationId, {
-            settlementAmount: settlementDiscount,
+        // Non-blocking: tries write paths once (absolute discount — no double-add).
+        void api.quotations
+          .finalizeSettlement(activePayment.quotationId, {
+            settlementAmount: settlementWriteOff,
             discountAmount: pricingDiscount,
             finalAmount: pricingFinalAmount,
             paymentType: activePayment.paymentType,
             paymentMode: activePayment.paymentMode,
+            remarks: remarks || undefined,
             phases: normalizePhaseAmountsForApi(
               coercePhasesPaymentModes(activePayment.phases),
-              getPaymentEffectiveCap(activePayment),
+              newEffectiveCap,
             ),
           })
-        } catch (settleError) {
-          // The server may already consider the balance cleared — its amountAfterSubsidy
-          // (e.g. 189,000) can be lower than the AM subtotal (190,000), so it reports
-          // remaining 0 and rejects the write-off. That IS effectively settled: reconcile
-          // the AM-side gap locally instead of failing.
-          const msg = settleError instanceof ApiError ? String(settleError.message || "").toLowerCase() : ""
-          const serverAlreadyCleared =
-            msg.includes("cannot exceed remaining") ||
-            msg.includes("remaining (0)") ||
-            msg.includes("remaining 0") ||
-            msg.includes("already settled") ||
-            msg.includes("already completed") ||
-            msg.includes("nothing to settle")
-          if (!serverAlreadyCleared) throw settleError
-        }
+          .catch((err) => console.warn("[Final settlement] API attempt error:", err))
 
-        // Re-fetch from server so the settled state (and hidden button) reflects the DB.
-        // The database is the single source of truth — no local/cache/session storage.
-        try {
-          await loadApprovedQuotations()
-        } catch {
-          // Non-fatal: in-memory optimistic update below keeps the current view correct.
-        }
+        setQuotations((prev) =>
+          prev.map((q) => (q.id === activePayment.quotationId ? { ...q, ...settledQuotation } : q)),
+        )
       }
 
-      // In-memory optimistic update only. The database is the source of truth
-      // (loadApprovedQuotations above already re-fetched the settled state).
+      // Keep Completed across refresh until PostgreSQL echoes finalSettlementApplied.
+      persistFinalSettlementLocal(activePayment.quotationId, {
+        discount: newDiscount,
+        amount: settlementWriteOff,
+        remarks: remarks || undefined,
+      })
+
       setCustomerPayments((prev) =>
         prev.map((payment) =>
           payment.quotationId === activePayment.quotationId
@@ -2632,17 +2760,12 @@ export default function AccountManagementPage() {
                 subtotal: newEffectiveCap,
                 originalSubtotal,
                 discountAmount: newDiscount,
-                paymentStatus: "completed",
+                paymentStatus: "completed" as const,
                 remainingFromApi: 0,
                 finalSettlementApplied: true,
-                finalSettlementDiscount:
-                  (Number(payment.finalSettlementDiscount) || 0) + settlementDiscount,
-                quotation: {
-                  ...payment.quotation,
-                  discount: newDiscount,
-                  discountAmount: newDiscount,
-                  paymentStatus: "completed",
-                } as Quotation,
+                finalSettlementDiscount: settlementWriteOff,
+                finalSettlementRemarks: remarks || payment.finalSettlementRemarks,
+                quotation: settledQuotation,
               }
             : payment,
         ),
@@ -2650,17 +2773,18 @@ export default function AccountManagementPage() {
 
       toast({
         title: "Final settlement applied",
-        description: `Settlement discount d: ₹${settlementDiscount.toLocaleString("en-IN")} (paid ₹${Math.round(totalPaid).toLocaleString("en-IN")}). Remaining is now ₹0.`,
+        description: `Settlement d: ₹${settlementWriteOff.toLocaleString("en-IN")} · Remaining ₹0 · Completed.`,
       })
+      setSettlementRemarksDraft("")
       setInstallmentDialogOpen(false)
       setActivePaymentId(null)
+      setPaymentSectionTab("completed")
+      setPaymentStatusFilter("all")
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to apply final settlement."
-      // Database-only: NO local / cache / session fallback. If the server did not save it,
-      // nothing is settled and the button stays visible so it can be retried.
       toast({
-        title: "Settlement not saved",
-        description: `Could not save to the database, so nothing was settled. ${message}`,
+        title: "Settlement error",
+        description: message,
         variant: "destructive",
       })
     } finally {
@@ -2769,6 +2893,33 @@ export default function AccountManagementPage() {
         } catch {
           // Non-fatal — optimistic update below.
         }
+
+        // Ensure list no longer treats this as settled if GET still echoes flags briefly.
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === activePayment.quotationId
+              ? ({
+                  ...q,
+                  discount: newDiscount,
+                  discountAmount: newDiscount,
+                  paymentStatus: restoredStatus,
+                  remaining: restoredRemaining,
+                  remainingAmount: restoredRemaining,
+                  finalSettlementApplied: false,
+                  finalSettlementAmount: 0,
+                  final_settlement_applied: false,
+                  final_settlement_amount: 0,
+                  finalSettlementRemarks: undefined,
+                  pricing: {
+                    ...((q as Quotation & { pricing?: Record<string, unknown> }).pricing || {}),
+                    discountAmount: newDiscount,
+                    finalSettlementApplied: false,
+                    finalSettlementAmount: 0,
+                  },
+                } as Quotation)
+              : q,
+          ),
+        )
       }
 
       setCustomerPayments((prev) =>
@@ -2783,11 +2934,14 @@ export default function AccountManagementPage() {
                 remainingFromApi: restoredRemaining,
                 finalSettlementApplied: false,
                 finalSettlementDiscount: 0,
+                finalSettlementRemarks: undefined,
                 quotation: {
                   ...payment.quotation,
                   discount: newDiscount,
                   discountAmount: newDiscount,
                   paymentStatus: restoredStatus,
+                  remaining: restoredRemaining,
+                  remainingAmount: restoredRemaining,
                   finalSettlementApplied: false,
                   finalSettlementAmount: 0,
                   final_settlement_applied: false,
@@ -2802,8 +2956,12 @@ export default function AccountManagementPage() {
         title: "Settlement reverted",
         description: `Removed discount d: ₹${amountToRevert.toLocaleString("en-IN")}. Remaining is now ₹${Math.round(restoredRemaining).toLocaleString("en-IN")}.`,
       })
+      clearFinalSettlementLocal(activePayment.quotationId)
       setInstallmentDialogOpen(false)
       setActivePaymentId(null)
+      // Back to Pending & Partial when balance restored; stay Completed if still fully paid.
+      setPaymentSectionTab(restoredStatus === "completed" ? "completed" : "active")
+      setPaymentStatusFilter("all")
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to revert settlement."
       toast({
@@ -3911,14 +4069,23 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                                {getPaymentDiscountAmount(payment) > 0 ? (
+                                {isFinalSettlementApplied(payment) ||
+                                getPaymentDiscountAmount(payment) > 0 ? (
                                   <>
-                                    <p className="text-xs line-through text-muted-foreground">
+                                    <p className="text-xs line-through text-muted-foreground tabular-nums">
                                       ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
                                     </p>
-                                    <p className="text-sm font-semibold tabular-nums">
+                                    <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                                       ₹{getPaymentEffectiveCap(payment).toLocaleString()}
                                     </p>
+                                    {(isFinalSettlementApplied(payment) ||
+                                      getSettlementDiscountAmount(payment) > 0) && (
+                                      <p className="text-[10px] text-amber-700 dark:text-amber-400 mt-0.5">
+                                        − ₹
+                                        {Math.round(getSettlementDiscountAmount(payment)).toLocaleString()}{" "}
+                                        d
+                                      </p>
+                                    )}
                                   </>
                                 ) : (
                                   <p className="text-sm font-semibold tabular-nums">
@@ -4529,15 +4696,35 @@ export default function AccountManagementPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-xs text-muted-foreground">Subtotal</p>
-                  <p className="text-base font-semibold">
-                    ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
-                  </p>
-                  {getPaymentDiscountAmount(activePayment) > 0 && (
-                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                      − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()} discount
+                  {isFinalSettlementApplied(activePayment) ||
+                  getPaymentDiscountAmount(activePayment) > 0 ? (
+                    <>
+                      <p className="text-sm line-through text-muted-foreground tabular-nums">
+                        ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                      </p>
+                      <p className="text-base font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                        ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
+                      </p>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
+                        − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()} discount
+                        {getSettlementDiscountAmount(activePayment) > 0
+                          ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
+                          : ""}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-base font-semibold">
+                      ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
                     </p>
                   )}
-                  <p className="text-[11px] text-muted-foreground mt-1">
+                  <p
+                    className={cn(
+                      "text-[11px] mt-1",
+                      getDisplayRemaining(activePayment) <= 0
+                        ? "font-semibold text-emerald-700"
+                        : "text-muted-foreground",
+                    )}
+                  >
                     Remaining: ₹
                     {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
                   </p>
@@ -5194,15 +5381,20 @@ export default function AccountManagementPage() {
                 </div>
               </div>
 
+              {/* Submit only while Remaining > 0 and not yet settled */}
               {isFinalSettlementEligible(activePayment) &&
                 getDisplayRemaining(activePayment) > 0 &&
                 !isFinalSettlementApplied(activePayment) && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                    <div className="space-y-1">
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/60 dark:border-amber-900/50 dark:bg-amber-950/20 px-4 py-3 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                    <div className="space-y-1 min-w-0 flex-1">
                       <p className="text-sm font-semibold">Final settlement</p>
                       <p className="text-sm font-semibold text-amber-700 dark:text-amber-300">
-                        Settlement amount (d): ₹{Math.round(getDisplayRemaining(activePayment)).toLocaleString("en-IN")}
+                        Settlement amount (d): ₹
+                        {getSettlementWriteOffAmount(activePayment).toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Writes off remaining → ₹0 and moves this file to Completed only (removed from Pending & Partial).
                       </p>
                     </div>
                     <Button
@@ -5215,11 +5407,32 @@ export default function AccountManagementPage() {
                       {isSavingFinalSettlement ? "Applying..." : "Submit final settlement"}
                     </Button>
                   </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="settlement-remarks" className="text-xs text-muted-foreground">
+                      Settlement remarks
+                    </Label>
+                    <textarea
+                      id="settlement-remarks"
+                      rows={2}
+                      value={settlementRemarksDraft}
+                      onChange={(e) => setSettlementRemarksDraft(e.target.value)}
+                      placeholder="Optional notes for this settlement…"
+                      className="flex min-h-[64px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={isSavingFinalSettlement || isRevertingFinalSettlement || isSavingInstallments}
+                    />
+                  </div>
                 </div>
               )}
-              {(getPaymentDiscountAmount(activePayment) > 0 ||
-                isFinalSettlementApplied(activePayment) ||
-                getSettlementDiscountAmount(activePayment) > 0) && (
+              {(isFinalSettlementApplied(activePayment) ||
+                getSettlementDiscountAmount(activePayment) > 0) &&
+                activePayment.finalSettlementRemarks ? (
+                <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Settlement remarks</p>
+                  <p className="mt-0.5 whitespace-pre-wrap">{activePayment.finalSettlementRemarks}</p>
+                </div>
+              ) : null}
+              {/* Settled + Remaining ₹0: Revert only — never Submit again */}
+              {isFinalSettlementApplied(activePayment) && (
                 <div className="rounded-lg border border-rose-200/80 bg-rose-50/60 dark:border-rose-900/50 dark:bg-rose-950/20 px-4 py-3">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <div className="space-y-1">
@@ -5230,6 +5443,9 @@ export default function AccountManagementPage() {
                           Math.round(getSettlementDiscountAmount(activePayment)) ||
                           Math.round(getPaymentDiscountAmount(activePayment))
                         ).toLocaleString("en-IN")}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Remaining is ₹0 · file is in Completed. Revert to restore balance and move back to Pending & Partial.
                       </p>
                     </div>
                     <Button

@@ -5326,6 +5326,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Dealer Call Analytics live** — emit `calling:actions-updated` after PATCH action; calling-actions GET complete | **§AY**, HANDOFF **§47** / **§5** | dealer action PATCH + `GET …/calling-actions` |
 | **High** | **Sheet auto-sync cron** — every **30 min** `POST …/sync-all` + socket | **§AZ**, HANDOFF **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
 | **High** | **PDF panel range clear** — empty `pdfPanelRangeKey` must clear on save (INA 500–600 / Waaree 580 Topcon) | **§BA**, HANDOFF **§48** | products PATCH + GET echo |
+| **High** | **Final settlement → PostgreSQL** — Remaining 0, Completed + strikethrough Subtotal, Revert; must survive refresh | **§BB**, HANDOFF **§49** | `POST …/final-settlement`, GET echo, revert |
 | **High** | **Calling queue priority** — finish `in_progress`, then Social Media assigned | **§AT**, HANDOFF **§4.5.3** | `BACKEND_CALLING_QUEUE_CURRENT.ts` |
 | Medium | **PDF warranty inverter + Hybrid Type** — round-trip `inverterBrand` / `inverterType` (SPA PDF) | **§AO**, HANDOFF **§45** | `lib/quotation-proposal-document.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
@@ -6535,6 +6536,112 @@ On `PATCH /quotations/:id/products` (and create body `products`):
 - [ ] Toggle checked → unchecked → GET cleared (no stale key)
 
 **Refs:** HANDOFF **§48**, REQUIRED **§X**, `lib/quotation-pdf-display.ts`, `lib/quotation-pdf-flags-local.ts`
+
+---
+
+## §BB — **Final settlement persist in PostgreSQL (Completed + Revert)** — Sep 2026
+
+**Product (Account Management → Payment Management):**
+1. **Submit final settlement** → write-off Remaining as discount `d`
+2. **Remaining = ₹0**, `paymentStatus = completed` → row under **Completed**
+3. **Subtotal** shows original ~~crossed~~ + net amount (`original − d`)
+4. **Submit** hidden after settle; only **Revert settlement** shown
+5. Optional **settlement remarks**
+6. **Hard refresh** must keep Completed (PostgreSQL is source of truth — no browser session)
+
+**Bug if backend incomplete:** Settle looks OK → refresh → back to **Pending & Partial**.
+
+**Frontend (shipped):** `app/dashboard/account-management/page.tsx` + `lib/api.ts` → `finalizeSettlement` / `revertSettlement`
+- No sessionStorage / localStorage for settlement when API is on
+- POST → verify `GET /quotations/:id` has `finalSettlementApplied` → reload list
+- Without GET echo → toast **Settlement not saved** (does not fake Completed)
+
+### Backend must (P0) — do in order
+
+#### 1) Migration (PostgreSQL)
+
+```sql
+ALTER TABLE quotations
+  ADD COLUMN IF NOT EXISTS final_settlement_applied BOOLEAN DEFAULT FALSE,
+  ADD COLUMN IF NOT EXISTS final_settlement_amount  NUMERIC(12,2) DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS final_settlement_at      TIMESTAMPTZ NULL,
+  ADD COLUMN IF NOT EXISTS final_settlement_by      UUID NULL,
+  ADD COLUMN IF NOT EXISTS final_settlement_remarks TEXT NULL,
+  ADD COLUMN IF NOT EXISTS remaining_amount         NUMERIC(12,2) DEFAULT 0;
+```
+
+Map on Sequelize model (`field:` snake_case as above).
+
+#### 2) Persist on settle
+
+`POST /api/quotations/:id/final-settlement` (preferred) — body example:
+
+```json
+{
+  "settlementAmount": 1000,
+  "discountAmount": 1000,
+  "finalAmount": 299000,
+  "paymentStatus": "completed",
+  "remaining": 0,
+  "finalSettlementApplied": true,
+  "remarks": "Customer waived last installment",
+  "finalSettlementRemarks": "Customer waived last installment"
+}
+```
+
+| Column / field | Value |
+|----------------|-------|
+| `final_settlement_applied` | `true` |
+| `final_settlement_amount` | write-off INR (`d`) |
+| `final_settlement_remarks` | optional string |
+| `discount_amount` / `discountAmount` | existing + `d` |
+| `payment_status` | `completed` |
+| `remaining` / `remaining_amount` | `0` |
+
+Do **not** rewrite installment paid rows.
+
+Fallbacks SPA also tries: `PATCH /pricing`, `PATCH /payment-details`, `PATCH /discount` — same flags must persist.
+
+#### 3) GET must echo (list + by-id)
+
+`GET /quotations?status=approved` and `GET /quotations/:id`:
+
+```json
+{
+  "subtotal": 300000,
+  "discountAmount": 1000,
+  "paymentStatus": "completed",
+  "remaining": 0,
+  "remainingAmount": 0,
+  "finalSettlementApplied": true,
+  "finalSettlementAmount": 1000,
+  "finalSettlementRemarks": "Customer waived last installment",
+  "pricing": {
+    "discountAmount": 1000,
+    "finalSettlementApplied": true
+  }
+}
+```
+
+SPA uses this for: Remaining ₹0, strikethrough Subtotal, hide Submit, show Revert.
+
+#### 4) Revert
+
+`POST /api/quotations/:id/revert-final-settlement` (also `DELETE …/final-settlement`):
+- Clear `finalSettlementApplied`, `finalSettlementAmount`, `finalSettlementRemarks`
+- Restore `discountAmount`, `remaining`, `paymentStatus` (partial/pending as math requires)
+- Installments unpaid totals **unchanged**
+
+**Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · Spec `BACKEND_FINAL_SETTLEMENT.md` · Revert `BACKEND_REVERT_SETTLEMENT.md`
+
+### Checklist (must all pass)
+
+- [ ] POST settle → **200**, DB row has applied=true, remaining=0, status=completed
+- [ ] GET list + by-id echo same fields (+ remarks)
+- [ ] Hard refresh → still **Completed**, Subtotal crossed, Remaining ₹0, **Submit hidden**, **Revert** visible
+- [ ] Revert → flags cleared, remaining restored, Submit available again if balance > 0
+
+**Refs:** HANDOFF **§49**, `lib/api.ts` → `finalizeSettlement` / `revertSettlement`
 
 ---
 

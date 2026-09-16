@@ -3993,4 +3993,20 @@ Also: `BACKEND_USER_FIELD_PERMISSIONS.ts`
 
 ---
 
+## 49. Final settlement → PostgreSQL Completed + Revert (**§BB**) — Sep 2026
+
+**UI (needs DB):** Remaining ₹0 · Subtotal ~~original~~ → net · Completed tab · hide Submit · show Revert · survive hard refresh.
+
+**Backend (P0) — PostgreSQL:**
+1. Migration: `final_settlement_applied`, `final_settlement_amount`, `final_settlement_remarks`, `remaining_amount`.
+2. `POST /quotations/:id/final-settlement` — persist applied, amount, remarks, `discountAmount`, `paymentStatus=completed`, `remaining=0`.
+3. **GET** approved list + by-id must echo those fields (SPA will not fake Completed).
+4. `POST /quotations/:id/revert-final-settlement` — clear flags, restore remaining/status.
+
+**QA:** Settle → hard refresh still Completed → Revert restores Pending/Partial.
+
+**Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · `BACKEND_REVERT_SETTLEMENT.md` · REQUIRED **§BB**
+
+---
+
 

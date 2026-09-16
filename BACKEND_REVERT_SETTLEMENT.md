@@ -115,6 +115,7 @@ async function postRevertFinalSettlement(req, res) {
     finalSettlementAmount: 0,
     finalSettlementAt: null,
     finalSettlementBy: null,
+    finalSettlementRemarks: null,
     pricing: {
       ...(quotation.pricing || {}),
       discountAmount,
@@ -141,7 +142,7 @@ router.delete('/quotations/:id/final-settlement', authRequired, postRevertFinalS
 1. Open Manage on a row with `− ₹… d` (e.g. Chanda Devi).
 2. Click **Revert settlement** → confirm → **200**.
 3. Refresh: discount `d` gone, subtotal restored, remaining = net − paid, status partial/pending as expected.
-4. `GET` shows `finalSettlementApplied: false`, `finalSettlementAmount: 0`.
+4. `GET` shows `finalSettlementApplied: false`, `finalSettlementAmount: 0`, `finalSettlementRemarks: null`.
 5. Paid installment totals unchanged.
 6. Can apply **Submit final settlement** again later if needed.
 

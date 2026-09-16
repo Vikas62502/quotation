@@ -96,6 +96,8 @@ function snapshotQuotation(quotation) {
     paymentStatus: quotation.paymentStatus,
     finalSettlementApplied: quotation.finalSettlementApplied === true,
     finalSettlementAmount: N(quotation.finalSettlementAmount),
+    finalSettlementRemarks:
+      quotation.finalSettlementRemarks ?? quotation.final_settlement_remarks ?? null,
     installmentsCount: Array.isArray(quotation.paymentPhases || quotation.installments)
       ? (quotation.paymentPhases || quotation.installments).length
       : 0,
@@ -178,6 +180,17 @@ function computeSettlement(quotation, body) {
   const settlementAmount = round(body.settlementAmount ?? body.amount ?? 0)
   const finalAmount = Math.max(0, amountAfterSubsidy - discountAmount)
 
+  // Optional Manage → Settlement remarks (§BB)
+  const rawRemarks =
+    body.remarks ??
+    body.settlementRemarks ??
+    body.finalSettlementRemarks ??
+    body.final_settlement_remarks
+  const remarks =
+    rawRemarks == null || String(rawRemarks).trim() === ""
+      ? null
+      : String(rawRemarks).trim()
+
   const result = {
     amountAfterSubsidy,
     paid,
@@ -186,6 +199,7 @@ function computeSettlement(quotation, body) {
     finalAmount,
     remaining: 0,
     paymentStatus: "completed",
+    remarks,
   }
   logFS("⚙ COMPUTE", { existingDiscount: existing, ...result })
   return result
@@ -219,6 +233,8 @@ async function applySettlement(quotation, s, user, { transaction } = {}) {
       finalSettlementAmount: s.settlementAmount,
       finalSettlementAt: new Date(),
       finalSettlementBy: user?.id || null,
+      // Optional remarks from Manage → Final settlement (SPA §BB)
+      finalSettlementRemarks: s.remarks ?? quotation.finalSettlementRemarks ?? null,
       // NOTE: paymentPhases / installments intentionally UNCHANGED.
     },
     { transaction },
@@ -256,7 +272,9 @@ async function applySettlement(quotation, s, user, { transaction } = {}) {
  *   "paymentStatus": "completed",
  *   "remaining": 0,
  *   "remainingAmount": 0,
- *   "finalSettlementApplied": true
+ *   "finalSettlementApplied": true,
+ *   "remarks": "Customer waived last installment",
+ *   "finalSettlementRemarks": "Customer waived last installment"
  * }
  */
 export async function postFinalSettlement(req, res) {
@@ -533,10 +551,17 @@ export async function patchDiscountAbsolute(req, res) {
  * Persist at least (1)+discountAmount so refresh across devices keeps it hidden.
  */
 export function extendQuotationJsonForSettlement(json, quotation) {
+  const remarks =
+    quotation.finalSettlementRemarks ??
+    quotation.final_settlement_remarks ??
+    json.finalSettlementRemarks ??
+    null
   return {
     ...json,
     finalSettlementApplied: quotation.finalSettlementApplied === true,
     finalSettlementAmount: N(quotation.finalSettlementAmount),
+    finalSettlementRemarks: remarks,
+    final_settlement_remarks: remarks,
     remaining: N(json.remaining ?? quotation.remaining ?? quotation.remainingAmount),
     remainingAmount: N(json.remainingAmount ?? quotation.remainingAmount ?? quotation.remaining),
     pricing: {
@@ -565,6 +590,7 @@ ALTER TABLE quotations
   ADD COLUMN IF NOT EXISTS final_settlement_amount  NUMERIC(12,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS final_settlement_at      TIMESTAMPTZ NULL,
   ADD COLUMN IF NOT EXISTS final_settlement_by      UUID NULL,
+  ADD COLUMN IF NOT EXISTS final_settlement_remarks TEXT NULL,
   ADD COLUMN IF NOT EXISTS remaining_amount         NUMERIC(12,2) DEFAULT 0;
 
 -- Sequelize model attributes:
@@ -572,6 +598,7 @@ ALTER TABLE quotations
 --   finalSettlementAmount:  { type: DataTypes.DECIMAL(12,2), defaultValue: 0, field: 'final_settlement_amount' }
 --   finalSettlementAt:      { type: DataTypes.DATE, allowNull: true, field: 'final_settlement_at' }
 --   finalSettlementBy:      { type: DataTypes.UUID, allowNull: true, field: 'final_settlement_by' }
+--   finalSettlementRemarks: { type: DataTypes.TEXT, allowNull: true, field: 'final_settlement_remarks' }
 */
 
 // -----------------------------------------------------------------------------

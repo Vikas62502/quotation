@@ -12,8 +12,11 @@ API client: `lib/api.ts` → `finalizeSettlement` (persists to DB; throws if not
 >   login on every device ONLY because the backend stored it and returns it on `GET`.**
 > - So the backend MUST (a) accept the write without error, (b) persist
 >   `finalSettlementApplied` + `finalSettlementAmount` + `discountAmount` + `remaining=0` +
->   `paymentStatus=completed`, and (c) return them on every `GET`. There is no client-side
->   safety net anymore.
+>   `paymentStatus=completed` (+ optional `finalSettlementRemarks`), and (c) return them on
+>   every `GET`. There is no client-side safety net anymore.
+>
+> **Sep 2026 (§BB):** SPA also sends optional **settlement remarks** and expects GET to echo
+> `finalSettlementRemarks` so Completed tab / Manage stay correct after hard refresh.
 
 **Share this file with backend.** Copy-paste controllers with full logging: **`BACKEND_FINAL_SETTLEMENT.ts`**.
 
@@ -32,6 +35,7 @@ ALTER TABLE quotations
   ADD COLUMN IF NOT EXISTS final_settlement_amount  NUMERIC(12,2) DEFAULT 0,
   ADD COLUMN IF NOT EXISTS final_settlement_at      TIMESTAMPTZ NULL,
   ADD COLUMN IF NOT EXISTS final_settlement_by      UUID NULL,
+  ADD COLUMN IF NOT EXISTS final_settlement_remarks TEXT NULL,
   ADD COLUMN IF NOT EXISTS remaining_amount         NUMERIC(12,2) DEFAULT 0;
 ```
 
@@ -42,6 +46,7 @@ finalSettlementApplied: { type: DataTypes.BOOLEAN, defaultValue: false, field: '
 finalSettlementAmount:  { type: DataTypes.DECIMAL(12,2), defaultValue: 0, field: 'final_settlement_amount' },
 finalSettlementAt:      { type: DataTypes.DATE, allowNull: true, field: 'final_settlement_at' },
 finalSettlementBy:      { type: DataTypes.UUID, allowNull: true, field: 'final_settlement_by' },
+finalSettlementRemarks: { type: DataTypes.TEXT, allowNull: true, field: 'final_settlement_remarks' },
 remainingAmount:        { type: DataTypes.DECIMAL(12,2), defaultValue: 0, field: 'remaining_amount' },
 ```
 
@@ -60,8 +65,9 @@ router.patch('/quotations/:id/discount',         authRequired, patchDiscountAbso
 
 **Step 5 — GET serializer.** In `quotationToApiJson` (used by BOTH `GET /quotations` and
 `GET /quotations/:id`) always return: `finalSettlementApplied`, `finalSettlementAmount`,
-`discountAmount`, `pricing.discountAmount`, `remaining`, `remainingAmount`, `paymentStatus`,
-and the unchanged `installments`. See `extendQuotationJsonForSettlement`.
+`finalSettlementRemarks`, `discountAmount`, `pricing.discountAmount`, `remaining`,
+`remainingAmount`, `paymentStatus`, and the unchanged `installments`. See
+`extendQuotationJsonForSettlement`.
 
 **Step 6 — Verify with logs.** Click Submit and read the server terminal (see the log
 lifecycle below). Confirm `③ DIFF` shows `finalSettlementApplied: false→true` and

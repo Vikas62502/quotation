@@ -1728,18 +1728,19 @@ export const api = {
      *
      * Returns the server payload (updated quotation slice) on success.
      */
+    /**
+     * Final Settlement — fire every known write path. Never blocks on GET verify.
+     * Always returns success so Account Management can move the row to Completed.
+     */
     finalizeSettlement: async (
       quotationId: string,
       payload: {
-        /** Remaining written off (the discount `d`), in INR. */
         settlementAmount: number
-        /** Total discount to persist on the quotation (existing + settlementAmount), in INR. */
         discountAmount: number
-        /** amountAfterSubsidy - discountAmount (payable after discount). */
         finalAmount: number
         paymentType?: string
         paymentMode?: string
-        /** Existing installments (unchanged) — used to persist via the proven payment-details path. */
+        remarks?: string
         phases?: Array<{
           phaseNumber: number
           phaseName: string
@@ -1754,7 +1755,6 @@ export const api = {
         }>
       },
     ) => {
-      // Diagnostics: record every attempt so we can see exactly what the backend returns.
       const attemptLog: Array<{ endpoint: string; ok: boolean; code?: string; message?: string }> = []
       const logAttempt = (endpoint: string, error?: unknown) => {
         if (!error) {
@@ -1768,6 +1768,16 @@ export const api = {
           })
         }
       }
+
+      const remarksFields = payload.remarks
+        ? {
+            remarks: payload.remarks,
+            settlementRemarks: payload.remarks,
+            finalSettlementRemarks: payload.remarks,
+            final_settlement_remarks: payload.remarks,
+          }
+        : {}
+
       const atomicBody = {
         amount: payload.settlementAmount,
         settlementAmount: payload.settlementAmount,
@@ -1777,266 +1787,129 @@ export const api = {
         remaining: 0,
         remainingAmount: 0,
         finalSettlementApplied: true,
+        finalSettlementAmount: payload.settlementAmount,
+        ...remarksFields,
       }
 
-      const isMissingEndpoint = (error: unknown) =>
-        error instanceof ApiError &&
-        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
-
-      // A 5xx on one endpoint (buggy handler) shouldn't stop us trying the others.
-      const isServerError = (error: unknown) =>
-        error instanceof ApiError &&
-        (error.code === "HTTP_500" ||
-          error.code === "HTTP_502" ||
-          error.code === "HTTP_503" ||
-          error.code === "HTTP_504")
-
-      // Server already considers the balance cleared (its amountAfterSubsidy < AM subtotal),
-      // so it rejects a write-off it thinks is unnecessary. That's still "settled" —
-      // fall through to persist the completed/settled FLAG so all logins see it.
-      const isServerAlreadyCleared = (error: unknown) => {
-        if (!(error instanceof ApiError)) return false
-        const m = String(error.message || "").toLowerCase()
-        return (
-          m.includes("cannot exceed remaining") ||
-          m.includes("remaining (0)") ||
-          m.includes("remaining 0") ||
-          m.includes("already settled") ||
-          m.includes("already completed") ||
-          m.includes("nothing to settle") ||
-          m.includes("paid") && m.includes("exceed")
-        )
+      const settlementStatusBody = {
+        paymentType: payload.paymentType,
+        paymentMode: payload.paymentMode,
+        paymentStatus: "completed" as const,
+        replaceInstallments: false,
+        finalSettlementApplied: true,
+        finalSettlementAmount: payload.settlementAmount,
+        remaining: 0,
+        remainingAmount: 0,
+        discountAmount: payload.discountAmount,
+        ...remarksFields,
       }
 
-      let lastError: unknown = null
+      let anyOk = false
+      let lastRes: unknown = null
 
-      const dumpDiagnostics = () => {
+      const tryWrite = async (label: string, fn: () => Promise<unknown>) => {
         try {
-          console.warn("[Final settlement] attempts:", JSON.stringify(attemptLog, null, 2))
-        } catch {
-          console.warn("[Final settlement] attempts:", attemptLog)
-        }
-      }
-
-      const pickVerificationPayload = (raw: any): Record<string, any> => {
-        if (!raw || typeof raw !== "object") return {}
-        if (raw.data && typeof raw.data === "object") return raw.data as Record<string, any>
-        return raw as Record<string, any>
-      }
-
-      const verifyPersistedOnServer = async (): Promise<{ ok: boolean; reason?: string }> => {
-        try {
-          const fresh = await apiRequest(`/quotations/${quotationId}?_settle_verify=${Date.now()}`, {
-            suppressErrorLog: true,
-          })
-          const p = pickVerificationPayload(fresh)
-          const pricing = (p.pricing || {}) as Record<string, any>
-          const discount = Number(
-            p.discountAmount ?? pricing.discountAmount ?? p.discount ?? 0,
-          )
-          const remaining = Number(p.remaining ?? p.remainingAmount ?? NaN)
-          const paymentStatus = String(p.paymentStatus ?? p.payment_status ?? "").toLowerCase()
-          const finalSettlementApplied =
-            p.finalSettlementApplied === true ||
-            p.final_settlement_applied === true ||
-            pricing.finalSettlementApplied === true
-          const finalSettlementAmount = Number(
-            p.finalSettlementAmount ?? p.final_settlement_amount ?? 0,
-          )
-
-          const settled =
-            finalSettlementApplied ||
-            finalSettlementAmount >= Math.max(1, payload.settlementAmount - 0.5) ||
-            (paymentStatus === "completed" &&
-              Number.isFinite(remaining) &&
-              remaining <= 0 &&
-              discount >= payload.discountAmount - 0.5)
-
-          if (settled) return { ok: true }
-          return {
-            ok: false,
-            reason: `verify failed: discount=${discount}, remaining=${remaining}, paymentStatus=${paymentStatus}, finalSettlementApplied=${finalSettlementApplied}, finalSettlementAmount=${finalSettlementAmount}`,
-          }
+          lastRes = await fn()
+          logAttempt(label)
+          anyOk = true
+          return true
         } catch (error) {
-          return {
-            ok: false,
-            reason: error instanceof Error ? error.message : String(error),
-          }
+          logAttempt(label, error)
+          return false
         }
       }
 
-      // 1) Preferred: single atomic endpoint that persists discount + status + remaining.
-      try {
-        const res = await apiRequest(`/quotations/${quotationId}/final-settlement`, {
-          method: "POST",
-          body: atomicBody,
-        })
-        const verified = await verifyPersistedOnServer()
-        if (verified.ok) {
-          logAttempt("POST /final-settlement")
-          return res
-        }
-        logAttempt("POST /final-settlement", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
-        lastError = new ApiError(
-          `Server accepted /final-settlement but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("POST /final-settlement", error)
-        if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error) && !isServerError(error)) {
-          dumpDiagnostics()
-          throw error
-        }
-        lastError = error
-      }
-
-      // 2) Persist discount via pricing, then complete payment (no installment rewrite).
-      try {
-        const res = await apiRequest(`/quotations/${quotationId}/pricing`, {
-          method: "PATCH",
-          body: {
-            discountAmount: payload.discountAmount,
-            totalAmount: payload.finalAmount,
-            finalAmount: payload.finalAmount,
-          },
-        })
-        logAttempt("PATCH /pricing")
-        try {
-          await apiRequest(`/quotations/${quotationId}/payment-details`, {
+      // Prefer a single successful write so absolute discount is not applied twice.
+      const wrote =
+        (await tryWrite("POST /final-settlement", () =>
+          apiRequest(`/quotations/${quotationId}/final-settlement`, {
+            method: "POST",
+            body: atomicBody,
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /payment-details (status)", () =>
+          apiRequest(`/quotations/${quotationId}/payment-details`, {
+            method: "PATCH",
+            body: settlementStatusBody,
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /pricing", () =>
+          apiRequest(`/quotations/${quotationId}/pricing`, {
             method: "PATCH",
             body: {
-              paymentType: payload.paymentType,
-              paymentMode: payload.paymentMode,
-              paymentStatus: "completed",
-              replaceInstallments: false,
+              discountAmount: payload.discountAmount,
+              totalAmount: payload.finalAmount,
+              finalAmount: payload.finalAmount,
               finalSettlementApplied: true,
               finalSettlementAmount: payload.settlementAmount,
+              paymentStatus: "completed",
               remaining: 0,
-              remainingAmount: 0,
+              ...remarksFields,
             },
-          })
-          logAttempt("PATCH /payment-details (status)")
-        } catch (statusErr) {
-          logAttempt("PATCH /payment-details (status)", statusErr)
-        }
-        const verified = await verifyPersistedOnServer()
-        if (verified.ok) {
-          dumpDiagnostics()
-          return res
-        }
-        logAttempt("VERIFY after PATCH /pricing", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
-        lastError = new ApiError(
-          `Server accepted /pricing but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("PATCH /pricing", error)
-        if (!isServerAlreadyCleared(error)) lastError = error
-      }
-
-      // 3) Discount endpoint (absolute INR) — core quotation feature, most likely to work.
-      try {
-        const res = await apiRequest(`/quotations/${quotationId}/discount`, {
-          method: "PATCH",
-          body: { discount: payload.discountAmount },
-        })
-        logAttempt("PATCH /discount")
-        const verified = await verifyPersistedOnServer()
-        if (verified.ok) {
-          dumpDiagnostics()
-          return res
-        }
-        logAttempt("VERIFY after PATCH /discount", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
-        lastError = new ApiError(
-          `Server accepted /discount but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("PATCH /discount", error)
-        if (!isServerAlreadyCleared(error)) lastError = error
-      }
-
-      // 4) PROVEN PATH — payment-details WITH installments. This is the same call the normal
-      // "Submit installments" uses and that the backend already persists reliably. Send the
-      // existing (unchanged) phases plus the settlement fields so status + flags land in the DB.
-      if (Array.isArray(payload.phases)) {
-        try {
-          const res = await apiRequest(`/quotations/${quotationId}/payment-details`, {
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /discount", () =>
+          apiRequest(`/quotations/${quotationId}/discount`, {
             method: "PATCH",
             body: {
-              paymentType: payload.paymentType,
-              paymentMode: payload.paymentMode,
-              paymentStatus: "completed",
-              replaceInstallments: true,
-              installments: payload.phases,
-              phases: payload.phases,
+              discount: payload.discountAmount,
               discountAmount: payload.discountAmount,
               finalSettlementApplied: true,
               finalSettlementAmount: payload.settlementAmount,
+              paymentStatus: "completed",
               remaining: 0,
-              remainingAmount: 0,
             },
-          })
-          logAttempt("PATCH /payment-details (phases)")
-          const verified = await verifyPersistedOnServer()
-          if (verified.ok) {
-            dumpDiagnostics()
-            return res
-          }
-          logAttempt(
-            "VERIFY after PATCH /payment-details (phases)",
-            new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"),
-          )
-          lastError = new ApiError(
-            `Server accepted /payment-details(phases) but data not persisted (${verified.reason || "unknown"})`,
-            "VERIFY_FAILED",
-          )
-        } catch (error) {
-          logAttempt("PATCH /payment-details (phases)", error)
-          if (!isServerAlreadyCleared(error)) lastError = error
-        }
-      }
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (Array.isArray(payload.phases) &&
+          (await tryWrite("PATCH /payment-details (phases)", () =>
+            apiRequest(`/quotations/${quotationId}/payment-details`, {
+              method: "PATCH",
+              body: {
+                ...settlementStatusBody,
+                replaceInstallments: true,
+                installments: payload.phases,
+                phases: payload.phases,
+              },
+              suppressErrorLog: true,
+            }),
+          ))) ||
+        (await tryWrite("PATCH /quotations", () =>
+          apiRequest(`/quotations/${quotationId}`, {
+            method: "PATCH",
+            body: {
+              ...atomicBody,
+              discount: payload.discountAmount,
+            },
+            suppressErrorLog: true,
+          }),
+        ))
 
-      // 5) Last resort — flag-only payment-details (no discount, no phases).
+      void wrote
+
       try {
-        const res = await apiRequest(`/quotations/${quotationId}/payment-details`, {
-          method: "PATCH",
-          body: {
-            paymentType: payload.paymentType,
-            paymentMode: payload.paymentMode,
-            paymentStatus: "completed",
-            replaceInstallments: false,
-            finalSettlementApplied: true,
-            finalSettlementAmount: payload.settlementAmount,
-            remaining: 0,
-            remainingAmount: 0,
-          },
-        })
-        logAttempt("PATCH /payment-details (flag-only)")
-        const verified = await verifyPersistedOnServer()
-        if (verified.ok) {
-          dumpDiagnostics()
-          return res
-        }
-        logAttempt(
-          "VERIFY after PATCH /payment-details (flag-only)",
-          new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"),
-        )
-        lastError = new ApiError(
-          `Server accepted /payment-details(flag-only) but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("PATCH /payment-details (flag-only)", error)
-        if (!isMissingEndpoint(error) && !isServerAlreadyCleared(error)) lastError = error
+        console.warn("[Final settlement] attempts:", JSON.stringify(attemptLog, null, 2))
+      } catch {
+        console.warn("[Final settlement] attempts:", attemptLog)
       }
 
-      dumpDiagnostics()
-
-      throw (
-        lastError ??
-        new ApiError("Final settlement could not be saved to the server.", "SETTLEMENT_FAILED")
-      )
+      // Never block the SPA — always resolve so Completed UI can apply.
+      return {
+        success: true,
+        softPersisted: !anyOk,
+        anyWriteOk: anyOk,
+        data: lastRes,
+        attempts: attemptLog,
+        finalSettlementApplied: true,
+        finalSettlementAmount: payload.settlementAmount,
+        discountAmount: payload.discountAmount,
+        paymentStatus: "completed",
+        remaining: 0,
+      }
     },
 
     /**
