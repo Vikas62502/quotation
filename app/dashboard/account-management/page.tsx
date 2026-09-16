@@ -1073,6 +1073,8 @@ export default function AccountManagementPage() {
   const [sendToInstallationFilter, setSendToInstallationFilter] =
     useState<SendToInstallationFilter>("all")
   const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
+  const [paymentBankFilter, setPaymentBankFilter] = useState("all")
+  const [paymentIfscFilter, setPaymentIfscFilter] = useState("all")
   /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [paymentFiltersOpen, setPaymentFiltersOpen] = useState(false)
@@ -1645,11 +1647,57 @@ export default function AccountManagementPage() {
     return [...byId.entries()].sort((a, b) => a[1].localeCompare(b[1], undefined, { sensitivity: "base" }))
   }, [customerPayments])
 
+  const paymentBankOptions = useMemo(() => {
+    const names = new Set<string>()
+    let hasMissing = false
+    for (const payment of customerPayments) {
+      const t = String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+      if (t !== "loan" && t !== "mix") continue
+      const bank = String(payment.bankName || "").trim()
+      if (!bank) {
+        hasMissing = true
+        continue
+      }
+      names.add(bank)
+    }
+    const sorted = [...names].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }))
+    return { banks: sorted, hasMissing }
+  }, [customerPayments])
+
+  const paymentIfscOptions = useMemo(() => {
+    const codes = new Set<string>()
+    let hasMissing = false
+    for (const payment of customerPayments) {
+      const t = String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+      if (t !== "loan" && t !== "mix") continue
+      const ifsc = String(payment.bankIfsc || "").trim().toUpperCase()
+      if (!ifsc) {
+        hasMissing = true
+        continue
+      }
+      codes.add(ifsc)
+    }
+    const sorted = [...codes].sort((a, b) => a.localeCompare(b))
+    return { codes: sorted, hasMissing }
+  }, [customerPayments])
+
   useEffect(() => {
     if (paymentDealerFilter === "all") return
     if (paymentDealerOptions.some(([id]) => id === paymentDealerFilter)) return
     setPaymentDealerFilter("all")
   }, [paymentDealerFilter, paymentDealerOptions])
+
+  useEffect(() => {
+    if (paymentBankFilter === "all" || paymentBankFilter === "__none__") return
+    if (paymentBankOptions.banks.includes(paymentBankFilter)) return
+    setPaymentBankFilter("all")
+  }, [paymentBankFilter, paymentBankOptions])
+
+  useEffect(() => {
+    if (paymentIfscFilter === "all" || paymentIfscFilter === "__none__") return
+    if (paymentIfscOptions.codes.includes(paymentIfscFilter)) return
+    setPaymentIfscFilter("all")
+  }, [paymentIfscFilter, paymentIfscOptions])
 
   useEffect(() => {
     if (paymentSectionTab !== "completed" && paymentStatusFilter === "completed") {
@@ -1758,10 +1806,16 @@ export default function AccountManagementPage() {
           return false
         }
       }
+      const search = paymentSearchTerm.toLowerCase().trim()
+      const bankName = String(payment.bankName || "").trim()
+      const bankIfsc = String(payment.bankIfsc || "").trim().toUpperCase()
       const matchesSearch =
-        payment.customerName.toLowerCase().includes(paymentSearchTerm.toLowerCase()) ||
+        !search ||
+        payment.customerName.toLowerCase().includes(search) ||
         payment.customerMobile.includes(paymentSearchTerm) ||
-        payment.quotationId.toLowerCase().includes(paymentSearchTerm.toLowerCase())
+        payment.quotationId.toLowerCase().includes(search) ||
+        bankName.toLowerCase().includes(search) ||
+        bankIfsc.toLowerCase().includes(search)
       const paymentTypeValue = getPaymentTypeValue(payment)
       const matchesPaymentType =
         paymentTypeFilter.length === 0 ||
@@ -1789,6 +1843,17 @@ export default function AccountManagementPage() {
         (paymentDealerFilter === "__unassigned__"
           ? !payment.dealerId
           : payment.dealerId === paymentDealerFilter)
+      const isLoanOrMix = paymentTypeValue === "loan" || paymentTypeValue === "mix"
+      const matchesBank =
+        paymentBankFilter === "all" ||
+        (paymentBankFilter === "__none__"
+          ? isLoanOrMix && !bankName
+          : bankName.toLowerCase() === paymentBankFilter.toLowerCase())
+      const matchesIfsc =
+        paymentIfscFilter === "all" ||
+        (paymentIfscFilter === "__none__"
+          ? isLoanOrMix && !bankIfsc
+          : bankIfsc === paymentIfscFilter.toUpperCase())
       return (
         matchesSearch &&
         matchesPaymentType &&
@@ -1797,6 +1862,8 @@ export default function AccountManagementPage() {
         matchesFileStatus &&
         matchesSendToInstallation &&
         matchesDealer &&
+        matchesBank &&
+        matchesIfsc &&
         matchesApproveDateRange
       )
     },
@@ -1810,6 +1877,8 @@ export default function AccountManagementPage() {
       fileStatusFilter,
       sendToInstallationFilter,
       paymentDealerFilter,
+      paymentBankFilter,
+      paymentIfscFilter,
       approveDateRange,
     ],
   )
@@ -2100,6 +2169,8 @@ export default function AccountManagementPage() {
     fileStatusFilter,
     sendToInstallationFilter,
     paymentDealerFilter,
+    paymentBankFilter,
+    paymentIfscFilter,
     approveDateRange?.from?.toISOString() ?? "",
     approveDateRange?.to?.toISOString() ?? "",
     paymentSectionTab,
@@ -3545,7 +3616,7 @@ export default function AccountManagementPage() {
                     <div className="relative w-full sm:w-56 min-w-0">
                       <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
                       <Input
-                        placeholder="Search by customer name, mobile..."
+                        placeholder="Search name, mobile, bank, IFSC…"
                         value={paymentSearchTerm}
                         onChange={(e) => setPaymentSearchTerm(e.target.value)}
                         className="pl-8 h-9 text-sm"
@@ -3568,6 +3639,8 @@ export default function AccountManagementPage() {
                           (fileStatusFilter !== "all" ? 1 : 0) +
                           (sendToInstallationFilter !== "all" ? 1 : 0) +
                           (paymentDealerFilter !== "all" ? 1 : 0) +
+                          (paymentBankFilter !== "all" ? 1 : 0) +
+                          (paymentIfscFilter !== "all" ? 1 : 0) +
                           (approveDateRange?.from || approveDateRange?.to ? 1 : 0)
                         return activeCount > 0 ? (
                           <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
@@ -4331,6 +4404,44 @@ export default function AccountManagementPage() {
                 </SelectContent>
               </Select>
             </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Bank</Label>
+              <Select value={paymentBankFilter} onValueChange={setPaymentBankFilter}>
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue placeholder="Filter by bank" />
+                </SelectTrigger>
+                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
+                  <SelectItem value="all">All banks</SelectItem>
+                  {paymentBankOptions.hasMissing ? (
+                    <SelectItem value="__none__">No bank (loan / cash+loan)</SelectItem>
+                  ) : null}
+                  {paymentBankOptions.banks.map((bank) => (
+                    <SelectItem key={bank} value={bank}>
+                      {bank}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">IFSC</Label>
+              <Select value={paymentIfscFilter} onValueChange={setPaymentIfscFilter}>
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue placeholder="Filter by IFSC" />
+                </SelectTrigger>
+                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
+                  <SelectItem value="all">All IFSC codes</SelectItem>
+                  {paymentIfscOptions.hasMissing ? (
+                    <SelectItem value="__none__">No IFSC (loan / cash+loan)</SelectItem>
+                  ) : null}
+                  {paymentIfscOptions.codes.map((ifsc) => (
+                    <SelectItem key={ifsc} value={ifsc}>
+                      {ifsc}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end pt-1">
               <Button
                 type="button"
@@ -4345,6 +4456,8 @@ export default function AccountManagementPage() {
                   setFileStatusFilter("all")
                   setSendToInstallationFilter("all")
                   setPaymentDealerFilter("all")
+                  setPaymentBankFilter("all")
+                  setPaymentIfscFilter("all")
                 }}
               >
                 Clear filters
