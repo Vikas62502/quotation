@@ -3995,15 +3995,15 @@ Also: `BACKEND_USER_FIELD_PERMISSIONS.ts`
 
 ## 49. Final settlement → PostgreSQL Completed + Revert (**§BB**) — Sep 2026
 
-**UI (needs DB):** Remaining ₹0 · Subtotal ~~original~~ → net · Completed tab · hide Submit · show Revert · survive hard refresh.
+**Working UI:** Remaining ₹0 · Subtotal ~~original~~ → net · `d` = unpaid gap only · Completed only · hide Submit · show Revert · **hard refresh keeps Completed**.
 
-**Backend (P0) — PostgreSQL:**
+**Backend (P0):**
 1. Migration: `final_settlement_applied`, `final_settlement_amount`, `final_settlement_remarks`, `remaining_amount`.
-2. `POST /quotations/:id/final-settlement` — persist applied, amount, remarks, `discountAmount`, `paymentStatus=completed`, `remaining=0`.
-3. **GET** approved list + by-id must echo those fields (SPA will not fake Completed).
-4. `POST /quotations/:id/revert-final-settlement` — clear flags, restore remaining/status.
+2. `POST /final-settlement` — `settlementAmount` = gap (`subtotal − paid`); `discountAmount` = **absolute SET** (never ADD); remaining=0; status=completed.
+3. GET list + by-id must echo applied / amount / remaining 0 / status completed.
+4. Idempotent (no double `d`). Revert clears flags + restores remaining.
 
-**QA:** Settle → hard refresh still Completed → Revert restores Pending/Partial.
+**QA examples:** Remaining ₹5,000 → `d`=5000 after refresh still Completed. Remaining ₹1,000 → `d`=1000 not 2000.
 
 **Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · `BACKEND_REVERT_SETTLEMENT.md` · REQUIRED **§BB**
 

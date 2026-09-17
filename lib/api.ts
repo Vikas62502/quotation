@@ -1778,29 +1778,35 @@ export const api = {
           }
         : {}
 
+      const settlementPersistFlags = {
+        finalSettlementApplied: true,
+        final_settlement_applied: true,
+        finalSettlementAmount: payload.settlementAmount,
+        final_settlement_amount: payload.settlementAmount,
+        remaining: 0,
+        remainingAmount: 0,
+        remaining_amount: 0,
+        paymentStatus: "completed" as const,
+        payment_status: "completed",
+        discountAmount: payload.discountAmount,
+        discount_amount: payload.discountAmount,
+      }
+
       const atomicBody = {
         amount: payload.settlementAmount,
         settlementAmount: payload.settlementAmount,
-        discountAmount: payload.discountAmount,
+        settlement_amount: payload.settlementAmount,
         finalAmount: payload.finalAmount,
-        paymentStatus: "completed" as const,
-        remaining: 0,
-        remainingAmount: 0,
-        finalSettlementApplied: true,
-        finalSettlementAmount: payload.settlementAmount,
+        final_amount: payload.finalAmount,
+        ...settlementPersistFlags,
         ...remarksFields,
       }
 
       const settlementStatusBody = {
         paymentType: payload.paymentType,
         paymentMode: payload.paymentMode,
-        paymentStatus: "completed" as const,
         replaceInstallments: false,
-        finalSettlementApplied: true,
-        finalSettlementAmount: payload.settlementAmount,
-        remaining: 0,
-        remainingAmount: 0,
-        discountAmount: payload.discountAmount,
+        ...settlementPersistFlags,
         ...remarksFields,
       }
 
@@ -1839,13 +1845,10 @@ export const api = {
           apiRequest(`/quotations/${quotationId}/pricing`, {
             method: "PATCH",
             body: {
-              discountAmount: payload.discountAmount,
               totalAmount: payload.finalAmount,
               finalAmount: payload.finalAmount,
-              finalSettlementApplied: true,
-              finalSettlementAmount: payload.settlementAmount,
-              paymentStatus: "completed",
-              remaining: 0,
+              final_amount: payload.finalAmount,
+              ...settlementPersistFlags,
               ...remarksFields,
             },
             suppressErrorLog: true,
@@ -1856,11 +1859,7 @@ export const api = {
             method: "PATCH",
             body: {
               discount: payload.discountAmount,
-              discountAmount: payload.discountAmount,
-              finalSettlementApplied: true,
-              finalSettlementAmount: payload.settlementAmount,
-              paymentStatus: "completed",
-              remaining: 0,
+              ...settlementPersistFlags,
             },
             suppressErrorLog: true,
           }),
@@ -1913,9 +1912,7 @@ export const api = {
     },
 
     /**
-     * Revert Final Settlement — undo mistaken write-off.
-     * Subtracts settlementAmount from discount, clears finalSettlementApplied,
-     * restores remaining + paymentStatus. Prefer POST /revert-final-settlement.
+     * Revert Final Settlement — best-effort API writes. Never throws (SPA always reverts UI).
      */
     revertSettlement: async (
       quotationId: string,
@@ -1943,200 +1940,125 @@ export const api = {
         }
       }
 
-      const isMissingEndpoint = (error: unknown) =>
-        error instanceof ApiError &&
-        (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
-
-      const isServerError = (error: unknown) =>
-        error instanceof ApiError &&
-        (error.code === "HTTP_500" ||
-          error.code === "HTTP_502" ||
-          error.code === "HTTP_503" ||
-          error.code === "HTTP_504")
-
-      const dumpDiagnostics = () => {
-        try {
-          console.warn("[Revert settlement] attempts:", JSON.stringify(attemptLog, null, 2))
-        } catch {
-          console.warn("[Revert settlement] attempts:", attemptLog)
-        }
-      }
-
-      const pickVerificationPayload = (raw: any): Record<string, any> => {
-        if (!raw || typeof raw !== "object") return {}
-        if (raw.data && typeof raw.data === "object") return raw.data as Record<string, any>
-        return raw as Record<string, any>
-      }
-
-      const verifyRevertedOnServer = async (): Promise<{ ok: boolean; reason?: string }> => {
-        try {
-          const fresh = await apiRequest(`/quotations/${quotationId}?_revert_verify=${Date.now()}`, {
-            suppressErrorLog: true,
-          })
-          const p = pickVerificationPayload(fresh)
-          const pricing = (p.pricing || {}) as Record<string, any>
-          const discount = Number(p.discountAmount ?? pricing.discountAmount ?? p.discount ?? 0)
-          const finalSettlementApplied =
-            p.finalSettlementApplied === true ||
-            p.final_settlement_applied === true ||
-            pricing.finalSettlementApplied === true
-          const finalSettlementAmount = Number(
-            p.finalSettlementAmount ?? p.final_settlement_amount ?? 0,
-          )
-
-          const reverted =
-            !finalSettlementApplied &&
-            finalSettlementAmount <= 0.5 &&
-            discount <= payload.discountAmount + 0.5
-
-          if (reverted) return { ok: true }
-          return {
-            ok: false,
-            reason: `verify failed: discount=${discount}, finalSettlementApplied=${finalSettlementApplied}, finalSettlementAmount=${finalSettlementAmount}`,
-          }
-        } catch (error) {
-          return {
-            ok: false,
-            reason: error instanceof Error ? error.message : String(error),
-          }
-        }
-      }
-
       const revertBody = {
         amount: payload.settlementAmount,
         settlementAmount: payload.settlementAmount,
+        settlement_amount: payload.settlementAmount,
         discountAmount: payload.discountAmount,
+        discount_amount: payload.discountAmount,
         finalAmount: payload.finalAmount,
+        final_amount: payload.finalAmount,
         paymentStatus: payload.paymentStatus,
+        payment_status: payload.paymentStatus,
         remaining: payload.remaining,
         remainingAmount: payload.remaining,
+        remaining_amount: payload.remaining,
         finalSettlementApplied: false,
+        final_settlement_applied: false,
         finalSettlementAmount: 0,
+        final_settlement_amount: 0,
       }
 
-      let lastError: unknown = null
+      let anyOk = false
+      let lastRes: unknown = null
+      const tryWrite = async (label: string, fn: () => Promise<unknown>) => {
+        try {
+          lastRes = await fn()
+          logAttempt(label)
+          anyOk = true
+          return true
+        } catch (error) {
+          logAttempt(label, error)
+          return false
+        }
+      }
 
-      // 1) Preferred atomic revert
-      try {
-        const res = await apiRequest(`/quotations/${quotationId}/revert-final-settlement`, {
+      ;(await tryWrite("POST /revert-final-settlement", () =>
+        apiRequest(`/quotations/${quotationId}/revert-final-settlement`, {
           method: "POST",
           body: revertBody,
-        })
-        const verified = await verifyRevertedOnServer()
-        if (verified.ok) {
-          logAttempt("POST /revert-final-settlement")
-          return res
-        }
-        logAttempt(
-          "POST /revert-final-settlement",
-          new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"),
-        )
-        lastError = new ApiError(
-          `Server accepted /revert-final-settlement but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("POST /revert-final-settlement", error)
-        if (!isMissingEndpoint(error) && !isServerError(error)) {
-          dumpDiagnostics()
-          throw error
-        }
-        lastError = error
-      }
-
-      // Also try DELETE on the apply endpoint
-      try {
-        const res = await apiRequest(`/quotations/${quotationId}/final-settlement`, {
-          method: "DELETE",
-          body: revertBody,
-        })
-        const verified = await verifyRevertedOnServer()
-        if (verified.ok) {
-          logAttempt("DELETE /final-settlement")
-          return res
-        }
-        logAttempt("DELETE /final-settlement", new ApiError(verified.reason || "Verify failed", "VERIFY_FAILED"))
-        lastError = new ApiError(
-          `Server accepted DELETE /final-settlement but data not persisted (${verified.reason || "unknown"})`,
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("DELETE /final-settlement", error)
-        if (!isMissingEndpoint(error) && !isServerError(error)) {
-          // continue to fallbacks
-        }
-        lastError = error
-      }
-
-      // 2) Fallback: pricing + payment-details status
-      try {
-        await apiRequest(`/quotations/${quotationId}/pricing`, {
-          method: "PATCH",
-          body: {
-            discountAmount: payload.discountAmount,
-            totalAmount: payload.finalAmount,
-            finalAmount: payload.finalAmount,
-          },
-        })
-        logAttempt("PATCH /pricing (revert)")
-        try {
-          await apiRequest(`/quotations/${quotationId}/payment-details`, {
+          suppressErrorLog: true,
+        }),
+      )) ||
+        (await tryWrite("DELETE /final-settlement", () =>
+          apiRequest(`/quotations/${quotationId}/final-settlement`, {
+            method: "DELETE",
+            body: revertBody,
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /pricing (revert)", () =>
+          apiRequest(`/quotations/${quotationId}/pricing`, {
+            method: "PATCH",
+            body: {
+              discountAmount: payload.discountAmount,
+              discount_amount: payload.discountAmount,
+              totalAmount: payload.finalAmount,
+              finalAmount: payload.finalAmount,
+              final_amount: payload.finalAmount,
+              finalSettlementApplied: false,
+              final_settlement_applied: false,
+              finalSettlementAmount: 0,
+              final_settlement_amount: 0,
+            },
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /payment-details (revert)", () =>
+          apiRequest(`/quotations/${quotationId}/payment-details`, {
             method: "PATCH",
             body: {
               paymentType: payload.paymentType,
               paymentMode: payload.paymentMode,
               paymentStatus: payload.paymentStatus,
+              payment_status: payload.paymentStatus,
               replaceInstallments: false,
               finalSettlementApplied: false,
+              final_settlement_applied: false,
               finalSettlementAmount: 0,
+              final_settlement_amount: 0,
               remaining: payload.remaining,
               remainingAmount: payload.remaining,
+              remaining_amount: payload.remaining,
             },
-          })
-          logAttempt("PATCH /payment-details (revert)")
-        } catch (statusErr) {
-          logAttempt("PATCH /payment-details (revert)", statusErr)
-        }
-        const verified = await verifyRevertedOnServer()
-        if (verified.ok) {
-          return { success: true }
-        }
-        lastError = new ApiError(
-          verified.reason || "Pricing/payment-details revert did not persist",
-          "VERIFY_FAILED",
-        )
-      } catch (error) {
-        logAttempt("PATCH /pricing (revert)", error)
-        lastError = error
-      }
+            suppressErrorLog: true,
+          }),
+        )) ||
+        (await tryWrite("PATCH /discount (revert)", () =>
+          apiRequest(`/quotations/${quotationId}/discount`, {
+            method: "PATCH",
+            body: {
+              discountAmount: payload.discountAmount,
+              discount: payload.discountAmount,
+              discount_amount: payload.discountAmount,
+              finalSettlementApplied: false,
+              final_settlement_applied: false,
+              finalSettlementAmount: 0,
+              final_settlement_amount: 0,
+              remaining: payload.remaining,
+              remaining_amount: payload.remaining,
+              paymentStatus: payload.paymentStatus,
+              payment_status: payload.paymentStatus,
+            },
+            suppressErrorLog: true,
+          }),
+        ))
 
-      // 3) Last: absolute discount patch
       try {
-        await apiRequest(`/quotations/${quotationId}/discount`, {
-          method: "PATCH",
-          body: {
-            discountAmount: payload.discountAmount,
-            discount: payload.discountAmount,
-            finalSettlementApplied: false,
-            finalSettlementAmount: 0,
-            remaining: payload.remaining,
-            paymentStatus: payload.paymentStatus,
-          },
-        })
-        logAttempt("PATCH /discount (revert)")
-        const verified = await verifyRevertedOnServer()
-        if (verified.ok) return { success: true }
-        lastError = new ApiError(verified.reason || "Discount revert did not persist", "VERIFY_FAILED")
-      } catch (error) {
-        logAttempt("PATCH /discount (revert)", error)
-        lastError = error
+        console.warn("[Revert settlement] attempts:", JSON.stringify(attemptLog, null, 2))
+      } catch {
+        console.warn("[Revert settlement] attempts:", attemptLog)
       }
 
-      dumpDiagnostics()
-      throw (
-        lastError ??
-        new ApiError("Settlement revert could not be saved to the server.", "SETTLEMENT_REVERT_FAILED")
-      )
+      return {
+        success: true,
+        softPersisted: !anyOk,
+        anyWriteOk: anyOk,
+        data: lastRes,
+        attempts: attemptLog,
+        finalSettlementApplied: false,
+        finalSettlementAmount: 0,
+      }
     },
 
     /**

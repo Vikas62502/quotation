@@ -5326,7 +5326,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Dealer Call Analytics live** — emit `calling:actions-updated` after PATCH action; calling-actions GET complete | **§AY**, HANDOFF **§47** / **§5** | dealer action PATCH + `GET …/calling-actions` |
 | **High** | **Sheet auto-sync cron** — every **30 min** `POST …/sync-all` + socket | **§AZ**, HANDOFF **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
 | **High** | **PDF panel range clear** — empty `pdfPanelRangeKey` must clear on save (INA 500–600 / Waaree 580 Topcon) | **§BA**, HANDOFF **§48** | products PATCH + GET echo |
-| **High** | **Final settlement → PostgreSQL** — Remaining 0, Completed + strikethrough Subtotal, Revert; must survive refresh | **§BB**, HANDOFF **§49** | `POST …/final-settlement`, GET echo, revert |
+| **High** | **Final settlement → PostgreSQL** — gap-only `d`, absolute discount SET, Completed survives refresh, Revert | **§BB**, HANDOFF **§49** | `POST …/final-settlement`, GET echo, revert |
 | **High** | **Calling queue priority** — finish `in_progress`, then Social Media assigned | **§AT**, HANDOFF **§4.5.3** | `BACKEND_CALLING_QUEUE_CURRENT.ts` |
 | Medium | **PDF warranty inverter + Hybrid Type** — round-trip `inverterBrand` / `inverterType` (SPA PDF) | **§AO**, HANDOFF **§45** | `lib/quotation-proposal-document.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
@@ -6543,20 +6543,22 @@ On `PATCH /quotations/:id/products` (and create body `products`):
 
 **Product (Account Management → Payment Management):**
 1. **Submit final settlement** → write-off Remaining as discount `d`
-2. **Remaining = ₹0**, `paymentStatus = completed` → row under **Completed**
-3. **Subtotal** shows original ~~crossed~~ + net amount (`original − d`)
+2. **Remaining = ₹0**, `paymentStatus = completed` → row under **Completed** only (not Pending & Partial)
+3. **Subtotal** shows ~~original~~ + net (`original − d`); `d` = unpaid gap only (never doubled)
 4. **Submit** hidden after settle; only **Revert settlement** shown
 5. Optional **settlement remarks**
-6. **Hard refresh** must keep Completed (PostgreSQL is source of truth — no browser session)
+6. **Hard refresh / other devices** must keep Completed — **PostgreSQL is source of truth**
 
-**Bug if backend incomplete:** Settle looks OK → refresh → back to **Pending & Partial**.
+**Bugs if backend incomplete:**
+- Settle looks OK → refresh → back to **Pending & Partial** (e.g. SMT JYOTI SHARMA Remaining ₹5,000)
+- `d` shows **₹2,000** when Remaining was only **₹1,000** (discount ADD twice instead of absolute SET)
 
-**Frontend (shipped):** `app/dashboard/account-management/page.tsx` + `lib/api.ts` → `finalizeSettlement` / `revertSettlement`
-- No sessionStorage / localStorage for settlement when API is on
-- POST → verify `GET /quotations/:id` has `finalSettlementApplied` → reload list
-- Without GET echo → toast **Settlement not saved** (does not fake Completed)
+**Frontend (shipped):** `finalizeSettlement` / `revertSettlement` in `lib/api.ts`
+- Prefers `POST /final-settlement`; one fallback path if needed
+- `settlementAmount` = unpaid gap; `discountAmount` = absolute SET
+- Local bridge until GET echoes flags — **implement this § to make refresh work for all users/devices**
 
-### Backend must (P0) — do in order
+### Backend must (P0) — working conditions
 
 #### 1) Migration (PostgreSQL)
 
@@ -6570,78 +6572,61 @@ ALTER TABLE quotations
   ADD COLUMN IF NOT EXISTS remaining_amount         NUMERIC(12,2) DEFAULT 0;
 ```
 
-Map on Sequelize model (`field:` snake_case as above).
+#### 2) Math (must match SPA)
 
-#### 2) Persist on settle
-
-`POST /api/quotations/:id/final-settlement` (preferred) — body example:
-
-```json
-{
-  "settlementAmount": 1000,
-  "discountAmount": 1000,
-  "finalAmount": 299000,
-  "paymentStatus": "completed",
-  "remaining": 0,
-  "finalSettlementApplied": true,
-  "remarks": "Customer waived last installment",
-  "finalSettlementRemarks": "Customer waived last installment"
-}
+```
+settlementAmount (d) = max(0, originalSubtotal − SUM(paidAmount))   // unpaid gap ONLY
+discountAmount       = ABSOLUTE so payable = paid   (SET, never ADD on retry)
+remaining            = 0
+paymentStatus        = completed
+finalSettlementApplied = true
+finalSettlementAmount  = settlementAmount
 ```
 
-| Column / field | Value |
-|----------------|-------|
-| `final_settlement_applied` | `true` |
-| `final_settlement_amount` | write-off INR (`d`) |
-| `final_settlement_remarks` | optional string |
-| `discount_amount` / `discountAmount` | existing + `d` |
-| `payment_status` | `completed` |
-| `remaining` / `remaining_amount` | `0` |
+| Example | Subtotal | Paid | `d` / amount | After net |
+|---------|----------|------|--------------|-----------|
+| JYOTI | 275000 | 270000 | **5000** | 270000 |
+| ARTI | 290000 | 289000 | **1000** (not 2000) | 289000 |
 
-Do **not** rewrite installment paid rows.
-
-Fallbacks SPA also tries: `PATCH /pricing`, `PATCH /payment-details`, `PATCH /discount` — same flags must persist.
-
-#### 3) GET must echo (list + by-id)
-
-`GET /quotations?status=approved` and `GET /quotations/:id`:
+#### 3) `POST /api/quotations/:id/final-settlement`
 
 ```json
 {
-  "subtotal": 300000,
-  "discountAmount": 1000,
+  "settlementAmount": 5000,
+  "discountAmount": 5000,
+  "finalAmount": 270000,
   "paymentStatus": "completed",
   "remaining": 0,
   "remainingAmount": 0,
   "finalSettlementApplied": true,
-  "finalSettlementAmount": 1000,
-  "finalSettlementRemarks": "Customer waived last installment",
-  "pricing": {
-    "discountAmount": 1000,
-    "finalSettlementApplied": true
-  }
+  "finalSettlementAmount": 5000,
+  "finalSettlementRemarks": "optional"
 }
 ```
 
-SPA uses this for: Remaining ₹0, strikethrough Subtotal, hide Submit, show Revert.
+Persist: applied=true, amount=`d`, remarks, discountAmount **absolute**, status=completed, remaining=0.  
+Do **not** rewrite installments. Idempotent (second POST must not double `d`).
 
-#### 4) Revert
+#### 4) GET echo (list + by-id) — required for refresh
 
-`POST /api/quotations/:id/revert-final-settlement` (also `DELETE …/final-settlement`):
-- Clear `finalSettlementApplied`, `finalSettlementAmount`, `finalSettlementRemarks`
-- Restore `discountAmount`, `remaining`, `paymentStatus` (partial/pending as math requires)
-- Installments unpaid totals **unchanged**
+Return `finalSettlementApplied`, `finalSettlementAmount`, `discountAmount`, `paymentStatus=completed`, `remaining=0` on approved list and by-id.
 
-**Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · Spec `BACKEND_FINAL_SETTLEMENT.md` · Revert `BACKEND_REVERT_SETTLEMENT.md`
+#### 5) Revert — `POST /api/quotations/:id/revert-final-settlement`
 
-### Checklist (must all pass)
+Clear applied / amount / remarks; restore discount, remaining, status.
 
-- [ ] POST settle → **200**, DB row has applied=true, remaining=0, status=completed
-- [ ] GET list + by-id echo same fields (+ remarks)
-- [ ] Hard refresh → still **Completed**, Subtotal crossed, Remaining ₹0, **Submit hidden**, **Revert** visible
-- [ ] Revert → flags cleared, remaining restored, Submit available again if balance > 0
+**Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · `BACKEND_FINAL_SETTLEMENT.md` · `BACKEND_REVERT_SETTLEMENT.md`
 
-**Refs:** HANDOFF **§49**, `lib/api.ts` → `finalizeSettlement` / `revertSettlement`
+### Working checklist
+
+- [ ] Settle ₹5,000 → DB amount=5000, remaining=0, completed
+- [ ] GET list+by-id echo same → **hard refresh still Completed**
+- [ ] Settle ₹1,000 → `d`=1000 not 2000
+- [ ] Revert → Pending & Partial with correct remaining
+- [ ] Idempotent settle (no double discount)
+
+**Refs:** HANDOFF **§49**, `lib/api.ts` → `finalizeSettlement`
 
 ---
+
 
