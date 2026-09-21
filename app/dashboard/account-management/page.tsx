@@ -829,7 +829,8 @@ function formatInstallmentShortLabel(phase: PaymentPhase): string {
   return `I${phase.phaseNumber}`
 }
 
-type PaymentInstallmentFilter = "all" | "1" | "2" | "3" | "4" | "5"
+type PaymentInstallmentCount = "1" | "2" | "3" | "4" | "5"
+type MixSideFilterValue = "loan" | "cash"
 
 /** Yes = already sent (badge). No = still shows Send to Installer button. */
 type SendToInstallationFilter = "all" | "yes" | "no"
@@ -843,6 +844,19 @@ const PAYMENT_TYPE_FILTER_OPTIONS: { value: PaymentTypeFilterValue; label: strin
   { value: "unknown", label: "Not Set" },
 ]
 
+const MIX_SIDE_FILTER_OPTIONS: { value: MixSideFilterValue; label: string }[] = [
+  { value: "loan", label: "Loan" },
+  { value: "cash", label: "Cash" },
+]
+
+const PAYMENT_INSTALLMENT_FILTER_OPTIONS: { value: PaymentInstallmentCount; label: string }[] = [
+  { value: "1", label: "1 installment" },
+  { value: "2", label: "2 installments" },
+  { value: "3", label: "3 installments" },
+  { value: "4", label: "4 installments" },
+  { value: "5", label: "5 installments" },
+]
+
 /** Keep dropdowns inside Filters dialog — avoids portal z-index / transform mis-positioning. */
 const PAYMENT_FILTER_SELECT_CONTENT_PROPS = {
   disablePortal: true,
@@ -851,27 +865,143 @@ const PAYMENT_FILTER_SELECT_CONTENT_PROPS = {
   className: "max-h-60",
 }
 
-function getPaymentTypeFilterTriggerLabel(selected: PaymentTypeFilterValue[]): string {
-  if (selected.length === 0 || selected.length === PAYMENT_TYPE_FILTER_OPTIONS.length) {
-    return "All Payment Types"
-  }
+function getCheckboxFilterTriggerLabel<T extends string>(
+  selected: T[],
+  options: { value: T; label: string }[],
+  allLabel: string,
+  collapseAllToEmpty = true,
+): string {
+  if (selected.length === 0 || (collapseAllToEmpty && selected.length === options.length)) return allLabel
   if (selected.length === 1) {
-    return PAYMENT_TYPE_FILTER_OPTIONS.find((o) => o.value === selected[0])?.label ?? "1 type"
+    return options.find((o) => o.value === selected[0])?.label ?? "1 selected"
   }
-  const labels = selected
-    .map((v) => PAYMENT_TYPE_FILTER_OPTIONS.find((o) => o.value === v)?.label)
-    .filter(Boolean)
+  const labels = selected.map((v) => options.find((o) => o.value === v)?.label).filter(Boolean)
   return labels.join(", ")
+}
+
+function toggleCheckboxFilterValue<T extends string>(
+  prev: T[],
+  value: T,
+  checked: boolean,
+  optionCount?: number,
+): T[] {
+  if (checked) {
+    const merged = prev.includes(value) ? prev : [...prev, value]
+    if (optionCount != null && merged.length === optionCount) return []
+    return merged
+  }
+  return prev.filter((v) => v !== value)
+}
+
+function countPhasesForMixSide(payment: CustomerPayment, side: MixSideFilterValue): number {
+  return payment.phases.filter((phase) => {
+    const isLoan = isLoanSidePaymentMode(phase.paymentMode)
+    return side === "loan" ? isLoan : !isLoan
+  }).length
+}
+
+function paymentMatchesMixSideFilter(payment: CustomerPayment, mixSides: MixSideFilterValue[]): boolean {
+  if (mixSides.length === 0) return true
+  if (paymentTypeOf(payment) !== "mix") return true
+  return mixSides.some((side) => countPhasesForMixSide(payment, side) > 0)
 }
 
 function paymentMatchesInstallmentFilter(
   payment: CustomerPayment,
-  filter: PaymentInstallmentFilter,
+  installmentCounts: PaymentInstallmentCount[],
+  mixSides: MixSideFilterValue[],
 ): boolean {
-  if (filter === "all") return true
-  const expectedInstallmentCount = Number(filter)
-  if (!Number.isFinite(expectedInstallmentCount) || expectedInstallmentCount < 1) return true
-  return payment.phases.length === expectedInstallmentCount
+  if (installmentCounts.length === 0 || installmentCounts.length === PAYMENT_INSTALLMENT_FILTER_OPTIONS.length) {
+    return true
+  }
+  const expected = new Set(installmentCounts.map((value) => Number(value)))
+  const type = paymentTypeOf(payment)
+  if (type === "mix" && mixSides.length > 0) {
+    return mixSides.some((side) => expected.has(countPhasesForMixSide(payment, side)))
+  }
+  return expected.has(payment.phases.length)
+}
+
+function CheckboxFilterPopover<T extends string>({
+  label,
+  allLabel,
+  selected,
+  options,
+  onChange,
+  description,
+  collapseAllToEmpty = true,
+}: {
+  label: string
+  allLabel: string
+  selected: T[]
+  options: { value: T; label: string }[]
+  onChange: (next: T[]) => void
+  description?: string
+  collapseAllToEmpty?: boolean
+}) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      {description ? (
+        <p className="text-[11px] leading-snug text-muted-foreground">{description}</p>
+      ) : null}
+      <Popover modal={false}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9 w-full justify-between px-3 text-sm font-normal"
+          >
+            <span className="truncate">
+              {getCheckboxFilterTriggerLabel(selected, options, allLabel, collapseAllToEmpty)}
+            </span>
+            <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          className="z-[200] w-[var(--radix-popover-trigger-width)] min-w-48 p-2"
+          align="start"
+        >
+          <div className="flex flex-col gap-1">
+            <button
+              type="button"
+              className={cn(
+                "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
+                selected.length === 0 && "bg-accent",
+              )}
+              onClick={() => onChange([])}
+            >
+              {allLabel}
+            </button>
+            {options.map((option) => {
+              const checked = selected.includes(option.value)
+              return (
+                <label
+                  key={option.value}
+                  className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
+                >
+                  <Checkbox
+                    checked={checked}
+                    onCheckedChange={(next) => {
+                      onChange(
+                        toggleCheckboxFilterValue(
+                          selected,
+                          option.value,
+                          next === true,
+                          collapseAllToEmpty ? options.length : undefined,
+                        ),
+                      )
+                    }}
+                  />
+                  <span>{option.label}</span>
+                </label>
+              )
+            })}
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
 }
 
 function getStoredSubsidyChequesMap(): Record<string, SubsidyChequeRecord[]> {
@@ -1000,6 +1130,19 @@ function formatAdminDate(iso?: string | null) {
   if (!iso) return "—"
   const d = parseFlexibleAdminDate(String(iso))
   return d ? d.toLocaleString("en-IN") : "—"
+}
+
+function formatFileStatusApprovedAt(iso?: string | null) {
+  if (!iso) return ""
+  const d = parseFlexibleAdminDate(String(iso))
+  if (!d) return ""
+  return d.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  })
 }
 
 /** Normalize API date / epoch / Date for display pipeline. */
@@ -1335,7 +1478,8 @@ export default function AccountManagementPage() {
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<PaymentTypeFilterValue[]>([])
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
-  const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentFilter>("all")
+  const [paymentInstallmentFilter, setPaymentInstallmentFilter] = useState<PaymentInstallmentCount[]>([])
+  const [mixSideFilter, setMixSideFilter] = useState<MixSideFilterValue[]>([])
   const [fileStatusFilter, setFileStatusFilter] = useState<FileStatusFilter>("all")
   const [sendToInstallationFilter, setSendToInstallationFilter] =
     useState<SendToInstallationFilter>("all")
@@ -1617,6 +1761,18 @@ export default function AccountManagementPage() {
                 | undefined,
               installerApprovedAt: (flat.installerApprovedAt ?? flat.installer_approved_at) as string | undefined,
               installer_approved_at: (flat.installerApprovedAt ?? flat.installer_approved_at) as string | undefined,
+              meteringApprovedAt: pickIsoOrString(flat.meteringApprovedAt ?? flat.metering_approved_at),
+              metering_approved_at: pickIsoOrString(flat.meteringApprovedAt ?? flat.metering_approved_at),
+              mcoAt: pickIsoOrString(flat.mcoAt ?? flat.mco_at),
+              mco_at: pickIsoOrString(flat.mcoAt ?? flat.mco_at),
+              baldevApprovedAt: pickIsoOrString(flat.baldevApprovedAt ?? flat.baldev_approved_at),
+              baldev_approved_at: pickIsoOrString(flat.baldevApprovedAt ?? flat.baldev_approved_at),
+              finalConfirmationAt: pickIsoOrString(flat.finalConfirmationAt ?? flat.final_confirmation_at),
+              completedAt: pickIsoOrString(flat.completedAt ?? flat.completed_at),
+              statusHistory: (flat.statusHistory ?? flat.status_history ?? flat.statusChanges) as
+                | Quotation["statusHistory"]
+                | undefined,
+              statusUpdatedAt: pickIsoOrString(flat.statusUpdatedAt ?? flat.status_updated_at),
               installationPartialApproved: (flat.installationPartialApproved ??
                 flat.installation_partial_approved) as boolean | undefined,
               documents: flat.documents ?? flat.document,
@@ -1678,6 +1834,17 @@ export default function AccountManagementPage() {
                     q.installer_approved_at ||
                     queueRow.installerApprovedAt ||
                     queueRow.installer_approved_at,
+                  meteringApprovedAt:
+                    q.meteringApprovedAt ||
+                    q.metering_approved_at ||
+                    queueRow.meteringApprovedAt ||
+                    queueRow.metering_approved_at,
+                  mcoAt: q.mcoAt || q.mco_at || queueRow.mcoAt || queueRow.mco_at,
+                  baldevApprovedAt:
+                    q.baldevApprovedAt ||
+                    q.baldev_approved_at ||
+                    queueRow.baldevApprovedAt ||
+                    queueRow.baldev_approved_at,
                 } as Record<string, unknown>,
                 queueRow,
               ) as (typeof approvedQuotations)[number]
@@ -2186,7 +2353,12 @@ export default function AccountManagementPage() {
       const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
       const approveBounds = paymentDateRangeToFilterStrings(approveDateRange)
       const matchesApproveDateRange = calendarDateInRange(approveYmd, approveBounds.from, approveBounds.to)
-      const matchesInstallment = paymentMatchesInstallmentFilter(payment, paymentInstallmentFilter)
+      const matchesMixSide = paymentMatchesMixSideFilter(payment, mixSideFilter)
+      const matchesInstallment = paymentMatchesInstallmentFilter(
+        payment,
+        paymentInstallmentFilter,
+        mixSideFilter,
+      )
       const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatus)
       const sentToInstaller = isQuotationSentToInstaller(
         payment.quotation as unknown as Record<string, unknown>,
@@ -2216,6 +2388,7 @@ export default function AccountManagementPage() {
         matchesSearch &&
         matchesPaymentType &&
         matchesPaymentStatus &&
+        matchesMixSide &&
         matchesInstallment &&
         matchesFileStatus &&
         matchesSendToInstallation &&
@@ -2232,6 +2405,7 @@ export default function AccountManagementPage() {
       paymentTypeFilter,
       paymentStatusFilter,
       paymentInstallmentFilter,
+      mixSideFilter,
       fileStatusFilter,
       sendToInstallationFilter,
       paymentDealerFilter,
@@ -2523,7 +2697,8 @@ export default function AccountManagementPage() {
     paymentSearchTerm,
     paymentTypeFilter.slice().sort().join(","),
     paymentStatusFilter,
-    paymentInstallmentFilter,
+    paymentInstallmentFilter.slice().sort().join(","),
+    mixSideFilter.slice().sort().join(","),
     fileStatusFilter,
     sendToInstallationFilter,
     paymentDealerFilter,
@@ -2632,6 +2807,7 @@ export default function AccountManagementPage() {
       const remainingAmount = getDisplayRemaining(payment)
       const bankCell = getFinancingBankDisplay(payment)
       const journey = getJourneyStageProgress(payment.quotation)
+      const fileStatusStages = getJourneyFileStatusStages(payment.quotation)
       const fileStatus = getJourneyHoldInfo(payment.quotation).stageLabel
       const paymentTypeValue = getPaymentTypeValue(payment)
       const isMix = paymentTypeValue === "mix"
@@ -2667,9 +2843,15 @@ export default function AccountManagementPage() {
         cashRem,
         payment.phases.length,
         formatJourneyStageStatusLabel(journey.adminApproval, "adminApproval"),
-        formatJourneyStageStatusLabel(journey.installation, "installation"),
-        formatJourneyStageStatusLabel(journey.metering, "metering"),
-        formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation"),
+        fileStatusStages[0].approvedAt
+          ? `${formatJourneyStageStatusLabel(journey.installation, "installation")} · ${formatFileStatusApprovedAt(fileStatusStages[0].approvedAt)}`
+          : formatJourneyStageStatusLabel(journey.installation, "installation"),
+        fileStatusStages[1].approvedAt
+          ? `${formatJourneyStageStatusLabel(journey.metering, "metering")} · ${formatFileStatusApprovedAt(fileStatusStages[1].approvedAt)}`
+          : formatJourneyStageStatusLabel(journey.metering, "metering"),
+        fileStatusStages[2].approvedAt
+          ? `${formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation")} · ${formatFileStatusApprovedAt(fileStatusStages[2].approvedAt)}`
+          : formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation"),
         fileStatus,
       ]
     })
@@ -4080,7 +4262,8 @@ export default function AccountManagementPage() {
                         const activeCount =
                           (paymentTypeFilter.length > 0 ? 1 : 0) +
                           (paymentStatusFilter !== "all" ? 1 : 0) +
-                          (paymentInstallmentFilter !== "all" ? 1 : 0) +
+                          (mixSideFilter.length > 0 ? 1 : 0) +
+                          (paymentInstallmentFilter.length > 0 ? 1 : 0) +
                           (fileStatusFilter !== "all" ? 1 : 0) +
                           (sendToInstallationFilter !== "all" ? 1 : 0) +
                           (paymentDealerFilter !== "all" ? 1 : 0) +
@@ -4336,8 +4519,8 @@ export default function AccountManagementPage() {
                               className={cn(
                                 "grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full",
                                 showAccountsSiteProfit
-                                  ? "xl:grid-cols-[minmax(10rem,1.2fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(9rem,1.1fr)_minmax(6rem,0.85fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)]"
-                                  : "xl:grid-cols-[minmax(10rem,1.35fr)_minmax(4.5rem,0.65fr)_minmax(4.5rem,0.65fr)_minmax(5rem,0.7fr)_minmax(5.5rem,0.75fr)_minmax(6rem,0.8fr)_minmax(10rem,1.25fr)_minmax(7rem,1fr)_minmax(6.75rem,7.25rem)]",
+                                  ? "xl:grid-cols-[minmax(10rem,1.2fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(12.5rem,1.35fr)_minmax(6rem,0.85fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)]"
+                                  : "xl:grid-cols-[minmax(10rem,1.35fr)_minmax(4.5rem,0.65fr)_minmax(4.5rem,0.65fr)_minmax(5rem,0.7fr)_minmax(5.5rem,0.75fr)_minmax(6rem,0.8fr)_minmax(12.5rem,1.45fr)_minmax(7rem,1fr)_minmax(6.75rem,7.25rem)]",
                               )}
                             >
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
@@ -4531,31 +4714,36 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="min-w-[10.5rem]">
+                              <div className="min-w-[12.5rem]">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File status</p>
-                                <div className="mt-0.5 space-y-0.5">
+                                <div className="mt-0.5 space-y-1">
                                   {getJourneyFileStatusStages(payment.quotation).map((item) => {
                                     const stageLabel =
                                       item.label === "Final confirmation"
                                         ? "Final approval"
                                         : item.label
+                                    const approvedAtLabel = formatFileStatusApprovedAt(item.approvedAt)
                                     return (
-                                      <div
-                                        key={item.label}
-                                        className="flex items-center gap-1.5 whitespace-nowrap"
-                                      >
-                                        <span className="text-[10px] text-muted-foreground shrink-0">
-                                          {stageLabel}
-                                        </span>
-                                        <Badge
-                                          variant="outline"
-                                          className={cn(
-                                            "text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium",
-                                            journeyStageStatusBadgeClass(item.status),
-                                          )}
-                                        >
-                                          {item.statusLabel}
-                                        </Badge>
+                                      <div key={item.label} className="min-w-0">
+                                        <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                          <span className="text-[10px] text-muted-foreground shrink-0">
+                                            {stageLabel}
+                                          </span>
+                                          <Badge
+                                            variant="outline"
+                                            className={cn(
+                                              "text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium",
+                                              journeyStageStatusBadgeClass(item.status),
+                                            )}
+                                          >
+                                            {item.statusLabel}
+                                          </Badge>
+                                        </div>
+                                        {approvedAtLabel ? (
+                                          <p className="text-[9px] leading-tight text-muted-foreground tabular-nums mt-0.5">
+                                            {approvedAtLabel}
+                                          </p>
+                                        ) : null}
                                       </div>
                                     )
                                   })}
@@ -4710,65 +4898,38 @@ export default function AccountManagementPage() {
               onChange={setApproveDateRange}
               placeholder="All approve dates"
             />
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Payment type</Label>
-              <Popover modal={false}>
-                <PopoverTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 w-full justify-between px-3 text-sm font-normal"
-                  >
-                    <span className="truncate">{getPaymentTypeFilterTriggerLabel(paymentTypeFilter)}</span>
-                    <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  className="z-[200] w-[var(--radix-popover-trigger-width)] min-w-48 p-2"
-                  align="start"
-                >
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      className={cn(
-                        "flex w-full items-center rounded-sm px-2 py-1.5 text-sm hover:bg-accent",
-                        paymentTypeFilter.length === 0 && "bg-accent",
-                      )}
-                      onClick={() => setPaymentTypeFilter([])}
-                    >
-                      All Payment Types
-                    </button>
-                    {PAYMENT_TYPE_FILTER_OPTIONS.map((option) => {
-                      const checked = paymentTypeFilter.includes(option.value)
-                      return (
-                        <label
-                          key={option.value}
-                          className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent"
-                        >
-                          <Checkbox
-                            checked={checked}
-                            onCheckedChange={(next) => {
-                              setPaymentTypeFilter((prev) => {
-                                if (next === true) {
-                                  const merged = prev.includes(option.value)
-                                    ? prev
-                                    : [...prev, option.value]
-                                  return merged.length === PAYMENT_TYPE_FILTER_OPTIONS.length
-                                    ? []
-                                    : merged
-                                }
-                                return prev.filter((v) => v !== option.value)
-                              })
-                            }}
-                          />
-                          <span>{option.label}</span>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            </div>
+            <CheckboxFilterPopover
+              label="Payment type"
+              allLabel="All Payment Types"
+              selected={paymentTypeFilter}
+              options={PAYMENT_TYPE_FILTER_OPTIONS}
+              onChange={(next) => {
+                setPaymentTypeFilter(next)
+                if (next.length > 0 && !next.includes("mix")) {
+                  setMixSideFilter([])
+                }
+              }}
+            />
+            {paymentTypeFilter.includes("mix") ? (
+              <div className="rounded-md border border-border/70 bg-muted/30 p-3">
+                <CheckboxFilterPopover
+                  label="Cash + loan"
+                  allLabel="Loan and cash"
+                  selected={mixSideFilter}
+                  options={MIX_SIDE_FILTER_OPTIONS}
+                  collapseAllToEmpty={false}
+                  description="Count loan or cash phases only on Cash + loan files."
+                  onChange={setMixSideFilter}
+                />
+              </div>
+            ) : null}
+            <CheckboxFilterPopover
+              label="Installments"
+              allLabel="All installments"
+              selected={paymentInstallmentFilter}
+              options={PAYMENT_INSTALLMENT_FILTER_OPTIONS}
+              onChange={setPaymentInstallmentFilter}
+            />
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Payment status</Label>
               <Select
@@ -4785,25 +4946,6 @@ export default function AccountManagementPage() {
                   {paymentSectionTab === "completed" ? (
                     <SelectItem value="completed">Completed</SelectItem>
                   ) : null}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Installments</Label>
-              <Select
-                value={paymentInstallmentFilter}
-                onValueChange={(value) => setPaymentInstallmentFilter(value as PaymentInstallmentFilter)}
-              >
-                <SelectTrigger className="h-9 w-full text-sm">
-                  <SelectValue placeholder="Installment" />
-                </SelectTrigger>
-                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
-                  <SelectItem value="all">All installments</SelectItem>
-                  <SelectItem value="1">1 installment</SelectItem>
-                  <SelectItem value="2">2 installments</SelectItem>
-                  <SelectItem value="3">3 installments</SelectItem>
-                  <SelectItem value="4">4 installments</SelectItem>
-                  <SelectItem value="5">5 installments</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -4906,7 +5048,8 @@ export default function AccountManagementPage() {
                   setApproveDateRange(undefined)
                   setPaymentTypeFilter([])
                   setPaymentStatusFilter("all")
-                  setPaymentInstallmentFilter("all")
+                  setPaymentInstallmentFilter([])
+                  setMixSideFilter([])
                   setFileStatusFilter("all")
                   setSendToInstallationFilter("all")
                   setPaymentDealerFilter("all")

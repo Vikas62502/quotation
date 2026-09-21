@@ -185,6 +185,119 @@ export function journeyStageStatusBadgeClass(status: JourneyStageStatus): string
   return "bg-muted text-muted-foreground border-border"
 }
 
+function coerceJourneyIso(value: unknown): string | undefined {
+  if (value == null || value === "") return undefined
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? undefined : value.toISOString()
+  if (typeof value === "object" && value !== null && "$date" in (value as object)) {
+    return coerceJourneyIso((value as { $date?: unknown }).$date)
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const ms = value < 1e12 ? value * 1000 : value
+    const d = new Date(ms)
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+  }
+  const d = new Date(String(value).trim())
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+}
+
+function pickQuotationIso(quotation: Quotation, keys: string[]): string | undefined {
+  const q = quotation as unknown as Record<string, unknown>
+  for (const key of keys) {
+    const iso = coerceJourneyIso(q[key])
+    if (iso) return iso
+  }
+  return undefined
+}
+
+function pickStatusHistoryIso(quotation: Quotation, match: (status: string) => boolean): string | undefined {
+  const q = quotation as unknown as Record<string, unknown>
+  const history = q.statusHistory ?? q.status_history ?? q.statusChanges
+  if (!Array.isArray(history)) return undefined
+  for (let i = history.length - 1; i >= 0; i--) {
+    const entry = history[i] as Record<string, unknown> | null
+    if (!entry || typeof entry !== "object") continue
+    const status = String(entry.status ?? entry.to ?? entry.newStatus ?? "")
+      .trim()
+      .toLowerCase()
+    if (!match(status)) continue
+    const iso = coerceJourneyIso(entry.at ?? entry.changedAt ?? entry.timestamp ?? entry.createdAt)
+    if (iso) return iso
+  }
+  return undefined
+}
+
+/** Approval / completion timestamp for a FILE STATUS step (empty while still pending). */
+export function getJourneyFileStatusStageApprovedAt(
+  quotation: Quotation,
+  stage: "installation" | "metering" | "finalConfirmation",
+  status: JourneyStageStatus,
+): string | undefined {
+  if (status === "pending") return undefined
+
+  if (stage === "installation") {
+    return (
+      pickQuotationIso(quotation, [
+        "installerApprovedAt",
+        "installer_approved_at",
+        "installationApprovedAt",
+        "installation_approved_at",
+        "installationCompletedAt",
+        "installation_completed_at",
+      ]) ||
+      pickStatusHistoryIso(
+        quotation,
+        (s) => s === "installer_approved" || s.includes("installer_approved"),
+      )
+    )
+  }
+
+  if (stage === "metering") {
+    const meteringApproved = pickQuotationIso(quotation, [
+      "meteringApprovedAt",
+      "metering_approved_at",
+      "meteringCompletedAt",
+      "metering_completed_at",
+    ])
+    const meteringFinal =
+      pickQuotationIso(quotation, ["mcoAt", "mco_at"]) ||
+      pickStatusHistoryIso(quotation, (s) => s === "mco" || s.includes("mco"))
+    if (status === "completed") {
+      return (
+        meteringFinal ||
+        meteringApproved ||
+        pickStatusHistoryIso(
+          quotation,
+          (s) => s === "metering_approved" || s.includes("metering_approved"),
+        )
+      )
+    }
+    return (
+      meteringApproved ||
+      pickStatusHistoryIso(
+        quotation,
+        (s) => s === "metering_approved" || s.includes("metering_approved"),
+      )
+    )
+  }
+
+  return (
+    pickQuotationIso(quotation, [
+      "baldevApprovedAt",
+      "baldev_approved_at",
+      "finalConfirmationAt",
+      "final_confirmation_at",
+      "finalApprovedAt",
+      "final_approved_at",
+      "completedAt",
+      "completed_at",
+    ]) ||
+    pickStatusHistoryIso(
+      quotation,
+      (s) => s === "baldev_approved" || s === "completed" || s.includes("baldev_approved"),
+    )
+  )
+}
+
 /** Installation + Metering + Final confirmation for Payment Management file status column. */
 export function getJourneyFileStatusStages(quotation: Quotation) {
   const progress = getJourneyStageProgress(quotation)
@@ -193,16 +306,23 @@ export function getJourneyFileStatusStages(quotation: Quotation) {
       label: "Installation",
       status: progress.installation,
       statusLabel: formatJourneyStageStatusLabel(progress.installation, "installation"),
+      approvedAt: getJourneyFileStatusStageApprovedAt(quotation, "installation", progress.installation),
     },
     {
       label: "Metering",
       status: progress.metering,
       statusLabel: formatJourneyStageStatusLabel(progress.metering, "metering"),
+      approvedAt: getJourneyFileStatusStageApprovedAt(quotation, "metering", progress.metering),
     },
     {
       label: "Final confirmation",
       status: progress.finalConfirmation,
       statusLabel: formatJourneyStageStatusLabel(progress.finalConfirmation, "finalConfirmation"),
+      approvedAt: getJourneyFileStatusStageApprovedAt(
+        quotation,
+        "finalConfirmation",
+        progress.finalConfirmation,
+      ),
     },
   ] as const
 }
