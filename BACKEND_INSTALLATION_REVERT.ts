@@ -35,6 +35,10 @@ export const INSTALLATION_REVERT_ALLOWED_FROM = new Set([
   "installer_in_progress",
   "in_progress",
   "pending_installer", // idempotent
+  // Metering is a separate workflow; backend may have written pending_metering
+  // onto installation_status. Revert must still be allowed.
+  "pending_metering",
+  "metering_in_progress",
 ])
 
 export function normalizeInstallStatus(raw) {

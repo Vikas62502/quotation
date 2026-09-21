@@ -190,6 +190,9 @@ import {
   getRetrieveFromInstallationState,
   getAdminInstallationTabRevertState,
   clearInstallerReleaseInLocalMap,
+  markInstallationForcedPending,
+  clearInstallationForcedPending,
+  isInstallationForcedPending,
   getMeteringWorkflowStage,
   isMeteringApprovedForTransition,
   readInstallationScheduledMap,
@@ -219,7 +222,9 @@ import { normalizeMediaUrl, pickMediaUrlFromValue, toPublicOpenHref } from "@/li
 import { InstallationPublicPhoto } from "@/components/installation-public-photo"
 import {
   gatherInstallationPublicImageUrls,
+  mergeSiteCompletionPublicUrlsOntoQuotation,
 } from "@/lib/installation-public-images"
+import { uploadInstallationPhotosNow, retainedInstallationUrlsByField } from "@/lib/upload-installation-photo"
 import { StoredMediaPreview } from "@/components/stored-media-preview"
 import { parseMeterDocumentNameFromApiPayload, parseMeterDocumentUrlFromApiPayload, readQuotationMeterDocument, toMeterDocumentPublicViewUrl } from "@/lib/parse-api-media"
 import {
@@ -723,15 +728,9 @@ function addDedupedUrl(sink: string[], max: number, s?: string) {
   sink.push(normalized)
 }
 
-/** Installation photos uploaded, or workflow advanced past installer completion. */
-function isInstallationUploadComplete(quotation: Quotation, approvedQueueIds?: Set<string>): boolean {
-  const q = quotation as unknown as Record<string, unknown>
-  const inApprovedQueue = approvedQueueIds?.has(quotation.id) ?? false
-  const imageCount = gatherInstallationPublicImageUrls(q).length
-  return isInstallationApprovedForAdminTab(q, {
-    imageUrlCount: imageCount,
-    inInstallerApprovedQueue: inApprovedQueue,
-  })
+/** Installation is approved only after Complete from Pending Installation. */
+function isInstallationUploadComplete(quotation: Quotation, _approvedQueueIds?: Set<string>): boolean {
+  return isInstallationApprovedForAdminTab(quotation as unknown as Record<string, unknown>)
 }
 
 function AdminQuotationDealerBlock({
@@ -1513,6 +1512,7 @@ export default function AdminPanelPage() {
   const [adminInstallNotes, setAdminInstallNotes] = useState("")
   const [adminInstallDimensions, setAdminInstallDimensions] = useState({ length: "", width: "", height: "" })
   const [adminInstallSaving, setAdminInstallSaving] = useState(false)
+  const [adminInstallUploadingKey, setAdminInstallUploadingKey] = useState<string | null>(null)
   const [adminMeteringModalOpen, setAdminMeteringModalOpen] = useState(false)
   const [adminMeteringQuotationId, setAdminMeteringQuotationId] = useState<string | null>(null)
   /** After Details save, advance Meter Pending → Meter in Discom. */
@@ -2809,7 +2809,9 @@ export default function AdminPanelPage() {
         setQuotationsListTotal(resolvedQuotationsTotal)
         setOptimisticFileLoginSelect({})
         setInstallerQueueIds(installerQueueIdSet)
-        setInstallerQueueApprovedIds(installerQueueApprovedIdSet)
+        setInstallerQueueApprovedIds(
+          new Set([...installerQueueApprovedIdSet].filter((id) => !isInstallationForcedPending(id))),
+        )
 
         let localQuotationsBackup: Quotation[] = []
         try {
@@ -4413,7 +4415,7 @@ export default function AdminPanelPage() {
     quotation: Quotation,
   ): "pending" | "inprogress" | "partial" | "approved" => {
     const backendStatus = getInstallationWorkflowStatus(quotation as any)
-    if (backendStatus === "pending_installer") return "pending"
+    if (isInstallationForcedPending(quotation.id) || backendStatus === "pending_installer") return "pending"
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
       return "inprogress"
     }
@@ -5415,12 +5417,8 @@ export default function AdminPanelPage() {
     // Send to Metering with no Discom/WCC action yet → Meter Pending only (not WCC)
     if (stage === "processing") return false
 
-    // Entry: Installation approved, not yet sent into metering pipeline
-    if (isInstallationPartialApproved(quotation as any)) return false
-    if (!shouldShowInAdminInstallationTab(quotation as any, readInstallerReleaseMap())) return false
-    if (!isInstallationUploadComplete(quotation, installerQueueApprovedIds)) return false
-    if (hasAdminMeteringWccPack(quotation)) return false
-    return true
+    // Metering is independent of Installation Complete — WCC only after Send to Metering / Discom.
+    return false
   }
 
   /** Meter Installation Pending: after WCC Pending (post-Discom path). */
@@ -6712,14 +6710,6 @@ export default function AdminPanelPage() {
     try {
       let ok = false
       if (useApi) {
-        const installRaw = getInstallationWorkflowStatus(quotation as unknown as Record<string, unknown>)
-        if (installRaw === "pending_installer" || installRaw === "installer_in_progress") {
-          try {
-            await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_approved")
-          } catch {
-            /* sendQuotationToMetering may still step through */
-          }
-        }
         ok = await sendQuotationToMetering(quotation.id)
 
         if (!ok) {
@@ -6732,26 +6722,16 @@ export default function AdminPanelPage() {
               /cannot send to metering/i.test(message) || /pending_installer/i.test(message)
 
             if (blockedFromPending) {
-              try {
-                console.warn(
-                  "[Send to Metering] blocked from pending_installer — stepping through installer_approved → pending_metering",
-                  { quotationId: quotation.id, message },
-                )
-                await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_approved")
-                await api.admin.quotations.updateOperationalStatus(quotation.id, "pending_metering")
-                ok = true
-              } catch (stepError) {
-                console.error("Send to metering (step-through) failed:", stepError)
-                toast({
-                  title: "Send to metering failed",
-                  description:
-                    stepError instanceof ApiError
-                      ? stepError.message
-                      : "Could not update metering status on the server.",
-                  variant: "destructive",
-                })
-                return
-              }
+              console.error("Send to metering failed:", error)
+              toast({
+                title: "Send to metering failed",
+                description:
+                  error instanceof ApiError
+                    ? error.message
+                    : "Could not send to Metering. Installation status is separate — ask backend to set metering_status only.",
+                variant: "destructive",
+              })
+              return
             } else {
               console.error("Send to metering failed:", error)
               toast({
@@ -6899,6 +6879,7 @@ export default function AdminPanelPage() {
       }
 
       clearInstallerReleaseInLocalMap(quotation.id)
+      clearInstallationForcedPending(quotation.id)
       setInstallerQueueApprovedIds((prev) => {
         const next = new Set(prev)
         next.delete(quotation.id)
@@ -6940,6 +6921,7 @@ export default function AdminPanelPage() {
       }) as Quotation
 
     const applyLocalRevert = () => {
+      markInstallationForcedPending(id)
       setInstallerQueueApprovedIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
@@ -6953,19 +6935,9 @@ export default function AdminPanelPage() {
       if (useApi) {
         try {
           await api.admin.quotations.revertInstallationToPending(id)
-        } catch (error) {
-          try {
-            await api.admin.quotations.updateOperationalStatus(id, "pending_installer")
-          } catch {
-            toast({
-              title: "Server did not accept revert",
-              description:
-                error instanceof ApiError
-                  ? error.message
-                  : "Moved to Pending Installation on this screen. Ask backend to allow installer_approved → pending_installer.",
-              variant: "destructive",
-            })
-          }
+        } catch {
+          // Installation revert is independent of metering_status. Keep the row
+          // on Pending Installation even if the server still has pending_metering.
         }
       }
       applyLocalRevert()
@@ -6985,6 +6957,99 @@ export default function AdminPanelPage() {
       }
     } finally {
       setInstallRevertSaving(false)
+    }
+  }
+
+  const uploadAdminInstallFieldNow = async (quotationId: string, fieldKey: string, files: File[]) => {
+    if (!files.length) {
+      setAdminInstallMediaByField((prev) => ({ ...prev, [fieldKey]: [] }))
+      return
+    }
+    const optimistic: AdminInstallMedia[] = files.map((file) => ({
+      name: file.name,
+      url: URL.createObjectURL(file),
+      localFile: file,
+    }))
+    setAdminInstallMediaByField((prev) => ({ ...prev, [fieldKey]: optimistic }))
+    if (!useApi) return
+    setAdminInstallUploadingKey(fieldKey)
+    try {
+      const existing = retainedInstallationUrlsByField(adminInstallMediaByField, fieldKey)
+      const uploaded = await uploadInstallationPhotosNow({
+        quotationId,
+        fieldKey,
+        files,
+        caller: "admin",
+        existingUrlsByField: existing,
+      })
+      setAdminInstallMediaByField((prev) => ({ ...prev, [fieldKey]: uploaded }))
+      const urls = uploaded.map((item) => item.url)
+      setQuotations((prev) =>
+        prev.map((row) =>
+          row.id === quotationId
+            ? (mergeSiteCompletionPublicUrlsOntoQuotation(
+                row as unknown as Record<string, unknown>,
+                urls,
+                fieldKey,
+              ) as unknown as Quotation)
+            : row,
+        ),
+      )
+      setAdminInstallQuotation((prev) =>
+        prev && prev.id === quotationId
+          ? (mergeSiteCompletionPublicUrlsOntoQuotation(
+              prev as unknown as Record<string, unknown>,
+              urls,
+              fieldKey,
+            ) as unknown as Quotation)
+          : prev,
+      )
+    } catch (error) {
+      toast({
+        title: "Image upload failed",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Could not save this photo to storage. It will retry when you submit.",
+        variant: "destructive",
+      })
+    } finally {
+      setAdminInstallUploadingKey(null)
+    }
+  }
+
+  const uploadAdminInstallPiNow = async (quotationId: string, files: File[]) => {
+    if (!files.length) return
+    const optimistic: AdminInstallMedia[] = files.map((file) => ({
+      name: file.name,
+      url: URL.createObjectURL(file),
+      localFile: file,
+    }))
+    setAdminInstallPiMedia((prev) => [...prev, ...optimistic])
+    if (!useApi) return
+    setAdminInstallUploadingKey("piUpload")
+    try {
+      const uploaded = await uploadInstallationPhotosNow({
+        quotationId,
+        fieldKey: "piUpload",
+        files,
+        caller: "admin",
+      })
+      setAdminInstallPiMedia((prev) => {
+        const kept = prev.filter((item) => !optimistic.some((opt) => opt.localFile && item.localFile === opt.localFile))
+        return [...kept, ...uploaded]
+      })
+    } catch (error) {
+      toast({
+        title: "PI upload failed",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Could not save this PI to storage. It will retry when you submit.",
+        variant: "destructive",
+      })
+    } finally {
+      setAdminInstallUploadingKey(null)
     }
   }
 
@@ -7063,18 +7128,23 @@ export default function AdminPanelPage() {
   const submitAdminInstallationUpload = async (mode: "approved" | "partial" = "approved") => {
     if (!adminInstallQuotation) return
     const isPartial = mode === "partial"
-    if (!isPartial) {
-    const requiredFields = ADMIN_INSTALLATION_IMAGE_FIELDS.filter((f) => isAdminImageFieldRequired(f))
-    const missingFields = requiredFields.filter(
-      (field) => !(adminInstallMediaByField[field.key] && adminInstallMediaByField[field.key]!.length > 0),
-    )
-    if (missingFields.length > 0) {
+    if (adminInstallUploadingKey) {
       toast({
-        title: "Images required",
-        description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+        title: "Upload in progress",
+        description: "Wait for the current photo to finish saving to storage before submitting.",
         variant: "destructive",
       })
       return
+    }
+    if (!isPartial) {
+      const hasAnyImage = Object.values(adminInstallMediaByField).some((slots) => (slots?.length ?? 0) > 0)
+      if (!hasAnyImage) {
+        toast({
+          title: "Image required",
+          description: "Upload at least one installation photo to mark as Approved.",
+          variant: "destructive",
+        })
+        return
       }
     } else {
       const hasAnyImage =
@@ -7316,6 +7386,7 @@ export default function AdminPanelPage() {
           }),
         )
         if (!isPartial) {
+          clearInstallationForcedPending(uploadedId)
           setInstallerQueueApprovedIds((prev) => {
             const next = new Set(prev)
             next.add(uploadedId)
@@ -7349,8 +7420,8 @@ export default function AdminPanelPage() {
       }
 
       if (stageOk) {
-        setOperationalTab(isPartial ? "installation" : "metering")
-        setOperationalProgressTab(isPartial ? "partial" : "wcc")
+        setOperationalTab("installation")
+        setOperationalProgressTab(isPartial ? "partial" : "done")
         setAdminInstallExpandedId(null)
         setAdminInstallQuotation(null)
         setAdminInstallMediaByField({})
@@ -7359,7 +7430,7 @@ export default function AdminPanelPage() {
           title: "Saved",
           description: isPartial
             ? "Partial upload saved. Showing Partial Approved — this quotation is not in Approved Installation."
-            : "Installation approved — moved to Metering → WCC Pending. Fill Discom name, remarks, and assigned person.",
+            : "Installation approved. Metering is separate — use Quotations → Send to Metering when that team should start.",
         })
       } else {
         toast({
@@ -10947,30 +11018,16 @@ export default function AdminPanelPage() {
                                                 >
                                               }
                                       onFilesChange={(fieldKey, files) =>
-                                        setAdminInstallMediaByField((prev) => ({
-                                          ...prev,
-                                          [fieldKey]: files.map((f) => ({
-                                            name: f.name,
-                                            url: URL.createObjectURL(f),
-                                            localFile: f,
-                                          })),
-                                        }))
+                                        void uploadAdminInstallFieldNow(quotation.id, fieldKey, files)
                                       }
                                               piFiles={adminInstallPiMedia}
                                               onPiFilesChange={(files) => {
-                                                if (!files.length) return
-                                                setAdminInstallPiMedia((prev) => [
-                                                  ...prev,
-                                                  ...files.map((f) => ({
-                                                    name: f.name,
-                                                    url: URL.createObjectURL(f),
-                                                    localFile: f,
-                                                  })),
-                                                ])
+                                                void uploadAdminInstallPiNow(quotation.id, files)
                                               }}
                                               onRemovePiFile={(index) =>
                                                 setAdminInstallPiMedia((prev) => prev.filter((_, i) => i !== index))
                                       }
+                                      uploadingKey={adminInstallUploadingKey}
                                       extraExpenses={adminInstallExtraExpenses}
                                       onAddExpense={() =>
                                         setAdminInstallExtraExpenses((prev) => [
@@ -16064,30 +16121,16 @@ export default function AdminPanelPage() {
                         adminInstallMediaByField as Record<string, InstallationUploadedFile[] | undefined>
                       }
                       onFilesChange={(fieldKey, files) =>
-                        setAdminInstallMediaByField((prev) => ({
-                          ...prev,
-                          [fieldKey]: files.map((f) => ({
-                            name: f.name,
-                            url: URL.createObjectURL(f),
-                            localFile: f,
-                          })),
-                        }))
+                        void uploadAdminInstallFieldNow(quotation.id, fieldKey, files)
                       }
                       piFiles={adminInstallPiMedia}
                       onPiFilesChange={(files) => {
-                        if (!files.length) return
-                        setAdminInstallPiMedia((prev) => [
-                          ...prev,
-                          ...files.map((f) => ({
-                            name: f.name,
-                            url: URL.createObjectURL(f),
-                            localFile: f,
-                          })),
-                        ])
+                        void uploadAdminInstallPiNow(quotation.id, files)
                       }}
                       onRemovePiFile={(index) =>
                         setAdminInstallPiMedia((prev) => prev.filter((_, i) => i !== index))
                       }
+                      uploadingKey={adminInstallUploadingKey}
                       extraExpenses={[]}
                       onAddExpense={() => {}}
                       onExpenseChange={() => {}}

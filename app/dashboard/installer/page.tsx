@@ -39,8 +39,10 @@ import {
   gatherInstallationPublicImageUrls,
   INSTALLATION_APPROVED_MEDIA_STATUSES,
   isInstallationUploadCompleteWithMedia,
+  mergeSiteCompletionPublicUrlsOntoQuotation,
 } from "@/lib/installation-public-images"
 import { loadOperationalInstallationRows } from "@/lib/load-operational-installation-rows"
+import { uploadInstallationPhotosNow, retainedInstallationUrlsByField } from "@/lib/upload-installation-photo"
 import {
   addCalendarDaysFromDateString,
   flattenWrappedQuotationRow,
@@ -48,6 +50,10 @@ import {
   getInstallationWorkflowStatus,
   mergeInstallationMediaSources,
   mergeInstallerReleaseOntoQuotation,
+  markInstallationForcedPending,
+  clearInstallationForcedPending,
+  isInstallationForcedPending,
+  clearInstallerReleaseInLocalMap,
   readInstallerReleaseMap,
   shouldShowInAdminInstallationTab,
   isInstallationPartialApproved,
@@ -77,7 +83,6 @@ import {
   INSTALLATION_IMAGE_FIELDS,
   type InstallationImageFieldKey,
   isInstallationImageFieldMultiple,
-  isInstallationImageFieldRequired,
 } from "@/lib/installation-image-fields"
 
 type InstallerQuotation = {
@@ -367,7 +372,7 @@ export default function InstallerDashboardPage() {
                 : undefined,
             getQuotationById: (id) => api.quotations.getById(id, { suppressErrorLog: true }),
           })
-          setInstallerQueueApprovedIds(approvedIds)
+          setInstallerQueueApprovedIds(new Set([...approvedIds].filter((id) => !isInstallationForcedPending(id))))
           setQuotations(rows.map((row) => installerQuotationFromApiRecord(row)) as InstallerQuotation[])
         } else {
           let localQuotations: InstallerQuotation[] = []
@@ -487,11 +492,12 @@ export default function InstallerDashboardPage() {
     })
 
   const getInstallerStatus = (q: InstallerQuotation): "pending" | "partial" | "inprogress" | "approved" => {
+    const backendStatus = getInstallationWorkflowStatus(q as Record<string, unknown>)
+    if (isInstallationForcedPending(q.id) || backendStatus === "pending_installer") return "pending"
     if (isInstallationPartialApproved(q as Record<string, unknown>)) return "partial"
     if (isInstallationUploadComplete(q)) return "approved"
     const progress = getInstallationAdminTabProgress(q as Record<string, unknown>, false)
     if (progress === "partial") return "partial"
-    const backendStatus = getInstallationWorkflowStatus(q as Record<string, unknown>)
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
       return "inprogress"
     }
@@ -911,6 +917,8 @@ export default function InstallerDashboardPage() {
           return
         }
       }
+      clearInstallerReleaseInLocalMap(quotation.id)
+      clearInstallationForcedPending(quotation.id)
       setQuotations((prev) => prev.filter((q) => q.id !== quotation.id))
       toast({ title: "Retrieved", description: "Quotation moved back to Accounts." })
     } catch (error) {
@@ -933,7 +941,8 @@ export default function InstallerDashboardPage() {
         try {
           await api.admin.quotations.revertInstallationToPending(id)
         } catch {
-          await api.admin.quotations.updateOperationalStatus(id, "pending_installer")
+          // Installation is independent of metering — keep local pending even if the
+          // server still stores pending_metering on installation_status.
         }
       }
       setInstallerQueueApprovedIds((prev) => {
@@ -941,6 +950,7 @@ export default function InstallerDashboardPage() {
         next.delete(id)
         return next
       })
+      markInstallationForcedPending(id)
       setQuotations((prev) =>
         prev.map((q) =>
           q.id === id
@@ -988,23 +998,91 @@ export default function InstallerDashboardPage() {
       return
     }
 
-    // Keep files local until Complete/Submit — per-field immediate upload hits Multer
-    // "Unexpected or too many file fields" on backends that only allow installerCompletionImages + piUpload.
+    const optimistic = files.map(toLocalUploadedFile)
     setUploadFilesByQuotation((prev) => ({
       ...prev,
       [quotationId]: {
         ...(prev[quotationId] || {}),
-        [fieldKey]: files.map(toLocalUploadedFile),
+        [fieldKey]: optimistic,
       },
     }))
+    if (!useApi) return
+    setUploadingAssetKey(`${quotationId}:${fieldKey}`)
+    try {
+      const existing = retainedInstallationUrlsByField(uploadFilesByQuotation[quotationId] || {}, fieldKey)
+      const uploaded = await uploadInstallationPhotosNow({
+        quotationId,
+        fieldKey,
+        files,
+        caller: "installer",
+        existingUrlsByField: existing,
+      })
+      setUploadFilesByQuotation((prev) => ({
+        ...prev,
+        [quotationId]: {
+          ...(prev[quotationId] || {}),
+          [fieldKey]: uploaded,
+        },
+      }))
+      const urls = uploaded.map((item) => item.url)
+      setQuotations((prev) =>
+        prev.map((row) =>
+          row.id === quotationId
+            ? (mergeSiteCompletionPublicUrlsOntoQuotation(
+                row as Record<string, unknown>,
+                urls,
+                fieldKey,
+              ) as InstallerQuotation)
+            : row,
+        ),
+      )
+    } catch (error) {
+      toast({
+        title: "Image upload failed",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Could not save this photo to storage. It will retry when you submit.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAssetKey(null)
+    }
   }
 
   const uploadInstallerPiFiles = async (quotationId: string, files: File[]) => {
     if (!files.length) return
+    const optimistic = files.map(toLocalUploadedFile)
     setPiUploadByQuotation((prev) => ({
       ...prev,
-      [quotationId]: [...(prev[quotationId] || []), ...files.map(toLocalUploadedFile)],
+      [quotationId]: [...(prev[quotationId] || []), ...optimistic],
     }))
+    if (!useApi) return
+    setUploadingAssetKey(`${quotationId}:piUpload`)
+    try {
+      const uploaded = await uploadInstallationPhotosNow({
+        quotationId,
+        fieldKey: "piUpload",
+        files,
+        caller: "installer",
+      })
+      setPiUploadByQuotation((prev) => {
+        const current = prev[quotationId] || []
+        const kept = current.filter((item) => !optimistic.some((opt) => opt.localFile && item.localFile === opt.localFile))
+        return { ...prev, [quotationId]: [...kept, ...uploaded] }
+      })
+    } catch (error) {
+      toast({
+        title: "PI upload failed",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Could not save this PI to storage. It will retry when you submit.",
+        variant: "destructive",
+      })
+    } finally {
+      setUploadingAssetKey(null)
+    }
   }
 
   const handleApproveInstallation = async (
@@ -1013,7 +1091,6 @@ export default function InstallerDashboardPage() {
   ) => {
     const isPartial = mode === "partial"
     const filesByField = uploadFilesByQuotation[quotation.id] || {}
-    const requiredFields = INSTALLATION_IMAGE_FIELDS.filter((field) => isInstallationImageFieldRequired(field))
     const uploadedFiles = INSTALLATION_IMAGE_FIELDS.flatMap((field) => filesByField[field.key] || [])
     const notes = uploadNotes[quotation.id] || ""
     const dimensions = dimensionsByQuotation[quotation.id] || { length: "", width: "", height: "" }
@@ -1040,13 +1117,13 @@ export default function InstallerDashboardPage() {
         return
       }
     } else {
-      const missingFields = requiredFields.filter(
-        (field) => !(filesByField[field.key] && filesByField[field.key]!.length > 0),
-      )
-      if (missingFields.length > 0) {
+      const hasAnyImage =
+        uploadedFiles.length > 0 ||
+        INSTALLATION_IMAGE_FIELDS.some((field) => (filesByField[field.key] || []).length > 0)
+      if (!hasAnyImage) {
         toast({
-          title: "Images required",
-          description: `Please upload all required images. Missing: ${missingFields.map((f) => f.label).join(", ")}.`,
+          title: "Image required",
+          description: "Upload at least one installation photo to mark as Approved.",
           variant: "destructive",
         })
         return
@@ -1286,6 +1363,7 @@ export default function InstallerDashboardPage() {
           }),
         )
         if (!isPartial) {
+          clearInstallationForcedPending(quotation.id)
           setInstallerQueueApprovedIds((prev) => new Set([...prev, quotation.id]))
         }
         setWorkflowMap((prev) => ({

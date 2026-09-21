@@ -2,7 +2,6 @@ import type { Quotation } from "@/lib/quotation-context"
 import { formatPersonName } from "@/lib/name-display"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
 import { getQuotationSystemKwFromProducts } from "@/lib/quotation-system-kw"
-import { gatherInstallationPublicImageUrls } from "@/lib/installation-public-images"
 import {
   isInstallationApprovedForAdminTab,
   isInstallationPartialApproved,
@@ -131,8 +130,7 @@ export function isQuotationEligibleForProductNeededInstallation(
   if (!shouldShowInAdminInstallationTab(record)) return false
   if (isInstallationPartialApproved(record)) return false
 
-  const imageUrlCount = gatherInstallationPublicImageUrls(quotation as Record<string, unknown>).length
-  if (isInstallationApprovedForAdminTab(record, { imageUrlCount })) return false
+  if (isInstallationApprovedForAdminTab(record)) return false
 
   return true
 }

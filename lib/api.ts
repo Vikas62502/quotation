@@ -606,11 +606,17 @@ function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): st
   if (!root || typeof root !== "object") return null
 
   const directKeys = [
+    "publicUrl",
+    "public_url",
+    "signedUrl",
+    "signed_url",
     "url",
     "fileUrl",
     "file_url",
     "location",
+    "Location",
     "path",
+    "key",
     ...preferredKeys,
   ]
   for (const key of directKeys) {
@@ -618,10 +624,10 @@ function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): st
     if (typeof value === "string" && value.trim()) return value.trim()
   }
 
-  const nestedDocs = [root.documents, root.document, root.file]
+  const nestedDocs = [root.documents, root.document, root.file, root.media, root.asset]
   for (const nested of nestedDocs) {
     if (!nested || typeof nested !== "object") continue
-    for (const key of preferredKeys) {
+    for (const key of [...preferredKeys, "publicUrl", "public_url", "signedUrl", "url", "fileUrl"]) {
       const value = nested[key]
       if (typeof value === "string" && value.trim()) return value.trim()
       const urlValue = nested[`${key}Url`]
@@ -706,9 +712,13 @@ async function patchMeteringWorkflowAction(
 export async function sendQuotationToMetering(quotationId: string): Promise<boolean> {
   // Dedicated admin/installer handoff endpoints (preferred).
   const handoffBody = {
-    ...operationalWorkflowBody("pending_metering"),
+    meteringStatus: "pending_metering",
+    metering_status: "pending_metering",
     target: "pending_metering",
     handoff: "metering",
+    force: true,
+    adminOverride: true,
+    source: "admin-quotations-send-to-metering",
   }
   const handoffEndpoints = [
     `/admin/quotations/${quotationId}/send-to-metering`,
@@ -729,11 +739,7 @@ export async function sendQuotationToMetering(quotationId: string): Promise<bool
     return true
   }
 
-  // Backends that reject pending_installer → pending_metering: step through.
-  const stepped =
-    (await patchOperationalWorkflowStatus(quotationId, "installer_approved")) &&
-    (await patchOperationalWorkflowStatus(quotationId, "pending_metering"))
-  return stepped
+  return false
 }
 
 /**
@@ -2922,33 +2928,111 @@ export const api = {
       quotationId: string,
       field: string,
       file: File,
+      options?: { caller?: "installer" | "admin"; existingUrlsByField?: Record<string, string[]> },
     ): Promise<string> => {
-      const formData = new FormData()
-      formData.append("field", field)
-      formData.append("file", file)
+      const existingJson =
+        options?.existingUrlsByField && Object.keys(options.existingUrlsByField).length > 0
+          ? JSON.stringify(options.existingUrlsByField)
+          : ""
 
-      const endpoints = [
+      const withCommonFlags = (body: FormData) => {
+        body.append("force", "true")
+        body.append("adminOverride", "true")
+        body.append("allowFromPendingInstaller", "true")
+        body.append("saveMediaOnly", "true")
+        body.append("persistImagesOnly", "true")
+        body.append("source", options?.caller === "admin" ? "admin" : "installer")
+        if (existingJson) body.append("existingInstallationImageUrlsJson", existingJson)
+        return body
+      }
+
+      const fieldFile = withCommonFlags(new FormData())
+      fieldFile.append("field", field)
+      fieldFile.append("file", file)
+
+      const aggregate = withCommonFlags(new FormData())
+      if (field === "piUpload") {
+        aggregate.append("piUpload", file)
+      } else {
+        aggregate.append("installerCompletionImages", file)
+        aggregate.append("installerCompletionImageFieldOrderJson", JSON.stringify([field]))
+      }
+
+      const perField = withCommonFlags(new FormData())
+      perField.append(field, file)
+
+      const shapes: FormData[] = [fieldFile, aggregate, perField]
+      const uploadEndpoints = [
+        ...(options?.caller === "admin"
+          ? [
+              `/admin/quotations/${quotationId}/installer-documents/upload`,
+              `/admin/quotations/${quotationId}/documents/upload`,
+              `/admin/installer/quotations/${quotationId}/documents/upload`,
+            ]
+          : []),
         `/installer/quotations/${quotationId}/documents/upload`,
         `/installer/quotations/${quotationId}/upload`,
         `/quotations/${quotationId}/installer-documents/upload`,
+        `/quotations/${quotationId}/documents/upload`,
+      ]
+      const documentEndpoints = [
+        ...(options?.caller === "admin"
+          ? [
+              `/admin/quotations/${quotationId}/installer-documents`,
+              `/admin/installer/quotations/${quotationId}/documents`,
+            ]
+          : []),
+        `/installer/quotations/${quotationId}/documents`,
       ]
 
       let lastError: unknown = null
-      for (const endpoint of endpoints) {
-        try {
-          const payload = await multipartRequest(endpoint, "POST", cloneFormData(formData))
-          const url = parseUploadUrlCandidate(payload, [field, `${field}Url`, `${field}_url`])
-          if (url) return url
-          throw new ApiError(
-            "Upload succeeded but no file URL was returned by the installer upload endpoint.",
-            "MISSING_UPLOAD_URL",
-          )
-        } catch (error) {
-          lastError = error
-          const retryable =
-            error instanceof ApiError &&
-            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
-          if (!retryable) throw error
+      const preferredKeys = [field, `${field}Url`, `${field}_url`, `${field}PublicUrl`]
+      const tryParse = (payload: unknown) => parseUploadUrlCandidate(payload, preferredKeys)
+
+      for (const shape of shapes) {
+        for (const endpoint of uploadEndpoints) {
+          try {
+            const payload = await multipartRequest(endpoint, "POST", cloneFormData(shape))
+            const url = tryParse(payload)
+            if (url) return url
+            lastError = new ApiError(
+              "Upload succeeded but no file URL was returned by the installer upload endpoint.",
+              "MISSING_UPLOAD_URL",
+            )
+          } catch (error) {
+            lastError = error
+            const retryable =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                error.code === "HTTP_403" ||
+                error.code === "AUTH_004" ||
+                isMulterUnexpectedFileError(error))
+            if (!retryable) throw error
+          }
+        }
+        for (const endpoint of documentEndpoints) {
+          try {
+            const payload = await multipartRequest(endpoint, "POST", cloneFormData(shape))
+            const url = tryParse(payload)
+            if (url) return url
+            lastError = new ApiError(
+              "Upload succeeded but no file URL was returned by the installer upload endpoint.",
+              "MISSING_UPLOAD_URL",
+            )
+          } catch (error) {
+            lastError = error
+            const retryable =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                error.code === "HTTP_403" ||
+                error.code === "AUTH_004" ||
+                isMulterUnexpectedFileError(error))
+            if (!retryable) throw error
+          }
         }
       }
 
@@ -3993,6 +4077,9 @@ export const api = {
           force: true,
           adminOverride: true,
           allowRevert: true,
+          allowFromMetering: true,
+          independentInstallation: true,
+          skipMeteringGuard: true,
           source: "admin-install-revert",
           installerApprovedAt: null,
           installer_approved_at: null,
@@ -4000,16 +4087,20 @@ export const api = {
           installation_partial_approved: false,
         }
         const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
+          { endpoint: `/admin/quotations/${quotationId}/revert-installation`, method: "POST" },
           { endpoint: `/admin/quotations/${quotationId}/installation-status`, method: "PATCH" },
           { endpoint: `/admin/quotations/${quotationId}/workflow-status`, method: "PATCH" },
           { endpoint: `/installer/quotations/${quotationId}/installation-status`, method: "PATCH" },
-          { endpoint: `/admin/quotations/${quotationId}/revert-installation`, method: "POST" },
           { endpoint: `/quotations/${quotationId}`, method: "PATCH" },
         ]
         let lastError: unknown = null
         for (const attempt of endpoints) {
           try {
-            return await apiRequest(attempt.endpoint, { method: attempt.method, body })
+            return await apiRequest(attempt.endpoint, {
+              method: attempt.method,
+              body,
+              suppressErrorLog: true,
+            })
           } catch (error) {
             lastError = error
             const isRetryable =
@@ -4021,7 +4112,8 @@ export const api = {
                 error.code === "AUTH_004" ||
                 /not allowed/i.test(error.message) ||
                 /cannot/i.test(error.message) ||
-                /invalid status/i.test(error.message))
+                /invalid status/i.test(error.message) ||
+                /pending_metering/i.test(error.message))
             if (!isRetryable) throw error
           }
         }

@@ -214,6 +214,44 @@ export function gatherInstallationPublicImageUrls(q: Record<string, unknown>, ma
   return out
 }
 
+export function mergeSiteCompletionPublicUrlsOntoQuotation(
+  q: Record<string, unknown>,
+  urls: string[],
+  fieldKey?: string,
+): Record<string, unknown> {
+  const cleaned = urls.map((u) => (toPublicOpenHref(u) || String(u || "").trim())).filter(Boolean)
+  if (!cleaned.length) return q
+  const existingUrls = new Set(gatherInstallationPublicImageUrls(q, 48).map((u) => u.split("?")[0]))
+  const extras = cleaned.filter((u) => !existingUrls.has(u.split("?")[0]))
+  const existingBag = Array.isArray(q.siteCompletionImages)
+    ? q.siteCompletionImages
+    : Array.isArray(q.site_completion_images)
+      ? q.site_completion_images
+      : []
+  const bag = extras.length
+    ? [
+        ...existingBag,
+        ...extras.map((url) => ({
+          publicUrl: url,
+          url,
+          field: fieldKey || "site_completion_image",
+        })),
+      ]
+    : existingBag
+  const next: Record<string, unknown> = {
+    ...q,
+    siteCompletionImages: bag,
+    site_completion_images: bag,
+  }
+  if (fieldKey && cleaned[0]) {
+    const current = next[fieldKey]
+    if (current == null || current === "") next[fieldKey] = cleaned
+    else if (Array.isArray(current)) next[fieldKey] = [...current, ...cleaned]
+    else next[fieldKey] = [current, ...cleaned]
+  }
+  return next
+}
+
 function last10Digits(value: unknown): string {
   const digits = String(value || "").replace(/\D/g, "")
   if (digits.length >= 10) return digits.slice(-10)
@@ -277,13 +315,9 @@ export function resolveInstallationPhotoUrlsForQuotation(
 
 export function isInstallationUploadCompleteWithMedia(
   q: OperationalQuotationRecord,
-  opts?: { approvedQueueIds?: Set<string> },
+  _opts?: { approvedQueueIds?: Set<string> },
 ): boolean {
-  const id = String(q.id || "").trim()
-  return isInstallationApprovedForAdminTab(q, {
-    imageUrlCount: gatherInstallationPublicImageUrls(q as Record<string, unknown>).length,
-    inInstallerApprovedQueue: id ? opts?.approvedQueueIds?.has(id) : false,
-  })
+  return isInstallationApprovedForAdminTab(q)
 }
 
 export const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([

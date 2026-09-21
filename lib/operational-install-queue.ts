@@ -1,6 +1,9 @@
 /** Shared with installer + metering dashboards: account-management "send to installation" gate. */
 export const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 
+/** Admin/Installer Revert → Pending. Survives refresh when GET still looks approved because photos remain. */
+export const INSTALLATION_FORCED_PENDING_MAP_KEY = "installationForcedPendingMap"
+
 /** Admin Installation tab: optional override for planned install date (YYYY-MM-DD), keyed by quotation id. */
 export const ADMIN_INSTALLATION_SCHEDULED_MAP_KEY = "installationScheduledDateMap"
 
@@ -114,8 +117,6 @@ export function mergeAdminMeteringHandoffOntoQuotation(
   if (isAlreadyInMeteringPipeline(q)) return q
   return {
     ...q,
-    installationStatus: "pending_metering",
-    installation_status: "pending_metering",
     meteringStatus: "pending_metering",
     metering_status: "pending_metering",
   }
@@ -158,13 +159,89 @@ export function flattenWrappedQuotationRow(raw: unknown): OperationalQuotationRe
   return out
 }
 
+export function readInstallationForcedPendingMap(): Record<string, true> {
+  if (typeof window === "undefined") return {}
+  try {
+    const raw = JSON.parse(localStorage.getItem(INSTALLATION_FORCED_PENDING_MAP_KEY) || "{}")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+    const out: Record<string, true> = {}
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (id && value) out[id] = true
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export function isInstallationForcedPending(quotationId: string | undefined | null): boolean {
+  const id = String(quotationId || "").trim()
+  if (!id) return false
+  return Boolean(readInstallationForcedPendingMap()[id])
+}
+
+export function markInstallationForcedPending(quotationId: string) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readInstallationForcedPendingMap()
+    map[quotationId] = true
+    localStorage.setItem(INSTALLATION_FORCED_PENDING_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+export function clearInstallationForcedPending(quotationId: string) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readInstallationForcedPendingMap()
+    delete map[quotationId]
+    localStorage.setItem(INSTALLATION_FORCED_PENDING_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+export function mergeInstallationForcedPendingOntoQuotation<T extends OperationalQuotationRecord>(q: T): T {
+  const id = String(q.id || "").trim()
+  if (!id || !isInstallationForcedPending(id)) return q
+  return {
+    ...q,
+    installationStatus: "pending_installer",
+    installation_status: "pending_installer",
+    installerApprovedAt: undefined,
+    installer_approved_at: undefined,
+    installationPartialApproved: false,
+    installation_partial_approved: false,
+  }
+}
+
+/** Metering-only stages — must not drive Installation Pending / Approved tabs. */
+export const METERING_ONLY_WORKFLOW_STATUSES = new Set([
+  "pending_metering",
+  "metering_in_progress",
+  "metering_approved",
+  "meter_installation_pending",
+  "meter_install_pending",
+  "meter_install",
+  "mco",
+])
+
 export function getInstallationWorkflowStatus(q: OperationalQuotationRecord): string {
-  return String(q.installationStatus || q.installation_status || "").toLowerCase()
+  const id = String(q.id || "").trim()
+  if (id && isInstallationForcedPending(id)) return "pending_installer"
+  const raw = String(q.installationStatus || q.installation_status || "").toLowerCase()
+  if (METERING_ONLY_WORKFLOW_STATUSES.has(raw)) {
+    if (q.installerApprovedAt || q.installer_approved_at) return "installer_approved"
+    if (q.installationPartialApproved || q.installation_partial_approved) return "installer_partial_approved"
+    return "pending_installer"
+  }
+  return raw
 }
 
 /** Metering-specific workflow fields only (do not treat `installer_approved` as metering approved). */
 export function getMeteringWorkflowRaw(q: OperationalQuotationRecord): string {
-  return String(
+  const metering = String(
     q.meteringStage ||
       q.metering_stage ||
       q.meteringStatus ||
@@ -173,6 +250,10 @@ export function getMeteringWorkflowRaw(q: OperationalQuotationRecord): string {
       q.mco_status ||
       "",
   ).toLowerCase()
+  if (metering) return metering
+  const installStored = String(q.installationStatus || q.installation_status || "").toLowerCase()
+  if (METERING_ONLY_WORKFLOW_STATUSES.has(installStored)) return installStored
+  return ""
 }
 
 /** Installation finished — ready for admin “Send to Metering”. */
@@ -199,14 +280,18 @@ export function isInstallationPartialApproved(q: OperationalQuotationRecord): bo
 /** Quotation is already in (or past) the metering queue. */
 export function isAlreadyInMeteringPipeline(q: OperationalQuotationRecord): boolean {
   const metering = getMeteringWorkflowRaw(q)
-  const install = getInstallationWorkflowStatus(q)
   const meteringStages = new Set([
     "pending_metering",
     "metering_in_progress",
     "metering_approved",
     "mco",
   ])
-  return meteringStages.has(metering) || meteringStages.has(install)
+  if (meteringStages.has(metering) || METERING_ONLY_WORKFLOW_STATUSES.has(metering)) return true
+  const id = String(q.id || "").trim()
+  if (id && isAdminMeteringHandoffLocal(id)) return true
+  // Legacy rows stored metering on installation_status.
+  const installRaw = String(q.installationStatus || q.installation_status || "").toLowerCase()
+  return METERING_ONLY_WORKFLOW_STATUSES.has(installRaw)
 }
 
 /** Installation approved — waiting for admin to manually send to metering. */
@@ -562,13 +647,10 @@ export function isMeteringApprovedForTransition(q: OperationalQuotationRecord): 
 
 export function getMeteringWorkflowStage(q: OperationalQuotationRecord): MeteringWorkflowTab | null {
   const meteringRaw = getMeteringWorkflowRaw(q)
-  const installRaw = getInstallationWorkflowStatus(q)
+  const installStored = String(q.installationStatus || q.installation_status || "").toLowerCase()
+  const id = String(q.id || "").trim()
 
-  if (installRaw === "pending_baldev" || installRaw === "baldev_approved" || installRaw === "completed") {
-    return null
-  }
-
-  if (meteringRaw === "mco" || meteringRaw.includes("mco") || installRaw === "mco" || q.mcoAt || q.mco_at) {
+  if (meteringRaw === "mco" || meteringRaw.includes("mco") || installStored === "mco" || q.mcoAt || q.mco_at) {
     return "mco"
   }
 
@@ -576,8 +658,8 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
     meteringRaw === "meter_installation_pending" ||
     meteringRaw === "meter_install_pending" ||
     meteringRaw.includes("meter_install") ||
-    installRaw === "meter_installation_pending" ||
-    installRaw === "meter_install_pending"
+    installStored === "meter_installation_pending" ||
+    installStored === "meter_install_pending"
   ) {
     return "meter_install"
   }
@@ -589,8 +671,9 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
   const inMeteringProcessing =
     meteringRaw === "pending_metering" ||
     meteringRaw === "metering_in_progress" ||
-    installRaw === "pending_metering" ||
-    installRaw === "metering_in_progress"
+    installStored === "pending_metering" ||
+    installStored === "metering_in_progress" ||
+    (id && isAdminMeteringHandoffLocal(id))
 
   if (inMeteringProcessing) {
     return "processing"
@@ -599,37 +682,37 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
   return null
 }
 
-/** Workflow stages that mean installation photos/work were finished (not metering alone). */
+/** Workflow stages after Complete & Mark as Approved (not metering, not payment). */
 export const INSTALLATION_UPLOAD_COMPLETE_STATUSES = new Set([
   "installer_approved",
   "pending_baldev",
   "baldev_approved",
-  "completed",
 ])
 
 export function isInstallationUploadCompleteByStatus(q: OperationalQuotationRecord): boolean {
   return INSTALLATION_UPLOAD_COMPLETE_STATUSES.has(getInstallationWorkflowStatus(q))
 }
 
-/** Approved Installation tab — upload done or installer queue approved bucket. */
+/**
+ * Approved Installation tab — only after Complete / Mark as Approved from Pending Installation.
+ * Payment installments, leftover photos, and the installer “approved” queue are not enough.
+ */
 export function isInstallationApprovedForAdminTab(
   q: OperationalQuotationRecord,
-  opts?: { imageUrlCount?: number; inInstallerApprovedQueue?: boolean },
+  _opts?: { imageUrlCount?: number; inInstallerApprovedQueue?: boolean },
 ): boolean {
+  if (isInstallationForcedPending(String(q.id || ""))) return false
   const install = getInstallationWorkflowStatus(q)
-  // Admin Revert → pending must win over leftover photos / approved-queue ids.
-  if (install === "pending_installer" || install === "installer_in_progress" || install === "in_progress") {
+  if (
+    !install ||
+    install === "pending_installer" ||
+    install === "installer_in_progress" ||
+    install === "in_progress"
+  ) {
     return false
   }
-  // Partial uploads stay in Partial Approved — never the Approved Installation tab.
   if (isInstallationPartialApproved(q)) return false
-  // Real installer completion (do not treat pending_metering alone as installed —
-  // Account → Send to Installer with no action must stay in Pending Installation).
-  if (isInstallationUploadCompleteByStatus(q)) return true
-  if (isInstallationCompleteForMetering(q)) return true
-  if (Boolean(q.installerApprovedAt || q.installer_approved_at)) return true
-  if ((opts?.imageUrlCount ?? 0) > 0) return true
-  if (opts?.inInstallerApprovedQueue) return true
+  if (INSTALLATION_UPLOAD_COMPLETE_STATUSES.has(install)) return true
   return false
 }
 
@@ -716,12 +799,15 @@ export function mergeInstallerReleaseOntoQuotation<T extends OperationalQuotatio
     (String(merged.id || "").trim() ? map[String(merged.id)]?.installationReadyForInstaller : undefined) ??
     (sent ? true : undefined)
 
-  if (!ready && !releasedAt) return q
-  return {
-    ...q,
-    ...(ready ? { installationReadyForInstaller: true, installation_ready_for_installer: true } : {}),
-    ...(releasedAt ? { installationReleasedAt: releasedAt, installation_released_at: releasedAt } : {}),
-  }
+  const withRelease =
+    !ready && !releasedAt
+      ? q
+      : ({
+          ...q,
+          ...(ready ? { installationReadyForInstaller: true, installation_ready_for_installer: true } : {}),
+          ...(releasedAt ? { installationReleasedAt: releasedAt, installation_released_at: releasedAt } : {}),
+        } as T)
+  return mergeInstallationForcedPendingOntoQuotation(withRelease)
 }
 
 /** True when quotation should appear on installer operational queues. */
@@ -793,8 +879,9 @@ export function stampInstallerReleaseFromMap(
   const map = releaseMap ?? readInstallerReleaseMap()
   const id = String(q.id || "").trim()
   if (!id) return q
-  if (!map[id] && !isQuotationSentToInstaller(q, map)) return q
-  return mergeInstallerReleaseOntoQuotation(q, map)
+  const withRelease =
+    !map[id] && !isQuotationSentToInstaller(q, map) ? q : mergeInstallerReleaseOntoQuotation(q, map)
+  return mergeInstallationForcedPendingOntoQuotation(withRelease)
 }
 
 export function extractQuotationListFromApiResponse(response: any): any[] {
