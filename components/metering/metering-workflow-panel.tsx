@@ -13,7 +13,6 @@ import { useToast } from "@/hooks/use-toast"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { formatPersonName } from "@/lib/name-display"
 import { formatQuotationVisitLocation } from "@/lib/format-customer-address"
-import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import {
   extractQuotationListFromApiResponse,
   getInstallationWorkflowStatus,
@@ -21,6 +20,9 @@ import {
   isInstallationPartialApproved,
   isInstallationUploadCompleteByStatus,
   mergeAdminMeteringHandoffOntoQuotation,
+  mergeAdminMeteringProgressOntoQuotation,
+  markAdminMeteringProgress,
+  getAdminMeteringProgress,
   readAdminMeteringHandoffMap,
   readInstallerReleaseMap,
   shouldShowInAdminInstallationTab,
@@ -378,9 +380,11 @@ export function MeteringWorkflowPanel({
           const normalized = dedupeByQuotationId(
             [...adminRows, ...queueRows, ...broadQueueRows].map((raw) => {
               const flat = quotationFromApiRecord(raw)
-              return mergeAdminMeteringHandoffOntoQuotation(
-                flat as Record<string, unknown>,
-                handoffMap,
+              return mergeAdminMeteringProgressOntoQuotation(
+                mergeAdminMeteringHandoffOntoQuotation(
+                  flat as Record<string, unknown>,
+                  handoffMap,
+                ),
               ) as MeteringQuotation
             }),
           )
@@ -440,6 +444,8 @@ export function MeteringWorkflowPanel({
 
   const isWccPending = (q: MeteringQuotation) => {
     const stage = getMeteringStage(q)
+    if (stage === "meter_install" || stage === "mco") return false
+    if (getAdminMeteringProgress(q.id) === "wcc") return true
     // Post Meter in Discom → WCC (same as Admin)
     if (isWccAfterDiscomFlag(q)) {
       const uploadDone =
@@ -464,6 +470,7 @@ export function MeteringWorkflowPanel({
   }
 
   const applyLocalMeteringStage = (id: string, stage: Exclude<MeteringStage, "wcc" | "bank_process" | "pending_payment">) => {
+    markAdminMeteringProgress(id, stage)
     const now = new Date().toISOString()
     setQuotations((prev) =>
       prev.map((q) => {
@@ -518,12 +525,13 @@ export function MeteringWorkflowPanel({
 
   const moveToWccPending = async (id: string) => {
     if (effectiveReadOnly) return
-    if (!confirmSave("Move this file to WCC Pending and save?")) return
+    if (!confirmSave("Move this file to WCC Pending and save? It will leave Meter in Discom until Retrieve.")) return
     try {
       await api.admin.quotations.setMeteringWccAfterDiscom(id, true)
     } catch {
       // keep local flag even if backend route is missing
     }
+    markAdminMeteringProgress(id, "wcc")
     setQuotations((prev) =>
       prev.map((q) =>
         q.id === id
@@ -614,6 +622,7 @@ export function MeteringWorkflowPanel({
         }
       }
       const saved = response?.data || response || {}
+      markAdminMeteringProgress(id, stage === "approved" ? "approved" : "processing")
       setQuotations((prev) =>
         prev.map((q) =>
           q.id === id
@@ -626,6 +635,14 @@ export function MeteringWorkflowPanel({
                 installation_status:
                   saved.installation_status ||
                   saved.installationStatus ||
+                  (stage === "approved" ? "metering_approved" : "pending_metering"),
+                meteringStatus:
+                  saved.meteringStatus ||
+                  saved.metering_status ||
+                  (stage === "approved" ? "metering_approved" : "pending_metering"),
+                metering_status:
+                  saved.metering_status ||
+                  saved.meteringStatus ||
                   (stage === "approved" ? "metering_approved" : "pending_metering"),
                 meteringApprovedAt:
                   saved.meteringApprovedAt ||
@@ -1061,8 +1078,8 @@ export function MeteringWorkflowPanel({
     [quotations, modulePermissions, permissionCtx],
   )
 
-  /** One row per customer (current quotation) — same as dealer Quotations. */
-  const onlyCurrent = (list: MeteringQuotation[]) => keepCurrentQuotationsOnly(list, visibleQuotations)
+  /** Show every metering-pipeline row, including older quotations for the same customer. */
+  const onlyCurrent = (list: MeteringQuotation[]) => list
 
   const processingList = useMemo(
     () =>
@@ -1079,7 +1096,7 @@ export function MeteringWorkflowPanel({
     () =>
       onlyCurrent(
         filterSearch(
-          visibleQuotations.filter((q) => getMeteringStage(q) === "approved" && !isWccAfterDiscomFlag(q)),
+          visibleQuotations.filter((q) => getMeteringStage(q) === "approved" && !isWccPending(q)),
           searchByTab.approved,
         ).sort((a, b) => {
           const aDate = (a as any).meteringApprovedAt || (a as any).metering_approved_at || getAdminApprovedDate(a)

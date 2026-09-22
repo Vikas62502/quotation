@@ -186,6 +186,7 @@ import {
   getQuotationOpsStageLabel,
   getSendToMeteringMenuState,
   getAdminQuotationsTabSendToMeteringState,
+  isQuotationsTabInMeteringWorkflow,
   getAdminQuotationsTabRetrieveState,
   getRetrieveFromInstallationState,
   getAdminInstallationTabRevertState,
@@ -201,9 +202,13 @@ import {
   shouldShowInAdminInstallationTab,
   mergeInstallerReleaseOntoQuotation,
   mergeAdminMeteringHandoffOntoQuotation,
+  mergeAdminMeteringProgressOntoQuotation,
   readAdminMeteringHandoffMap,
   markAdminMeteringHandoff,
   clearAdminMeteringHandoff,
+  markAdminMeteringProgress,
+  clearAdminMeteringProgress,
+  getAdminMeteringProgress,
   syncAdminMeteringHandoffMapFromRows,
   isInstallationApprovedForAdminTab,
   isInstallationPartialApproved,
@@ -494,8 +499,21 @@ function QuotationApprovedAmountLines(quotation: Quotation | Record<string, unkn
   return { total, paymentType, loan, cash }
 }
 
-function formatOverviewRevenueLakh(amount: number): string {
-  return `₹${(amount / 100000).toFixed(1)}L`
+function formatOverviewRevenueInr(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`
+}
+
+function uniqueQuotationsByCustomer<
+  T extends {
+    id: string
+    createdAt?: string
+    isCurrent?: boolean
+    is_current?: boolean
+    customer?: { mobile?: string } | null
+    mobile?: string
+  },
+>(list: T[]): T[] {
+  return groupQuotationsByCustomerCurrentFirst(list).map((g) => g.current)
 }
 
 function toDateTimeLocalValue(input?: string | null): string {
@@ -1306,11 +1324,10 @@ function getOperationalStageForQuotation(quotation: Quotation): AdminOperational
 function AdminQuotationRowActions({
   quotation,
   sendingToMeteringId,
-  retrievingFromMeteringId,
+  alreadyOnMeteringTab = false,
   meteringStageOverride,
   olderCount = 0,
   onSendToMetering,
-  onRetrieveFromMetering,
   onTimeline,
   onQuotationHistory,
   onDocuments,
@@ -1318,20 +1335,20 @@ function AdminQuotationRowActions({
 }: {
   quotation: Quotation
   sendingToMeteringId: string | null
-  retrievingFromMeteringId: string | null
+  alreadyOnMeteringTab?: boolean
   meteringStageOverride?: "processing" | "approved" | "meter_install" | "mco" | null
   olderCount?: number
   onSendToMetering: (quotation: Quotation) => void
-  onRetrieveFromMetering: (quotation: Quotation) => void
   onTimeline: (quotation: Quotation) => void
   onQuotationHistory?: (quotation: Quotation) => void
   onDocuments: (quotation: Quotation) => void
   onView: (quotation: Quotation) => void
 }) {
-  const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation)
-  const retrieveFromMetering = getAdminQuotationsTabRetrieveState(quotation, meteringStageOverride)
+  const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation, {
+    meteringStageOverride,
+    alreadyOnMeteringTab,
+  })
   const isSending = sendingToMeteringId === quotation.id
-  const isRetrieving = retrievingFromMeteringId === quotation.id
 
   return (
     <div className="flex flex-nowrap items-center justify-end gap-1">
@@ -1370,23 +1387,6 @@ function AdminQuotationRowActions({
         >
           <Gauge className="w-3 h-3 mr-1 shrink-0" />
           {isSending ? "Sending..." : "Send to Metering"}
-        </Button>
-      ) : null}
-      {retrieveFromMetering.visible ? (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className={cn(
-            "h-8 text-[10px] px-2 whitespace-nowrap shrink-0 border-amber-800/40",
-            !retrieveFromMetering.enabled || isRetrieving ? "opacity-60" : "",
-          )}
-          title={retrieveFromMetering.hint || "Retrieve from Metering"}
-          onClick={() => onRetrieveFromMetering(quotation)}
-          disabled={!retrieveFromMetering.enabled || isRetrieving}
-        >
-          <RotateCcw className="w-3 h-3 mr-1 shrink-0" />
-          {isRetrieving ? "Retrieving..." : "Retrieve"}
         </Button>
       ) : null}
     </div>
@@ -2990,6 +2990,8 @@ export default function AdminPanelPage() {
             statusHistory: normalizeStatusHistoryFromApi(q.statusHistory ?? q.status_history ?? q.statusChanges),
             installationStatus: q.installationStatus ?? q.installation_status,
             installation_status: q.installation_status ?? q.installationStatus,
+            meteringStage: q.meteringStage ?? q.metering_stage,
+            metering_stage: q.metering_stage ?? q.meteringStage,
             meteringStatus: q.meteringStatus ?? q.metering_status,
             metering_status: q.metering_status ?? q.meteringStatus,
             mcoStatus: q.mcoStatus ?? q.mco_status,
@@ -3025,9 +3027,11 @@ export default function AdminPanelPage() {
           const mapped = queueExtra
             ? (mergeInstallationMediaSources(mappedBase, queueExtra) as typeof mappedBase)
             : mappedBase
-          return mergeAdminMeteringHandoffOntoQuotation(
-            mergeInstallerReleaseOntoQuotation(mapped, releaseLocal),
-            handoffLocal,
+          return mergeAdminMeteringProgressOntoQuotation(
+            mergeAdminMeteringHandoffOntoQuotation(
+              mergeInstallerReleaseOntoQuotation(mapped, releaseLocal),
+              handoffLocal,
+            ),
           )
         })
 
@@ -3041,7 +3045,9 @@ export default function AdminPanelPage() {
             nextList.map((q: any) => {
               const localRow = localById.get(String(q.id || ""))
               const withRelease = mergeInstallerReleaseOntoQuotation(q, releaseLocal, localRow ?? null)
-              const withHandoff = mergeAdminMeteringHandoffOntoQuotation(withRelease, handoffLocal)
+              const withHandoff = mergeAdminMeteringProgressOntoQuotation(
+                mergeAdminMeteringHandoffOntoQuotation(withRelease, handoffLocal),
+              )
               const withSchedule = {
                 ...withHandoff,
                 installationScheduledAt: withHandoff.installationScheduledAt || scheduledLocal[q.id],
@@ -3735,7 +3741,7 @@ export default function AdminPanelPage() {
 
   const dealerQuotationStatsById = useMemo(() => {
     const map = new Map<string, { count: number; revenue: number }>()
-    for (const q of quotations) {
+    for (const q of uniqueQuotationsByCustomer(quotations)) {
       const id = String(q.dealerId || "").trim()
       if (!id) continue
       const amount = getQuotationDisplayAmount(q)
@@ -4053,15 +4059,17 @@ export default function AdminPanelPage() {
         : activeDealers.filter((d) => d.id === topDealersDealerFilter)
 
     return dealersForStats.map((d) => {
-      const dealerApprovedQuotations = quotations.filter(
-        (q) =>
-          q.dealerId === d.id &&
-          matchesOverviewTopDealersApprovalDate(
-            q,
-            topDealersDateFilter,
-            topDealersCustomFromDate,
-            topDealersCustomToDate,
-          ),
+      const dealerApprovedQuotations = uniqueQuotationsByCustomer(
+        quotations.filter(
+          (q) =>
+            q.dealerId === d.id &&
+            matchesOverviewTopDealersApprovalDate(
+              q,
+              topDealersDateFilter,
+              topDealersCustomFromDate,
+              topDealersCustomToDate,
+            ),
+        ),
       )
       const dealerRevenue = dealerApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
       const totalKw = dealerApprovedQuotations.reduce(
@@ -4092,16 +4100,18 @@ export default function AdminPanelPage() {
 
   const overviewPeriodApprovedQuotations = useMemo(
     () =>
-      quotations.filter(
-        (q) =>
-          String(q.status || "").toLowerCase() === "approved" &&
-          matchesOverviewTopDealersApprovalDate(
-            q,
-            topDealersDateFilter,
-            topDealersCustomFromDate,
-            topDealersCustomToDate,
-          ) &&
-          (topDealersDealerFilter === "all" || q.dealerId === topDealersDealerFilter),
+      uniqueQuotationsByCustomer(
+        quotations.filter(
+          (q) =>
+            String(q.status || "").toLowerCase() === "approved" &&
+            matchesOverviewTopDealersApprovalDate(
+              q,
+              topDealersDateFilter,
+              topDealersCustomFromDate,
+              topDealersCustomToDate,
+            ) &&
+            (topDealersDealerFilter === "all" || q.dealerId === topDealersDealerFilter),
+        ),
       ),
     [
       quotations,
@@ -4194,11 +4204,14 @@ export default function AdminPanelPage() {
     })
   }
 
-  // Calculate statistics
-  const totalQuotations = Math.max(quotationsListTotal ?? quotations.length, quotations.length)
+  // Calculate statistics — one current quotation per unique customer (not every revision).
   const overviewListReady = quotations.length > 0
+  const overviewUniqueQuotations = overviewListReady ? uniqueQuotationsByCustomer(quotations) : []
+  const totalQuotations = overviewListReady
+    ? overviewUniqueQuotations.length
+    : quotationsListTotal ?? quotations.length
   const approvedQuotations = overviewListReady
-    ? quotations.filter((q) => q.status === "approved")
+    ? uniqueQuotationsByCustomer(quotations.filter((q) => String(q.status || "").toLowerCase() === "approved"))
     : []
   const totalRevenueFromList = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
   const totalRevenue =
@@ -4214,17 +4227,24 @@ export default function AdminPanelPage() {
   }
 
   const thisMonthAllQuotations = overviewListReady
-    ? quotations.filter((q) => {
-        const created = new Date(q.createdAt)
-        return !Number.isNaN(created.getTime()) && isInCurrentCalendarMonth(created)
-      })
+    ? uniqueQuotationsByCustomer(
+        quotations.filter((q) => {
+          const created = new Date(q.createdAt)
+          return !Number.isNaN(created.getTime()) && isInCurrentCalendarMonth(created)
+        }),
+      )
     : []
-  const thisMonthQuotationCount = thisMonthQuotationsFromStats ?? thisMonthAllQuotations.length
+  const thisMonthQuotationCount = overviewListReady
+    ? thisMonthAllQuotations.length
+    : thisMonthQuotationsFromStats ?? thisMonthAllQuotations.length
   const thisMonthApprovedQuotations = overviewListReady
-    ? approvedQuotations.filter((q) => {
-        const approvedDate = getQuotationApprovalDate(q)
-        return approvedDate ? isInCurrentCalendarMonth(approvedDate) : false
-      })
+    ? uniqueQuotationsByCustomer(
+        quotations.filter((q) => {
+          if (String(q.status || "").toLowerCase() !== "approved") return false
+          const approvedDate = getQuotationApprovalDate(q)
+          return approvedDate ? isInCurrentCalendarMonth(approvedDate) : false
+        }),
+      )
     : []
   const thisMonthRevenueFromList = thisMonthApprovedQuotations.reduce(
     (sum, q) => sum + getQuotationDisplayAmount(q),
@@ -4239,16 +4259,16 @@ export default function AdminPanelPage() {
     overviewListReady || overviewStatsFromApi.thisMonthKw == null
       ? thisMonthTotalKwFromList
       : overviewStatsFromApi.thisMonthKw
-  const thisMonthApprovedCustomersFromList = new Set(
-    thisMonthApprovedQuotations.map((q) => String(q.customer.mobile || "").trim()).filter(Boolean),
-  ).size
+  const thisMonthApprovedCustomersFromList = thisMonthApprovedQuotations.length
   const thisMonthApprovedCustomers =
     overviewListReady || overviewStatsFromApi.thisMonthApprovedCustomers == null
       ? thisMonthApprovedCustomersFromList
       : overviewStatsFromApi.thisMonthApprovedCustomers
   const thisMonthApprovedCountDisplay = overviewListReady
     ? thisMonthApprovedQuotations.length
-    : overviewStatsFromApi.thisMonthApproved ?? thisMonthApprovedQuotations.length
+    : overviewStatsFromApi.thisMonthApprovedCustomers ??
+      overviewStatsFromApi.thisMonthApproved ??
+      thisMonthApprovedQuotations.length
   const isOverviewInitialLoading =
     isAdminDataLoading &&
     !overviewListReady &&
@@ -4442,21 +4462,59 @@ export default function AdminPanelPage() {
     (a, b) => getApprovedSortTime(b) - getApprovedSortTime(a),
   )
 
+  const meteringTabMatchKeys = useMemo(() => {
+    const ids = new Set<string>()
+    for (const q of quotations) {
+      if (
+        adminMeteringStageOverride[q.id] ||
+        isQuotationsTabInMeteringWorkflow(q as unknown as OperationalQuotationRecord)
+      ) {
+        ids.add(q.id)
+      }
+    }
+    return { ids }
+  }, [quotations, adminMeteringStageOverride])
+
+  const quotationsSendToMeteringOptions = (q: Quotation) => {
+    return {
+      meteringStageOverride: adminMeteringStageOverride[q.id] ?? null,
+      alreadyOnMeteringTab:
+        Boolean(adminMeteringStageOverride[q.id]) ||
+        meteringTabMatchKeys.ids.has(q.id) ||
+        isQuotationsTabInMeteringWorkflow(q as unknown as OperationalQuotationRecord),
+    }
+  }
+
   const quotationsMeteringActionCounts = useMemo(() => {
     if (!quotationWorkspaceActive || operationalTab !== "all") {
-      return { send: 0, retrieve: 0 }
+      return { send: 0 }
     }
     const currentRows = groupQuotationsByCustomerCurrentFirst(sortedQuotations).map(
       (g) => g.current as Quotation,
     )
     let send = 0
-    let retrieve = 0
     for (const q of currentRows) {
-      if (getAdminQuotationsTabSendToMeteringState(q).visible) send += 1
-      if (getAdminQuotationsTabRetrieveState(q, adminMeteringStageOverride[q.id]).visible) retrieve += 1
+      const alreadyOnMeteringTab =
+        Boolean(adminMeteringStageOverride[q.id]) ||
+        meteringTabMatchKeys.ids.has(q.id) ||
+        isQuotationsTabInMeteringWorkflow(q as unknown as OperationalQuotationRecord)
+      if (
+        getAdminQuotationsTabSendToMeteringState(q, {
+          meteringStageOverride: adminMeteringStageOverride[q.id] ?? null,
+          alreadyOnMeteringTab,
+        }).visible
+      ) {
+        send += 1
+      }
     }
-    return { send, retrieve }
-  }, [quotationWorkspaceActive, operationalTab, sortedQuotations, adminMeteringStageOverride])
+    return { send }
+  }, [
+    quotationWorkspaceActive,
+    operationalTab,
+    sortedQuotations,
+    adminMeteringStageOverride,
+    meteringTabMatchKeys,
+  ])
 
   // Full unfiltered groups (for History / Restore) — prefer API is_current, else newest.
   const adminCustomerQuotationGroups = useMemo(
@@ -4568,7 +4626,7 @@ export default function AdminPanelPage() {
   const meteringApprovedQuotations =
     operationalTab === "metering"
       ? sortedQuotations.filter(
-          (q) => getAdminMeteringStage(q) === "approved" && !isAdminMeteringPostDiscomWcc(q),
+          (q) => getAdminMeteringStage(q) === "approved" && !isAdminMeteringWccPending(q),
         )
       : []
   const meteringMeterInstallQuotations =
@@ -4633,8 +4691,8 @@ export default function AdminPanelPage() {
       else if (operationalProgressTab === "bank_process") list = meteringBankProcessQuotations
       else if (operationalProgressTab === "pending_payment") list = meteringPendingPaymentQuotations
       else list = meteringProcessingQuotations // Meter Pending (default; no All tab)
-      // Same as personal Metering: one current quotation per customer.
-      list = keepCurrentQuotationsOnly(list, quotations)
+      // Keep every metering-pipeline row, including older quotations for the same
+      // customer — collapsing to "current" hid approved files from Metering.
     } else if (operationalTab === "confirmation") {
       if (operationalProgressTab === "dcr") list = confirmationDcrQuotations
       else if (operationalProgressTab === "pending") list = confirmationFinalProcessQuotations
@@ -4647,12 +4705,8 @@ export default function AdminPanelPage() {
         (g) => g.current as Quotation,
       )
       if (operationalProgressTab === "metering_send") {
-        list = list.filter((q) => getAdminQuotationsTabSendToMeteringState(q).visible)
-      } else if (operationalProgressTab === "metering_retrieve") {
-        list = list.filter(
-          (q) =>
-            adminMeteringStageOverride[q.id] === "processing" ||
-            getAdminQuotationsTabRetrieveState(q, adminMeteringStageOverride[q.id]).visible,
+        list = list.filter((q) =>
+          getAdminQuotationsTabSendToMeteringState(q, quotationsSendToMeteringOptions(q)).visible,
         )
       }
     }
@@ -4714,13 +4768,12 @@ export default function AdminPanelPage() {
     confirmationDcrQuotations,
     confirmationFinalProcessQuotations,
     adminMeteringStageOverride,
+    meteringTabMatchKeys,
   ])
 
   const quotationListUsesServerTotal =
     operationalTab === "all" &&
-    (operationalProgressTab === "all" ||
-      operationalProgressTab === "metering_send" ||
-      operationalProgressTab === "metering_retrieve") &&
+    (operationalProgressTab === "all" || operationalProgressTab === "metering_send") &&
     normalizedSearchTerm.length === 0 &&
     filterDealer === "all" &&
     filterCities.length === 0 &&
@@ -5399,6 +5452,7 @@ export default function AdminPanelPage() {
   }
 
   function applyMeteringWccAfterDiscomLocal(quotationId: string, value: boolean) {
+    if (value) markAdminMeteringProgress(quotationId, "wcc")
     setQuotations((prev) =>
       prev.map((q) => (q.id === quotationId ? withMeteringWccAfterDiscomFlag(q, value) : q)),
     )
@@ -5406,6 +5460,8 @@ export default function AdminPanelPage() {
 
   function isAdminMeteringWccPending(quotation: Quotation): boolean {
     const stage = getAdminMeteringStage(quotation)
+    if (stage === "meter_install" || stage === "mco") return false
+    if (getAdminMeteringProgress(quotation.id) === "wcc") return true
 
     // Post Meter in Discom → WCC (before Meter Installation Pending)
     if (isAdminMeteringPostDiscomWcc(quotation)) {
@@ -5722,15 +5778,24 @@ export default function AdminPanelPage() {
   }
 
   function getAdminMeteringStage(quotation: Quotation): "processing" | "approved" | "meter_install" | "mco" | null {
+    const fromWorkflow = getMeteringWorkflowStage(quotation as unknown as Record<string, unknown>)
     const override = adminMeteringStageOverride[quotation.id]
-    if (override) return override
-    return getMeteringWorkflowStage(quotation as unknown as Record<string, unknown>)
+    if (!override) return fromWorkflow
+    if (!fromWorkflow) return override
+    const rank: Record<"processing" | "approved" | "meter_install" | "mco", number> = {
+      processing: 1,
+      approved: 2,
+      meter_install: 4,
+      mco: 5,
+    }
+    return rank[override] >= rank[fromWorkflow] ? override : fromWorkflow
   }
 
   const applyAdminMeteringStageLocal = (
     quotationId: string,
     stage: "processing" | "approved" | "meter_install" | "mco",
   ) => {
+    markAdminMeteringProgress(quotationId, stage)
     setAdminMeteringStageOverride((prev) => ({ ...prev, [quotationId]: stage }))
     setQuotations((prev) =>
       prev.map((q) => (q.id === quotationId ? patchQuotationMeteringStageLocal(q, stage) : q)),
@@ -5968,7 +6033,7 @@ export default function AdminPanelPage() {
           authorized_representative: authorizedRepresentative,
           ...meterDocPatch,
         } as unknown as Quotation
-        await setAdminMeteringStage(patched, "approved")
+        await setAdminMeteringStage(patched, "approved", { skipConfirm: true })
       } else {
         void loadData(++adminLoadRequestRef.current)
       }
@@ -6473,6 +6538,13 @@ export default function AdminPanelPage() {
       })
       return
     }
+    if (
+      !confirmSave(
+        `Move ${quotation.id} to WCC Pending? It will leave Meter in Discom until Retrieve.`,
+      )
+    ) {
+      return
+    }
     try {
       if (useApi) {
         await api.admin.quotations.setMeteringWccAfterDiscom(quotation.id, true)
@@ -6501,6 +6573,7 @@ export default function AdminPanelPage() {
   const setAdminMeteringStage = async (
     quotation: Quotation,
     target: "approved" | "meter_install" | "mco" | "processing",
+    options?: { skipConfirm?: boolean },
   ) => {
     try {
       if (target === "approved") {
@@ -6510,6 +6583,12 @@ export default function AdminPanelPage() {
             title: "Complete metering details",
             description: "Fill required fields, then Save & To Discom — the row will appear under Meter in Discom.",
           })
+          return
+        }
+        if (
+          !options?.skipConfirm &&
+          !confirmSave(`Move ${quotation.id} to Meter in Discom? It will leave Meter Pending until Retrieve.`)
+        ) {
           return
         }
         await ensureAdminMeteringApproved(quotation)
@@ -6531,6 +6610,13 @@ export default function AdminPanelPage() {
         })
         return
       } else if (target === "meter_install") {
+        if (
+          !confirmSave(
+            `Move ${quotation.id} to Meter Installation Pending? It will leave WCC Pending until Retrieve.`,
+          )
+        ) {
+          return
+        }
         applyMeteringWccAfterDiscomLocal(quotation.id, false)
         applyAdminMeteringStageLocal(quotation.id, "meter_install")
         setOperationalProgressTab("meter_install")
@@ -6557,6 +6643,9 @@ export default function AdminPanelPage() {
         })
         return
       } else if (target === "mco") {
+        if (!confirmSave(`Move ${quotation.id} to Final Step? It will leave Meter Installation Pending until Retrieve.`)) {
+          return
+        }
         applyMeteringWccAfterDiscomLocal(quotation.id, false)
         // Carry Meter Installation Pending draft fields into Final Step before stage change.
         const mipDraft = getAdminMeterInstallDraft(quotation)
@@ -6628,6 +6717,7 @@ export default function AdminPanelPage() {
         })
         return
       } else {
+        if (!confirmSave(`Move ${quotation.id} back to Meter Pending?`)) return
         applyMeteringWccAfterDiscomLocal(quotation.id, false)
         await api.metering.updateStatus(quotation.id, "move_back")
         applyAdminMeteringStageLocal(quotation.id, "processing")
@@ -6692,7 +6782,7 @@ export default function AdminPanelPage() {
   const handleSendToMetering = async (quotation: Quotation) => {
     const menuState =
       operationalTab === "all"
-        ? getAdminQuotationsTabSendToMeteringState(quotation)
+        ? getAdminQuotationsTabSendToMeteringState(quotation, quotationsSendToMeteringOptions(quotation))
         : getSendToMeteringMenuState(quotation)
     if (sendingToMeteringId === quotation.id) return
     if (!menuState.enabled) {
@@ -6768,7 +6858,7 @@ export default function AdminPanelPage() {
       if (ok) {
         toast({
           title: "Sent to Metering",
-          description: `${quotation.id} is now in Metering → Meter Pending. Use Retrieve here if you need to pull it back.`,
+          description: `${quotation.id} is now in Metering → Meter Pending.`,
         })
       }
     } finally {
@@ -6815,6 +6905,7 @@ export default function AdminPanelPage() {
       }
 
       clearAdminMeteringHandoff(quotation.id)
+      clearAdminMeteringProgress(quotation.id)
       setAdminMeteringStageOverride((prev) => {
         const next = { ...prev }
         delete next[quotation.id]
@@ -8176,7 +8267,7 @@ export default function AdminPanelPage() {
                   <div className="text-3xl font-bold">
                     {isOverviewInitialLoading ? "—" : totalQuotations.toLocaleString()}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">All time</p>
+                  <p className="text-xs text-muted-foreground mt-1">Unique customers · all time</p>
                 </CardContent>
               </Card>
 
@@ -8187,9 +8278,9 @@ export default function AdminPanelPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueLakh(totalRevenue)}
+                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(totalRevenue)}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Approved quotations · all time</p>
+                  <p className="text-xs text-muted-foreground mt-1">Unique customers · approved · all time</p>
                 </CardContent>
               </Card>
 
@@ -8200,7 +8291,7 @@ export default function AdminPanelPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-2xl font-bold">
-                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueLakh(thisMonthRevenue)}
+                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(thisMonthRevenue)}
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">
                     {isOverviewInitialLoading
@@ -8219,7 +8310,7 @@ export default function AdminPanelPage() {
                   <div className="text-3xl font-bold">
                     {isOverviewInitialLoading ? "—" : thisMonthQuotationCount.toLocaleString()}
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Created this month</p>
+                  <p className="text-xs text-muted-foreground mt-1">Unique customers created this month</p>
                 </CardContent>
               </Card>
 
@@ -8241,17 +8332,17 @@ export default function AdminPanelPage() {
                 <div className="space-y-1">
                   <CardTitle>Dealers by Revenue</CardTitle>
                   <CardDescription>
-                    Ranked by revenue from quotations approved in the selected period (approval date only — not
-                    creation date). Defaults to this month.
+                    Ranked by revenue from unique customers with quotations approved in the selected period
+                    (approval date only — not creation date). Defaults to this month.
                   </CardDescription>
                   <p className="text-sm font-semibold text-foreground pt-1">
                     Total revenue (filtered):{" "}
-                    <span className="text-primary">{formatOverviewRevenueLakh(filteredOverviewTotalRevenue)}</span>
+                    <span className="text-primary">{formatOverviewRevenueInr(filteredOverviewTotalRevenue)}</span>
                     <span className="text-muted-foreground font-normal mx-2">·</span>
                     Total capacity (filtered):{" "}
                     <span className="text-primary">{formatOverviewKw(filteredOverviewTotalKw)}</span>
                     <span className="text-muted-foreground font-normal text-xs ml-1">
-                      ({overviewPeriodApprovedQuotations.length} approved quotation
+                      ({overviewPeriodApprovedQuotations.length} unique customer
                       {overviewPeriodApprovedQuotations.length === 1 ? "" : "s"})
                     </span>
                   </p>
@@ -8343,12 +8434,12 @@ export default function AdminPanelPage() {
                               <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
                             </div>
                             <div className="text-right">
-                              <p className="font-semibold">{formatOverviewRevenueLakh(stat.revenue)}</p>
+                              <p className="font-semibold">{formatOverviewRevenueInr(stat.revenue)}</p>
                               <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
                                 {formatOverviewKw(stat.totalKw)}
                               </p>
                               <p className="text-sm text-muted-foreground">
-                                {stat.quotationCount} approved quotation
+                                {stat.quotationCount} unique customer
                                 {stat.quotationCount === 1 ? "" : "s"}
                               </p>
                             </div>
@@ -9007,10 +9098,6 @@ export default function AdminPanelPage() {
                         {
                           key: "metering_send" as const,
                           label: `Send to Metering (${quotationsMeteringActionCounts.send})`,
-                        },
-                        {
-                          key: "metering_retrieve" as const,
-                          label: `In Metering — Retrieve (${quotationsMeteringActionCounts.retrieve})`,
                         },
                       ] as const
                     ).map((item) => (
@@ -11361,10 +11448,9 @@ export default function AdminPanelPage() {
                                 Timeline
                               </Button>
                               {(() => {
-                                const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation)
-                                const retrieveFromMetering = getAdminQuotationsTabRetrieveState(
+                                const sendToMetering = getAdminQuotationsTabSendToMeteringState(
                                   quotation,
-                                  adminMeteringStageOverride[quotation.id],
+                                  quotationsSendToMeteringOptions(quotation),
                                 )
                                 if (sendToMetering.visible) {
                                   return (
@@ -11378,21 +11464,6 @@ export default function AdminPanelPage() {
                                     >
                                       <Gauge className="w-3 h-3 mr-1" />
                                       {sendingToMeteringId === quotation.id ? "Sending..." : "Send to Metering"}
-                                    </Button>
-                                  )
-                                }
-                                if (retrieveFromMetering.visible) {
-                                  return (
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      className={`flex-1 ${!retrieveFromMetering.enabled || retrievingFromMeteringId === quotation.id ? "opacity-60" : ""}`}
-                                      onClick={() => void handleRetrieveFromMetering(quotation)}
-                                      disabled={!retrieveFromMetering.enabled || retrievingFromMeteringId === quotation.id}
-                                      title={retrieveFromMetering.hint || "Retrieve from Metering"}
-                                    >
-                                      <RotateCcw className="w-3 h-3 mr-1" />
-                                      {retrievingFromMeteringId === quotation.id ? "Retrieving..." : "Retrieve"}
                                     </Button>
                                   )
                                 }
@@ -11583,11 +11654,10 @@ export default function AdminPanelPage() {
                                 <AdminQuotationRowActions
                                   quotation={quotation}
                                   sendingToMeteringId={sendingToMeteringId}
-                                  retrievingFromMeteringId={retrievingFromMeteringId}
+                                  alreadyOnMeteringTab={quotationsSendToMeteringOptions(quotation).alreadyOnMeteringTab}
                                   meteringStageOverride={adminMeteringStageOverride[quotation.id]}
                                   olderCount={getAdminOlderCount(quotation)}
                                   onSendToMetering={(q) => void handleSendToMetering(q)}
-                                  onRetrieveFromMetering={(q) => void handleRetrieveFromMetering(q)}
                                   onTimeline={setStatusHistoryQuotation}
                                   onQuotationHistory={openAdminQuotationHistory}
                                   onDocuments={openDocumentsDialog}
@@ -11749,7 +11819,7 @@ export default function AdminPanelPage() {
                             <div className="w-full lg:w-auto lg:ml-4 space-y-2 text-left lg:text-right">
                               {row.kind === "dealer" ? (
                                 <div>
-                                  <div className="text-lg font-semibold">₹{(dealerRevenue / 100000).toFixed(1)}L</div>
+                                  <div className="text-lg font-semibold">{formatOverviewRevenueInr(dealerRevenue)}</div>
                                   <div className="text-sm text-muted-foreground">{dealerQuotationCount} quotations</div>
                                 </div>
                               ) : null}

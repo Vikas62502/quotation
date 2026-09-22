@@ -34,8 +34,8 @@ const quotationsChartConfig = {
   value: { label: "Quotations", color: "var(--chart-3)" },
 } satisfies ChartConfig
 
-function formatRevenueLakh(amount: number): string {
-  return `₹${(amount / 100000).toFixed(1)}L`
+function formatRevenueInr(amount: number): string {
+  return `₹${Math.round(amount).toLocaleString("en-IN")}`
 }
 
 function dealerLabel(dealer: Dealer): string {
@@ -105,7 +105,7 @@ export function DealersByRevenueCharts({ stats }: DealersByRevenueChartsProps) {
       rawQuotations: stat.quotationCount,
       value:
         metric === "revenue"
-          ? stat.revenue / 100000
+          ? stat.revenue
           : metric === "capacity"
             ? stat.totalKw
             : stat.quotationCount,
@@ -130,7 +130,7 @@ export function DealersByRevenueCharts({ stats }: DealersByRevenueChartsProps) {
             data={chartData}
             dataKey="value"
             config={revenueChartConfig}
-            formatValue={(row) => formatRevenueLakh(row.rawRevenue)}
+            formatValue={(row) => formatRevenueInr(row.rawRevenue)}
           />
         </TabsContent>
 
@@ -149,7 +149,7 @@ export function DealersByRevenueCharts({ stats }: DealersByRevenueChartsProps) {
             dataKey="value"
             config={quotationsChartConfig}
             formatValue={(row) =>
-              `${row.rawQuotations} approved quotation${row.rawQuotations === 1 ? "" : "s"}`
+              `${row.rawQuotations} unique customer${row.rawQuotations === 1 ? "" : "s"}`
             }
           />
         </TabsContent>

@@ -57,6 +57,18 @@ export const METERING_WORKFLOW_MAP_KEY = "meteringWorkflowMap"
 
 /** Admin sent quotation to Metering from Quotations tab — survives refresh until Retrieve. */
 export const ADMIN_METERING_HANDOFF_MAP_KEY = "adminMeteringHandoffMap"
+/** Confirmed Metering tab after To Discom / WCC / Install / Final Step. Survives refresh. */
+export const ADMIN_METERING_PROGRESS_MAP_KEY = "adminMeteringProgressMap"
+
+export type MeteringProgressStage = "processing" | "approved" | "wcc" | "meter_install" | "mco"
+
+const METERING_PROGRESS_RANK: Record<MeteringProgressStage, number> = {
+  processing: 1,
+  approved: 2,
+  wcc: 3,
+  meter_install: 4,
+  mco: 5,
+}
 
 export type OperationalQuotationRecord = Record<string, any>
 
@@ -115,6 +127,8 @@ export function mergeAdminMeteringHandoffOntoQuotation(
   const id = String(q.id || "").trim()
   if (!id || !map[id]) return q
   if (isAlreadyInMeteringPipeline(q)) return q
+  const progress = getAdminMeteringProgress(id)
+  if (progress && progress !== "processing") return q
   return {
     ...q,
     meteringStatus: "pending_metering",
@@ -137,6 +151,136 @@ export function syncAdminMeteringHandoffMapFromRows(rows: OperationalQuotationRe
     localStorage.setItem(ADMIN_METERING_HANDOFF_MAP_KEY, JSON.stringify(map))
   } catch {
     // no-op
+  }
+}
+
+function isMeteringProgressStage(value: unknown): value is MeteringProgressStage {
+  return (
+    value === "processing" ||
+    value === "approved" ||
+    value === "wcc" ||
+    value === "meter_install" ||
+    value === "mco"
+  )
+}
+
+export function readAdminMeteringProgressMap(): Record<string, MeteringProgressStage> {
+  if (typeof window === "undefined") return {}
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADMIN_METERING_PROGRESS_MAP_KEY) || "{}")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+    const out: Record<string, MeteringProgressStage> = {}
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (id && isMeteringProgressStage(value)) out[id] = value
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export function getAdminMeteringProgress(quotationId: string): MeteringProgressStage | null {
+  const id = String(quotationId || "").trim()
+  if (!id) return null
+  return readAdminMeteringProgressMap()[id] || null
+}
+
+export function laterMeteringProgress(
+  a?: MeteringProgressStage | null,
+  b?: MeteringProgressStage | null,
+): MeteringProgressStage | null {
+  if (!a) return b || null
+  if (!b) return a
+  return METERING_PROGRESS_RANK[a] >= METERING_PROGRESS_RANK[b] ? a : b
+}
+
+export function markAdminMeteringProgress(quotationId: string, stage: MeteringProgressStage) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readAdminMeteringProgressMap()
+    const current = map[quotationId]
+    // Retrieve / To Pending explicitly set processing; otherwise never go backwards.
+    map[quotationId] =
+      stage === "processing" ? "processing" : laterMeteringProgress(current, stage) || stage
+    localStorage.setItem(ADMIN_METERING_PROGRESS_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+export function clearAdminMeteringProgress(quotationId: string) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readAdminMeteringProgressMap()
+    delete map[quotationId]
+    localStorage.setItem(ADMIN_METERING_PROGRESS_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+/** Apply the furthest confirmed Metering step onto a list row (does not downgrade API). */
+export function mergeAdminMeteringProgressOntoQuotation(
+  q: OperationalQuotationRecord,
+  progressMap?: Record<string, MeteringProgressStage>,
+): OperationalQuotationRecord {
+  const map = progressMap ?? readAdminMeteringProgressMap()
+  const id = String(q.id || "").trim()
+  const stage = id ? map[id] : undefined
+  if (!id || !stage) return q
+
+  const fromFields = deriveMeteringWorkflowStageFromFields(q)
+  const fieldAsProgress: MeteringProgressStage | null =
+    fromFields === "approved" && (q.meteringWccAfterDiscom || q.metering_wcc_after_discom)
+      ? "wcc"
+      : fromFields
+  const applied = laterMeteringProgress(fieldAsProgress, stage) || stage
+
+  if (applied === "processing") {
+    if (fromFields && fromFields !== "processing") return q
+    return {
+      ...q,
+      meteringStatus: q.meteringStatus || q.metering_status || "pending_metering",
+      metering_status: q.metering_status || q.meteringStatus || "pending_metering",
+    }
+  }
+  if (applied === "approved") {
+    return {
+      ...q,
+      meteringStatus: "metering_approved",
+      metering_status: "metering_approved",
+      meteringWccAfterDiscom: false,
+      metering_wcc_after_discom: false,
+    }
+  }
+  if (applied === "wcc") {
+    return {
+      ...q,
+      meteringStatus: "metering_approved",
+      metering_status: "metering_approved",
+      meteringWccAfterDiscom: true,
+      metering_wcc_after_discom: true,
+    }
+  }
+  if (applied === "meter_install") {
+    return {
+      ...q,
+      meteringStatus: "meter_installation_pending",
+      metering_status: "meter_installation_pending",
+      installationStatus: q.installationStatus || q.installation_status || "meter_installation_pending",
+      installation_status: q.installation_status || q.installationStatus || "meter_installation_pending",
+      meteringWccAfterDiscom: false,
+      metering_wcc_after_discom: false,
+    }
+  }
+  return {
+    ...q,
+    meteringStatus: "mco",
+    metering_status: "mco",
+    installationStatus: q.installationStatus || q.installation_status || "mco",
+    installation_status: q.installation_status || q.installationStatus || "mco",
+    meteringWccAfterDiscom: false,
+    metering_wcc_after_discom: false,
   }
 }
 
@@ -374,6 +518,8 @@ export function isQuotationsTabInMeteringWorkflow(q: OperationalQuotationRecord)
   if (workflow.has(metering) || workflow.has(install)) return true
   if (q.meteringApprovedAt || q.metering_approved_at) return true
   if (q.mcoAt || q.mco_at) return true
+  const wcc = q.meteringWccAfterDiscom ?? q.metering_wcc_after_discom
+  if (wcc === true || wcc === 1 || wcc === "true" || wcc === "1") return true
   return false
 }
 
@@ -384,10 +530,18 @@ export function isQuotationsTabInMeteringWorkflow(q: OperationalQuotationRecord)
  */
 export function getAdminQuotationsTabSendToMeteringState(
   q: OperationalQuotationRecord,
+  options?: {
+    meteringStageOverride?: MeteringWorkflowTab | null
+    alreadyOnMeteringTab?: boolean
+  },
 ): SendToMeteringMenuState {
   const status = String(q.status || "pending").toLowerCase()
 
-  if (isQuotationsTabInMeteringWorkflow(q)) {
+  if (
+    options?.alreadyOnMeteringTab ||
+    options?.meteringStageOverride ||
+    isQuotationsTabInMeteringWorkflow(q)
+  ) {
     return { visible: false, enabled: false, hint: "", sent: true }
   }
 
@@ -645,10 +799,12 @@ export function isMeteringApprovedForTransition(q: OperationalQuotationRecord): 
   return false
 }
 
-export function getMeteringWorkflowStage(q: OperationalQuotationRecord): MeteringWorkflowTab | null {
+/** Stage from API / row fields only — ignores local handoff and confirmed progress. */
+export function deriveMeteringWorkflowStageFromFields(
+  q: OperationalQuotationRecord,
+): MeteringWorkflowTab | null {
   const meteringRaw = getMeteringWorkflowRaw(q)
   const installStored = String(q.installationStatus || q.installation_status || "").toLowerCase()
-  const id = String(q.id || "").trim()
 
   if (meteringRaw === "mco" || meteringRaw.includes("mco") || installStored === "mco" || q.mcoAt || q.mco_at) {
     return "mco"
@@ -664,21 +820,55 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
     return "meter_install"
   }
 
+  if (
+    meteringRaw === "metering_approved" ||
+    (meteringRaw === "approved" && !meteringRaw.includes("installer")) ||
+    installStored === "metering_approved"
+  ) {
+    return "approved"
+  }
+
   if (isMeteringApprovedForTransition(q)) {
     return "approved"
   }
 
-  const inMeteringProcessing =
+  if (
     meteringRaw === "pending_metering" ||
     meteringRaw === "metering_in_progress" ||
     installStored === "pending_metering" ||
-    installStored === "metering_in_progress" ||
-    (id && isAdminMeteringHandoffLocal(id))
-
-  if (inMeteringProcessing) {
+    installStored === "metering_in_progress"
+  ) {
     return "processing"
   }
 
+  return null
+}
+
+export function getMeteringWorkflowStage(q: OperationalQuotationRecord): MeteringWorkflowTab | null {
+  const id = String(q.id || "").trim()
+  const fromFields = deriveMeteringWorkflowStageFromFields(q)
+  const persisted = id ? getAdminMeteringProgress(id) : null
+  const persistedTab: MeteringWorkflowTab | null = !persisted
+    ? null
+    : persisted === "wcc"
+      ? "approved"
+      : persisted
+
+  const fieldRank = fromFields
+    ? METERING_PROGRESS_RANK[fromFields]
+    : 0
+  const persistedRank = persisted ? METERING_PROGRESS_RANK[persisted] : 0
+  if (persistedRank >= fieldRank && persistedTab) {
+    return persistedTab
+  }
+  if (fromFields) return fromFields
+
+  // Handoff / installer-approved only place a row in Meter Pending when it has not
+  // already been confirmed into a later step.
+  if (persisted && persisted !== "processing") return persistedTab
+
+  if (id && isAdminMeteringHandoffLocal(id)) return "processing"
+  if (isAwaitingManualMeteringHandoff(q)) return "processing"
   return null
 }
 

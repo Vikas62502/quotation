@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { IndianRupee, Loader2, Search, Wallet } from "lucide-react"
+import { Download, IndianRupee, Loader2, Search, Wallet } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { api, apiErrorToUserMessage } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
@@ -35,6 +35,7 @@ import {
   flattenWrappedQuotationRow,
 } from "@/lib/operational-install-queue"
 import { cn } from "@/lib/utils"
+import { downloadCsvFile } from "@/lib/excel-column-export"
 
 function formatInr(amount: number): string {
   return `₹${Math.round(amount || 0).toLocaleString("en-IN")}`
@@ -145,6 +146,66 @@ export default function DealerPaymentsPage() {
     }
   }, [filtered])
 
+  const downloadFilteredPaymentsExcel = () => {
+    if (filtered.length === 0) {
+      toast({
+        title: "No data to export",
+        description: "Adjust search or filters to include at least one payment row.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    const headers = [
+      "Quotation ID",
+      "Customer Name",
+      "Customer Mobile",
+      "Payment Type",
+      "Payment Status",
+      "Date",
+      "Amount",
+      "Paid Amount",
+      "Remaining Amount",
+      "Loan Amount",
+      "Cash Amount",
+      "Loan Paid",
+      "Cash Paid",
+      "Loan Remaining",
+      "Cash Remaining",
+      "Installment Count",
+    ]
+
+    const rows = filtered.map((row) => [
+      row.quotationId,
+      row.customerName,
+      row.customerMobile,
+      row.paymentTypeLabel,
+      statusLabel(row.paymentStatus),
+      formatDate(row.approvedAt || row.createdAt),
+      row.subtotal,
+      row.paidAmount,
+      row.remainingAmount,
+      row.paymentType === "mix" || row.paymentType === "loan" ? row.loanAmount : "",
+      row.paymentType === "mix" || row.paymentType === "cash" ? row.cashAmount : "",
+      row.paymentType === "mix" || row.paymentType === "loan" ? row.loanPaid : "",
+      row.paymentType === "mix" || row.paymentType === "cash" ? row.cashPaid : "",
+      row.paymentType === "mix" || row.paymentType === "loan" ? row.loanRemaining : "",
+      row.paymentType === "mix" || row.paymentType === "cash" ? row.cashRemaining : "",
+      row.installments.length,
+    ])
+
+    const stamp = new Date().toISOString().slice(0, 10)
+    downloadCsvFile({
+      filename: `dealer-payments-${stamp}.csv`,
+      headers,
+      rows,
+    })
+    toast({
+      title: "Download started",
+      description: `${filtered.length} payment row${filtered.length === 1 ? "" : "s"} exported.`,
+    })
+  }
+
   if (!authReady || !isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -245,6 +306,10 @@ export default function DealerPaymentsPage() {
               </Select>
               <Button type="button" variant="outline" onClick={() => void loadQuotations()} disabled={isLoading}>
                 {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Refresh"}
+              </Button>
+              <Button type="button" variant="outline" onClick={downloadFilteredPaymentsExcel} disabled={isLoading}>
+                <Download className="w-4 h-4 mr-2" />
+                Download Excel
               </Button>
             </div>
           </CardHeader>
