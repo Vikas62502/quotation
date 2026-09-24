@@ -2570,8 +2570,8 @@ Bank is **parallel** (loan / cash+loan only) — not after Final Step.
 ### Backend still required
 
 1. Meter statuses + `meteringWccAfterDiscom` (existing handoff).
-2. **NEW** `bankProcessDone` / `bank_process_done` (+ optional `bank_process_done_at`) echoed on GET.
-3. **NEW** `PATCH …/bank-process` (or payment-details) accepting `bankProcessDone: true` without changing metering stage.
+2. **NEW** `bankProcessDone` / `bank_process_done` (+ optional `bank_process_done_at`) echoed on GET. Admin **Banking** uses this for **Submitted**.
+3. **NEW** `PATCH …/bank-process` (or payment-details) accepting `bankProcessDone: true` plus assigned person / remarks / location / document names. Do not change metering stage.
 4. Echo `paymentType` / `payment_type` (`loan` | `mix` | `cash`) on list rows.
 5. Authorize **`installer`** on metering status / details / WCC / bank routes used by Installer → Metering (else `403 AUTH_004`).
 
@@ -4010,6 +4010,80 @@ Also: `BACKEND_USER_FIELD_PERMISSIONS.ts`
 **QA examples:** Remaining ₹5,000 → `d`=5000 after refresh still Completed. Remaining ₹1,000 → `d`=1000 not 2000.
 
 **Copy-paste:** `BACKEND_FINAL_SETTLEMENT.ts` · `BACKEND_REVERT_SETTLEMENT.md` · REQUIRED **§BB**
+
+---
+
+## 41. Admin **Banking** tabs (Pending from the bank → Submitted → Completed) — Sep 2026
+
+**Frontend:** Admin → **Banking** · `lib/api.ts` `submitBankProcess` · `BACKEND_METERING_DUAL_TRACK.md` **§B**  
+**List rules (1st paid ₹0 / remaining ₹0):** **§50**
+
+| UI tab | Server rule |
+|--------|-------------|
+| Hidden (not in Banking) | 1st **loan** installment `paidAmount` **₹0**, or 2nd remaining ₹0 while loan remaining still > 0 |
+| Pending from the bank | payment `loan` \| `mix`, **1st loan paid > 0**, loan remaining > 0, 2nd remaining > 0, `bankProcessDone` not true |
+| Submitted | `bankProcessDone: true`, **1st loan paid > 0**, loan remaining > 0, 2nd remaining > 0 |
+| Completed | loan remaining **₹0** from Accounts payment update (no new complete flag). Do **not** put remaining ₹0 on Pending/Submitted. |
+
+**No new route.** Use existing:
+
+```http
+PATCH /api/admin/quotations/{id}/bank-process
+```
+
+Fallbacks: `PATCH …/payment-details`, `PATCH /api/quotations/{id}`.
+
+Persist + **GET echo**: `bankProcessDone`, `bankAssignedPersonName`, `bankRemarks`, `bankLocation`, `bankDocumentNames` (+ snake_case). Binary document upload is optional; names are enough for the Submitted list.
+
+---
+
+## 50. Admin **Banking** — hide 1st paid ₹0 / remaining ₹0; Filters + Download are FE-only — Sep 2026
+
+**Frontend:** Admin → **Banking** · `lib/admin-banking.ts` `getBankingLoanStage` · `components/admin-banking-panel.tsx`
+
+### No new endpoints
+
+| UI | Backend |
+|----|---------|
+| **Filters** (dealer, Loan / Cash+loan, month) | Client-side on the quotations already loaded. No list query params. |
+| **Download** + column picker | Client CSV. No export API. |
+| 1st installment ₹0 hidden | Computed from GET `installments` / `paymentPhases` (loan-side phase 1 `paidAmount`) |
+| Remaining ₹0 not on Pending/Submitted | Computed from GET `remainingAmount` / `loanRemaining` (+ 2nd installment remaining) |
+
+### GET must keep echoing (already required for Accounts / dealer payments)
+
+Admin quotation list + by-id must include:
+
+```json
+{
+  "paymentType": "mix",
+  "loanAmount": 200000,
+  "loanRemaining": 200000,
+  "remainingAmount": 200000,
+  "installments": [
+    { "phaseNumber": 1, "paidAmount": 0, "amount": 200000, "paymentMode": "loan" },
+    { "phaseNumber": 2, "paidAmount": 0, "amount": 200000, "paymentMode": "loan" }
+  ]
+}
+```
+
+Do **not** strip `installments[].paidAmount` / `paymentMode` or loan remaining from GET — Banking cannot hide 1st-paid-₹0 rows without them.
+
+### If you add a dedicated Banking list later (optional)
+
+Apply the same rules server-side:
+
+1. `paymentType` ∈ `{loan, mix}` (also `cash_loan` / `cash+loan`)
+2. **Exclude** when 1st **loan** installment `paidAmount <= 0` (Cash + loan: ignore cash phases; use first `paymentMode=loan`)
+3. **Pending / Submitted:** exclude when loan remaining **<= 0** or 2nd remaining **<= 0**
+4. **Completed:** loan remaining **<= 0** and 1st loan paid **> 0**
+5. Submit still uses `PATCH …/bank-process` from **§41** — no change
+
+### QA
+
+1. Cash + loan, 1st loan paid ₹0, remaining ₹2,00,000 (e.g. Rajeev Kumar) → **not** in Pending from the bank.
+2. Loan remaining ₹0 after Accounts payment → **Completed** only; not Pending / Submitted.
+3. Filters / Download work without a new API.
 
 ---
 

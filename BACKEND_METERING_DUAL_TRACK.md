@@ -150,10 +150,38 @@ PATCH /api/admin/quotations/{id}/installation-status
 with the same boolean fields in the body.
 
 **On `bankProcessDone: true` / `moveToPendingPayment: true`:**
-1. Persist bank fields
+1. Persist bank fields (assigned person, remarks, location, document names)
 2. Set `bank_process_done = true`, `bank_process_done_at = NOW()`
 3. Do **not** change metering stage (row stays in whatever Meter tab it was in)
-4. Return updated quotation JSON including `bankProcessDone: true`
+4. Return updated quotation JSON including `bankProcessDone: true` and the bank fields below
+
+Admin → **Banking** (Sep 2026) uses the same flag for a 3-tab flow. **Pending / Submitted also require 1st loan installment paid > 0** and remaining > 0 (see HANDOFF **§50**). Request body from `submitBankProcess`:
+
+```json
+{
+  "bankProcessDone": true,
+  "bank_process_done": true,
+  "moveToPendingPayment": true,
+  "bankAssignedPersonName": "…",
+  "bank_assigned_person_name": "…",
+  "assignedPersonName": "…",
+  "assigned_person_name": "…",
+  "bankRemarks": "…",
+  "bank_remarks": "…",
+  "bankLocation": "…",
+  "bank_location": "…",
+  "bankDocumentNames": ["file1.pdf", "file2.jpg"],
+  "bank_document_names": ["file1.pdf", "file2.jpg"]
+}
+```
+
+| GET field | Use |
+|-----------|-----|
+| `bankProcessDone` / `bank_process_done` | **Submitted** (true) vs **Pending from the bank** (false) |
+| `bankAssignedPersonName` / `bank_assigned_person_name` | Assigned person on Submitted |
+| `bankRemarks` / `bankLocation` | Bank process details |
+| `bankDocumentNames` / `bank_document_names` | Submitted document names (binary upload optional) |
+| loan remaining / installments (Accounts) | **Completed** when loan remaining is ₹0 — no extra complete flag |
 
 **Idempotent:** Re-PATCH when already done → **200**.
 

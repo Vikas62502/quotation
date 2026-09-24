@@ -3057,6 +3057,16 @@ export default function AdminPanelPage() {
             installationReleasedAt: q.installationReleasedAt ?? q.installation_released_at,
             installationScheduledAt: q.installationScheduledAt ?? q.installation_scheduled_at,
             installationTeamId: q.installationTeamId ?? q.installation_team_id,
+            bankProcessDone: q.bankProcessDone ?? q.bank_process_done,
+            bank_process_done: q.bank_process_done ?? q.bankProcessDone,
+            bankAssignedPersonName: q.bankAssignedPersonName ?? q.bank_assigned_person_name,
+            bank_assigned_person_name: q.bank_assigned_person_name ?? q.bankAssignedPersonName,
+            bankRemarks: q.bankRemarks ?? q.bank_remarks,
+            bank_remarks: q.bank_remarks ?? q.bankRemarks,
+            bankLocation: q.bankLocation ?? q.bank_location,
+            bank_location: q.bank_location ?? q.bankLocation,
+            bankDocumentNames: q.bankDocumentNames ?? q.bank_document_names,
+            bank_document_names: q.bank_document_names ?? q.bankDocumentNames,
           }
           const mapped = queueExtra
             ? (mergeInstallerQueueOntoAdminRow(mappedBase, queueExtra) as typeof mappedBase)
@@ -12594,12 +12604,46 @@ export default function AdminPanelPage() {
           <TabsContent value="banking" className="space-y-6">
             <AdminBankingPanel
               quotations={quotations}
+              dealers={activeDealers}
               getDealerName={getDealerName}
               getDealerMobile={getDealerMobile}
               getBankDetails={getQuotationBankDetails}
-              onOpenDetails={(quotation) => {
-                setSelectedQuotation(quotation)
-                setDialogOpen(true)
+              onSubmitProcess={async (quotation, payload) => {
+                markAdminBankProcessDone(quotation.id)
+                setQuotations((prev) =>
+                  prev.map((q) =>
+                    q.id === quotation.id
+                      ? ({
+                          ...q,
+                          bankProcessDone: true,
+                          bank_process_done: true,
+                          bankAssignedPersonName: payload.assignedPersonName,
+                          bank_assigned_person_name: payload.assignedPersonName,
+                          assignedPersonName: payload.assignedPersonName || (q as any).assignedPersonName,
+                          assigned_person_name:
+                            payload.assignedPersonName || (q as any).assigned_person_name,
+                          bankRemarks: payload.remarks,
+                          bank_remarks: payload.remarks,
+                          bankLocation: payload.bankLocation,
+                          bank_location: payload.bankLocation,
+                          bankDocumentNames: payload.documentNames,
+                          bank_document_names: payload.documentNames,
+                        } as Quotation)
+                      : q,
+                  ),
+                )
+                if (useApi) {
+                  try {
+                    await api.admin.quotations.submitBankProcess(quotation.id, {
+                      assignedPersonName: payload.assignedPersonName,
+                      remarks: payload.remarks,
+                      bankLocation: payload.bankLocation,
+                      documentNames: payload.documentNames,
+                    })
+                  } catch {
+                    // local flags already applied; backend route may not be live yet
+                  }
+                }
               }}
             />
           </TabsContent>

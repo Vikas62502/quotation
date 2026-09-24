@@ -4292,6 +4292,55 @@ export const api = {
       },
 
       /**
+       * Admin Banking: submit assigned person + documents, mark bank process done.
+       * File then waits in Submitted until Accounts payment (loan remaining ₹0) → Completed.
+       */
+      submitBankProcess: async (
+        quotationId: string,
+        payload: {
+          assignedPersonName: string
+          remarks?: string
+          bankLocation?: string
+          documentNames?: string[]
+        },
+      ) => {
+        const body = {
+          bankProcessDone: true,
+          bank_process_done: true,
+          moveToPendingPayment: true,
+          bankAssignedPersonName: payload.assignedPersonName,
+          bank_assigned_person_name: payload.assignedPersonName,
+          assignedPersonName: payload.assignedPersonName,
+          assigned_person_name: payload.assignedPersonName,
+          bankRemarks: payload.remarks || "",
+          bank_remarks: payload.remarks || "",
+          bankLocation: payload.bankLocation || "",
+          bank_location: payload.bankLocation || "",
+          bankDocumentNames: payload.documentNames || [],
+          bank_document_names: payload.documentNames || [],
+        }
+        const endpoints = [
+          `/admin/quotations/${quotationId}/bank-process`,
+          `/admin/quotations/${quotationId}/payment-details`,
+          `/quotations/${quotationId}/payment-details`,
+          `/quotations/${quotationId}`,
+        ]
+        let lastError: unknown = null
+        for (const endpoint of endpoints) {
+          try {
+            return await apiRequest(endpoint, { method: "PATCH", body, suppressErrorLog: true })
+          } catch (error) {
+            lastError = error
+            const retry =
+              error instanceof ApiError &&
+              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+            if (!retry) throw error
+          }
+        }
+        throw lastError
+      },
+
+      /**
        * Planned installation date (YYYY-MM-DD). Retries alternate paths until backend exposes one.
        */
       updateInstallationScheduledDate: async (quotationId: string, installationScheduledAt: string | null) => {
