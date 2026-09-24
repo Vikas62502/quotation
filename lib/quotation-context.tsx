@@ -171,7 +171,20 @@ export interface Quotation {
   /** Cash portion when payment type is cash + loan */
   cashAmount?: number
   /** Payment installments (Account Management); used in metering for I2 amount. */
-  paymentPhases?: Array<{ phaseNumber: number; amount: number }>
+  paymentPhases?: Array<{
+    phaseNumber: number
+    amount: number
+    paidAmount?: number
+    paymentMode?: string
+    status?: string
+  }>
+  installments?: Array<{
+    phaseNumber: number
+    amount: number
+    paidAmount?: number
+    paymentMode?: string
+    status?: string
+  }>
   /** Subsidy cheque details when approval payment is cash or cash + loan */
   subsidyChequeDetails?: string
   /** File login: already filed vs mark as login now */

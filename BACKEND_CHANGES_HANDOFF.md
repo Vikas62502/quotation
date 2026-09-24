@@ -3532,11 +3532,11 @@ Frontend also keeps `localStorage.adminMeteringHandoffMap` until GET echoes work
 |------|--------|
 | **Route** | `PATCH\|POST /api/admin/quotations/:id/retrieve-from-metering` |
 | **Alt** | `PATCH /api/admin/quotations/:id/metering-handoff` with `retrieveFromMetering: true` |
-| **From** | `pending_metering`, `metering_in_progress` |
-| **To** | `installation_status = installer_approved`; clear `metering_status` / `metering_stage` (null or empty) |
+| **From** | `pending_metering`, `metering_in_progress`, empty metering + `installer_approved`, or Admin Meter Pending with `force` / `adminOverride` / `retrieveFromMetering: true` |
+| **To** | `installation_status = installer_approved`; clear `metering_status` / `metering_stage` / `meteringWccAfterDiscom` |
 | **Keep** | `installation_ready_for_installer`, `installation_released_at` (Payment Management release) |
 | **Keep** | `quotations.status` = `approved` (do not write workflow into `status` column) |
-| **Block** | `metering_approved`, `meter_installation_pending`, `mco`, `pending_baldev`, etc. → **409** |
+| **Block** | `meter_installation_pending`, `mco`, `pending_baldev` → **409** (not Meter Pending) |
 | **Auth** | `admin` |
 
 **Request body (frontend):**
@@ -3545,6 +3545,10 @@ Frontend also keeps `localStorage.adminMeteringHandoffMap` until GET echoes work
 {
   "installationStatus": "installer_approved",
   "installation_status": "installer_approved",
+  "meteringStatus": "",
+  "metering_status": "",
+  "meteringStage": "",
+  "metering_stage": "",
   "target": "installer_approved",
   "retrieveFromMetering": true,
   "allowRevert": true,

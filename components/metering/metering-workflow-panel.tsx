@@ -528,8 +528,13 @@ export function MeteringWorkflowPanel({
     if (!confirmSave("Move this file to WCC Pending and save? It will leave Meter in Discom until Retrieve.")) return
     try {
       await api.admin.quotations.setMeteringWccAfterDiscom(id, true)
-    } catch {
-      // keep local flag even if backend route is missing
+    } catch (error) {
+      toast({
+        title: "Could not move to WCC Pending",
+        description: error instanceof Error ? error.message : "Failed to update metering WCC flag.",
+        variant: "destructive",
+      })
+      return
     }
     markAdminMeteringProgress(id, "wcc")
     setQuotations((prev) =>

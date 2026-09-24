@@ -492,10 +492,10 @@ export default function InstallerDashboardPage() {
     })
 
   const getInstallerStatus = (q: InstallerQuotation): "pending" | "partial" | "inprogress" | "approved" => {
-    const backendStatus = getInstallationWorkflowStatus(q as Record<string, unknown>)
-    if (isInstallationForcedPending(q.id) || backendStatus === "pending_installer") return "pending"
+    if (isInstallationForcedPending(q.id)) return "pending"
     if (isInstallationPartialApproved(q as Record<string, unknown>)) return "partial"
     if (isInstallationUploadComplete(q)) return "approved"
+    const backendStatus = getInstallationWorkflowStatus(q as Record<string, unknown>)
     const progress = getInstallationAdminTabProgress(q as Record<string, unknown>, false)
     if (progress === "partial") return "partial"
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
@@ -1379,12 +1379,12 @@ export default function InstallerDashboardPage() {
           },
         }))
         setExpandedQuotationId(null)
-        setActiveTab(isPartial ? "partial" : "done")
+        if (isPartial) setActiveTab("partial")
         toast({
           title: isPartial ? "Partial Approved" : "Installation complete",
           description: isPartial
             ? "Saved under Partial Approved — finish remaining photos to move to Approved Installation."
-            : "Moved to Approved Installation.",
+            : "Installation approved. Staying on Pending Installation.",
         })
       } else if (useApi) {
         toast({

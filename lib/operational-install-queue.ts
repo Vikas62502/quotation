@@ -570,38 +570,35 @@ export function getAdminQuotationsTabSendToMeteringState(
   }
 }
 
-/** Early metering only — before Discom / WCC / MCO. */
+/** Early metering only — before Discom / WCC / MCO. Meter Pending rows may always retrieve. */
 export function canRetrieveFromMeteringPipeline(q: OperationalQuotationRecord): boolean {
   const id = String(q.id || "").trim()
+  const uiStage = getMeteringWorkflowStage(q)
+  if (uiStage === "approved" || uiStage === "meter_install" || uiStage === "mco") return false
+
+  // Meter Pending (including local To Pending / send-to-metering overlay).
+  if (uiStage === "processing") return true
+  if (id && isAdminMeteringHandoffLocal(id) && uiStage !== "approved") return true
+  if (isAwaitingManualMeteringHandoff(q)) return true
+
   const handoffLocal = id ? isAdminMeteringHandoffLocal(id) : false
   const inPipeline = isAlreadyInMeteringPipeline(q)
-
   if (!handoffLocal && !inPipeline) return false
-  if (isMeteringApprovedForTransition(q)) return false
 
   const metering = getMeteringWorkflowRaw(q)
-  const install = getInstallationWorkflowStatus(q)
+  const installStored = String(q.installationStatus || q.installation_status || "").toLowerCase()
   const late = new Set([
     "metering_approved",
     "mco",
     "meter_installation_pending",
     "meter_install",
+    "meter_install_pending",
     "pending_baldev",
     "baldev_approved",
     "completed",
   ])
-  if (late.has(metering) || late.has(install)) return false
-
-  if (handoffLocal && !inPipeline) {
-    const earlyInstall = new Set([
-      "pending_installer",
-      "installer_in_progress",
-      "in_progress",
-      "installer_approved",
-      "",
-    ])
-    return earlyInstall.has(install)
-  }
+  if (late.has(metering) || late.has(installStored)) return false
+  if (isMeteringApprovedForTransition(q)) return false
 
   return true
 }
@@ -623,7 +620,7 @@ export function getAdminQuotationsTabRetrieveState(
   q: OperationalQuotationRecord,
   meteringStageOverride?: MeteringWorkflowTab | null,
 ): SendToMeteringMenuState {
-  if (meteringStageOverride === "processing") {
+  if (meteringStageOverride === "processing" || getMeteringWorkflowStage(q) === "processing") {
     return {
       visible: true,
       enabled: true,
@@ -1193,4 +1190,36 @@ export function mergeInstallationMediaSources(
     piUploadUrl: preferFilledMedia(base.piUploadUrl, extra.piUploadUrl),
     pi_upload_url: preferFilledMedia(base.pi_upload_url, extra.pi_upload_url),
   }
+}
+
+/**
+ * Merge installer-queue photos onto an Admin list row without promoting it to
+ * Approved Installation. Queue `approved` membership is not Complete.
+ */
+export function mergeInstallerQueueOntoAdminRow(
+  existing: OperationalQuotationRecord,
+  queueRow: OperationalQuotationRecord | null | undefined,
+): OperationalQuotationRecord {
+  if (!queueRow) return existing
+  const merged = mergeInstallationMediaSources(existing, queueRow)
+  if (isInstallationApprovedForAdminTab(existing) || isInstallationPartialApproved(existing)) {
+    return merged
+  }
+  const existingStatus = String(existing.installationStatus || existing.installation_status || "").trim()
+  if (existingStatus) {
+    return {
+      ...merged,
+      installationStatus: existing.installationStatus ?? existing.installation_status,
+      installation_status: existing.installation_status ?? existing.installationStatus,
+    }
+  }
+  const mergedStatus = String(merged.installationStatus || merged.installation_status || "").trim()
+  if (INSTALLATION_UPLOAD_COMPLETE_STATUSES.has(mergedStatus)) {
+    return {
+      ...merged,
+      installationStatus: existing.installationStatus,
+      installation_status: existing.installation_status,
+    }
+  }
+  return merged
 }

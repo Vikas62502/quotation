@@ -638,6 +638,16 @@ function parseUploadUrlCandidate(payload: any, preferredKeys: string[] = []): st
   return null
 }
 
+const METERING_WORKFLOW_STAGE_VALUES = new Set([
+  "pending_metering",
+  "metering_in_progress",
+  "metering_approved",
+  "meter_installation_pending",
+  "meter_install_pending",
+  "meter_install",
+  "mco",
+])
+
 function operationalWorkflowBody(status: string, action?: string) {
   const body: Record<string, string | boolean> = {
     status,
@@ -651,6 +661,11 @@ function operationalWorkflowBody(status: string, action?: string) {
     adminOverride: true,
     allowFromPendingInstaller: true,
     source: "admin",
+  }
+  if (METERING_WORKFLOW_STAGE_VALUES.has(status)) {
+    body.meteringStage = status
+    body.metering_stage = status
+    body.stage = status
   }
   if (action) body.action = action
   return body
@@ -749,10 +764,18 @@ export async function sendQuotationToMetering(quotationId: string): Promise<bool
 export async function retrieveQuotationFromMetering(quotationId: string): Promise<boolean> {
   const target = "installer_approved"
   const body = {
-    ...operationalWorkflowBody(target),
+    installationStatus: target,
+    installation_status: target,
+    meteringStatus: "",
+    metering_status: "",
+    meteringStage: "",
+    metering_stage: "",
     target,
     retrieveFromMetering: true,
     allowRevert: true,
+    force: true,
+    adminOverride: true,
+    source: "admin",
   }
   const endpoints = [
     `/admin/quotations/${quotationId}/retrieve-from-metering`,
@@ -3076,8 +3099,15 @@ export const api = {
     forceSetStatus: async (quotationId: string, status: "metering_approved" | "mco") => {
       const body = {
         status,
+        stage: status,
         installationStatus: status,
+        installation_status: status,
         meteringStatus: status,
+        metering_status: status,
+        meteringStage: status,
+        metering_stage: status,
+        force: true,
+        adminOverride: true,
       }
 
       const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
@@ -4023,7 +4053,7 @@ export const api = {
        * Always sends force/adminOverride so admin can hand off pending_installer → pending_metering.
        */
       updateOperationalStatus: async (quotationId: string, installationStatus: string) => {
-        const body = {
+        const body: Record<string, unknown> = {
           installationStatus,
           installation_status: installationStatus,
           meteringStatus: installationStatus,
@@ -4033,6 +4063,11 @@ export const api = {
           adminOverride: true,
           allowFromPendingInstaller: true,
           source: "admin",
+        }
+        if (METERING_WORKFLOW_STAGE_VALUES.has(installationStatus)) {
+          body.meteringStage = installationStatus
+          body.metering_stage = installationStatus
+          body.stage = installationStatus
         }
 
         const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST" }> = [
@@ -4129,18 +4164,40 @@ export const api = {
           meteringWccAfterDiscom: value,
           metering_wcc_after_discom: value,
         }
-        const statusBody = {
+        const approvedStageBody = {
           installationStatus: "metering_approved",
           installation_status: "metering_approved",
           meteringStatus: "metering_approved",
           metering_status: "metering_approved",
+          meteringStage: "metering_approved",
+          metering_stage: "metering_approved",
+          stage: "metering_approved",
+          force: true,
+          adminOverride: true,
+          source: "admin",
+        }
+        const statusBody = {
+          ...approvedStageBody,
           ...flagBody,
+        }
+
+        // Dedicated WCC route 400s unless the server stage is already metering_approved.
+        // Local "Meter in Discom" overlay can be ahead of the API — persist stage first.
+        if (value) {
+          await patchMeteringWorkflowAction(quotationId, "start")
+          await patchMeteringWorkflowAction(quotationId, "approve")
+          await patchOperationalWorkflowStatus(quotationId, "metering_approved")
         }
 
         const endpoints: Array<{ endpoint: string; method: "PATCH" | "POST"; body: Record<string, unknown> }> = [
           {
             endpoint: `/admin/quotations/${quotationId}/metering-wcc-after-discom`,
             method: "PATCH",
+            body: flagBody,
+          },
+          {
+            endpoint: `/admin/quotations/${quotationId}/metering-wcc-after-discom`,
+            method: "POST",
             body: flagBody,
           },
           {
@@ -4166,12 +4223,17 @@ export const api = {
             return await apiRequest(attempt.endpoint, {
               method: attempt.method,
               body: attempt.body,
+              suppressErrorLog: true,
             })
           } catch (error) {
             lastError = error
+            const message = error instanceof Error ? error.message : ""
             const isRetryable =
               error instanceof ApiError &&
-              (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+              (error.code === "HTTP_404" ||
+                error.code === "HTTP_405" ||
+                error.code === "HTTP_501" ||
+                (value && /only be set when stage is metering_approved/i.test(message)))
             if (!isRetryable) throw error
           }
         }

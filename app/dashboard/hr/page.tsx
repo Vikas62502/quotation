@@ -284,7 +284,7 @@ const normalizeName = (value?: string) =>
     .toLowerCase()
     .replace(/\s+/g, " ")
 
-export default function HrDashboardPage() {
+export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
   const router = useRouter()
   const { isAuthenticated, role, logout, access } = useAuth()
   const { toast } = useToast()
@@ -677,6 +677,7 @@ export default function HrDashboardPage() {
   }
 
   useEffect(() => {
+    if (embedded) return
     if (!isAuthenticated) {
       router.push("/login")
       return
@@ -684,7 +685,7 @@ export default function HrDashboardPage() {
     if (role !== "hr" && !canOpenSection(access, role, "hr")) {
       router.push(getPostLoginPath(access.length ? access : []))
     }
-  }, [isAuthenticated, role, access, router])
+  }, [embedded, isAuthenticated, role, access, router])
 
   useEffect(() => {
     const loadDealers = async () => {
@@ -1525,9 +1526,9 @@ export default function HrDashboardPage() {
   const multiAccess = getAccessOptions(access).length > 1
 
   return (
-    <div className="min-h-screen bg-background">
-      <AccessSwitchBar current="hr" title="HR" />
-      {!multiAccess ? (
+    <div className={embedded ? "space-y-4" : "min-h-screen bg-background"}>
+      {!embedded ? <AccessSwitchBar current="hr" title="HR" /> : null}
+      {!embedded && !multiAccess ? (
         <header className="border-b border-border bg-card">
           <div className="container mx-auto px-4 py-4 flex items-center justify-between">
             <button onClick={() => router.push("/")} className="flex items-center">
@@ -1549,7 +1550,7 @@ export default function HrDashboardPage() {
         </header>
       ) : null}
 
-      <main className="container mx-auto px-4 py-6 space-y-4">
+      <main className={embedded ? "space-y-4" : "container mx-auto px-4 py-6 space-y-4"}>
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
             <Users className="w-4 h-4 text-primary" />
@@ -2258,4 +2259,8 @@ export default function HrDashboardPage() {
       </Dialog>
     </div>
   )
+}
+
+export default function HrDashboardPage() {
+  return <HrWorkspace />
 }

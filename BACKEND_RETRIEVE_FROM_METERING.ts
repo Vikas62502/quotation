@@ -23,7 +23,13 @@
  * =============================================================================
  */
 
-const EARLY_METERING = new Set(["pending_metering", "metering_in_progress", ""])
+const EARLY_METERING = new Set([
+  "pending_metering",
+  "metering_in_progress",
+  "processing",
+  "installer_approved",
+  "",
+])
 const LATE_METERING = new Set([
   "metering_approved",
   "meter_installation_pending",
@@ -58,11 +64,41 @@ function requireAdmin(req, res) {
 }
 
 /**
- * Apply retrieve-from-metering: early metering → installer_approved.
+ * Apply retrieve-from-metering: Meter Pending → installer_approved.
  * Keep Payment Management release flags (installation_ready_for_installer).
+ *
+ * Admin Meter Pending shows Retrieve for every processing row. Honour
+ * `force` / `adminOverride` / `retrieveFromMetering` so missing `meteringStage`
+ * does not 409 ("not in early Meter Pending").
  */
-export async function applyRetrieveFromMetering(quotation) {
+export async function applyRetrieveFromMetering(quotation, reqBody = {}) {
   const { install, metering } = currentStages(quotation)
+  const force =
+    reqBody.force === true ||
+    reqBody.adminOverride === true ||
+    reqBody.allowRevert === true ||
+    reqBody.retrieveFromMetering === true
+
+  if (LATE_METERING.has(metering) && !force) {
+    const err = new Error("Quotation is past Meter Pending — retrieve not allowed.")
+    err.status = 409
+    err.code = "WF_RETRIEVE_METERING_002"
+    throw err
+  }
+  // Discom / WCC / MCO stay blocked even with force — use late-stage revert.
+  if (
+    metering === "meter_installation_pending" ||
+    metering === "mco" ||
+    install === "meter_installation_pending" ||
+    install === "mco" ||
+    install === "pending_baldev" ||
+    install === "baldev_approved"
+  ) {
+    const err = new Error("Quotation is past Meter Pending — retrieve not allowed.")
+    err.status = 409
+    err.code = "WF_RETRIEVE_METERING_002"
+    throw err
+  }
 
   const inEarly =
     EARLY_METERING.has(metering) ||
@@ -72,19 +108,13 @@ export async function applyRetrieveFromMetering(quotation) {
     metering === "metering_in_progress" ||
     install === "metering_in_progress"
 
-  if (!inEarly) {
+  // Meter Pending list can have installer_approved + empty meteringStage after Send to Metering.
+  if (!inEarly && !force) {
     const err = new Error(
       `Cannot retrieve from metering while stage is '${metering || install || "unset"}'. Use late-stage revert flows.`,
     )
     err.status = 409
     err.code = "WF_RETRIEVE_METERING_001"
-    throw err
-  }
-
-  if (LATE_METERING.has(metering) || LATE_METERING.has(install)) {
-    const err = new Error("Quotation is past Meter Pending — retrieve not allowed.")
-    err.status = 409
-    err.code = "WF_RETRIEVE_METERING_002"
     throw err
   }
 
@@ -97,6 +127,8 @@ export async function applyRetrieveFromMetering(quotation) {
     metering_stage: null,
     pendingMeteringAt: null,
     pending_metering_at: null,
+    meteringWccAfterDiscom: false,
+    metering_wcc_after_discom: false,
     // Do NOT clear installation_ready_for_installer / installation_released_at.
     // Do NOT change quotations.status (still approved).
   })
@@ -130,7 +162,7 @@ export async function postAdminRetrieveFromMetering(req, res) {
       return res.status(404).json({ success: false, error: { code: "RES_001", message: "Not found" } })
     }
 
-    await applyRetrieveFromMetering(quotation)
+    await applyRetrieveFromMetering(quotation, req.body || {})
     const data = quotationToApiJson(quotation)
     return res.json({ success: true, data })
   } catch (e) {

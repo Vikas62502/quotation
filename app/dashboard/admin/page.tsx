@@ -106,6 +106,8 @@ import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { AdminPricingTablesManagement } from "@/components/admin-pricing-tables-management"
 import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel"
+import { AdminBankingPanel } from "@/components/admin-banking-panel"
+import { HrWorkspace } from "@/app/dashboard/hr/page"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { FullCustomerJourneyPanel } from "@/components/full-customer-journey-panel"
 import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
@@ -222,11 +224,13 @@ import {
   stampInstallerReleaseFromMap,
   syncInstallerReleaseMapFromRows,
   mergeInstallationMediaSources,
+  mergeInstallerQueueOntoAdminRow,
 } from "@/lib/operational-install-queue"
 import { normalizeMediaUrl, pickMediaUrlFromValue, toPublicOpenHref } from "@/lib/media-url"
 import { InstallationPublicPhoto } from "@/components/installation-public-photo"
 import {
   gatherInstallationPublicImageUrls,
+  isInstallationUploadCompleteWithMedia,
   mergeSiteCompletionPublicUrlsOntoQuotation,
 } from "@/lib/installation-public-images"
 import { uploadInstallationPhotosNow, retainedInstallationUrlsByField } from "@/lib/upload-installation-photo"
@@ -355,18 +359,28 @@ function getQuotationPaymentTypeRaw(q: Quotation | Record<string, unknown>): str
 
 function readQuotationPaymentPhases(
   q: Quotation | Record<string, unknown>,
-): Array<{ phaseNumber: number; amount: number }> {
+): Array<{
+  phaseNumber: number
+  amount: number
+  paidAmount: number
+  paymentMode?: string
+  status?: string
+}> {
   const r = q as Record<string, unknown>
   const raw =
+    r.installments ||
     r.paymentPhases ||
     r.payment_phases ||
-    r.installments ||
     r.phases ||
     null
   if (!Array.isArray(raw)) return []
   return raw.map((phase: any, index: number) => ({
     phaseNumber: Number(phase?.phaseNumber ?? phase?.phase_number ?? index + 1),
-    amount: Math.round(Number(phase?.amount ?? 0)) || 0,
+    amount: Math.round(Number(phase?.amount ?? phase?.installmentAmount ?? phase?.installment_amount ?? 0)) || 0,
+    paidAmount:
+      Math.round(Number(phase?.paidAmount ?? phase?.paid_amount ?? phase?.amountPaid ?? phase?.amount_paid ?? 0)) || 0,
+    paymentMode: String(phase?.paymentMode || phase?.payment_mode || phase?.mode || "").trim() || undefined,
+    status: String(phase?.status || "").trim() || undefined,
   }))
 }
 
@@ -746,9 +760,11 @@ function addDedupedUrl(sink: string[], max: number, s?: string) {
   sink.push(normalized)
 }
 
-/** Installation is approved only after Complete from Pending Installation. */
-function isInstallationUploadComplete(quotation: Quotation, _approvedQueueIds?: Set<string>): boolean {
-  return isInstallationApprovedForAdminTab(quotation as unknown as Record<string, unknown>)
+/** Approved Installation: Complete, or approved quotation that already has uploaded photos. */
+function isInstallationUploadComplete(quotation: Quotation, approvedQueueIds?: Set<string>): boolean {
+  return isInstallationUploadCompleteWithMedia(quotation as unknown as Record<string, unknown>, {
+    approvedQueueIds,
+  })
 }
 
 function AdminQuotationDealerBlock({
@@ -1594,6 +1610,7 @@ export default function AdminPanelPage() {
   const [retrievingFromMeteringId, setRetrievingFromMeteringId] = useState<string | null>(null)
   const [retrievingFromInstallationId, setRetrievingFromInstallationId] = useState<string | null>(null)
   const QUOTATIONS_LIST_BATCH_SIZE = 12
+  const quotationListScrollRef = useRef<HTMLDivElement | null>(null)
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [documentsDialogOpen, setDocumentsDialogOpen] = useState(false)
@@ -2787,7 +2804,22 @@ export default function AdminPanelPage() {
               } as Quotation
             })
             if (!isStale()) {
-              setQuotations((prev) => (prev.length > 0 && activeTab !== "quotations" ? prev : previewRows))
+              setQuotations((prev) => {
+                if (prev.length > 0 && activeTab !== "quotations") return prev
+                if (prev.length === 0) return previewRows
+                const incomingById = new Map(previewRows.map((row) => [String(row.id), row]))
+                const seen = new Set<string>()
+                const next = prev.map((row) => {
+                  const id = String(row.id)
+                  seen.add(id)
+                  return incomingById.get(id) ?? row
+                })
+                for (const row of previewRows) {
+                  const id = String(row.id)
+                  if (!seen.has(id)) next.push(row)
+                }
+                return next
+              })
               setQuotationsListTotal((prev) => Math.max(prev ?? 0, paginatedQuotationsTotal ?? previewRows.length))
             }
           }
@@ -2851,7 +2883,7 @@ export default function AdminPanelPage() {
             adminById.set(
               id,
               stampInstallerReleaseFromMap(
-                mergeInstallationMediaSources(existing, rowWithStatus) as OperationalQuotationRecord,
+                mergeInstallerQueueOntoAdminRow(existing, queueRow) as OperationalQuotationRecord,
                 releaseLocal,
               ) as Record<string, unknown>,
             )
@@ -2922,6 +2954,7 @@ export default function AdminPanelPage() {
             rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
           const queueExtra = installerQueueById[String(q.id || "").trim()]
           const productSource = queueExtra ? { ...q, ...queueExtra } : q
+          const paymentPhases = readQuotationPaymentPhases(q)
           const mappedBase = {
             ...q,
             id: q.id,
@@ -2967,7 +3000,8 @@ export default function AdminPanelPage() {
               const n = Number(q.cashAmount ?? q.cash_amount)
               return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
             })(),
-            paymentPhases: readQuotationPaymentPhases(q),
+            paymentPhases,
+            installments: paymentPhases,
             subsidyChequeDetails: q.subsidyChequeDetails ?? q.subsidy_cheque_details,
             fileLoginStatus: fileLoginStatusNorm as FileLoginStatus | undefined,
             filePaymentType: (() => {
@@ -3025,7 +3059,7 @@ export default function AdminPanelPage() {
             installationTeamId: q.installationTeamId ?? q.installation_team_id,
           }
           const mapped = queueExtra
-            ? (mergeInstallationMediaSources(mappedBase, queueExtra) as typeof mappedBase)
+            ? (mergeInstallerQueueOntoAdminRow(mappedBase, queueExtra) as typeof mappedBase)
             : mappedBase
           return mergeAdminMeteringProgressOntoQuotation(
             mergeAdminMeteringHandoffOntoQuotation(
@@ -4305,7 +4339,7 @@ export default function AdminPanelPage() {
         if (operationalProgressTab === "done") return true
         let installerStatus: "pending" | "inprogress" | "partial" | "approved" = "pending"
         if (isInstallationPartialApproved(q as any)) installerStatus = "partial"
-        else if (isInstallationUploadComplete(q, installerQueueApprovedIds)) installerStatus = "approved"
+        else if (isInstallationApprovedForAdminTab(q as unknown as Record<string, unknown>)) installerStatus = "approved"
         else {
           const backendStatus = getInstallationWorkflowStatus(q as any)
           if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
@@ -4434,13 +4468,13 @@ export default function AdminPanelPage() {
   const getInstallerQueueStatusForAdmin = (
     quotation: Quotation,
   ): "pending" | "inprogress" | "partial" | "approved" => {
+    if (isInstallationForcedPending(quotation.id)) return "pending"
+    if (isInstallationPartialApproved(quotation as any)) return "partial"
+    if (isInstallationApprovedForAdminTab(quotation as unknown as Record<string, unknown>)) return "approved"
     const backendStatus = getInstallationWorkflowStatus(quotation as any)
-    if (isInstallationForcedPending(quotation.id) || backendStatus === "pending_installer") return "pending"
     if (backendStatus === "installer_in_progress" || backendStatus === "in_progress") {
       return "inprogress"
     }
-    if (isInstallationPartialApproved(quotation as any)) return "partial"
-    if (isInstallationUploadComplete(quotation, installerQueueApprovedIds)) return "approved"
     return "pending"
   }
 
@@ -4796,10 +4830,6 @@ export default function AdminPanelPage() {
     filterPaymentType,
     filterBankDetails,
     filterInstallOverdue,
-    activeQuotationList.length,
-    activeQuotationList[0]?.id ?? "",
-    activeQuotationList[activeQuotationList.length - 1]?.id ?? "",
-    quotationsListTotal,
   ].join("|")
 
   const {
@@ -4813,6 +4843,7 @@ export default function AdminPanelPage() {
     batchSize: QUOTATIONS_LIST_BATCH_SIZE,
     resetKey: quotationListResetKey,
     enabled: activeTab === "quotations",
+    rootRef: quotationListScrollRef,
     totalCount:
       quotationListUsesServerTotal && quotationsListTotal != null
         ? Math.max(quotationsListTotal, activeQuotationList.length)
@@ -5507,7 +5538,7 @@ export default function AdminPanelPage() {
       if (!shouldShowInAdminInstallationTab(quotation as any, readInstallerReleaseMap())) return null
       return getInstallationAdminTabProgress(
         quotation as any,
-        isInstallationUploadComplete(quotation, installerQueueApprovedIds),
+        isInstallationApprovedForAdminTab(quotation as any),
       )
     }
     if (tab === "metering") {
@@ -5802,9 +5833,12 @@ export default function AdminPanelPage() {
     )
   }
 
-  const ensureAdminMeteringApproved = async (quotation: Quotation) => {
+  const ensureAdminMeteringApproved = async (
+    quotation: Quotation,
+    options?: { forcePersist?: boolean },
+  ) => {
     const q = quotation as unknown as Record<string, unknown>
-    if (isMeteringApprovedForTransition(q)) return
+    if (!options?.forcePersist && isMeteringApprovedForTransition(q)) return
 
     const installRaw = getInstallationWorkflowStatus(q)
     if (installRaw === "installer_approved") {
@@ -6547,6 +6581,11 @@ export default function AdminPanelPage() {
     }
     try {
       if (useApi) {
+        try {
+          await ensureAdminMeteringApproved(quotation, { forcePersist: true })
+        } catch {
+          // WCC route also persists metering_approved before setting the flag.
+        }
         await api.admin.quotations.setMeteringWccAfterDiscom(quotation.id, true)
       }
       applyMeteringWccAfterDiscomLocal(quotation.id, true)
@@ -6867,16 +6906,17 @@ export default function AdminPanelPage() {
   }
 
   const handleRetrieveFromMetering = async (quotation: Quotation) => {
+    const meteringStage = getAdminMeteringStage(quotation)
     const override = adminMeteringStageOverride[quotation.id]
     const retrieveState =
-      override === "processing"
+      meteringStage === "processing" || override === "processing"
         ? { visible: true, enabled: true, hint: "", sent: false }
         : getAdminQuotationsTabRetrieveState(quotation, override)
     if (retrievingFromMeteringId === quotation.id) return
     if (!retrieveState.enabled) {
       toast({
         title: "Cannot retrieve",
-        description: retrieveState.hint || "This quotation is not in early Meter Pending.",
+        description: retrieveState.hint || "This quotation is not in Meter Pending.",
         variant: "destructive",
       })
       return
@@ -7512,7 +7552,7 @@ export default function AdminPanelPage() {
 
       if (stageOk) {
         setOperationalTab("installation")
-        setOperationalProgressTab(isPartial ? "partial" : "done")
+        if (isPartial) setOperationalProgressTab("partial")
         setAdminInstallExpandedId(null)
         setAdminInstallQuotation(null)
         setAdminInstallMediaByField({})
@@ -7521,7 +7561,7 @@ export default function AdminPanelPage() {
           title: "Saved",
           description: isPartial
             ? "Partial upload saved. Showing Partial Approved — this quotation is not in Approved Installation."
-            : "Installation approved. Metering is separate — use Quotations → Send to Metering when that team should start.",
+            : "Installation approved. You can keep working in Pending Installation.",
         })
       } else {
         toast({
@@ -8169,11 +8209,13 @@ export default function AdminPanelPage() {
                 <>
                     <SelectItem value="quotations__all">Quotations (all)</SelectItem>
                     <SelectItem value="payments">Accounts</SelectItem>
+                    <SelectItem value="banking">Banking</SelectItem>
                     <SelectItem value="quotations__installation">Installation</SelectItem>
                     <SelectItem value="quotations__metering">Metering</SelectItem>
                     <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
                     <SelectItem value="dealers">Users</SelectItem>
                     <SelectItem value="customers">Customers</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="catalog__products">Catalog — Products</SelectItem>
                     <SelectItem value="catalog__pricing">Catalog — Pricing</SelectItem>
                 </>
@@ -8183,8 +8225,8 @@ export default function AdminPanelPage() {
           ) : null}
 
           {!reportsOnlyAccess ? (
-          <div className="hidden md:block w-full pb-1">
-            <TabsList className="flex h-auto min-h-11 w-full flex-wrap gap-1 rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-9 [&_[data-slot=tabs-trigger]]:shrink-0 [&_[data-slot=tabs-trigger]]:px-2 [&_[data-slot=tabs-trigger]]:text-sm [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
+          <div className="hidden md:block w-full">
+            <TabsList className="grid h-auto min-h-11 w-full grid-cols-[repeat(14,minmax(0,1fr))] gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-auto [&_[data-slot=tabs-trigger]]:min-h-9 [&_[data-slot=tabs-trigger]]:px-1.5 [&_[data-slot=tabs-trigger]]:py-1.5 [&_[data-slot=tabs-trigger]]:text-[11px] [&_[data-slot=tabs-trigger]]:leading-tight [&_[data-slot=tabs-trigger]]:!whitespace-normal [&_[data-slot=tabs-trigger]]:text-center [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="customer-journey">Customer Journey</TabsTrigger>
             <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
@@ -8199,6 +8241,7 @@ export default function AdminPanelPage() {
               Quotations
             </TabsTrigger>
             <TabsTrigger value="payments">Accounts</TabsTrigger>
+            <TabsTrigger value="banking">Banking</TabsTrigger>
             <TabsTrigger
               value="quotations"
               className={quotationSubTabTriggerClass("installation")}
@@ -8228,6 +8271,7 @@ export default function AdminPanelPage() {
             </TabsTrigger>
             <TabsTrigger value="dealers">Users</TabsTrigger>
             <TabsTrigger value="customers">Customers</TabsTrigger>
+            <TabsTrigger value="hr">HR</TabsTrigger>
             <TabsTrigger value="catalog">Catalog</TabsTrigger>
             </TabsList>
           </div>
@@ -9443,7 +9487,7 @@ export default function AdminPanelPage() {
                           </p>
                       </div>
                     ) : (
-                        <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                        <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                           <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                             <table className="w-full min-w-[64rem] border-collapse text-left">
                               <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
@@ -9575,7 +9619,7 @@ export default function AdminPanelPage() {
                           </p>
                         </div>
                       ) : (
-                        <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                        <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                           <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                             <table className="w-full min-w-[56rem] border-collapse text-left">
                               <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
@@ -9693,7 +9737,7 @@ export default function AdminPanelPage() {
                           </p>
                         </div>
                       ) : (
-                        <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                        <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                           <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                             <table className="w-full min-w-[72rem] border-collapse text-left">
                               <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
@@ -9890,7 +9934,7 @@ export default function AdminPanelPage() {
                           </p>
                         </div>
                       ) : (
-                        <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                        <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
                           {visibleQuotationList.map((quotation) => {
                             const qAny = quotation as unknown as Record<string, unknown>
                             const nestedDealer = qAny.dealer as Record<string, unknown> | null | undefined
@@ -10128,7 +10172,7 @@ export default function AdminPanelPage() {
                         ) : null}
                       </div>
                     ) : (
-                      <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                      <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                         <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                           <table className="w-full min-w-[94rem] border-collapse text-left">
                             <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
@@ -10403,7 +10447,7 @@ export default function AdminPanelPage() {
                           </p>
                         </div>
                       ) : (
-                        <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                        <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
                           {visibleQuotationList.map((quotation) => {
                             const installerApprovedDate =
                               (quotation as any).installerApprovedAt ||
@@ -10505,7 +10549,7 @@ export default function AdminPanelPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
+                      <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] space-y-3 overflow-y-auto overscroll-y-contain pr-1">
                         {visibleQuotationList.map((quotation) => {
                           const confirmationStage = getAdminConfirmationStage(quotation)
                           const installerApprovedDate =
@@ -10749,7 +10793,7 @@ export default function AdminPanelPage() {
                         </p>
                       </div>
                     ) : (
-                      <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
+                      <div ref={quotationListScrollRef} className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
                         <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
                           <table className="w-full min-w-[78rem] border-collapse text-left">
                             <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
@@ -12544,6 +12588,24 @@ export default function AdminPanelPage() {
                 </Button>
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Banking Tab — loan / cash+loan installment follow-up from Accounts */}
+          <TabsContent value="banking" className="space-y-6">
+            <AdminBankingPanel
+              quotations={quotations}
+              getDealerName={getDealerName}
+              getDealerMobile={getDealerMobile}
+              getBankDetails={getQuotationBankDetails}
+              onOpenDetails={(quotation) => {
+                setSelectedQuotation(quotation)
+                setDialogOpen(true)
+              }}
+            />
+          </TabsContent>
+
+          <TabsContent value="hr" className="space-y-6">
+            <HrWorkspace embedded />
           </TabsContent>
 
           {/* Catalog Tab — Products + Pricing */}

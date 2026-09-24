@@ -31,17 +31,35 @@ export function useIncrementalList<T>(
 
   const [visibleCount, setVisibleCount] = useState(batchSize)
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const itemsLengthRef = useRef(items.length)
+  itemsLengthRef.current = items.length
+  const prevResetKeyRef = useRef(resetKey)
 
   useEffect(() => {
+    if (prevResetKeyRef.current === resetKey) return
+    prevResetKeyRef.current = resetKey
     setVisibleCount(batchSize)
   }, [resetKey, batchSize])
 
+  // Source list can shrink while scrolling (row moved to another tab). Keep the
+  // current window instead of jumping back to the first batch.
+  useEffect(() => {
+    setVisibleCount((prev) => {
+      if (items.length <= 0) return prev
+      return Math.min(prev, items.length)
+    })
+  }, [items.length])
+
   const loadMore = useCallback(() => {
-    setVisibleCount((prev) => Math.min(prev + batchSize, items.length))
-  }, [batchSize, items.length])
+    setVisibleCount((prev) => {
+      const cap = itemsLengthRef.current
+      if (cap <= 0) return prev
+      return Math.min(prev + batchSize, cap)
+    })
+  }, [batchSize])
 
   useEffect(() => {
-    if (!enabled || items.length === 0) return
+    if (!enabled) return
 
     const el = sentinelRef.current
     if (!el) return
@@ -52,12 +70,12 @@ export function useIncrementalList<T>(
         if (!entries[0]?.isIntersecting) return
         loadMore()
       },
-      { root, rootMargin: "240px 0px 0px 0px", threshold: 0 },
+      { root, rootMargin: "0px 0px 280px 0px", threshold: 0 },
     )
 
     observer.observe(el)
     return () => observer.disconnect()
-  }, [enabled, items.length, loadMore, visibleCount, rootRef])
+  }, [enabled, loadMore, visibleCount, items.length, rootRef])
 
   const visibleItems = items.slice(0, Math.min(visibleCount, items.length))
   const listTotal = Math.max(totalCountOverride ?? items.length, items.length)

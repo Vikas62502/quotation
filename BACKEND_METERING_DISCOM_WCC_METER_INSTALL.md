@@ -150,14 +150,27 @@ Fallback — existing installation-status PATCH:
 }
 ```
 
-**Validation:** Reject `meteringWccAfterDiscom: true` unless:
+**Validation (Sep 2026 — live Admin bug):** do **not** 400 with
+`meteringWccAfterDiscom can only be set when stage is metering_approved`
+when the row is still `pending_metering` / `metering_in_progress`.
 
-1. Current metering stage is `metering_approved`, and  
-2. Installation is approved (`installer_approved` or upload-complete equivalent — not `installer_partial_approved`).
+Admin **Meter in Discom** can be ahead of DB `meteringStage`. On
+`PATCH /api/admin/quotations/{id}/metering-wcc-after-discom`
+`{ "meteringWccAfterDiscom": true }`:
 
-Return **400** with a clear message if installation is not approved.
+1. If stage is `pending_metering`, `metering_in_progress`, or empty → persist
+   `meteringStage` / `meteringStatus` / `metering_stage` / `metering_status` =
+   **`metering_approved`**, then set the WCC flag → **200**.
+2. If stage is already `metering_approved` → set the flag only → **200**.
+3. If stage is `meter_installation_pending`, `mco`, or later → **409**.
+4. Installation must not be `installer_partial_approved`.
 
-**GET:** Echo the flag on `GET /api/admin/quotations` and metering list rows. **Required** so Admin tabs work after refresh with no client storage.
+Also persist `meteringStage: metering_approved` on **To Discom**
+(`PATCH /metering/quotations/{id}/status` action `approve`, and
+`PATCH /admin/quotations/{id}/installation-status`). GET list rows in
+Meter in Discom **must** return `meteringStage: "metering_approved"`.
+
+**GET:** Echo the flag **and** `meteringStage` on `GET /api/admin/quotations`. **Required** so Admin tabs work after refresh with no client storage.
 
 ---
 

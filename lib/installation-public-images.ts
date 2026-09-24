@@ -1,6 +1,8 @@
 import { pickMediaUrlFromValue, toPublicOpenHref } from "@/lib/media-url"
 import {
   isInstallationApprovedForAdminTab,
+  isInstallationForcedPending,
+  isInstallationPartialApproved,
   type OperationalQuotationRecord,
 } from "@/lib/operational-install-queue"
 
@@ -315,9 +317,13 @@ export function resolveInstallationPhotoUrlsForQuotation(
 
 export function isInstallationUploadCompleteWithMedia(
   q: OperationalQuotationRecord,
-  _opts?: { approvedQueueIds?: Set<string> },
+  opts?: { approvedQueueIds?: Set<string> },
 ): boolean {
-  return isInstallationApprovedForAdminTab(q)
+  if (isInstallationApprovedForAdminTab(q)) return true
+  if (isInstallationForcedPending(String(q.id || ""))) return false
+  if (isInstallationPartialApproved(q)) return false
+  const id = String(q.id || "").trim()
+  return Boolean(id && opts?.approvedQueueIds?.has(id))
 }
 
 export const INSTALLATION_APPROVED_MEDIA_STATUSES = new Set([
