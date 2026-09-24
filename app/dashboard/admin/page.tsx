@@ -88,6 +88,8 @@ import {
   isAlwaysReadOnlyWorkflowModule,
   filterEntitiesByModuleScope,
   isEntityIdAllowedByModuleScope,
+  filterQuotationsByWorkflowPermission,
+  canWriteWorkflowModule,
   type ModuleFieldPermissions,
   type OfficeLocation,
 } from "@/lib/module-field-permissions"
@@ -1443,6 +1445,12 @@ function createEmptyDocumentsForm(): Record<string, any> {
   }
 }
 
+function limitedAdminAccessView(tab: string): { key: UserAccessKey; title: string } {
+  if (tab === "visitor-reports") return { key: "visitor_reports", title: "Visitor Reports" }
+  if (tab === "banking") return { key: "banking", title: "Banking" }
+  return { key: "calling_reports", title: "Calling Reports" }
+}
+
 export default function AdminPanelPage() {
   const { isAuthenticated, dealer, role, access, logout, modulePermissions, officeLocation, accountManager } =
     useAuth()
@@ -1460,7 +1468,7 @@ export default function AdminPanelPage() {
     role === "super-admin" ||
     access.includes("admin") ||
     String(dealer?.username || "").toLowerCase() === "admin"
-  /** Users granted only Visitor/Calling Reports (no Admin checkbox) see those tabs only. */
+  /** Users granted only Banking / Visitor / Calling Reports (no Admin checkbox) see those tabs only. */
   const reportsOnlyAccess = canUseAdminPanel && !isFullAdmin
   const [quotations, setQuotations] = useState<Quotation[]>([])
   /** Server-side total when list fetch is paginated (e.g. limit 1000). */
@@ -2384,9 +2392,13 @@ export default function AdminPanelPage() {
     }
   }, [isAuthenticated, router, dealer, role, access])
 
-  // Deep-link / switcher: keep activeTab in sync with ?tab= (Visitor ↔ Calling Reports)
+  // Deep-link / switcher: keep activeTab in sync with ?tab= (Banking / Visitor / Calling Reports)
   useEffect(() => {
-    if (reportTabFromUrl === "calling-reports" || reportTabFromUrl === "visitor-reports") {
+    if (
+      reportTabFromUrl === "calling-reports" ||
+      reportTabFromUrl === "visitor-reports" ||
+      reportTabFromUrl === "banking"
+    ) {
       setActiveTab(reportTabFromUrl)
     }
   }, [reportTabFromUrl])
@@ -2396,6 +2408,7 @@ export default function AdminPanelPage() {
     const allowed: string[] = []
     if (access.includes("calling_reports")) allowed.push("calling-reports")
     if (access.includes("visitor_reports")) allowed.push("visitor-reports")
+    if (access.includes("banking")) allowed.push("banking")
     if (allowed.length === 0) return
     // Prefer URL tab so Visitor Reports is not overwritten by Calling Reports default
     if (reportTabFromUrl && allowed.includes(reportTabFromUrl)) {
@@ -3634,6 +3647,24 @@ export default function AdminPanelPage() {
     }
     return new Set(callingReportsDealers.map((d) => String(d.id)))
   }, [callingReportsDealers, isFullAdmin, modulePermissions?.calling_reports])
+
+  const bankingDealers = useMemo(() => {
+    if (isFullAdmin) return activeDealers
+    return filterEntitiesByModuleScope(activeDealers, modulePermissions, "banking", reportPermissionCtx)
+  }, [activeDealers, isFullAdmin, modulePermissions, reportPermissionCtx])
+
+  const bankingQuotations = useMemo(() => {
+    if (isFullAdmin) return quotations
+    return filterQuotationsByWorkflowPermission(
+      quotations as unknown as Record<string, unknown>[],
+      modulePermissions,
+      "banking",
+      reportPermissionCtx,
+    ) as unknown as Quotation[]
+  }, [quotations, isFullAdmin, modulePermissions, reportPermissionCtx])
+
+  const canWriteBanking =
+    isFullAdmin || canWriteWorkflowModule(modulePermissions, "banking", reportPermissionCtx)
 
   /** Users tab: dealers + operations users + visitors. */
   type ManagedUserRow = {
@@ -8147,8 +8178,8 @@ export default function AdminPanelPage() {
       {reportsOnlyAccess ? (
         <>
           <AccessSwitchBar
-            current={activeTab === "visitor-reports" ? "visitor_reports" : "calling_reports"}
-            title={activeTab === "visitor-reports" ? "Visitor Reports" : "Calling Reports"}
+            current={limitedAdminAccessView(activeTab).key}
+            title={limitedAdminAccessView(activeTab).title}
           />
           {getAccessOptions(access).length <= 1 ? (
             <header className="border-b border-border bg-card">
@@ -8188,11 +8219,13 @@ export default function AdminPanelPage() {
             </div>
             <div className="min-w-0">
               <h1 className="text-xl sm:text-2xl font-semibold text-foreground">
-                {activeTab === "visitor-reports" ? "Visitor Reports" : "Calling Reports"}
+                {limitedAdminAccessView(activeTab).title}
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Welcome, {dealer?.firstName || "User"}. View-only reports assigned to you — same layout as your other
-                dashboards.
+                Welcome, {dealer?.firstName || "User"}.{" "}
+                {activeTab === "banking"
+                  ? "Banking files assigned to you — same layout as Admin Banking."
+                  : "View-only reports assigned to you — same layout as your other dashboards."}
               </p>
             </div>
           </div>
@@ -12603,11 +12636,12 @@ export default function AdminPanelPage() {
           {/* Banking Tab — loan / cash+loan installment follow-up from Accounts */}
           <TabsContent value="banking" className="space-y-6">
             <AdminBankingPanel
-              quotations={quotations}
-              dealers={activeDealers}
+              quotations={bankingQuotations}
+              dealers={bankingDealers}
               getDealerName={getDealerName}
               getDealerMobile={getDealerMobile}
               getBankDetails={getQuotationBankDetails}
+              readOnly={!canWriteBanking}
               onSubmitProcess={async (quotation, payload) => {
                 markAdminBankProcessDone(quotation.id)
                 setQuotations((prev) =>
@@ -14713,7 +14747,7 @@ export default function AdminPanelPage() {
               <div className="space-y-2 rounded-lg border border-border/70 p-3">
                 <Label className="text-base font-semibold">Dashboard access *</Label>
                 <p className="text-xs text-muted-foreground">
-                  Check dashboards to open after login. Accounts, Installation, Metering, and Final confirmation
+                  Check dashboards to open after login. Accounts, Banking, Installation, Metering, and Final confirmation
                   include field read/write and &quot;Which to access&quot; on the same row. Visitor Reports and Calling
                   Reports are always <span className="font-medium">Read only</span> with the same &quot;Which to
                   access&quot; / Selected one controls. Dealer is checkbox only — dealers always get full access when
@@ -15250,6 +15284,7 @@ export default function AdminPanelPage() {
                       const next = { ...(mfp || {}) }
                       delete (next as any).visitor_reports
                       delete (next as any).calling_reports
+                      delete (next as any).banking
                       return next
                     }
 
@@ -15308,7 +15343,7 @@ export default function AdminPanelPage() {
                               }
                               serverAuthBlockedLocalSave = true
                             } else if (isAccessEnumRejected(firstError)) {
-                              // Live Zod still missing visitor_reports / calling_reports — strip & retry.
+                              // Live Zod still missing visitor_reports / calling_reports / banking — strip & retry.
                               const serverAccess = accessWithoutReportOnlyKeys(selectedAccess)
                               const mfp = stripReportModules(syncedModulePermissions)
                               if (serverAccess.length === 0) {
@@ -15674,7 +15709,7 @@ export default function AdminPanelPage() {
                         toast({
                           title: "Saved (reports access local)",
                           description:
-                            "Profile saved. Visitor/Calling Reports keys are not on the API Zod enum yet — kept in this browser. Backend: add visitor_reports + calling_reports to access enum — BACKEND_USER_ACCESS.ts / REQUIRED §AU.",
+                            "Profile saved. Banking / Visitor / Calling Reports keys are not on the API Zod enum yet — kept in this browser. Backend: add banking + visitor_reports + calling_reports to access enum — BACKEND_USER_ACCESS.ts / REQUIRED §AU.",
                         })
                       } else {
                         toast({

@@ -39,10 +39,11 @@
 | 3 | Persist + echo `panelType` / `panel_type` = **`Crompton set`** (package marker — **required for set price**) |
 | 4 | Allow `inverterBrand` = **`Crompton`**, `inverterSize` = **`3.6kW`** |
 | 5 | Allow ACDB/DCDB **`Crompton (1-Phase)`** |
-| 6 | Accept panel sizes **`600W` / `605W` / `610W`** with normal qty (> 0) |
+| 6 | Accept panel sizes **`550W` / `600W` / `605W` / `610W`** with normal qty (> 0) |
 | 7 | Set-price when `panelType === "Crompton set"`: **3kW→210000**, **5kW→295000** — do **not** use Premier Energies Topcon matrix |
-| 8 | If serving `GET /quotations/pricing-tables`, include Crompton DCR rows + system presets |
+| 8 | If serving `GET /quotations/pricing-tables`, include Crompton DCR rows + system presets (**605W and 550W**) |
 | 9 | Empty range key on PATCH clears stored key (same as §2.1) |
+| 10 | Persist + echo `pdfPanelRangeKey` **`premier_energy_540_560_bifacial`** when 550W bifacial is selected |
 
 ---
 
@@ -50,7 +51,8 @@
 
 | Key | Package | PDF label |
 |-----|---------|-----------|
-| `premier_energy_600_610` | Crompton set | 600W - 610W Topcon Bifacial |
+| `premier_energy_600_610` | Crompton set 600–610W | 600W - 610W Topcon Bifacial |
+| `premier_energy_540_560_bifacial` | Crompton set **550W** | 540-560W Bifacial |
 
 Also still valid: existing Waaree / Adani / Premier Topcon / Tata / INA / 80kW Non-DCR keys.
 
@@ -210,7 +212,8 @@ Optional catalog component rows (if product catalog is validated strictly):
 - `inverterBrand`: `Crompton`
 - `inverterSize`: `3.6kW`
 - `acdb` / `dcdb`: `Crompton (1-Phase)`
-- `pdfPanelRangeKey`: `premier_energy_600_610`
+- `pdfPanelRangeKey`: `premier_energy_600_610` **or** `premier_energy_540_560_bifacial` (550W)
+- Panel sizes: `550W` / `600W` / `605W` / `610W`
 - DCR `systemSize` `3kW` / `5kW` with phase `1-Phase` only for this package
 
 **Do not:**
@@ -237,7 +240,7 @@ Frontend sends computed `subtotal` / `systemPrice` from the selected config; bac
 **Lookup order for set price:**
 1. If `panelType` / `panel_type` is `Crompton set` → use Crompton set prices (210000 / 295000)
 2. Else if `panelBrand` is Premier Energies / Premier → existing Premier Energies matrix
-3. Never treat plain `Premier Energy` alone as Crompton set unless `panelType` / Crompton inverter + `premier_energy_600_610` also match
+3. Never treat plain `Premier Energy` alone as Crompton set unless `panelType` / Crompton inverter + (`premier_energy_600_610` or `premier_energy_540_560_bifacial`) also match
 
 ---
 

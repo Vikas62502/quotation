@@ -24,7 +24,7 @@ import { SolarLogo } from "@/components/solar-logo"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import { Menu, Home, Users, FileText, LogOut, User, Shield, PhoneCall, Eye, ChevronDown, Wallet, Route, ClipboardList } from "lucide-react"
+import { Menu, Home, Users, FileText, LogOut, User, Shield, PhoneCall, Eye, ChevronDown, Wallet, Route, ClipboardList, Landmark } from "lucide-react"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
 import { canOpenSection, getAccessOptions, resolveEffectiveAccess, type UserAccessKey } from "@/lib/user-access"
 import { cn } from "@/lib/utils"
@@ -40,14 +40,17 @@ const isQuotationAppPath = (pathname: string) =>
 
 const isAccessSectionActive = (key: UserAccessKey, pathname: string) => {
   if (key === "quotation") return isQuotationAppPath(pathname)
-  if (key === "calling_reports" || key === "visitor_reports") {
+  if (key === "calling_reports" || key === "visitor_reports" || key === "banking") {
     if (pathname.startsWith("/dashboard/calling-reports")) return key === "calling_reports"
     if (pathname.startsWith("/dashboard/visitor-reports")) return key === "visitor_reports"
     if (!pathname.startsWith("/dashboard/admin")) return false
-    if (typeof window === "undefined") return key === "calling_reports" || key === "visitor_reports"
+    if (typeof window === "undefined") {
+      return key === "calling_reports" || key === "visitor_reports" || key === "banking"
+    }
     const tab = new URLSearchParams(window.location.search).get("tab")
     if (key === "calling_reports") return tab === "calling-reports"
-    return tab === "visitor-reports"
+    if (key === "visitor_reports") return tab === "visitor-reports"
+    return tab === "banking"
   }
   const href = getAccessOptions([key])[0]?.href
   if (!href) return false
@@ -92,9 +95,11 @@ const getNavItems = (isAdmin: boolean, role: string | null, access: UserAccessKe
               ? FileText
               : o.key === "accounts"
                 ? Wallet
-                : o.key === "calling_reports" || o.key === "visitor_reports"
-                  ? ClipboardList
-                  : Users,
+                : o.key === "banking"
+                  ? Landmark
+                  : o.key === "calling_reports" || o.key === "visitor_reports"
+                    ? ClipboardList
+                    : Users,
       })),
     ]
     // Calling Data stays under Dealer nav only — not a separate workspace item

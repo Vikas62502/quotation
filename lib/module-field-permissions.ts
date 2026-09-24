@@ -1,5 +1,5 @@
 /**
- * Installation / Metering / Final confirmation / report field permissions (read vs write + scope).
+ * Installation / Metering / Final confirmation / Banking / report field permissions (read vs write + scope).
  * Separate from dashboard `access[]` checkboxes in Admin → Users.
  */
 
@@ -8,6 +8,7 @@ export type OfficeLocation = (typeof OFFICE_LOCATIONS)[number]
 
 export type WorkflowModuleKey =
   | "accounts"
+  | "banking"
   | "installation"
   | "metering"
   | "final_confirmation"
@@ -70,6 +71,7 @@ export function getScopeOptionsForModule(_module: WorkflowModuleKey) {
 
 export const WORKFLOW_MODULE_LABELS: Record<WorkflowModuleKey, string> = {
   accounts: "Accounts",
+  banking: "Banking",
   installation: "Installation",
   metering: "Metering",
   final_confirmation: "Final confirmation",
@@ -132,6 +134,7 @@ export function normalizeModuleFieldPermissions(raw: unknown): ModuleFieldPermis
   const o = raw as Record<string, unknown>
   const out: ModuleFieldPermissions = {}
   if (o.accounts != null) out.accounts = normalizeModulePermissionRule(o.accounts)
+  if (o.banking != null) out.banking = normalizeModulePermissionRule(o.banking)
   if (o.installation != null) out.installation = normalizeModulePermissionRule(o.installation)
   if (o.metering != null) out.metering = normalizeModulePermissionRule(o.metering)
   if (o.final_confirmation != null) out.final_confirmation = normalizeModulePermissionRule(o.final_confirmation)
@@ -264,6 +267,7 @@ export function syncModuleFieldPermissionsWithAccess(
   )
   const modules: WorkflowModuleKey[] = [
     "accounts",
+    "banking",
     "installation",
     "metering",
     "final_confirmation",

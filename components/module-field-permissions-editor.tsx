@@ -199,6 +199,7 @@ export function WorkflowModuleInlineControls({
 export function isWorkflowAccessKey(key: string): key is WorkflowModuleKey {
   return (
     key === "accounts" ||
+    key === "banking" ||
     key === "installation" ||
     key === "metering" ||
     key === "final_confirmation" ||

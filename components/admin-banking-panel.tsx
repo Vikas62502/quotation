@@ -35,6 +35,7 @@ import {
   rememberExcelColumns,
 } from "@/components/excel-column-picker-dialog"
 import { columnOptionsFromHeaders, downloadCsvFile, filterRowsByColumnIds } from "@/lib/excel-column-export"
+import { isInstallationApprovedForAdminTab } from "@/lib/operational-install-queue"
 
 function formatInr(amount: number): string {
   return `₹${Math.round(amount || 0).toLocaleString("en-IN")}`
@@ -69,6 +70,7 @@ type Props = {
   getBankDetails: (quotation: Quotation) => string
   onOpenDetails?: (quotation: Quotation) => void
   onSubmitProcess?: (quotation: Quotation, payload: BankingSubmitPayload) => Promise<void> | void
+  readOnly?: boolean
 }
 
 const EMPTY_COPY: Record<BankingSubTab, string> = {
@@ -207,6 +209,7 @@ export function AdminBankingPanel({
   getBankDetails,
   onOpenDetails,
   onSubmitProcess,
+  readOnly = false,
 }: Props) {
   const { toast } = useToast()
   const [subTab, setSubTab] = useState<BankingSubTab>("pending_bank")
@@ -215,6 +218,7 @@ export function AdminBankingPanel({
   const [filterDealer, setFilterDealer] = useState("all")
   const [filterPaymentType, setFilterPaymentType] = useState("all")
   const [filterMonth, setFilterMonth] = useState("all")
+  const [filterInstallation, setFilterInstallation] = useState("all")
   const [excelOpen, setExcelOpen] = useState(false)
   const [excelRememberedIds, setExcelRememberedIds] = useState<string[] | null>(null)
   const [submitRow, setSubmitRow] = useState<BankingPaymentRow | null>(null)
@@ -236,9 +240,15 @@ export function AdminBankingPanel({
       if (filterDealer !== "all" && row.quotation.dealerId !== filterDealer) return false
       if (filterPaymentType !== "all" && row.paymentType !== filterPaymentType) return false
       if (!matchesMonthFilter(row.approvedAt || row.createdAt, filterMonth)) return false
+      if (
+        filterInstallation === "approved" &&
+        !isInstallationApprovedForAdminTab(row.quotation as unknown as Record<string, unknown>)
+      ) {
+        return false
+      }
       return true
     })
-  }, [allRows, filterDealer, filterMonth, filterPaymentType])
+  }, [allRows, filterDealer, filterInstallation, filterMonth, filterPaymentType])
 
   const counts = useMemo(() => {
     const next: Record<BankingSubTab, number> = {
@@ -269,7 +279,10 @@ export function AdminBankingPanel({
   }, [scopedRows, getDealerMobile, getDealerName, searchTerm, subTab])
 
   const activeFilterCount =
-    (filterDealer !== "all" ? 1 : 0) + (filterPaymentType !== "all" ? 1 : 0) + (filterMonth !== "all" ? 1 : 0)
+    (filterDealer !== "all" ? 1 : 0) +
+    (filterPaymentType !== "all" ? 1 : 0) +
+    (filterMonth !== "all" ? 1 : 0) +
+    (filterInstallation !== "all" ? 1 : 0)
 
   const bankingExcelColumns = useMemo(() => columnOptionsFromHeaders([...BANKING_EXCEL_HEADERS]), [])
 
@@ -470,7 +483,7 @@ export function AdminBankingPanel({
                       dealerMobile={getDealerMobile(row.quotation.dealerId, row.quotation)}
                       bankDetails={getBankDetails(row.quotation)}
                       onOpenDetails={onOpenDetails}
-                      onSubmit={tab.value === "pending_bank" ? openSubmit : undefined}
+                      onSubmit={tab.value === "pending_bank" && onSubmitProcess && !readOnly ? openSubmit : undefined}
                     />
                   ))}
                 </div>
@@ -485,8 +498,8 @@ export function AdminBankingPanel({
           <DialogHeader>
             <DialogTitle>Banking Filters</DialogTitle>
             <DialogDescription>
-              Filter banking files by dealer, payment type, and month. Download uses the current tab after filters and
-              search, and lets you choose which columns to include.
+              Filter banking files by dealer, payment type, month, and installation approved. Download uses the current
+              tab after filters and search, and lets you choose which columns to include.
             </DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
@@ -523,6 +536,15 @@ export function AdminBankingPanel({
                 <SelectItem value="previous">Previous Month</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={filterInstallation} onValueChange={setFilterInstallation}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by installation" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Installation</SelectItem>
+                <SelectItem value="approved">Installation approved</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button
@@ -532,6 +554,7 @@ export function AdminBankingPanel({
                 setFilterDealer("all")
                 setFilterPaymentType("all")
                 setFilterMonth("all")
+                setFilterInstallation("all")
               }}
             >
               Reset

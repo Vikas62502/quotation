@@ -36,7 +36,7 @@
  * (Admin → Users → Update User with Visitor Reports / Calling Reports checked.)
  *
  *   access: z.array(z.enum(ACCESS_KEYS)).min(1)
- *   // or: z.array(z.enum(["admin","quotation",…,"visitor_reports","calling_reports"]))
+ *   // or: z.array(z.enum(["admin","quotation",…,"visitor_reports","calling_reports","banking"]))
  */
 export const ACCESS_KEYS = [
   "admin",
@@ -49,6 +49,7 @@ export const ACCESS_KEYS = [
   "visitor",
   "visitor_reports",
   "calling_reports",
+  "banking",
 ] as const
 
 export type AccessKey = (typeof ACCESS_KEYS)[number]
@@ -64,9 +65,10 @@ const ACCESS_TO_ROLE: Record<AccessKey, string> = {
   final_confirmation: "baldev",
   hr: "hr",
   visitor: "visitor",
-  // Reports are dashboard grants, not primary roles — keep dealer/ops role intact
+  // Reports / Banking are dashboard grants, not primary roles — keep dealer/ops role intact
   visitor_reports: "dealer",
   calling_reports: "dealer",
+  banking: "account-management",
 }
 
 const PRIMARY_PRIORITY: AccessKey[] = [
@@ -78,9 +80,10 @@ const PRIMARY_PRIORITY: AccessKey[] = [
   "hr",
   "visitor",
   "quotation",
-  // visitor_reports / calling_reports last — never preferred as primary role
+  // visitor_reports / calling_reports / banking last — never preferred as primary role
   "visitor_reports",
   "calling_reports",
+  "banking",
 ]
 
 /** Normalize FE / DB values into canonical access keys. */
@@ -99,6 +102,7 @@ export function normalizeAccess(raw: unknown): AccessKey[] {
     if (key === "dealer" || key === "quotations") key = "quotation"
     if (key === "visitor_report" || key === "visitorreports") key = "visitor_reports"
     if (key === "calling_report" || key === "callingreports") key = "calling_reports"
+    if (key === "bank" || key === "bank_process") key = "banking"
     if (!ACCESS_SET.has(key as AccessKey) || seen.has(key)) continue
     seen.add(key)
     out.push(key as AccessKey)
@@ -353,7 +357,8 @@ export function requireAccess(key: AccessKey) {
  * Report dashboards (P0 — REQUIRED §AX):
  *   GET /admin/calling-actions  → requireAnyAccess(["admin","calling_reports","hr"])
  *   GET admin visits / visitor reports → requireAnyAccess(["admin","visitor_reports"])
- *   Do not use role==="admin" only — Calling Reports users get AUTH_004 otherwise.
+ *   GET /admin/quotations + PATCH …/bank-process → requireAnyAccess(["admin","banking"])
+ *   Do not use role==="admin" only — Calling Reports / Banking users get AUTH_004 otherwise.
  *
  * See BACKEND_USER_FIELD_PERMISSIONS.ts + REQUIRED §AR / §AX.
  */

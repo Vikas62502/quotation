@@ -36,14 +36,15 @@ function isSectionActive(key: UserAccessKey, pathname: string, current?: UserAcc
       pathname.startsWith("/dashboard/new-quotation")
     )
   }
-  if (key === "calling_reports" || key === "visitor_reports") {
+  if (key === "calling_reports" || key === "visitor_reports" || key === "banking") {
     if (pathname.startsWith("/dashboard/calling-reports")) return key === "calling_reports"
     if (pathname.startsWith("/dashboard/visitor-reports")) return key === "visitor_reports"
     if (!pathname.startsWith("/dashboard/admin")) return false
     if (typeof window === "undefined") return false
     const tab = new URLSearchParams(window.location.search).get("tab")
     if (key === "calling_reports") return tab === "calling-reports"
-    return tab === "visitor-reports"
+    if (key === "visitor_reports") return tab === "visitor-reports"
+    return tab === "banking"
   }
   const href = getAccessOptions([key])[0]?.href
   if (!href) return false

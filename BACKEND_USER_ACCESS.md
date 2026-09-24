@@ -98,6 +98,7 @@ Primary JWT `role` may stay `hr`. Do **not** force login to rewrite role to `dea
 | `admin` | `admin` | Admin panel |
 | `quotation` | `dealer` | Quotation / customers / payments (dealer nav) |
 | `accounts` | `account-management` | Accounts |
+| `banking` | *(keep existing role; not a primary role)* | Admin **Banking** tab (`?tab=banking`) |
 | `installation` | `installer` | Installation |
 | `metering` | `metering` | Metering |
 | `final_confirmation` | `baldev` | Final confirmation |
@@ -310,6 +311,7 @@ Allow route if legacy `role` matches **OR** `access` includes the section key.
 | Admin | `admin`/`super-admin` **or** `access` has `admin` |
 | Dealer quotation | `dealer` **or** `access` has `quotation` |
 | Accounts | `account-management` **or** `access` has `accounts` |
+| Banking (Admin tab) | `admin` **or** `access` has `banking` — `GET /admin/quotations` + `PATCH …/bank-process` |
 | Installation | `installer` / `installation-team` **or** `access` has `installation` |
 | Metering | `metering` **or** `access` has `metering` |
 | Final confirmation | `baldev` **or** `access` has `final_confirmation` |

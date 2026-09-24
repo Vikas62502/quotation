@@ -38,8 +38,14 @@ export function isQuotationAdminAccess(opts: {
       .replace(/[\s-]+/g, "_"),
   )
   if (access.includes("admin")) return true
-  // View-only report dashboards granted from Users → Dashboard access
-  if (access.includes("visitor_reports") || access.includes("calling_reports")) return true
+  // Admin-tab grants from Users → Dashboard access (reports + Banking)
+  if (
+    access.includes("visitor_reports") ||
+    access.includes("calling_reports") ||
+    access.includes("banking")
+  ) {
+    return true
+  }
   return false
 }
 

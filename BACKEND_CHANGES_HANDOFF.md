@@ -4087,4 +4087,114 @@ Apply the same rules server-side:
 
 ---
 
+## 51. Crompton 550W bifacial + Non-DCR missing-set panel defaults + Banking docs optional — Sep 2026
+
+**Frontend:** `lib/pricing-tables.ts` · `lib/quotation-pdf-display.ts` · `components/product-selection-form.tsx` · Banking submit in `components/admin-banking-panel.tsx`
+
+### A) Crompton set — also **550W bifacial** (P0)
+
+Same package prices. New panel size + PDF range.
+
+| Field | 600–610W (existing) | **550W (new)** |
+|-------|---------------------|----------------|
+| `panelType` | `Crompton set` | `Crompton set` |
+| `panelBrand` | `Premier Energy` | `Premier Energy` |
+| `panelSize` | `600W` / `605W` / `610W` | **`550W`** |
+| `pdfPanelRangeKey` | `premier_energy_600_610` | **`premier_energy_540_560_bifacial`** |
+| 3kW / 5kW 1-Phase price | 210000 / 295000 | **same** |
+
+**Do:**
+1. Allow `panelSize: "550W"` on Crompton set (do **not** 400 as unknown size).
+2. Persist + GET echo `pdfPanelRangeKey: "premier_energy_540_560_bifacial"`.
+3. If `GET /quotations/pricing-tables` is on, include 3kW/5kW presets with `panelSize: "550W"` as well as 605W.
+
+```json
+{
+  "systemType": "dcr",
+  "phase": "1-Phase",
+  "panelBrand": "Premier Energy",
+  "panelType": "Crompton set",
+  "panelSize": "550W",
+  "inverterBrand": "Crompton",
+  "inverterSize": "3.6kW",
+  "pdfPanelRangeKey": "premier_energy_540_560_bifacial",
+  "systemPrice": 210000
+}
+```
+
+### B) Non-DCR — no catalog set (e.g. **300kW**) is FE-only defaults
+
+**No new price row.** Frontend fills editable **Waaree 580W** / **Adani 620W** when there is no Non-DCR package.
+
+**Backend:** save whatever the dealer entered. Do **not** require a pricing-table match.
+
+| Accept | Example |
+|--------|---------|
+| `systemType` | `non-dcr` |
+| `systemSize` / `inverterSize` / `structureSize` | `300kW` (or any size not in the sheet) |
+| `panelBrand` + `panelSize` | Waaree **`580W`**, Adani **`620W`**, or any other edited wattage |
+| `systemPrice` / `subtotal` | Dealer-entered — do not overwrite from a missing matrix row |
+
+**Do not** 400 “unknown system size” / “invalid panel size” for 300kW + 580W/620W.
+
+### C) Banking submit — documents optional
+
+Already in **§41**. Confirm `PATCH …/bank-process` with only `assignedPersonName` (empty `bankDocumentNames`) returns **200**. No new route.
+
+---
+
+## 52. Admin Users — **Banking** Dashboard access checkbox — Sep 2026
+
+**Frontend:** Admin → Users → Create/Edit User → **Dashboard access** now includes **Banking** (same Field access + Which to access as Accounts).  
+`lib/user-access.ts` key `banking` · href `/dashboard/admin?tab=banking`
+
+### P0 — Zod `access` enum
+
+Add **`banking`** next to `visitor_reports` / `calling_reports`:
+
+```ts
+access: z.array(z.enum([
+  "admin", "quotation", "accounts", "banking",
+  "installation", "metering", "final_confirmation", "hr", "visitor",
+  "visitor_reports", "calling_reports",
+])).min(1)
+```
+
+Until this ships, SPA strips `banking` and retries, then keeps the grant in the browser (`userAccessOverrides` + `moduleFieldPermissions.banking`).
+
+### Login + GET user echo
+
+`POST /auth/login` and `GET /admin/dealers` / account-managers must echo:
+
+```json
+{
+  "access": ["banking"],
+  "moduleFieldPermissions": {
+    "banking": { "level": "write", "scope": "everyone", "selectedUserIds": [] }
+  }
+}
+```
+
+`scope: "selected_users"` → only those dealer IDs on the Banking list.
+
+### Routes Banking users must be allowed (not `role === "admin"` only)
+
+| Action | Allow |
+|--------|--------|
+| Open Banking list | `requireAnyAccess(["admin","banking"])` on `GET /admin/quotations` (same list Banking already uses) |
+| Submit bank process | write: `PATCH …/bank-process` with `requireAnyAccess(["admin","banking"])` |
+| Read only Field access | GET list **200**; PATCH **403** |
+
+Copy-paste: `BACKEND_USER_ACCESS.ts` `ACCESS_KEYS`
+
+### QA
+
+1. Edit User → **Banking** checkbox + Field access Write / Selected one → Update User **200**.
+2. Login as that user → workspace/login opens **Banking** (`?tab=banking`).
+3. Selected dealers only appear in Banking Filters / rows.
+
+---
+
+
+
 

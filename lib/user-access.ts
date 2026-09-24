@@ -7,6 +7,7 @@ export type UserAccessKey =
   | "admin"
   | "quotation"
   | "accounts"
+  | "banking"
   | "installation"
   | "metering"
   | "final_confirmation"
@@ -40,6 +41,12 @@ export const USER_ACCESS_OPTIONS: UserAccessOption[] = [
     label: "Accounts",
     description: "Approved quotations and payment management",
     href: "/dashboard/account-management",
+  },
+  {
+    key: "banking",
+    label: "Banking",
+    description: "Loan / cash+loan bank process (pending, submitted, completed)",
+    href: "/dashboard/admin?tab=banking",
   },
   {
     key: "installation",
@@ -138,11 +145,13 @@ export function normalizeAccessList(raw: unknown): UserAccessKey[] {
             ? "final_confirmation"
             : key === "dealer" || key === "quotations"
               ? "quotation"
-              : key === "visitor_report" || key === "visitorreports" || key === "visitor_reports_tab"
-                ? "visitor_reports"
-                : key === "calling_report" || key === "callingreports" || key === "calling_reports_tab"
-                  ? "calling_reports"
-                  : key
+              : key === "bank" || key === "bank_process" || key === "banking_tab"
+                ? "banking"
+                : key === "visitor_report" || key === "visitorreports" || key === "visitor_reports_tab"
+                  ? "visitor_reports"
+                  : key === "calling_report" || key === "callingreports" || key === "calling_reports_tab"
+                    ? "calling_reports"
+                    : key
     if (!ACCESS_SET.has(mapped) || seen.has(mapped)) continue
     seen.add(mapped)
     out.push(mapped as UserAccessKey)
@@ -154,6 +163,7 @@ export function normalizeAccessList(raw: unknown): UserAccessKey[] {
 export const REPORT_ONLY_ACCESS_KEYS: readonly UserAccessKey[] = [
   "visitor_reports",
   "calling_reports",
+  "banking",
 ]
 
 /** Access safe to send when the live API has not shipped report keys yet. */
@@ -165,7 +175,7 @@ export function accessWithoutReportOnlyKeys(access: UserAccessKey[]): UserAccess
 export function looksLikeAccessEnumValidationMessage(text: string): boolean {
   const m = String(text || "")
   if (/Invalid option:\s*expected one of/i.test(m)) return true
-  if (/visitor_reports|calling_reports/i.test(m) && /invalid|expected one of|enum/i.test(m)) return true
+  if (/visitor_reports|calling_reports|banking/i.test(m) && /invalid|expected one of|enum/i.test(m)) return true
   return false
 }
 
@@ -311,7 +321,7 @@ export function getAccessOptions(access: UserAccessKey[]): UserAccessOption[] {
 export function mergeAccessFromModulePermissions(
   access: UserAccessKey[],
   modulePermissions: Partial<
-    Record<"visitor_reports" | "calling_reports", { level?: string } | null | undefined>
+    Record<"visitor_reports" | "calling_reports" | "banking", { level?: string } | null | undefined>
   > | null | undefined,
 ): UserAccessKey[] {
   const next = normalizeAccessList(access)
@@ -319,14 +329,15 @@ export function mergeAccessFromModulePermissions(
   const add = (key: UserAccessKey) => {
     if (!next.includes(key)) next.push(key)
   }
-  const visitorLevel = String(modulePermissions.visitor_reports?.level || "")
-    .trim()
-    .toLowerCase()
-  const callingLevel = String(modulePermissions.calling_reports?.level || "")
-    .trim()
-    .toLowerCase()
-  if (visitorLevel && visitorLevel !== "none") add("visitor_reports")
-  if (callingLevel && callingLevel !== "none") add("calling_reports")
+  const granted = (key: "visitor_reports" | "calling_reports" | "banking") => {
+    const level = String(modulePermissions[key]?.level || "")
+      .trim()
+      .toLowerCase()
+    return Boolean(level && level !== "none")
+  }
+  if (granted("visitor_reports")) add("visitor_reports")
+  if (granted("calling_reports")) add("calling_reports")
+  if (granted("banking")) add("banking")
   return next
 }
 
@@ -337,7 +348,7 @@ export function resolveEffectiveAccess(input: {
   access?: unknown
   permissions?: unknown
   modulePermissions?: Partial<
-    Record<"visitor_reports" | "calling_reports", { level?: string } | null | undefined>
+    Record<"visitor_reports" | "calling_reports" | "banking", { level?: string } | null | undefined>
   > | null
 }): UserAccessKey[] {
   return mergeAccessFromModulePermissions(resolveUserAccess(input), input.modulePermissions)
