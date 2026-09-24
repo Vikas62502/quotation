@@ -37,7 +37,7 @@ export function dcrCatalogPanelRangeLabel(panelType?: string): string {
     return getPanelPdfRangeLabel("waaree_580_700_bifacial_topcon") ?? "580-700W Bifacial Topcon"
   }
   if (normalized.includes("crompton")) {
-    return getPanelPdfRangeLabel("premier_energy_600_610") ?? "600W - 610W Topcon Bifacial"
+    return "550W Bifacial / 600W - 610W Topcon Bifacial"
   }
   return QUOTATION_AS_PER_THE_SET_LABEL
 }

@@ -12,6 +12,7 @@ import {
   INA_DCR_PANEL_RANGE_KEY,
   applyDefaultPdfPanelRanges,
   stripOptionalPdfRangeUnlessChecked,
+  cromptonPdfPanelRangeKeyForPanelSize,
 } from "@/lib/quotation-pdf-display"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
 import { applyLocalQuotationPdfFlags, writeLocalQuotationPdfFlags } from "@/lib/quotation-pdf-flags-local"
@@ -389,6 +390,7 @@ export function restoreInaPanelBrandForForm(products: ProductSelection): Product
 }
 
 const CROMPTON_PDF_PANEL_RANGE_KEY = "premier_energy_600_610"
+const CROMPTON_PDF_550_BIFACIAL_RANGE_KEY = "premier_energy_540_560_bifacial"
 
 function isCromptonPanelPackage(products: ProductSelection): boolean {
   const record = products as ProductSelection & Record<string, unknown>
@@ -407,6 +409,7 @@ function isCromptonPanelPackage(products: ProductSelection): boolean {
     panelType.includes("crompton") ||
     brand === "crompton set" ||
     range === CROMPTON_PDF_PANEL_RANGE_KEY ||
+    range === CROMPTON_PDF_550_BIFACIAL_RANGE_KEY ||
     (brand === "premier energy" && inverter === "crompton")
   )
 }
@@ -435,7 +438,7 @@ export function restoreCromptonSetForForm(products: ProductSelection): ProductSe
     inverterSize: products.inverterSize?.trim() || "3.6kW",
     acdb: acdbBrand || `Crompton (${phase})`,
     dcdb: dcdbBrand || `Crompton (${phase})`,
-    pdfPanelRangeKey: range || CROMPTON_PDF_PANEL_RANGE_KEY,
+    pdfPanelRangeKey: range || cromptonPdfPanelRangeKeyForPanelSize(products.panelSize || products.dcrPanelSize),
     pdfUsePanelSizeRange: true,
   }
 }

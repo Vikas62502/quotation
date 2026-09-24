@@ -106,7 +106,7 @@ function brandSectionLabel(panelType: string, scope: PricingPdfScope): string {
     if (panelType === "Premier Energies") return "Premier Energies (600-625W Topcon)"
     if (panelType === "INA") return "INA (500W-600W)"
     if (panelType === "Tata") return "Tata (530W-570W)"
-    if (panelType.toLowerCase().includes("crompton")) return "Crompton set (610W)"
+    if (panelType.toLowerCase().includes("crompton")) return "Crompton set (550W Bifacial / 610W)"
   }
   return panelType
 }

@@ -99,6 +99,7 @@ export type PdfPanelRangeKey =
   | "adani_600_630"
   | "premier_600_625_bifacial_topcon"
   | "premier_energy_600_610"
+  | "premier_energy_540_560_bifacial"
   | "ina_500_600_bifacial"
   | "tata_530_570"
   | "renewsys_540_580"
@@ -136,6 +137,13 @@ export function defaultPdfPanelRangeKeyForDcrPricingType(panelType: string): Pdf
   if (normalized.includes("crompton")) return "premier_energy_600_610"
   if (normalized === "waaree topcon") return null
   return null
+}
+
+/** Crompton set PDF range: 550W uses 540–560 bifacial; 600–610 uses Topcon bifacial. */
+export function cromptonPdfPanelRangeKeyForPanelSize(panelSize?: string): PdfPanelRangeKey {
+  const watts = Number.parseInt(String(panelSize || "").replace(/[^\d]/g, ""), 10)
+  if (Number.isFinite(watts) && watts > 0 && watts <= 560) return "premier_energy_540_560_bifacial"
+  return "premier_energy_600_610"
 }
 
 export function isTopconPdfPanelRangeKey(key?: string | null): boolean {
@@ -210,6 +218,11 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
     pdfSpecification: "600W - 610W N-Type Topcon Bifacial",
   },
   {
+    key: "premier_energy_540_560_bifacial",
+    label: "540-560W Bifacial",
+    pdfSpecification: "540-560W Bifacial",
+  },
+  {
     key: "ina_500_600_bifacial",
     label: "500-600W N-Type Topcon Bifacial",
     pdfSpecification: "500W - 600W N-Type Topcon Bifacial",
@@ -239,9 +252,9 @@ const PANEL_RANGE_CATALOG: PanelPdfRangeOption[] = [
 const PANEL_RANGE_BY_BRAND: Record<string, PdfPanelRangeKey[]> = {
   waaree: ["waaree_540_560_bifacial", "waaree_580_700_bifacial_topcon", "waaree_580_620"],
   adani: ["adani_540_580_bifacial", "adani_610_625_bifacial_topcon", "adani_600_630"],
-  premierenergies: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
-  premier: ["premier_600_625_bifacial_topcon", "premier_energy_600_610"],
-  premierenergy: ["premier_energy_600_610", "premier_600_625_bifacial_topcon"],
+  premierenergies: ["premier_600_625_bifacial_topcon", "premier_energy_600_610", "premier_energy_540_560_bifacial"],
+  premier: ["premier_600_625_bifacial_topcon", "premier_energy_600_610", "premier_energy_540_560_bifacial"],
+  premierenergy: ["premier_energy_600_610", "premier_energy_540_560_bifacial", "premier_600_625_bifacial_topcon"],
   ina: ["ina_500_600_bifacial"],
   tata: [TATA_DCR_PANEL_RANGE_KEY],
   // Optional on PDF — do not auto-select; exact entered size (e.g. 545W) until user checks a range.

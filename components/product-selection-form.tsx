@@ -38,6 +38,7 @@ import {
   panelQuantityForNominalSystemKw,
   bestPanelConfigWithinSystemKw,
   COMMON_PANEL_SIZES_WATTS,
+  nonDcrFallbackPanelSizeForBrand,
   PANEL_CAPACITY_DEFAULT_QTY,
   PANEL_CAPACITY_EXTENDED_QTY,
   canUse3480WPanelOption,
@@ -58,6 +59,7 @@ import {
   defaultPdfPanelRangeKeyForDcrPricingType,
   defaultPdfPanelRangeKeyForPanelBrand,
   defaultPdfPanelRangeKeyForNonDcr80KwPackage,
+  cromptonPdfPanelRangeKeyForPanelSize,
   applyDefaultPdfPanelRanges,
   getPanelPdfRangeLabel,
   stripOptionalPdfRangeUnlessChecked,
@@ -597,7 +599,36 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     return `${closest.num}W`
   }
   const updateFormData = <K extends keyof ProductSelection>(field: K, value: ProductSelection[K]) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
+    setFormData((prev) => {
+      const next = { ...prev, [field]: value }
+      if (
+        (field === "inverterSize" || field === "structureSize") &&
+        String(prev.systemType || "").toLowerCase() === "non-dcr"
+      ) {
+        const systemSize = String(value || "").trim()
+        const phase = next.phase === "1-Phase" || next.phase === "3-Phase" ? next.phase : undefined
+        const preset = systemSize
+          ? getSystemConfiguration(
+              "non-dcr",
+              systemSize,
+              String(next.panelBrand || ""),
+              pricingTables || undefined,
+              phase,
+            )
+          : null
+        if (!preset) {
+          const fallback = nonDcrFallbackPanelSizeForBrand(String(next.panelBrand || ""))
+          if (fallback) {
+            next.panelSize = fallback
+            const kw = Number.parseFloat(systemSize.replace(/kW/i, ""))
+            if (Number.isFinite(kw) && kw > 0) {
+              next.panelQuantity = panelQuantityForNominalSystemKw(kw, fallback)
+            }
+          }
+        }
+      }
+      return next
+    })
     setError("")
   }
 
@@ -682,6 +713,13 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             : keepQty
         next.allowNonDcr3480W = allow3480W
       }
+      const isCromptonSet = String(prev.panelType || "").toLowerCase().includes("crompton")
+      if (isCromptonSet && (field === "panelSize" || field === "dcrPanelSize")) {
+        const range = cromptonPdfPanelRangeKeyForPanelSize(rawSize)
+        next.pdfPanelRangeKey = range
+        next.pdfUsePanelSizeRange = true
+        if (field === "dcrPanelSize") next.pdfDcrPanelRangeKey = range
+      }
       return next
     })
     setError("")
@@ -749,6 +787,29 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         is80KwNonDcr && field !== "dcrPanelBrand"
           ? (defaultPdfPanelRangeKeyForNonDcr80KwPackage(brand) ?? "")
           : defaultPdfPanelRangeKeyForPanelBrand(brand)
+      const systemSizeHint = String(prev.structureSize || prev.inverterSize || "").trim()
+      const phaseHint =
+        prev.phase === "1-Phase" || prev.phase === "3-Phase" ? prev.phase : undefined
+      const applyNonDcrFallback =
+        (field === "panelBrand" && String(prev.systemType || "").toLowerCase() === "non-dcr") ||
+        field === "nonDcrPanelBrand"
+      const hasNonDcrSet =
+        applyNonDcrFallback && systemSizeHint
+          ? Boolean(
+              getSystemConfiguration(
+                "non-dcr",
+                systemSizeHint,
+                brand,
+                pricingTables || undefined,
+                phaseHint,
+              ),
+            )
+          : true
+      const fallbackSize =
+        applyNonDcrFallback && !hasNonDcrSet ? nonDcrFallbackPanelSizeForBrand(brand) : ""
+      const fallbackKw = fallbackSize ? parseNominalKwFromContext(prev) : 0
+      const fallbackQty =
+        fallbackSize && fallbackKw > 0 ? panelQuantityForNominalSystemKw(fallbackKw, fallbackSize) : 0
       return {
         ...prev,
         [field]: brand,
@@ -757,6 +818,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
           ? {
               pdfPanelRangeKey: defaultRange,
               pdfUsePanelSizeRange: Boolean(defaultRange),
+              ...(fallbackSize ? { panelSize: fallbackSize, ...(fallbackQty > 0 ? { panelQuantity: fallbackQty } : {}) } : {}),
             }
           : {}),
         ...(field === "dcrPanelBrand"
@@ -767,7 +829,14 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               pdfUsePanelSizeRange: Boolean(defaultRange),
             }
           : {}),
-        ...(field === "nonDcrPanelBrand" ? { pdfNonDcrPanelRangeKey: defaultRange } : {}),
+        ...(field === "nonDcrPanelBrand"
+          ? {
+              pdfNonDcrPanelRangeKey: defaultRange,
+              ...(fallbackSize
+                ? { nonDcrPanelSize: fallbackSize, ...(fallbackQty > 0 ? { nonDcrPanelQuantity: fallbackQty } : {}) }
+                : {}),
+            }
+          : {}),
       }
     })
     setError("")
@@ -914,6 +983,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       let panelBrand = "Adani"
       if (config.panelType === "Tata") panelBrand = "Tata"
       else if (config.panelType === "Waaree") panelBrand = "Waaree"
+      const fallbackNonDcrSize = nonDcrFallbackPanelSizeForBrand(panelBrand)
+      const nonDcrFromFallback = fallbackNonDcrSize
+        ? bestPanelConfigWithinSystemKw(nonDcrKw, { preferredPanelSize: fallbackNonDcrSize })
+        : nonDcrBest
+      const nonDcrPanelSize = fallbackNonDcrSize || `${nonDcrFromFallback.panelSizeW}W`
+      const nonDcrPanelQuantity = fallbackNonDcrSize ? nonDcrFromFallback.quantity : bestNonDcrQuantity
       
       const bothPhase: "1-Phase" | "3-Phase" =
         config.phase === "1-Phase" || config.phase === "3-Phase" ? config.phase : "3-Phase"
@@ -927,8 +1002,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         dcrPanelSize: `${bestDcrPanelSize}W`,
         dcrPanelQuantity: bestDcrQuantity,
         nonDcrPanelBrand: panelBrand,
-        nonDcrPanelSize: `${bestNonDcrPanelSize}W`,
-        nonDcrPanelQuantity: bestNonDcrQuantity,
+        nonDcrPanelSize,
+        nonDcrPanelQuantity,
         inverterType: "String Inverter",
         inverterBrand: "Polycab",
         inverterSize: config.inverterSize,
@@ -1028,10 +1103,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
               ? "Renew Energy"
               : "Adani"
       const isRenewEnergyPackage = panelBrand === "Renew Energy"
-      const nonDcrBest = bestPanelConfigWithinSystemKw(systemKw, {
-        panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
-        preferredPanelSize: config.panelType,
-      })
+      const preferredSize = nonDcrFallbackPanelSizeForBrand(panelBrand)
+      const nonDcrBest = preferredSize
+        ? bestPanelConfigWithinSystemKw(systemKw, { preferredPanelSize: preferredSize })
+        : bestPanelConfigWithinSystemKw(systemKw, {
+            panelSizesToTry: COMMON_PANEL_SIZES_WATTS,
+          })
 
       const systemSizeForPhase = `${systemKw}kW`
       const fallbackPhase = determinePhase(systemSizeForPhase, config.inverterSize, pricingTables || undefined)
@@ -1046,7 +1123,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         ...prev,
         phase: fallbackPhase,
         panelBrand,
-        panelSize: `${nonDcrBest.panelSizeW}W`,
+        panelSize: preferredSize || (nonDcrBest.panelSizeW > 0 ? `${nonDcrBest.panelSizeW}W` : ""),
         panelQuantity: nonDcrBest.quantity,
         inverterType: "String Inverter",
         inverterBrand: "Polycab",
@@ -1129,7 +1206,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const pdfRangeKey = isTataPackage
         ? TATA_DCR_PANEL_RANGE_KEY
         : isCromptonSet
-          ? "premier_energy_600_610"
+          ? cromptonPdfPanelRangeKeyForPanelSize(panelSizeToSet)
           : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
             defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
             "")
@@ -1194,7 +1271,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const pdfRangeKey = isTataPackage
         ? TATA_DCR_PANEL_RANGE_KEY
         : isCromptonSet
-          ? "premier_energy_600_610"
+          ? cromptonPdfPanelRangeKeyForPanelSize(panelSizeToSet)
           : (defaultPdfPanelRangeKeyForDcrPricingType(pricingPanelType) ??
             defaultPdfPanelRangeKeyForPanelBrand(selectedPanelBrand) ??
             "")
