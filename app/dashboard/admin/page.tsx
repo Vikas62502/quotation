@@ -4279,20 +4279,16 @@ export default function AdminPanelPage() {
     })
   }
 
-  // Calculate statistics — one current quotation per unique customer (not every revision).
+  // Overview cards: unique current quotation per customer only.
+  // Do not paint GET /admin/statistics first — those totals count every revision
+  // (e.g. 2,299 → 2,063) and a different revenue formula, then jump when the list arrives.
   const overviewListReady = quotations.length > 0
   const overviewUniqueQuotations = overviewListReady ? uniqueQuotationsByCustomer(quotations) : []
-  const totalQuotations = overviewListReady
-    ? overviewUniqueQuotations.length
-    : quotationsListTotal ?? quotations.length
+  const totalQuotations = overviewUniqueQuotations.length
   const approvedQuotations = overviewListReady
     ? uniqueQuotationsByCustomer(quotations.filter((q) => String(q.status || "").toLowerCase() === "approved"))
     : []
-  const totalRevenueFromList = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
-  const totalRevenue =
-    overviewListReady || overviewStatsFromApi.totalRevenue == null
-      ? totalRevenueFromList
-      : overviewStatsFromApi.totalRevenue
+  const totalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
   const thisMonthBounds = getJourneyDateRangeBounds("this_month", "", "")
   const isInCurrentCalendarMonth = (date: Date) => {
@@ -4309,9 +4305,7 @@ export default function AdminPanelPage() {
         }),
       )
     : []
-  const thisMonthQuotationCount = overviewListReady
-    ? thisMonthAllQuotations.length
-    : thisMonthQuotationsFromStats ?? thisMonthAllQuotations.length
+  const thisMonthQuotationCount = thisMonthAllQuotations.length
   const thisMonthApprovedQuotations = overviewListReady
     ? uniqueQuotationsByCustomer(
         quotations.filter((q) => {
@@ -4321,35 +4315,11 @@ export default function AdminPanelPage() {
         }),
       )
     : []
-  const thisMonthRevenueFromList = thisMonthApprovedQuotations.reduce(
-    (sum, q) => sum + getQuotationDisplayAmount(q),
-    0,
-  )
-  const thisMonthRevenue =
-    overviewListReady || overviewStatsFromApi.thisMonthRevenue == null
-      ? thisMonthRevenueFromList
-      : overviewStatsFromApi.thisMonthRevenue
-  const thisMonthTotalKwFromList = sumQuotationsSystemKw(thisMonthApprovedQuotations)
-  const thisMonthTotalKw =
-    overviewListReady || overviewStatsFromApi.thisMonthKw == null
-      ? thisMonthTotalKwFromList
-      : overviewStatsFromApi.thisMonthKw
-  const thisMonthApprovedCustomersFromList = thisMonthApprovedQuotations.length
-  const thisMonthApprovedCustomers =
-    overviewListReady || overviewStatsFromApi.thisMonthApprovedCustomers == null
-      ? thisMonthApprovedCustomersFromList
-      : overviewStatsFromApi.thisMonthApprovedCustomers
-  const thisMonthApprovedCountDisplay = overviewListReady
-    ? thisMonthApprovedQuotations.length
-    : overviewStatsFromApi.thisMonthApprovedCustomers ??
-      overviewStatsFromApi.thisMonthApproved ??
-      thisMonthApprovedQuotations.length
-  const isOverviewInitialLoading =
-    isAdminDataLoading &&
-    !overviewListReady &&
-    quotationsListTotal == null &&
-    thisMonthQuotationsFromStats == null
-  const isOverviewDetailsLoading = isAdminDataLoading && !overviewListReady
+  const thisMonthRevenue = thisMonthApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+  const thisMonthTotalKw = sumQuotationsSystemKw(thisMonthApprovedQuotations)
+  const thisMonthApprovedCustomers = thisMonthApprovedQuotations.length
+  const thisMonthApprovedCountDisplay = thisMonthApprovedQuotations.length
+  const isOverviewInitialLoading = !overviewListReady
   const quotationWorkspaceActive = activeTab === "quotations"
 
   // Filter quotations by all active conditions together.
@@ -8339,9 +8309,7 @@ export default function AdminPanelPage() {
               </div>
             ) : null}
             {isOverviewInitialLoading ? (
-              <p className="text-sm text-muted-foreground">Loading overview from API…</p>
-            ) : isOverviewDetailsLoading ? (
-              <p className="text-sm text-muted-foreground">Refreshing quotation details…</p>
+              <p className="text-sm text-muted-foreground">Loading unique customer totals…</p>
             ) : null}
             {/* Statistics Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -8424,13 +8392,20 @@ export default function AdminPanelPage() {
                   </CardDescription>
                   <p className="text-sm font-semibold text-foreground pt-1">
                     Total revenue (filtered):{" "}
-                    <span className="text-primary">{formatOverviewRevenueInr(filteredOverviewTotalRevenue)}</span>
+                    <span className="text-primary">
+                      {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(filteredOverviewTotalRevenue)}
+                    </span>
                     <span className="text-muted-foreground font-normal mx-2">·</span>
                     Total capacity (filtered):{" "}
-                    <span className="text-primary">{formatOverviewKw(filteredOverviewTotalKw)}</span>
+                    <span className="text-primary">
+                      {isOverviewInitialLoading ? "—" : formatOverviewKw(filteredOverviewTotalKw)}
+                    </span>
                     <span className="text-muted-foreground font-normal text-xs ml-1">
-                      ({overviewPeriodApprovedQuotations.length} unique customer
-                      {overviewPeriodApprovedQuotations.length === 1 ? "" : "s"})
+                      {isOverviewInitialLoading
+                        ? "(loading unique customers)"
+                        : `(${overviewPeriodApprovedQuotations.length} unique customer${
+                            overviewPeriodApprovedQuotations.length === 1 ? "" : "s"
+                          })`}
                     </span>
                   </p>
                 </div>
@@ -8489,17 +8464,23 @@ export default function AdminPanelPage() {
                 ) : null}
               </CardHeader>
               <CardContent className="space-y-6">
-                <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
-                {dealerStats.length === 0 ? (
+                {isOverviewInitialLoading ? (
                   <p className="text-sm text-muted-foreground text-center py-6">
-                    No active dealers match the selected filter.
-                  </p>
-                ) : dealersWithPeriodActivity.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-lg">
-                    No approved quotations in this period for the selected dealers.
+                    Loading unique customer totals…
                   </p>
                 ) : (
-                  <div>
+                  <>
+                    <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
+                    {dealerStats.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-6">
+                        No active dealers match the selected filter.
+                      </p>
+                    ) : dealersWithPeriodActivity.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-6 border border-dashed rounded-lg">
+                        No approved quotations in this period for the selected dealers.
+                      </p>
+                    ) : (
+                      <div>
                     <p className="text-xs font-medium text-muted-foreground mb-3">Dealer breakdown</p>
                     <div
                       className="native-scroll-list space-y-4 overflow-y-auto overscroll-y-contain pr-1"
@@ -8534,6 +8515,8 @@ export default function AdminPanelPage() {
                         ))}
                     </div>
                   </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
