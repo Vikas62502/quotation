@@ -8,11 +8,15 @@
  *   - Admin → Quotations → **Retrieve** (when in early metering)
  *   - Admin → Metering → Meter Pending → **Retrieve**
  *   - `lib/api.ts` → `retrieveQuotationFromMetering`
- *   - `lib/operational-install-queue.ts` → `canRetrieveFromMeteringPipeline`
+ *   - `lib/operational-install-queue.ts` → `canRetrieveFromMeteringPipeline`,
+ *     `markAdminMeteringRetrieved` (browser overlay only — GET must persist)
  *
  * Product:
  *   Pull a quotation back from Meter Pending before Discom / WCC / MCO so admin can
  *   fix installation or re-send to Metering later.
+ *
+ * Live bug (HANDOFF §53): Retrieve 200 / local hide, then GET still
+ * `metering_status: pending_metering` → row bounces back to Meter Pending.
  *
  * NOT the same as:
  *   - Admin Installation **Revert** (approved → pending_installer) — see
@@ -70,6 +74,10 @@ function requireAdmin(req, res) {
  * Admin Meter Pending shows Retrieve for every processing row. Honour
  * `force` / `adminOverride` / `retrieveFromMetering` so missing `meteringStage`
  * does not 409 ("not in early Meter Pending").
+ *
+ * CRITICAL: metering_status / metering_stage must be NULL — never copy
+ * installer_approved into metering columns. GET after this write must echo
+ * the same or the SPA Meter Pending list bounces the row back.
  */
 export async function applyRetrieveFromMetering(quotation, reqBody = {}) {
   const { install, metering } = currentStages(quotation)
@@ -131,6 +139,7 @@ export async function applyRetrieveFromMetering(quotation, reqBody = {}) {
     metering_wcc_after_discom: false,
     // Do NOT clear installation_ready_for_installer / installation_released_at.
     // Do NOT change quotations.status (still approved).
+    // Do NOT write installer_approved into metering_status.
   })
   await quotation.reload()
   return quotation
@@ -143,6 +152,10 @@ export async function applyRetrieveFromMetering(quotation, reqBody = {}) {
  * {
  *   "installationStatus": "installer_approved",
  *   "installation_status": "installer_approved",
+ *   "meteringStatus": "",
+ *   "metering_status": "",
+ *   "meteringStage": "",
+ *   "metering_stage": "",
  *   "target": "installer_approved",
  *   "retrieveFromMetering": true,
  *   "allowRevert": true,
@@ -175,6 +188,27 @@ export async function postAdminRetrieveFromMetering(req, res) {
 }
 
 /**
+ * Generic PATCH /installation-status with installer_approved:
+ * if retrieveFromMetering / empty metering fields / force retrieve, call
+ * applyRetrieveFromMetering — do not set metering_status = installer_approved.
+ */
+export async function patchInstallationStatusIfRetrieve(quotation, reqBody = {}) {
+  const target = norm(reqBody.installation_status || reqBody.installationStatus || reqBody.target)
+  const retrieve =
+    reqBody.retrieveFromMetering === true ||
+    reqBody.allowRevert === true ||
+    (target === "installer_approved" &&
+      (reqBody.meteringStatus === "" ||
+        reqBody.metering_status === "" ||
+        reqBody.meteringStatus === null ||
+        reqBody.metering_status === null))
+  if (target === "installer_approved" && retrieve) {
+    return applyRetrieveFromMetering(quotation, { ...reqBody, retrieveFromMetering: true, force: true })
+  }
+  return null
+}
+
+/**
  * Optional: same handler on metering-handoff with retrieve flag
  *
  * PATCH /api/admin/quotations/:id/metering-handoff
@@ -187,14 +221,29 @@ router.post ("/admin/quotations/:id/retrieve-from-metering", authAdmin, postAdmi
 */
 
 // -----------------------------------------------------------------------------
-// GET after retrieve — MUST echo on next list load (frontend no longer relies only on localStorage)
+// Meter Pending queue — installer_approved + empty metering is NOT Meter Pending
+// -----------------------------------------------------------------------------
+export function isMeterPendingQueueRow(q) {
+  const { install, metering } = currentStages(q)
+  return (
+    metering === "pending_metering" ||
+    metering === "metering_in_progress" ||
+    install === "pending_metering" ||
+    install === "metering_in_progress"
+  )
+}
+
+// -----------------------------------------------------------------------------
+// GET after retrieve — MUST echo on next list load
 // -----------------------------------------------------------------------------
 /*
 {
   "installationStatus": "installer_approved",
   "installation_status": "installer_approved",
-  "meteringStatus": null or "",
-  "metering_status": null or "",
+  "meteringStatus": null,
+  "metering_status": null,
+  "meteringStage": null,
+  "metering_stage": null,
   "installationReadyForInstaller": true,   // unchanged
   "installationReleasedAt": "…"           // unchanged
 }
@@ -205,8 +254,9 @@ router.post ("/admin/quotations/:id/retrieve-from-metering", authAdmin, postAdmi
 // -----------------------------------------------------------------------------
 /*
 1. Send quotation to Metering (pending_metering).
-2. Admin → Quotations → Retrieve → 200.
-3. GET row: installation_status = installer_approved; metering_status empty/null.
-4. Row NOT in Meter Pending queue; Send to Metering available again on Quotations.
-5. Retrieve from metering_approved → 409.
+2. Admin → Meter Pending → Retrieve → 200.
+3. GET by-id + list: installation_status = installer_approved; metering_status null.
+4. Hard refresh / other device: row NOT in Meter Pending; Send to Metering on Quotations.
+5. Retrieve from metering_approved / meter_install / mco → 409.
+6. Dedicated route 404 is a miss — generic installation-status PATCH must still null metering.
 */

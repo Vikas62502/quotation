@@ -4,6 +4,9 @@ export const INSTALLER_RELEASE_MAP_KEY = "installerReleaseMap"
 /** Admin/Installer Revert → Pending. Survives refresh when GET still looks approved because photos remain. */
 export const INSTALLATION_FORCED_PENDING_MAP_KEY = "installationForcedPendingMap"
 
+/** Admin Retrieve from Meter Pending. Survives refresh when GET still says pending_metering. */
+export const ADMIN_METERING_RETRIEVED_MAP_KEY = "adminMeteringRetrievedMap"
+
 /** Admin Installation tab: optional override for planned install date (YYYY-MM-DD), keyed by quotation id. */
 export const ADMIN_INSTALLATION_SCHEDULED_MAP_KEY = "installationScheduledDateMap"
 
@@ -90,6 +93,7 @@ export function readAdminMeteringHandoffMap(): Record<string, true> {
 export function markAdminMeteringHandoff(quotationId: string) {
   if (typeof window === "undefined" || !quotationId) return
   try {
+    clearAdminMeteringRetrieved(quotationId)
     const map = readAdminMeteringHandoffMap()
     map[quotationId] = true
     localStorage.setItem(ADMIN_METERING_HANDOFF_MAP_KEY, JSON.stringify(map))
@@ -113,8 +117,78 @@ export function isAdminMeteringHandoffLocal(quotationId: string): boolean {
   return Boolean(readAdminMeteringHandoffMap()[quotationId])
 }
 
+export function readAdminMeteringRetrievedMap(): Record<string, true> {
+  if (typeof window === "undefined") return {}
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADMIN_METERING_RETRIEVED_MAP_KEY) || "{}")
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {}
+    const out: Record<string, true> = {}
+    for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+      if (id && value) out[id] = true
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export function isAdminMeteringRetrievedLocal(quotationId: string | undefined | null): boolean {
+  const id = String(quotationId || "").trim()
+  if (!id) return false
+  return Boolean(readAdminMeteringRetrievedMap()[id])
+}
+
+export function markAdminMeteringRetrieved(quotationId: string) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readAdminMeteringRetrievedMap()
+    map[quotationId] = true
+    localStorage.setItem(ADMIN_METERING_RETRIEVED_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+export function clearAdminMeteringRetrieved(quotationId: string) {
+  if (typeof window === "undefined" || !quotationId) return
+  try {
+    const map = readAdminMeteringRetrievedMap()
+    delete map[quotationId]
+    localStorage.setItem(ADMIN_METERING_RETRIEVED_MAP_KEY, JSON.stringify(map))
+  } catch {
+    // no-op
+  }
+}
+
+/** Force installer_approved + empty metering when admin retrieved from Meter Pending. */
+export function mergeAdminMeteringRetrievedOntoQuotation<T extends OperationalQuotationRecord>(q: T): T {
+  const id = String(q.id || "").trim()
+  if (!id || !isAdminMeteringRetrievedLocal(id)) return q
+  return {
+    ...q,
+    installationStatus: "installer_approved",
+    installation_status: "installer_approved",
+    meteringStatus: "",
+    metering_status: "",
+    meteringStage: "",
+    metering_stage: "",
+    mcoStatus: "",
+    mco_status: "",
+  }
+}
+
+export function applyAdminMeteringLocalOverlays(
+  q: OperationalQuotationRecord,
+  handoffMap?: Record<string, true>,
+): OperationalQuotationRecord {
+  return mergeAdminMeteringRetrievedOntoQuotation(
+    mergeAdminMeteringProgressOntoQuotation(mergeAdminMeteringHandoffOntoQuotation(q, handoffMap)),
+  )
+}
+
 export function isInMeteringHandoffOrPipeline(q: OperationalQuotationRecord): boolean {
   const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return false
   if (id && isAdminMeteringHandoffLocal(id)) return true
   return isAlreadyInMeteringPipeline(q)
 }
@@ -126,6 +200,7 @@ export function mergeAdminMeteringHandoffOntoQuotation(
   const map = handoffMap ?? readAdminMeteringHandoffMap()
   const id = String(q.id || "").trim()
   if (!id || !map[id]) return q
+  if (isAdminMeteringRetrievedLocal(id)) return q
   if (isAlreadyInMeteringPipeline(q)) return q
   const progress = getAdminMeteringProgress(id)
   if (progress && progress !== "processing") return q
@@ -142,6 +217,15 @@ export function syncAdminMeteringHandoffMapFromRows(rows: OperationalQuotationRe
   for (const q of rows) {
     const id = String(q.id || "").trim()
     if (!id) continue
+    if (isAdminMeteringRetrievedLocal(id)) {
+      const fromFields = deriveMeteringWorkflowStageFromFields(q)
+      if (fromFields === "approved" || fromFields === "meter_install" || fromFields === "mco") {
+        clearAdminMeteringRetrieved(id)
+      } else {
+        delete map[id]
+      }
+      continue
+    }
     if (isAlreadyInMeteringPipeline(q)) {
       if (canRetrieveFromMeteringPipeline(q)) map[id] = true
       else delete map[id]
@@ -226,6 +310,7 @@ export function mergeAdminMeteringProgressOntoQuotation(
 ): OperationalQuotationRecord {
   const map = progressMap ?? readAdminMeteringProgressMap()
   const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return q
   const stage = id ? map[id] : undefined
   if (!id || !stage) return q
 
@@ -423,6 +508,8 @@ export function isInstallationPartialApproved(q: OperationalQuotationRecord): bo
 
 /** Quotation is already in (or past) the metering queue. */
 export function isAlreadyInMeteringPipeline(q: OperationalQuotationRecord): boolean {
+  const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return false
   const metering = getMeteringWorkflowRaw(q)
   const meteringStages = new Set([
     "pending_metering",
@@ -431,7 +518,6 @@ export function isAlreadyInMeteringPipeline(q: OperationalQuotationRecord): bool
     "mco",
   ])
   if (meteringStages.has(metering) || METERING_ONLY_WORKFLOW_STATUSES.has(metering)) return true
-  const id = String(q.id || "").trim()
   if (id && isAdminMeteringHandoffLocal(id)) return true
   // Legacy rows stored metering on installation_status.
   const installRaw = String(q.installationStatus || q.installation_status || "").toLowerCase()
@@ -454,7 +540,7 @@ export type SendToMeteringMenuState = {
 export function getQuotationOpsStageLabel(q: OperationalQuotationRecord): string {
   const id = String(q.id || "").trim()
   if (id && isAdminMeteringHandoffLocal(id) && !isAlreadyInMeteringPipeline(q)) return "Pending metering"
-  if (isAwaitingManualMeteringHandoff(q)) return "Pending metering"
+  if (isAwaitingManualMeteringHandoff(q)) return "Installation approved"
   const install = getInstallationWorkflowStatus(q)
   const metering = getMeteringWorkflowRaw(q)
   if (isAlreadyInMeteringPipeline(q)) {
@@ -500,6 +586,8 @@ export function getSendToMeteringMenuState(q: OperationalQuotationRecord): SendT
  * Covers API rows where install is still pending_installer but metering fields advanced.
  */
 export function isQuotationsTabInMeteringWorkflow(q: OperationalQuotationRecord): boolean {
+  const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return false
   if (isInMeteringHandoffOrPipeline(q)) return true
   const stage = getMeteringWorkflowStage(q)
   if (stage) return true
@@ -573,6 +661,7 @@ export function getAdminQuotationsTabSendToMeteringState(
 /** Early metering only — before Discom / WCC / MCO. Meter Pending rows may always retrieve. */
 export function canRetrieveFromMeteringPipeline(q: OperationalQuotationRecord): boolean {
   const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return false
   const uiStage = getMeteringWorkflowStage(q)
   if (uiStage === "approved" || uiStage === "meter_install" || uiStage === "mco") return false
 
@@ -843,6 +932,7 @@ export function deriveMeteringWorkflowStageFromFields(
 
 export function getMeteringWorkflowStage(q: OperationalQuotationRecord): MeteringWorkflowTab | null {
   const id = String(q.id || "").trim()
+  if (id && isAdminMeteringRetrievedLocal(id)) return null
   const fromFields = deriveMeteringWorkflowStageFromFields(q)
   const persisted = id ? getAdminMeteringProgress(id) : null
   const persistedTab: MeteringWorkflowTab | null = !persisted
@@ -865,7 +955,8 @@ export function getMeteringWorkflowStage(q: OperationalQuotationRecord): Meterin
   if (persisted && persisted !== "processing") return persistedTab
 
   if (id && isAdminMeteringHandoffLocal(id)) return "processing"
-  if (isAwaitingManualMeteringHandoff(q)) return "processing"
+  // installer_approved waiting for Send to Metering belongs on Installation / Quotations,
+  // not Meter Pending. Only local handoff or API pending_metering keep a row here.
   return null
 }
 

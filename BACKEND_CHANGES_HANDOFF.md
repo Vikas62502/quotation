@@ -3524,7 +3524,7 @@ Optional: `GET /api/admin/calling-actions/summary` with `totalCalls`, `connected
 
 Pull quotation back from **Meter Pending** / **metering_in_progress** to **installer_approved** so admin can fix installation or **Send to Metering** again. User stays on current tab (no redirect).
 
-Frontend also keeps `localStorage.adminMeteringHandoffMap` until GET echoes workflow — **backend must persist** so refresh + other devices match.
+Frontend also keeps `localStorage.adminMeteringRetrievedMap` until GET echoes workflow — **backend must persist** so refresh + other devices match. **§53** is the live bug (GET still `pending_metering` after Retrieve).
 
 ### Backend must do (P0)
 
@@ -4192,6 +4192,71 @@ Copy-paste: `BACKEND_USER_ACCESS.ts` `ACCESS_KEYS`
 1. Edit User → **Banking** checkbox + Field access Write / Selected one → Update User **200**.
 2. Login as that user → workspace/login opens **Banking** (`?tab=banking`).
 3. Selected dealers only appear in Banking Filters / rows.
+
+---
+
+## 53. Admin **Retrieve from Metering** must persist (GET bounce) — Sep 2026
+
+**Frontend:** Admin → Metering → Meter Pending → **Retrieve**  
+`lib/api.ts` → `retrieveQuotationFromMetering`  
+`lib/operational-install-queue.ts` → `markAdminMeteringRetrieved`, `getMeteringWorkflowStage`  
+Reference: **`BACKEND_RETRIEVE_FROM_METERING.ts`**, **§AL**, original route **§39**
+
+### Bug
+
+Retrieve looks like it works in the SPA (local overlay), then **hard refresh / other device** still shows the row on **Meter Pending**. Cause: PATCH is missing, 404, or only writes `installation_status` and **GET still returns `metering_status: pending_metering`**.
+
+Do **not** treat `installer_approved` as Meter Pending. That status is Installation approved waiting for **Send to Metering**.
+
+### P0 — persist on retrieve
+
+Implement **at least one** of:
+
+| Method | Path |
+|--------|------|
+| `PATCH` / `POST` | `/api/admin/quotations/:id/retrieve-from-metering` |
+| `PATCH` | `/api/admin/quotations/:id/metering-handoff` with `retrieveFromMetering: true` |
+
+**Write (same transaction):**
+
+| Column | Value |
+|--------|--------|
+| `installation_status` / `installationStatus` | `installer_approved` |
+| `metering_status` / `meteringStatus` | **`null`** (not `installer_approved`, not `pending_metering`) |
+| `metering_stage` / `meteringStage` | **`null`** |
+| `pending_metering_at` | **`null`** |
+| `metering_wcc_after_discom` | `false` |
+| `installation_ready_for_installer` | **unchanged** |
+| `quotations.status` | **unchanged** (`approved`) |
+
+Honour `force` / `adminOverride` / `retrieveFromMetering: true` so Meter Pending rows with empty `meteringStage` do not **409**.
+
+**Block 409** only for late stages: `metering_approved`, `meter_installation_pending`, `mco`, `pending_baldev`.
+
+### P0 — GET after retrieve
+
+`GET /admin/quotations` and metering queue **must echo** the write above on the next request. If GET still has `pending_metering`, the row stays in Meter Pending.
+
+Meter Pending / metering dashboard queue = `pending_metering` or `metering_in_progress` **only**. Exclude `installer_approved` with empty metering.
+
+### Do not
+
+- Copy `installer_approved` into `metering_status` on generic `PATCH …/installation-status` when the body is retrieve (`retrieveFromMetering`, `target: installer_approved`, empty metering fields).
+- Return **200** without committing. Next GET must match.
+- Hide Send to Metering after retrieve — Quotations / Installation Approved should show it again.
+
+### Fallback the SPA already tries
+
+If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "installer_approved")` then generic workflow PATCH. Those bodies currently send `meteringStatus: "installer_approved"`. **Dedicated retrieve route is required** so metering is **cleared**, not overwritten.
+
+### QA
+
+1. Send to Metering → GET `metering_status = pending_metering`.
+2. Meter Pending → Retrieve → **200**.
+3. Immediate GET by-id + list: `installation_status = installer_approved`, `metering_status` null/empty.
+4. Meter Pending queue does **not** include the id (other browser / hard refresh).
+5. Quotations / Installation Approved → **Send to Metering** enabled.
+6. Retrieve when already in Discom / WCC / MCO → **409**.
 
 ---
 

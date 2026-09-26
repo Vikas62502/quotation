@@ -19,8 +19,7 @@ import {
   getMeteringWorkflowStage,
   isInstallationPartialApproved,
   isInstallationUploadCompleteByStatus,
-  mergeAdminMeteringHandoffOntoQuotation,
-  mergeAdminMeteringProgressOntoQuotation,
+  applyAdminMeteringLocalOverlays,
   markAdminMeteringProgress,
   getAdminMeteringProgress,
   readAdminMeteringHandoffMap,
@@ -380,11 +379,9 @@ export function MeteringWorkflowPanel({
           const normalized = dedupeByQuotationId(
             [...adminRows, ...queueRows, ...broadQueueRows].map((raw) => {
               const flat = quotationFromApiRecord(raw)
-              return mergeAdminMeteringProgressOntoQuotation(
-                mergeAdminMeteringHandoffOntoQuotation(
-                  flat as Record<string, unknown>,
-                  handoffMap,
-                ),
+              return applyAdminMeteringLocalOverlays(
+                flat as Record<string, unknown>,
+                handoffMap,
               ) as MeteringQuotation
             }),
           )

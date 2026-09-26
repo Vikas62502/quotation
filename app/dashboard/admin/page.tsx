@@ -205,11 +205,13 @@ import {
   isQuotationSentToInstaller,
   shouldShowInAdminInstallationTab,
   mergeInstallerReleaseOntoQuotation,
-  mergeAdminMeteringHandoffOntoQuotation,
-  mergeAdminMeteringProgressOntoQuotation,
+  applyAdminMeteringLocalOverlays,
   readAdminMeteringHandoffMap,
   markAdminMeteringHandoff,
   clearAdminMeteringHandoff,
+  markAdminMeteringRetrieved,
+  clearAdminMeteringRetrieved,
+  isAdminMeteringRetrievedLocal,
   markAdminMeteringProgress,
   clearAdminMeteringProgress,
   getAdminMeteringProgress,
@@ -3084,11 +3086,9 @@ export default function AdminPanelPage() {
           const mapped = queueExtra
             ? (mergeInstallerQueueOntoAdminRow(mappedBase, queueExtra) as typeof mappedBase)
             : mappedBase
-          return mergeAdminMeteringProgressOntoQuotation(
-            mergeAdminMeteringHandoffOntoQuotation(
-              mergeInstallerReleaseOntoQuotation(mapped, releaseLocal),
-              handoffLocal,
-            ),
+          return applyAdminMeteringLocalOverlays(
+            mergeInstallerReleaseOntoQuotation(mapped, releaseLocal),
+            handoffLocal,
           )
         })
 
@@ -3102,9 +3102,7 @@ export default function AdminPanelPage() {
             nextList.map((q: any) => {
               const localRow = localById.get(String(q.id || ""))
               const withRelease = mergeInstallerReleaseOntoQuotation(q, releaseLocal, localRow ?? null)
-              const withHandoff = mergeAdminMeteringProgressOntoQuotation(
-                mergeAdminMeteringHandoffOntoQuotation(withRelease, handoffLocal),
-              )
+              const withHandoff = applyAdminMeteringLocalOverlays(withRelease, handoffLocal)
               const withSchedule = {
                 ...withHandoff,
                 installationScheduledAt: withHandoff.installationScheduledAt || scheduledLocal[q.id],
@@ -5820,6 +5818,7 @@ export default function AdminPanelPage() {
   }
 
   function getAdminMeteringStage(quotation: Quotation): "processing" | "approved" | "meter_install" | "mco" | null {
+    if (isAdminMeteringRetrievedLocal(quotation.id)) return null
     const fromWorkflow = getMeteringWorkflowStage(quotation as unknown as Record<string, unknown>)
     const override = adminMeteringStageOverride[quotation.id]
     if (!override) return fromWorkflow
@@ -6935,6 +6934,17 @@ export default function AdminPanelPage() {
     if (!confirmSave(`Retrieve ${quotation.id} from Metering back to Installation approved?`)) return
 
     setRetrievingFromMeteringId(quotation.id)
+    markAdminMeteringRetrieved(quotation.id)
+    clearAdminMeteringHandoff(quotation.id)
+    clearAdminMeteringProgress(quotation.id)
+    setAdminMeteringStageOverride((prev) => {
+      const next = { ...prev }
+      delete next[quotation.id]
+      return next
+    })
+    setQuotations((prev) =>
+      prev.map((q) => (q.id === quotation.id ? patchQuotationRetrieveFromMeteringLocal(q) : q)),
+    )
     try {
       if (useApi) {
         let ok = await retrieveQuotationFromMetering(quotation.id)
@@ -6943,29 +6953,27 @@ export default function AdminPanelPage() {
             await api.admin.quotations.updateOperationalStatus(quotation.id, "installer_approved")
             ok = true
           } catch (error) {
+            clearAdminMeteringRetrieved(quotation.id)
             toast({
               title: "Retrieve failed",
               description:
                 error instanceof ApiError ? error.message : "Could not update status on the server.",
               variant: "destructive",
             })
+            await loadData()
             return
           }
         }
-        if (ok) await loadData()
-      }
-
-      clearAdminMeteringHandoff(quotation.id)
-      clearAdminMeteringProgress(quotation.id)
-      setAdminMeteringStageOverride((prev) => {
-        const next = { ...prev }
-        delete next[quotation.id]
-        return next
-      })
-      setQuotations((prev) =>
-        prev.map((q) => (q.id === quotation.id ? patchQuotationRetrieveFromMeteringLocal(q) : q)),
-      )
-      if (!useApi) {
+        if (ok) {
+          await loadData()
+          markAdminMeteringRetrieved(quotation.id)
+          clearAdminMeteringHandoff(quotation.id)
+          clearAdminMeteringProgress(quotation.id)
+          setQuotations((prev) =>
+            prev.map((q) => (q.id === quotation.id ? patchQuotationRetrieveFromMeteringLocal(q) : q)),
+          )
+        }
+      } else {
         const updated = quotations.map((q) =>
           q.id === quotation.id ? patchQuotationRetrieveFromMeteringLocal(q) : q,
         )
@@ -6974,7 +6982,7 @@ export default function AdminPanelPage() {
 
       toast({
         title: "Retrieved from Metering",
-        description: `${quotation.id} is back on Quotations — you can send to Metering again when ready.`,
+        description: `${quotation.id} is back on Quotations / Installation — you can send to Metering again when ready.`,
       })
     } finally {
       setRetrievingFromMeteringId(null)

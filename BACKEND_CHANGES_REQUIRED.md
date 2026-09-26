@@ -5313,7 +5313,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | Medium | **Payment Excel journey columns** — approved list must return `installationStatus` + metering fields for CSV export | **§AC** | `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`, `lib/customer-journey.ts` |
 | **High** | **Super Admin / quotation Admin inventory JWT** — `/products` 200 but `/users`+`/sales`+… 401; align allow-list (`admin`\|`super-admin`) | **§AD.5.1** | `BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`, `lib/admin-access.ts` |
 | **High** | **Final confirmation uploads** — dedicated POST route; do not use KYC `PATCH …/documents` | **§M**, HANDOFF **§10** | `lib/api.ts` → `uploadFinalConfirmationDocuments`, `lib/final-confirmation-documents.ts` |
-| **High** | **Retrieve from Metering** — `installer_approved`, clear metering fields | **§AL**, HANDOFF **§39** | `retrieveQuotationFromMetering` |
+| **High** | **Retrieve from Metering** — `installer_approved`, **null** metering fields; GET must not bounce `pending_metering` | **§AL**, HANDOFF **§39** / **§53** | `retrieveQuotationFromMetering` |
 | **High** | **Retrieve from Installation** — clear release flags | **§AM**, HANDOFF **§40** | `retrieveQuotationFromInstallation` |
 | **High** | **Google Sheets social leads** — Meta tab sync + round-robin | **§AN**, HANDOFF **§41** | `api.hr.sheetSources.*` |
 | **High** | **Sheet Social Media socket** — emit `calling:uploads-updated` to stream:hr + dealers after sync/cron | **§AP** / **§AZ**, HANDOFF **§41** / **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
@@ -5362,7 +5362,7 @@ For questions or clarifications about these requirements, please refer to:
 - Super Admin quotation login + inventory: `lib/admin-access.ts`, `lib/auth-context.tsx`, `app/dashboard/inventory/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §AD**, **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`**
 - Final confirmation document uploads (Admin + Baldev): `lib/final-confirmation-documents.ts`, `lib/api.ts` → `uploadFinalConfirmationDocuments`, **`BACKEND_CHANGES_REQUIRED.md` §M**, **`BACKEND_CHANGES_HANDOFF.md` §10**
 - Admin Quotations tab Send to Metering: `lib/api.ts` → `sendQuotationToMetering`, **`BACKEND_CHANGES_REQUIRED.md` §L.1**, **`BACKEND_CHANGES_HANDOFF.md` §11**, **`BACKEND_SEND_TO_METERING.ts`**
-- Retrieve from Metering: `lib/api.ts` → `retrieveQuotationFromMetering`, **§AL**, **`BACKEND_RETRIEVE_FROM_METERING.ts`**, HANDOFF **§39**
+- Retrieve from Metering: `lib/api.ts` → `retrieveQuotationFromMetering`, **§AL**, **`BACKEND_RETRIEVE_FROM_METERING.ts`**, HANDOFF **§39** / **§53**
 - Retrieve from Installation: `lib/api.ts` → `retrieveQuotationFromInstallation`, **§AM**, **`BACKEND_RETRIEVE_FROM_INSTALLATION.ts`**, HANDOFF **§40**
 - Google Sheets social leads: `api.hr.sheetSources.*`, **`BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`**, **§AN**, HANDOFF **§41**
 - API specification: `API_SPECIFICATION.txt`
@@ -5803,7 +5803,9 @@ Accept legacy `everyone_except_dealer` on input; normalize to `everyone` on save
 ## §AL — Admin **Retrieve from Metering** — Sep 2026
 
 **Frontend:** Admin → Quotations / Metering → **Retrieve**; `retrieveQuotationFromMetering` in `lib/api.ts`.  
-**Reference:** `BACKEND_RETRIEVE_FROM_METERING.ts`, HANDOFF **§39**.
+**Reference:** `BACKEND_RETRIEVE_FROM_METERING.ts`, HANDOFF **§39** / **§53**.
+
+SPA overlay (`adminMeteringRetrievedMap`) hides the row only in this browser. **GET must persist** or hard refresh puts it back on Meter Pending.
 
 ### Routes (implement at least one)
 
@@ -5816,20 +5818,36 @@ Accept legacy `everyone_except_dealer` on input; normalize to `everyone` on save
 
 | From | To |
 |------|-----|
-| `pending_metering`, `metering_in_progress` | `installation_status = installer_approved` |
-| Clear | `metering_status`, `metering_stage`, `pending_metering_at` |
+| `pending_metering`, `metering_in_progress`, empty metering + Meter Pending `force` | `installation_status = installer_approved` |
+| Clear | `metering_status`, `metering_stage`, `pending_metering_at` → **`null`** (not `installer_approved`) |
 | Keep | `installation_ready_for_installer`, `installation_released_at`, `quotations.status` |
 
 Reject **409** when already `metering_approved`, `meter_installation_pending`, `mco`, `pending_baldev`, `completed`.
 
-### GET consistency
+Do **not** 409 Meter Pending rows that still show `installer_approved` with empty `meteringStage` when body has `force` / `retrieveFromMetering`.
 
-After PATCH, `GET /admin/quotations` and metering queue must echo updated stages (frontend uses localStorage handoff map only until GET matches).
+### GET consistency (P0 — bounce)
+
+After PATCH, `GET /admin/quotations` and metering queue must echo:
+
+```json
+{
+  "installationStatus": "installer_approved",
+  "installation_status": "installer_approved",
+  "meteringStatus": null,
+  "metering_status": null
+}
+```
+
+Meter Pending queue = `pending_metering` / `metering_in_progress` only. **Exclude** `installer_approved` with empty metering (that is Installation Approved).
+
+Generic `PATCH …/installation-status` with `installer_approved` must **not** copy that value into `metering_status` when `retrieveFromMetering` is true.
 
 ### Checklist
 
-- [ ] Dedicated retrieve route returns **200**
-- [ ] Meter Pending queue excludes row after retrieve
+- [ ] Dedicated retrieve route returns **200** and **commits**
+- [ ] Immediate GET by-id + list: metering fields **null**, install `installer_approved`
+- [ ] Meter Pending queue excludes row after retrieve (hard refresh / other device)
 - [ ] Send to Metering works again after retrieve
 - [ ] Late metering stages cannot retrieve (**409**)
 
@@ -6626,6 +6644,14 @@ Clear applied / amount / remarks; restore discount, remaining, status.
 - [ ] Idempotent settle (no double discount)
 
 **Refs:** HANDOFF **§49**, `lib/api.ts` → `finalizeSettlement`
+
+---
+
+## §BC — Retrieve from Metering GET bounce (Meter Pending) — Sep 2026
+
+Same as **§AL** + HANDOFF **§53**. Dedicated `PATCH /admin/quotations/:id/retrieve-from-metering` must **commit** `installer_approved` and **null** `metering_status`. Next GET must not still return `pending_metering`. Meter Pending queue must not include `installer_approved` with empty metering.
+
+**Copy-paste:** `BACKEND_RETRIEVE_FROM_METERING.ts`
 
 ---
 
