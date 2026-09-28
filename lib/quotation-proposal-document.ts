@@ -521,13 +521,12 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
           },
         ]
 
-  const showTataDcrAsPerSetForAcdbDcdb =
-    systemType === "dcr" &&
-    String(p.panelBrand || (p as Record<string, unknown>).dcr_panel_brand || "").trim().toLowerCase() === "tata" &&
-    (isAsPerTheSetLabel(String(p.panelSize || "")) ||
-      isAsPerTheSetLabel(String(p.dcrPanelSize || "")) ||
-      isAsPerTheSetLabel(String(p.inverterSize || "")) ||
-      isAsPerTheSetLabel(String(p.inverterBrand || "")))
+  const showTataAcdbDcdbAsPerSet =
+    String(p.panelBrand || p.dcrPanelBrand || (p as Record<string, unknown>).dcr_panel_brand || "")
+      .trim()
+      .toLowerCase() === "tata" ||
+    isAsPerTheSetLabel(String(p.acdb || "")) ||
+    isAsPerTheSetLabel(String(p.dcdb || ""))
 
   // 20kW and above: PDF shows CT / BT instead of ACDB / DCDB (e.g. 80kW commercial sites)
   const useCtBtLabels = systemKwForPackage >= 20
@@ -563,7 +562,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
       specification: useCtBtLabels ? "CT & BT Distribution" : "AC & DC Distribution Box",
       brandModel: useCtBtLabels
         ? `${QUOTATION_AS_PER_THE_SET_LABEL} / ${QUOTATION_AS_PER_THE_SET_LABEL}`
-        : showTataDcrAsPerSetForAcdbDcdb
+        : showTataAcdbDcdbAsPerSet
           ? `${QUOTATION_AS_PER_THE_SET_LABEL} / ${QUOTATION_AS_PER_THE_SET_LABEL}`
           : p.acdb || p.dcdb
             ? `${p.acdb || ""} ${p.dcdb || ""}`.trim()

@@ -657,6 +657,27 @@ export function isTataDcrPackageSet(products: ProductSelection): boolean {
   return true
 }
 
+export function isTataPanelPackage(products: ProductSelection): boolean {
+  const brand = (
+    products.panelBrand ||
+    products.dcrPanelBrand ||
+    products.nonDcrPanelBrand ||
+    ""
+  )
+    .trim()
+    .toLowerCase()
+  return brand === "tata"
+}
+
+function withTataAcdbDcdbAsPerSet(products: ProductSelection): ProductSelection {
+  if (!isTataPanelPackage(products)) return products
+  return {
+    ...products,
+    acdb: DCR_AS_PER_THE_SET,
+    dcdb: DCR_AS_PER_THE_SET,
+  }
+}
+
 /**
  * Map DCR package-set fields to catalog-valid values for create/update APIs.
  * PDF flags (applied separately) preserve Tata range / as-per-set display.
@@ -708,6 +729,10 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
     }
   }
 
+  if (isTataPanelPackage(next)) {
+    next = { ...next, acdb: DCR_AS_PER_THE_SET, dcdb: DCR_AS_PER_THE_SET }
+  }
+
   next = normalizePanelBrandAndSizeForApiCatalog(next)
   if (isInaPanelPackage(products)) {
     next = withInaApiCatalogMarkers(next)
@@ -748,17 +773,17 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
 
   // No optional range selected — keep cleared (do not auto-tick INA 500–600W on reopen).
   if (!existingRange) {
-    return {
+    return withTataAcdbDcdbAsPerSet({
       ...normalized,
       pdfPanelRangeKey: "",
       pdfUsePanelSizeRange: false,
       pdf_panel_range_key: null,
       pdf_use_panel_size_range: false,
-    } as ProductSelection
+    } as ProductSelection)
   }
 
   if (String(normalized.systemType || "").toLowerCase() !== "dcr") {
-    return applyDefaultPdfPanelRanges(normalized)
+    return withTataAcdbDcdbAsPerSet(applyDefaultPdfPanelRanges(normalized))
   }
 
   const brand = (normalized.panelBrand || normalized.dcrPanelBrand || "").trim().toLowerCase()
@@ -776,22 +801,24 @@ export function restoreDcrPackageDisplayForForm(products: ProductSelection): Pro
     isAsPerTheSetLabel(normalized.inverterBrand) ||
     isTataDcrPackage
 
-  if (!asPerSetPackage) return applyDefaultPdfPanelRanges(normalized)
+  if (!asPerSetPackage) return withTataAcdbDcdbAsPerSet(applyDefaultPdfPanelRanges(normalized))
 
   const panelBrand = normalized.panelBrand || normalized.dcrPanelBrand || ""
 
-  return applyDefaultPdfPanelRanges({
-    ...normalized,
-    panelBrand,
-    pdfPanelRangeKey: pdfPanelRangeKey || normalized.pdfPanelRangeKey,
-    panelSize: DCR_AS_PER_THE_SET,
-    panelQuantity: 0,
-    dcrPanelBrand: normalized.dcrPanelBrand || panelBrand,
-    dcrPanelSize: DCR_AS_PER_THE_SET,
-    dcrPanelQuantity: 0,
-    inverterBrand: DCR_AS_PER_THE_SET,
-    inverterSize: DCR_AS_PER_THE_SET,
-  })
+  return withTataAcdbDcdbAsPerSet(
+    applyDefaultPdfPanelRanges({
+      ...normalized,
+      panelBrand,
+      pdfPanelRangeKey: pdfPanelRangeKey || normalized.pdfPanelRangeKey,
+      panelSize: DCR_AS_PER_THE_SET,
+      panelQuantity: 0,
+      dcrPanelBrand: normalized.dcrPanelBrand || panelBrand,
+      dcrPanelSize: DCR_AS_PER_THE_SET,
+      dcrPanelQuantity: 0,
+      inverterBrand: DCR_AS_PER_THE_SET,
+      inverterSize: DCR_AS_PER_THE_SET,
+    }),
+  )
 }
 
 /** Catalog-safe products payload for create/update APIs (keeps INA markers for round-trip). */

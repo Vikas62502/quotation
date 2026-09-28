@@ -78,6 +78,12 @@ const DEFAULT_QUOTATION_SYSTEM_TYPE = "dcr" as const
 const EARTHING_AS_PER_SET_OPTION = "As per Set"
 const EARTHING_SIZE_CUSTOM_VALUE = "__earthing_size_custom__"
 const EARTHING_BRAND_CUSTOM_VALUE = "__earthing_brand_custom__"
+
+function isTataPanelSelection(p: ProductSelection): boolean {
+  return [p.panelBrand, p.dcrPanelBrand, p.nonDcrPanelBrand].some(
+    (brand) => String(brand || "").trim().toLowerCase() === "tata",
+  )
+}
 const EARTHING_WIRE_PRESET_SIZES = ["2mm", "4mm", "6mm"] as const
 const EARTHING_WIRE_PRESET_BRANDS = ["JMP", "Polycab", "Havells", "KEI", "Finolex"] as const
 
@@ -848,6 +854,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
 
   const isTataDcrPackage =
     effectiveSystemType === "dcr" && formData.panelBrand?.trim().toLowerCase() === "tata"
+  const isTataPanelPackage = isTataPanelSelection(formData)
   const isTataRangeSelected =
     isTataDcrPackage && formData.pdfPanelRangeKey === TATA_DCR_PANEL_RANGE_KEY
 
@@ -1007,8 +1014,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterType: "String Inverter",
         inverterBrand: "Polycab",
         inverterSize: config.inverterSize,
-        acdb: defaultAcdb,
-        dcdb: defaultDcdb,
+        acdb: panelBrand === "Tata" ? DCR_AS_PER_THE_SET : defaultAcdb,
+        dcdb: panelBrand === "Tata" ? DCR_AS_PER_THE_SET : defaultDcdb,
         earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
         earthingWireBrand: prev.earthingWireBrand || "JMP",
         // DCR systems require central subsidy (mandatory: 78000) — except commercial (always 0)
@@ -1128,8 +1135,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterType: "String Inverter",
         inverterBrand: "Polycab",
         inverterSize: config.inverterSize,
-        acdb: defaultAcdb,
-        dcdb: defaultDcdb,
+        acdb: panelBrand.trim().toLowerCase() === "tata" ? DCR_AS_PER_THE_SET : defaultAcdb,
+        dcdb: panelBrand.trim().toLowerCase() === "tata" ? DCR_AS_PER_THE_SET : defaultDcdb,
         earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
         earthingWireBrand: prev.earthingWireBrand || "JMP",
         // NON-DCR systems should always have 0 subsidies
@@ -1303,8 +1310,8 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
             : config.inverterSize,
         structureType: "GI Structure",
         structureSize: config.systemSize,
-        acdb: cromptonAcdb,
-        dcdb: cromptonDcdb,
+        acdb: isTataPackage ? DCR_AS_PER_THE_SET : cromptonAcdb,
+        dcdb: isTataPackage ? DCR_AS_PER_THE_SET : cromptonDcdb,
         earthingWireSize: prev.earthingWireSize || EARTHING_AS_PER_SET_OPTION,
         earthingWireBrand: prev.earthingWireBrand || "JMP",
         systemPrice: config.price,
@@ -1477,19 +1484,26 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   /** Commercial PDF set: hide subsidy inputs (also omit from proposal PDF). */
   const showSubsidyFields = !Boolean(formData.pdfCommercialSet)
 
-  // Auto-select Havells+Elmex / Elmex ACDB/DCDB when package phase is known
+  // Auto-select Havells+Elmex / Elmex ACDB/DCDB when package phase is known.
+  // Tata packages include ACDB/DCDB in the set — keep As per the set.
   useEffect(() => {
     if (!hasSelectedStandardConfig && !showBothFields) return
 
     const phase: "1-Phase" | "3-Phase" =
       formData.phase === "1-Phase" || formData.phase === "3-Phase" ? formData.phase : currentPhase
     const defaults = defaultAcdbDcdbForPhase(phase)
+    const tataPackage = isTataPanelSelection(formData)
 
     setFormData((prev) => {
       const updates: Partial<ProductSelection> = {}
       if (prev.phase !== phase) updates.phase = phase
-      if (!prev.acdb?.trim()) updates.acdb = defaults.acdb
-      if (!prev.dcdb?.trim()) updates.dcdb = defaults.dcdb
+      if (tataPackage) {
+        if (prev.acdb !== DCR_AS_PER_THE_SET) updates.acdb = DCR_AS_PER_THE_SET
+        if (prev.dcdb !== DCR_AS_PER_THE_SET) updates.dcdb = DCR_AS_PER_THE_SET
+      } else {
+        if (!prev.acdb?.trim()) updates.acdb = defaults.acdb
+        if (!prev.dcdb?.trim()) updates.dcdb = defaults.dcdb
+      }
       if (Object.keys(updates).length === 0) return prev
       return { ...prev, ...updates }
     })
@@ -1500,6 +1514,9 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     formData.phase,
     formData.acdb,
     formData.dcdb,
+    formData.panelBrand,
+    formData.dcrPanelBrand,
+    formData.nonDcrPanelBrand,
   ])
 
   const showBatteryFields = formData.inverterType === "Hybrid Inverter"
@@ -1847,11 +1864,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         setFormData((prev) => {
                           const swap = (s: string | undefined) =>
                             s ? s.replace(/\((1-Phase|3-Phase)\)/, `(${p})`) : s
+                          const tataPackage = isTataPanelSelection(prev) || isAsPerTheSetLabel(prev.acdb) || isAsPerTheSetLabel(prev.dcdb)
                           return {
                             ...prev,
                             phase: p,
-                            acdb: swap(prev.acdb) || formatACDBOption("Havells+Elmex", p),
-                            dcdb: swap(prev.dcdb) || formatDCDBOption("Elmex", p),
+                            acdb: tataPackage
+                              ? DCR_AS_PER_THE_SET
+                              : swap(prev.acdb) || formatACDBOption("Havells+Elmex", p),
+                            dcdb: tataPackage
+                              ? DCR_AS_PER_THE_SET
+                              : swap(prev.dcdb) || formatDCDBOption("Elmex", p),
                           }
                         })
                       }}
@@ -2005,10 +2027,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>ACDB</Label>
-                    {dcrPackageAsPerSet && isTataDcrPackage ? (
+                    {isTataPanelPackage ? (
                       <>
                         <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
-                        <p className="text-xs text-muted-foreground mt-1">Varies with the selected Tata DCR package set</p>
+                        <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
                       </>
                     ) : (
                       <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
@@ -2031,10 +2053,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   </div>
                   <div>
                     <Label>DCDB</Label>
-                    {dcrPackageAsPerSet && isTataDcrPackage ? (
+                    {isTataPanelPackage ? (
                       <>
                         <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
-                        <p className="text-xs text-muted-foreground mt-1">Varies with the selected Tata DCR package set</p>
+                        <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
                       </>
                     ) : (
                       <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
@@ -2652,6 +2674,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <Label>ACDB</Label>
+                    {isTataPanelPackage ? (
+                      <>
+                        <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                        <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
+                      </>
+                    ) : (
                     <Select value={formData.acdb || ""} onValueChange={(v) => updateFormData("acdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select ACDB" />
@@ -2668,9 +2696,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         })()}
                       </SelectContent>
                     </Select>
+                    )}
                   </div>
                   <div>
                     <Label>DCDB</Label>
+                    {isTataPanelPackage ? (
+                      <>
+                        <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                        <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
+                      </>
+                    ) : (
                     <Select value={formData.dcdb || ""} onValueChange={(v) => updateFormData("dcdb", v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="Select DCDB" />
@@ -2687,6 +2722,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         })()}
                       </SelectContent>
                     </Select>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3141,6 +3177,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <Label>ACDB</Label>
+                        {isTataPanelPackage ? (
+                          <>
+                            <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                            <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
+                          </>
+                        ) : (
                         <Select value={formData.acdb} onValueChange={(v) => updateFormData("acdb", v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select ACDB" />
@@ -3153,9 +3195,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             ))}
                           </SelectContent>
                         </Select>
+                        )}
                       </div>
                       <div>
                         <Label>DCDB</Label>
+                        {isTataPanelPackage ? (
+                          <>
+                            <Input readOnly disabled className="bg-muted" value={QUOTATION_AS_PER_THE_SET_LABEL} />
+                            <p className="text-xs text-muted-foreground mt-1">Included with the Tata package set</p>
+                          </>
+                        ) : (
                         <Select value={formData.dcdb} onValueChange={(v) => updateFormData("dcdb", v)}>
                           <SelectTrigger>
                             <SelectValue placeholder="Select DCDB" />
@@ -3168,6 +3217,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             ))}
                           </SelectContent>
                         </Select>
+                        )}
                       </div>
                     </div>
                   </div>
