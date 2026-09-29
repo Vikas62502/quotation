@@ -44,6 +44,7 @@ import {
   MapPin,
   LogOut,
   Upload,
+  MoreHorizontal,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -110,6 +111,13 @@ import { AdminPricingTablesManagement } from "@/components/admin-pricing-tables-
 import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel"
 import { AdminBankingPanel } from "@/components/admin-banking-panel"
 import { HrWorkspace } from "@/app/dashboard/hr/page"
+import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { FullCustomerJourneyPanel } from "@/components/full-customer-journey-panel"
 import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
@@ -8235,6 +8243,7 @@ export default function AdminPanelPage() {
                     <SelectItem value="quotations__metering">Metering</SelectItem>
                     <SelectItem value="quotations__confirmation">Final confirmation</SelectItem>
                     <SelectItem value="dealers">Users</SelectItem>
+                    <SelectItem value="subvendor">Subvendor</SelectItem>
                     <SelectItem value="customers">Customers</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="catalog__products">Catalog — Products</SelectItem>
@@ -8246,10 +8255,9 @@ export default function AdminPanelPage() {
           ) : null}
 
           {!reportsOnlyAccess ? (
-          <div className="hidden md:block w-full">
-            <TabsList className="grid h-auto min-h-11 w-full grid-cols-[repeat(14,minmax(0,1fr))] gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-auto [&_[data-slot=tabs-trigger]]:min-h-9 [&_[data-slot=tabs-trigger]]:px-1.5 [&_[data-slot=tabs-trigger]]:py-1.5 [&_[data-slot=tabs-trigger]]:text-[11px] [&_[data-slot=tabs-trigger]]:leading-tight [&_[data-slot=tabs-trigger]]:!whitespace-normal [&_[data-slot=tabs-trigger]]:text-center [&_[data-slot=tabs-trigger]]:font-medium [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
+          <div className="hidden md:flex w-full items-stretch gap-1">
+            <TabsList className="grid h-auto min-h-12 min-w-0 flex-1 grid-cols-[repeat(9,minmax(0,1fr))] gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-auto [&_[data-slot=tabs-trigger]]:min-h-10 [&_[data-slot=tabs-trigger]]:px-1.5 [&_[data-slot=tabs-trigger]]:py-1.5 [&_[data-slot=tabs-trigger]]:text-[13px] [&_[data-slot=tabs-trigger]]:leading-tight [&_[data-slot=tabs-trigger]]:!whitespace-normal [&_[data-slot=tabs-trigger]]:text-center [&_[data-slot=tabs-trigger]]:font-semibold [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="customer-journey">Customer Journey</TabsTrigger>
             <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
             <TabsTrigger value="visitor-reports">Visitor Reports</TabsTrigger>
             <TabsTrigger
@@ -8261,7 +8269,6 @@ export default function AdminPanelPage() {
             >
               Quotations
             </TabsTrigger>
-            <TabsTrigger value="payments">Accounts</TabsTrigger>
             <TabsTrigger value="banking">Banking</TabsTrigger>
             <TabsTrigger
               value="quotations"
@@ -8291,10 +8298,68 @@ export default function AdminPanelPage() {
               Final confirmation
             </TabsTrigger>
             <TabsTrigger value="dealers">Users</TabsTrigger>
-            <TabsTrigger value="customers">Customers</TabsTrigger>
-            <TabsTrigger value="hr">HR</TabsTrigger>
-            <TabsTrigger value="catalog">Catalog</TabsTrigger>
             </TabsList>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="More sections"
+                  title="Customer Journey, Accounts, Customers, HR, Catalog, Subvendor"
+                  className={cn(
+                    "h-auto min-h-12 w-11 shrink-0 rounded-xl border border-border/70 bg-muted/30 shadow-sm text-muted-foreground hover:text-foreground",
+                    (activeTab === "customer-journey" ||
+                      activeTab === "payments" ||
+                      activeTab === "customers" ||
+                      activeTab === "hr" ||
+                      activeTab === "catalog" ||
+                      activeTab === "subvendor") &&
+                      "bg-background text-foreground border-border/80",
+                  )}
+                >
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48 [&_[data-slot=dropdown-menu-item]]:text-[13px] [&_[data-slot=dropdown-menu-item]]:font-semibold">
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("customer-journey")}
+                  className={cn(activeTab === "customer-journey" && "bg-accent")}
+                >
+                  Customer Journey
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("payments")}
+                  className={cn(activeTab === "payments" && "bg-accent")}
+                >
+                  Accounts
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("customers")}
+                  className={cn(activeTab === "customers" && "bg-accent")}
+                >
+                  Customers
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("hr")}
+                  className={cn(activeTab === "hr" && "bg-accent")}
+                >
+                  HR
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("catalog")}
+                  className={cn(activeTab === "catalog" && "bg-accent")}
+                >
+                  Catalog
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("subvendor")}
+                  className={cn(activeTab === "subvendor" && "bg-accent")}
+                >
+                  Subvendor
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
           ) : null}
 
@@ -12671,6 +12736,10 @@ export default function AdminPanelPage() {
                 }
               }}
             />
+          </TabsContent>
+
+          <TabsContent value="subvendor" className="space-y-6">
+            <AdminSubvendorPanel dealers={dealers} quotations={quotations} />
           </TabsContent>
 
           <TabsContent value="hr" className="space-y-6">

@@ -4721,6 +4721,56 @@ export const api = {
         })
       },
     },
+
+    subvendors: {
+      getAll: async (params?: { kind?: "office_inside" | "office_outside" }) => {
+        const queryParams = new URLSearchParams()
+        if (params?.kind) queryParams.append("kind", params.kind)
+        const query = queryParams.toString()
+        return apiRequest(`/admin/subvendors${query ? `?${query}` : ""}`, {
+          suppressErrorLog: true,
+        })
+      },
+
+      create: async (body: Record<string, unknown>) => {
+        return apiRequest("/admin/subvendors", {
+          method: "POST",
+          body,
+        })
+      },
+
+      update: async (id: string, body: Record<string, unknown>) => {
+        return apiRequest(`/admin/subvendors/${id}`, {
+          method: "PATCH",
+          body,
+        })
+      },
+
+      delete: async (id: string) => {
+        return apiRequest(`/admin/subvendors/${id}`, {
+          method: "DELETE",
+        })
+      },
+
+      ledger: {
+        getAll: async (params?: { vendorId?: string; search?: string }) => {
+          const queryParams = new URLSearchParams()
+          if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
+          if (params?.search) queryParams.append("search", params.search)
+          const query = queryParams.toString()
+          return apiRequest(`/admin/subvendors/ledger${query ? `?${query}` : ""}`, {
+            suppressErrorLog: true,
+          })
+        },
+
+        update: async (quotationId: string, body: Record<string, unknown>) => {
+          return apiRequest(`/admin/subvendors/ledger/${quotationId}`, {
+            method: "PATCH",
+            body,
+          })
+        },
+      },
+    },
   },
 
   // System Config

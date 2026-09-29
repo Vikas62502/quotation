@@ -6655,4 +6655,28 @@ Same as **§AL** + HANDOFF **§53**. Dedicated `PATCH /admin/quotations/:id/retr
 
 ---
 
+## §BD — Subvendors + office-inside ledger (Sep 2026)
+
+New tables and admin APIs so Subvendor is not localStorage-only.
+
+### Tables
+
+1. `subvendors` — `kind` `office_inside` | `office_outside`; unique `dealer_id` when inside.
+2. `subvendor_ledger` — one row per `quotation_id`; editable INR columns (loan, received, remaining, proposal, cost of site, file charges, PI, GST, others).
+
+### Endpoints
+
+- `GET/POST /admin/subvendors`
+- `PATCH/DELETE /admin/subvendors/:id`
+- `GET /admin/subvendors/ledger`
+- `PATCH /admin/subvendors/ledger/:quotationId` (partial upsert; missing keys must not zero existing columns)
+
+Auth: admin JWT.
+
+Frontend: `/dashboard/subvendors` and Admin → ⋯ → Subvendor. `lib/api.ts` → `api.admin.subvendors`.
+
+**Copy-paste:** `BACKEND_SUBVENDORS.ts`
+
+---
+
 

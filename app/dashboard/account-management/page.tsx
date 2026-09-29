@@ -4846,11 +4846,8 @@ export default function AccountManagementPage() {
                                         ? "Read-only Accounts access — Manage is disabled"
                                         : "Manage installments and payment plan"
                                     }
-                                    onClick={async () => {
+                                    onClick={() => {
                                       if (accountsReadOnly || !canWriteAccounts) return
-                                      if (useApi) {
-                                        await loadApprovedQuotations()
-                                      }
                                       setActivePaymentId(payment.quotationId)
                                       setInstallmentDialogOpen(true)
                                     }}
