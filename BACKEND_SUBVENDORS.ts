@@ -32,6 +32,7 @@
  *   city          VARCHAR(128) NOT NULL DEFAULT '',
  *   category      VARCHAR(64)  NOT NULL DEFAULT 'Other',
  *   notes         TEXT         NOT NULL DEFAULT '',
+ *   profit_ratio  NUMERIC(6, 2) NOT NULL DEFAULT 0,
  *   created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
  *   updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
  * );
@@ -41,6 +42,9 @@
  *   WHERE kind = 'office_inside' AND dealer_id IS NOT NULL;
  *
  * CREATE INDEX IF NOT EXISTS subvendors_kind_idx ON subvendors (kind);
+ *
+ * ALTER TABLE subvendors
+ *   ADD COLUMN IF NOT EXISTS profit_ratio NUMERIC(6, 2) NOT NULL DEFAULT 0;
  *
  * CREATE TABLE IF NOT EXISTS subvendor_ledger (
  *   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -79,6 +83,7 @@
  *   city: { type: DataTypes.STRING(128), allowNull: false, defaultValue: '' },
  *   category: { type: DataTypes.STRING(64), allowNull: false, defaultValue: 'Other' },
  *   notes: { type: DataTypes.TEXT, allowNull: false, defaultValue: '' },
+ *   profitRatio: { type: DataTypes.DECIMAL(6, 2), allowNull: false, defaultValue: 0, field: 'profit_ratio' },
  * }, { tableName: 'subvendors', underscored: true, timestamps: true })
  *
  * SubvendorLedger.init({
@@ -131,21 +136,32 @@
  *   "email": "",
  *   "city": "",
  *   "category": "Other",
- *   "notes": ""
+ *   "notes": "",
+ *   "profitRatio": 10
  * }
  *
- * Accept snake_case aliases: dealer_id, contact_name.
+ * Accept snake_case aliases: dealer_id, contact_name, profit_ratio.
+ *
+ * profitRatio is a percent 0–100 (two decimals). Default 0.
  *
  * Validation:
  *   office_inside  → dealerId required; name may be filled from dealer profile
  *   office_outside → name required; dealerId ignored / null
  *   office_inside unique per dealer_id (409 SUBVENDOR_DUP if already linked)
  *
+ * PATCH /admin/subvendors/:id body (partial):
+ * {
+ *   "profitRatio": 12.5
+ * }
+ *
+ * If profitRatio / profit_ratio is omitted on PATCH, leave the stored column unchanged.
+ * If sent (including 0), round to two decimals and clamp 0–100.
+ *
  * GET /admin/subvendors 200:
  * {
  *   "success": true,
  *   "data": {
- *     "subvendors": [ { id, kind, dealerId, name, contactName, mobile, email, city, category, notes, createdAt, updatedAt } ]
+ *     "subvendors": [ { id, kind, dealerId, name, contactName, mobile, email, city, category, notes, profitRatio, profit_ratio, createdAt, updatedAt } ]
  *   }
  * }
  *
@@ -205,6 +221,14 @@ function roundInr(value) {
   return Number.isFinite(n) && n >= 0 ? n : 0
 }
 
+/** Profit ratio is a percent 0–100 with two decimals. Missing / invalid → 0. */
+function roundProfitRatio(value) {
+  if (value === undefined || value === null || value === "") return 0
+  const n = Number(String(value).replace(/%/g, "").trim())
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.min(100, Math.round(n * 100) / 100)
+}
+
 function publicSubvendor(row) {
   return {
     id: row.id,
@@ -219,6 +243,8 @@ function publicSubvendor(row) {
     city: row.city || "",
     category: row.category || "Other",
     notes: row.notes || "",
+    profitRatio: roundProfitRatio(row.profitRatio ?? row.profit_ratio),
+    profit_ratio: roundProfitRatio(row.profitRatio ?? row.profit_ratio),
     createdAt: row.createdAt || row.created_at,
     updatedAt: row.updatedAt || row.updated_at,
   }
@@ -256,6 +282,10 @@ function publicLedger(row) {
  * PATCH /admin/subvendors/:id
  * DELETE /admin/subvendors/:id  (do not delete ledger rows; ON DELETE SET NULL vendor_id)
  *
+ * On POST/PATCH vendor: assign profitRatio = roundProfitRatio(body.profitRatio ?? body.profit_ratio).
+ * GET list/item must echo profitRatio + profit_ratio. Missing column / missing key → 0, never omit.
+ * PATCH with omitted profitRatio must keep the existing value (do not reset to 0).
+ *
  * PATCH ledger: findOrCreate by quotation_id, then assign only provided amount keys.
  *
  * Error codes:
@@ -263,6 +293,7 @@ function publicLedger(row) {
  *   VAL_KIND          — kind missing / invalid
  *   VAL_DEALER        — office_inside without dealerId
  *   VAL_NAME          — office_outside without name
+ *   VAL_PROFIT        — profitRatio not a number / > 100
  *   SUBVENDOR_DUP     — that dealer is already an office_inside vendor (409)
  *   SUBVENDOR_404     — id not found
  *   QUOTATION_404     — ledger quotation id not found
@@ -272,9 +303,10 @@ export const SUBVENDOR_ERROR_CODES = {
   VAL_KIND: "VAL_KIND",
   VAL_DEALER: "VAL_DEALER",
   VAL_NAME: "VAL_NAME",
+  VAL_PROFIT: "VAL_PROFIT",
   SUBVENDOR_DUP: "SUBVENDOR_DUP",
   SUBVENDOR_404: "SUBVENDOR_404",
   QUOTATION_404: "QUOTATION_404",
 }
 
-export { publicSubvendor, publicLedger, roundInr }
+export { publicSubvendor, publicLedger, roundInr, roundProfitRatio }

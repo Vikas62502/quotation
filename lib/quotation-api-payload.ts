@@ -1,6 +1,7 @@
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import {
   DCR_AS_PER_THE_SET,
+  defaultAcdbDcdbForPhase,
   panelQuantityForNominalSystemKw,
   parsePanelSizeWatts,
 } from "@/lib/pricing-tables"
@@ -34,6 +35,8 @@ export function stripPdfDisplayFlags(products: ProductSelection): ProductSelecti
     pdf_use_panel_size_range?: boolean
     pdf_use_inverter_brand_options?: boolean
     pdf_commercial_set?: boolean
+    includeLithiumBattery?: boolean
+    include_lithium_battery?: boolean
   }
   const stripped = { ...rest } as ProductSelection & Record<string, unknown>
   delete stripped.pdf_panel_range_key
@@ -69,6 +72,12 @@ export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlag
     String(record.pdfCommercialSet ?? record.pdf_commercial_set ?? "")
       .trim()
       .toLowerCase() === "true"
+  const lithium =
+    record.includeLithiumBattery === true ||
+    record.include_lithium_battery === true ||
+    String(record.includeLithiumBattery ?? record.include_lithium_battery ?? "")
+      .trim()
+      .toLowerCase() === "true"
 
   return {
     pdfPanelRangeKey: primary ?? "",
@@ -83,6 +92,8 @@ export function buildPdfDisplayFlagsPayload(products: ProductSelection): PdfFlag
     pdf_use_inverter_brand_options: false,
     pdfCommercialSet: commercial,
     pdf_commercial_set: commercial,
+    includeLithiumBattery: lithium,
+    include_lithium_battery: lithium,
   }
 }
 
@@ -678,6 +689,17 @@ function withTataAcdbDcdbAsPerSet(products: ProductSelection): ProductSelection 
   }
 }
 
+/** Backend catalog has no "As per the set" ACDB/DCDB — map to the phase default for create/update. */
+function catalogSafeAcdbDcdb(products: ProductSelection): { acdb: string; dcdb: string } {
+  const phase: "1-Phase" | "3-Phase" =
+    String(products.phase || "").includes("3") ? "3-Phase" : "1-Phase"
+  const defaults = defaultAcdbDcdbForPhase(phase)
+  return {
+    acdb: isAsPerTheSetLabel(products.acdb) ? defaults.acdb : products.acdb,
+    dcdb: isAsPerTheSetLabel(products.dcdb) ? defaults.dcdb : products.dcdb,
+  }
+}
+
 /**
  * Map DCR package-set fields to catalog-valid values for create/update APIs.
  * PDF flags (applied separately) preserve Tata range / as-per-set display.
@@ -729,9 +751,8 @@ export function toCatalogCompatibleProducts(products: ProductSelection): Product
     }
   }
 
-  if (isTataPanelPackage(next)) {
-    next = { ...next, acdb: DCR_AS_PER_THE_SET, dcdb: DCR_AS_PER_THE_SET }
-  }
+  const boxes = catalogSafeAcdbDcdb(next)
+  next = { ...next, acdb: boxes.acdb, dcdb: boxes.dcdb }
 
   next = normalizePanelBrandAndSizeForApiCatalog(next)
   if (isInaPanelPackage(products)) {

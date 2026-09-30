@@ -83,6 +83,8 @@ export interface ProductSelection {
   hybridInverter?: string
   batteryCapacity?: string
   batteryPrice?: number
+  /** When true, proposal PDF includes a Lithium Battery row with capacity. */
+  includeLithiumBattery?: boolean
   // Customize
   customPanels?: Array<{ brand: string; size: string; quantity: number; type: string }>
   dcrPanelBrand?: string
@@ -681,6 +683,9 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         }
         if (currentProducts.hybridInverter) {
           cleanedProducts.hybridInverter = currentProducts.hybridInverter
+        }
+        if (currentProducts.includeLithiumBattery === true) {
+          cleanedProducts.includeLithiumBattery = true
         }
         const syncedProducts = syncDcrPanelFieldsFromPrimary({
           ...currentProducts,

@@ -23,6 +23,8 @@ export type AdminSubvendorRecord = {
   city: string
   category: string
   notes: string
+  /** Vendor profit ratio as a percent (0–100). */
+  profitRatio: number
   createdAt: string
 }
 
@@ -33,6 +35,24 @@ const newId = () =>
 
 function asText(value: unknown) {
   return typeof value === "string" ? value : value == null ? "" : String(value)
+}
+
+export function parseProfitRatio(raw: unknown): number {
+  const cleaned = String(raw ?? "").replace(/%/g, "").trim()
+  if (cleaned === "") return 0
+  const n = Number(cleaned)
+  if (!Number.isFinite(n) || n < 0) return 0
+  return Math.min(100, Math.round(n * 100) / 100)
+}
+
+export function formatProfitRatioInput(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return ""
+  return String(Math.round(value * 100) / 100)
+}
+
+export function formatProfitRatioLabel(value: number) {
+  const n = parseProfitRatio(value)
+  return `${n}%`
 }
 
 export function normalizeAdminSubvendor(raw: unknown): AdminSubvendorRecord | null {
@@ -51,6 +71,7 @@ export function normalizeAdminSubvendor(raw: unknown): AdminSubvendorRecord | nu
     city: asText(row.city).trim(),
     category: asText(row.category).trim() || "Other",
     notes: asText(row.notes).trim(),
+    profitRatio: parseProfitRatio(row.profitRatio ?? row.profit_ratio),
     createdAt: asText(row.createdAt ?? row.created_at) || new Date().toISOString(),
   }
 }
@@ -149,6 +170,8 @@ export function subvendorToApiBody(
     city: row.city,
     category: row.category || "Other",
     notes: row.notes,
+    profitRatio: parseProfitRatio(row.profitRatio),
+    profit_ratio: parseProfitRatio(row.profitRatio),
   }
 }
 

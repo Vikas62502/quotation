@@ -22,6 +22,9 @@ import {
   createAdminSubvendor,
   dealerDisplayName,
   deleteAdminSubvendor,
+  formatProfitRatioInput,
+  formatProfitRatioLabel,
+  parseProfitRatio,
   pickSubvendorListFromApi,
   pickSubvendorRecordFromApi,
   readAdminSubvendors,
@@ -33,9 +36,11 @@ import {
   type SubvendorDealerOption,
   type SubvendorKind,
 } from "@/lib/admin-subvendors"
+import { cn } from "@/lib/utils"
 import {
   getLedgerAmounts,
   isApprovedQuotation,
+  LEDGER_AMOUNT_FIELDS,
   ledgerPatchToApiBody,
   paymentTypeLabelForLedger,
   pickLedgerMapFromApi,
@@ -47,6 +52,7 @@ import {
   upsertLedgerAmounts,
   writeSubvendorLedger,
   type LedgerAmountField,
+  type LedgerPaymentType,
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
 
@@ -71,6 +77,47 @@ function parseAmountInput(raw: string) {
   return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
 }
 
+const LEDGER_FIELD_LABELS: Record<LedgerAmountField, string> = {
+  loanAmount: "Loan amount",
+  cashAmount: "Cash amount",
+  receivedAmount: "Received amount",
+  remaining: "Remaining",
+  proposal: "Proposal",
+  costOfSite: "Cost of site",
+  fileCharges: "File charges",
+  pi: "PI",
+  gstCharges: "GST charges",
+  others: "Others",
+}
+
+type InsideLedgerRow = {
+  quotationId: string
+  dealerId: string
+  customerName: string
+  customerMobile: string
+  vendorName: string
+  vendorMobile: string
+  systemSize: string
+  paymentType: LedgerPaymentType
+  paymentTypeLabel: string
+  loanAmount: number
+  cashAmount: number
+  receivedAmount: number
+  remaining: number
+  proposal: number
+  costOfSite: number
+  fileCharges: number
+  pi: number
+  gstCharges: number
+  others: number
+}
+
+function ledgerStatus(row: Pick<InsideLedgerRow, "receivedAmount" | "remaining">) {
+  if (row.remaining <= 0) return { label: "Completed", tone: "completed" as const }
+  if (row.receivedAmount > 0) return { label: "Partial", tone: "partial" as const }
+  return { label: "Pending", tone: "pending" as const }
+}
+
 const emptyForm = {
   dealerId: "",
   name: "",
@@ -80,6 +127,7 @@ const emptyForm = {
   city: "",
   category: "Other",
   notes: "",
+  profitRatio: "",
 }
 
 function matchesSearch(row: AdminSubvendorRecord, q: string) {
@@ -174,6 +222,23 @@ export function AdminSubvendorPanel({
     [insideRows],
   )
 
+  const vendorProfitById = useMemo(() => {
+    const approved = quotations.filter(isApprovedQuotation)
+    const current = keepCurrentQuotationsOnly(approved, approved)
+    const out: Record<string, number> = {}
+    for (const quotation of current) {
+      const dealerId = String(quotation.dealerId || quotation.dealer?.id || "")
+      const vendor = vendorsByDealerId.get(dealerId)
+      if (!vendor) continue
+      const stored = getLedgerAmounts(ledgerMap, quotation.id)
+      const payment = summarizeQuotationPayment(quotation)
+      const proposal = stored.proposal ?? payment.subtotal
+      const amount = Math.round((Math.max(0, proposal) * parseProfitRatio(vendor.profitRatio)) / 100)
+      out[vendor.id] = (out[vendor.id] || 0) + amount
+    }
+    return out
+  }, [ledgerMap, quotations, vendorsByDealerId])
+
   const ledgerRows = useMemo(() => {
     const approved = quotations.filter(isApprovedQuotation)
     const current = keepCurrentQuotationsOnly(approved, approved)
@@ -227,6 +292,7 @@ export function AdminSubvendorPanel({
             }),
           vendorMobile: vendor?.mobile || quotation.dealer?.mobile || "",
           systemSize: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
+          paymentType,
           paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
           loanAmount: stored.loanAmount ?? loanCash.loanAmount,
           cashAmount: stored.cashAmount ?? loanCash.cashAmount,
@@ -280,8 +346,7 @@ export function AdminSubvendorPanel({
     }
   }, [insideDealerIds, ledgerVendorId])
 
-  const commitLedgerAmount = async (quotationId: string, field: LedgerAmountField, raw: string) => {
-    const patch = { [field]: parseAmountInput(raw) } as SubvendorLedgerAmounts
+  const commitLedgerAmounts = async (quotationId: string, patch: SubvendorLedgerAmounts) => {
     const next = upsertLedgerAmounts(quotationId, patch)
     setLedgerMap(next)
     if (!useApi) return
@@ -332,6 +397,7 @@ export function AdminSubvendorPanel({
       city: row.city,
       category: row.category || "Other",
       notes: row.notes,
+      profitRatio: formatProfitRatioInput(row.profitRatio),
     })
     setDialogOpen(true)
   }
@@ -346,6 +412,7 @@ export function AdminSubvendorPanel({
         ...snapshotFromDealer(dealer),
         category: form.category.trim() || "Other",
         notes: form.notes.trim(),
+        profitRatio: parseProfitRatio(form.profitRatio),
       }
     } else {
       const name = form.name.trim()
@@ -360,6 +427,7 @@ export function AdminSubvendorPanel({
         city: form.city.trim(),
         category: form.category.trim() || "Other",
         notes: form.notes.trim(),
+        profitRatio: parseProfitRatio(form.profitRatio),
       }
     }
 
@@ -505,6 +573,7 @@ export function AdminSubvendorPanel({
               addLabel="Select dealer"
               showAdd={insideRows.length === 0 && availableDealers.length > 0}
               compact
+              profitById={vendorProfitById}
             />
             {insideRows.length > 0 ? (
               <InsideVendorLedger
@@ -515,7 +584,7 @@ export function AdminSubvendorPanel({
                 vendorId={ledgerVendorId}
                 onVendorId={setLedgerVendorId}
                 vendors={insideRows}
-                onCommitAmount={commitLedgerAmount}
+                onSaveAmounts={commitLedgerAmounts}
               />
             ) : null}
           </TabsContent>
@@ -637,6 +706,17 @@ export function AdminSubvendorPanel({
               </Select>
             </div>
             <div>
+              <Label>Profit ratio (%)</Label>
+              <Input
+                inputMode="decimal"
+                className="tabular-nums"
+                placeholder="0"
+                value={form.profitRatio}
+                onChange={(e) => setForm((p) => ({ ...p, profitRatio: e.target.value }))}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">Percent of this vendor's profit, 0–100.</p>
+            </div>
+            <div>
               <Label>Notes</Label>
               <Textarea
                 rows={3}
@@ -707,6 +787,7 @@ function VendorGrid({
   addLabel,
   showAdd,
   compact,
+  profitById,
 }: {
   rows: AdminSubvendorRecord[]
   emptyLabel: string
@@ -718,6 +799,7 @@ function VendorGrid({
   addLabel: string
   showAdd: boolean
   compact?: boolean
+  profitById?: Record<string, number>
 }) {
   if (rows.length === 0) {
     return (
@@ -736,7 +818,9 @@ function VendorGrid({
 
   return (
     <div className={compact ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"}>
-      {rows.map((row) => (
+      {rows.map((row) => {
+        const profitAmount = profitById?.[row.id] ?? 0
+        return (
         <div key={row.id} className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
@@ -762,38 +846,26 @@ function VendorGrid({
               </Button>
             </div>
           </div>
-          <div className="mt-3 space-y-1 text-sm">
-            {row.contactName && row.contactName !== row.name ? <p>{row.contactName}</p> : null}
-            {row.mobile ? <p className="text-muted-foreground">{row.mobile}</p> : null}
-            {row.email ? <p className="text-muted-foreground truncate">{row.email}</p> : null}
-            {row.city ? <p className="text-muted-foreground">{row.city}</p> : null}
-            {row.notes ? <p className="text-xs text-muted-foreground pt-1">{row.notes}</p> : null}
+          <div className="mt-3">
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+            <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+              {formatLedgerInr(profitAmount)}
+            </p>
+            <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+              {formatProfitRatioLabel(row.profitRatio)}
+            </p>
           </div>
         </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
 
-type InsideLedgerRow = {
-  quotationId: string
-  dealerId: string
-  customerName: string
-  customerMobile: string
-  vendorName: string
-  vendorMobile: string
-  systemSize: string
-  paymentTypeLabel: string
-  loanAmount: number
-  cashAmount: number
-  receivedAmount: number
-  remaining: number
-  proposal: number
-  costOfSite: number
-  fileCharges: number
-  pi: number
-  gstCharges: number
-  others: number
+function draftsFromLedgerRow(row: InsideLedgerRow): Record<LedgerAmountField, string> {
+  return Object.fromEntries(
+    LEDGER_AMOUNT_FIELDS.map((field) => [field, row[field] > 0 ? String(row[field]) : ""]),
+  ) as Record<LedgerAmountField, string>
 }
 
 function InsideVendorLedger({
@@ -804,27 +876,53 @@ function InsideVendorLedger({
   vendorId,
   onVendorId,
   vendors,
-  onCommitAmount,
+  onSaveAmounts,
 }: {
   rows: InsideLedgerRow[]
-  totals: Omit<
-    InsideLedgerRow,
-    "quotationId" | "dealerId" | "customerName" | "customerMobile" | "vendorName" | "vendorMobile" | "systemSize" | "paymentTypeLabel"
-  >
+  totals: Record<LedgerAmountField, number>
   search: string
   onSearch: (value: string) => void
   vendorId: string
   onVendorId: (value: string) => void
   vendors: AdminSubvendorRecord[]
-  onCommitAmount: (quotationId: string, field: LedgerAmountField, raw: string) => void
+  onSaveAmounts: (quotationId: string, patch: SubvendorLedgerAmounts) => Promise<void> | void
 }) {
+  const [manageRowId, setManageRowId] = useState<string | null>(null)
+  const [manageDrafts, setManageDrafts] = useState<Record<LedgerAmountField, string> | null>(null)
+  const [saving, setSaving] = useState(false)
+  const manageRow = rows.find((row) => row.quotationId === manageRowId) ?? null
+
+  const openManage = (row: InsideLedgerRow) => {
+    setManageRowId(row.quotationId)
+    setManageDrafts(draftsFromLedgerRow(row))
+  }
+
+  const closeManage = () => {
+    setManageRowId(null)
+    setManageDrafts(null)
+  }
+
+  const saveManage = async () => {
+    if (!manageRowId || !manageDrafts) return
+    const patch = Object.fromEntries(
+      LEDGER_AMOUNT_FIELDS.map((field) => [field, parseAmountInput(manageDrafts[field])]),
+    ) as SubvendorLedgerAmounts
+    setSaving(true)
+    try {
+      await onSaveAmounts(manageRowId, patch)
+      closeManage()
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <div className="rounded-xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-border/70 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold">Office inside ledger</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Full loan → cash ₹0. Full cash → loan ₹0. Cash + loan → both amounts.
+            Same card layout as Accounts. Edit amounts from Manage.
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
@@ -858,112 +956,223 @@ function InsideVendorLedger({
           <p>No approved customer files for these office inside vendors yet</p>
         </div>
       ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[108rem] border-collapse text-left">
-            <thead className="bg-muted/70">
-              <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
-                <th className="px-3 py-2.5 whitespace-nowrap">Vendor name</th>
-                <th className="px-3 py-2.5 whitespace-nowrap">System size</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Loan amount</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Cash amount</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Received amount</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Remaining</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Proposal</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Cost of site</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">File charges</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">PI</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">GST charges</th>
-                <th className="px-3 py-2.5 whitespace-nowrap text-right">Others</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.quotationId} className="border-b border-border/60">
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <p className="text-sm font-medium">{row.customerName}</p>
-                    <p className="text-xs text-muted-foreground">{row.customerMobile}</p>
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <p className="text-sm">{row.vendorName}</p>
-                    <p className="text-xs text-muted-foreground">{row.vendorMobile || "—"}</p>
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
-                    <p className="text-sm">{row.systemSize}</p>
-                    <p className="text-xs text-muted-foreground">{row.paymentTypeLabel}</p>
-                  </td>
-                  {(
-                    [
-                      "loanAmount",
-                      "cashAmount",
-                      "receivedAmount",
-                      "remaining",
-                      "proposal",
-                      "costOfSite",
-                      "fileCharges",
-                      "pi",
-                      "gstCharges",
-                      "others",
-                    ] as const
-                  ).map((field) => (
-                    <td key={field} className="px-2 py-1.5">
-                      <LedgerAmountInput
-                        value={row[field]}
-                        onCommit={(raw) => onCommitAmount(row.quotationId, field, raw)}
-                      />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="bg-muted/50 text-sm font-semibold">
-                <td className="px-3 py-2.5" colSpan={3}>
-                  Total ({rows.length})
-                </td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.loanAmount)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.cashAmount)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.receivedAmount)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.remaining)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.proposal)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.costOfSite)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.fileCharges)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.pi)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.gstCharges)}</td>
-                <td className="px-3 py-2.5 tabular-nums text-right whitespace-nowrap">{formatLedgerInr(totals.others)}</td>
-              </tr>
-            </tfoot>
-          </table>
+        <div className="p-3 space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+            {(
+              [
+                ["Proposal", totals.proposal],
+                ["Received", totals.receivedAmount],
+                ["Remaining", totals.remaining],
+                ["Loan", totals.loanAmount],
+                ["Cash", totals.cashAmount],
+                ["Cost of site", totals.costOfSite],
+              ] as const
+            ).map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(value)}</p>
+              </div>
+            ))}
+          </div>
+
+          {rows.map((row) => {
+            const status = ledgerStatus(row)
+            return (
+              <Card
+                key={row.quotationId}
+                className={cn(
+                  "shadow-none px-3 py-2.5 border border-border/70 border-l-4 overflow-hidden",
+                  status.tone === "completed"
+                    ? "border-l-emerald-500 bg-card"
+                    : status.tone === "partial"
+                      ? "border-l-amber-500 bg-card"
+                      : "border-l-rose-500 bg-card",
+                )}
+              >
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full xl:grid-cols-[minmax(11rem,1.35fr)_minmax(4.5rem,0.5fr)_minmax(5rem,0.6fr)_minmax(5rem,0.6fr)_minmax(5rem,0.6fr)_minmax(6.25rem,0.75fr)_minmax(5rem,0.55fr)_minmax(7rem,0.9fr)_minmax(5.5rem,0.4fr)]">
+                  <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
+                    <p className="text-sm font-semibold leading-tight break-words">
+                      {row.customerName}
+                      <span className="font-normal text-muted-foreground">
+                        {" "}
+                        ({row.customerMobile || "N/A"})
+                      </span>
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                      Vendor: {row.vendorName || "Unassigned"} • {row.vendorMobile || "No contact"}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">System size</p>
+                    <p className="text-sm font-semibold leading-tight">{row.systemSize}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{row.paymentTypeLabel}</p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Proposal</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(row.proposal)}</p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Received</p>
+                    <p
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        row.receivedAmount <= 0 ? "text-rose-700" : "text-foreground",
+                      )}
+                    >
+                      {formatLedgerInr(row.receivedAmount)}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Remaining</p>
+                    <p
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        row.remaining <= 0 ? "text-emerald-700" : "text-amber-700",
+                      )}
+                    >
+                      {formatLedgerInr(Math.max(row.remaining, 0))}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Payment</p>
+                    <p className="text-sm font-semibold leading-tight">{row.paymentTypeLabel}</p>
+                    {row.paymentType === "mix" ? (
+                      <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
+                        L {formatLedgerInr(row.loanAmount)} · C {formatLedgerInr(row.cashAmount)}
+                      </p>
+                    ) : row.paymentType === "loan" ? (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Loan {formatLedgerInr(row.loanAmount)}
+                      </p>
+                    ) : row.paymentType === "cash" ? (
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Cash {formatLedgerInr(row.cashAmount)}
+                      </p>
+                    ) : null}
+                    <p
+                      className={cn(
+                        "text-[11px] mt-0.5 font-medium",
+                        status.tone === "completed"
+                          ? "text-emerald-700"
+                          : status.tone === "partial"
+                            ? "text-amber-700"
+                            : "text-rose-700",
+                      )}
+                    >
+                      {status.label}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(row.costOfSite)}</p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Charges</p>
+                    <div className="mt-0.5 space-y-0.5">
+                      {(
+                        [
+                          ["File", row.fileCharges],
+                          ["PI", row.pi],
+                          ["GST", row.gstCharges],
+                          ["Others", row.others],
+                        ] as const
+                      ).map(([label, value]) => (
+                        <p key={label} className="text-[10px] leading-tight tabular-nums">
+                          <span className="text-muted-foreground">{label}</span> {formatLedgerInr(value)}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-6 px-3 text-[10px] leading-none font-medium w-full max-w-[7.25rem]"
+                      onClick={() => openManage(row)}
+                    >
+                      Manage
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )
+          })}
         </div>
       )}
-    </div>
-  )
-}
 
-function LedgerAmountInput({ value, onCommit }: { value: number; onCommit: (raw: string) => void }) {
-  const [draft, setDraft] = useState(value > 0 ? String(value) : "")
-  useEffect(() => {
-    setDraft(value > 0 ? String(value) : "")
-  }, [value])
-  const dirty = parseAmountInput(draft) !== value
-  const save = () => onCommit(draft)
-  return (
-    <div className="flex items-center justify-end gap-1 min-w-[9.5rem]">
-      <Input
-        inputMode="numeric"
-        className="h-8 w-[6.75rem] text-right tabular-nums text-xs"
-        placeholder="0"
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && dirty) save()
+      <Dialog
+        open={Boolean(manageRowId)}
+        onOpenChange={(open) => {
+          if (!open) closeManage()
         }}
-      />
-      {dirty ? (
-        <Button type="button" size="sm" className="h-8 px-2 text-xs shrink-0" onClick={save}>
-          Save
-        </Button>
-      ) : null}
+      >
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
+            <div>
+              <DialogTitle>Ledger management</DialogTitle>
+              <DialogDescription>Update amounts for this office inside customer file.</DialogDescription>
+            </div>
+            <Button type="button" size="sm" className="shrink-0" onClick={() => void saveManage()} disabled={saving}>
+              {saving ? "Saving..." : "Save"}
+            </Button>
+          </DialogHeader>
+          {manageRow && manageDrafts ? (
+            <div className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold">{manageRow.customerName}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Customer No: {manageRow.customerMobile || "N/A"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Vendor: {manageRow.vendorName || "Unassigned"} • {manageRow.vendorMobile || "No contact"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {manageRow.systemSize} · {manageRow.paymentTypeLabel}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-muted-foreground">Proposal</p>
+                  <p className="text-base font-semibold tabular-nums">{formatLedgerInr(manageRow.proposal)}</p>
+                  <p
+                    className={cn(
+                      "text-[11px] mt-1",
+                      manageRow.remaining <= 0 ? "font-semibold text-emerald-700" : "text-muted-foreground",
+                    )}
+                  >
+                    Remaining: {formatLedgerInr(manageRow.remaining)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {LEDGER_AMOUNT_FIELDS.map((field) => (
+                  <div key={field} className="space-y-1.5">
+                    <Label htmlFor={`ledger-${field}`}>{LEDGER_FIELD_LABELS[field]}</Label>
+                    <Input
+                      id={`ledger-${field}`}
+                      inputMode="numeric"
+                      className="tabular-nums"
+                      placeholder="0"
+                      value={manageDrafts[field]}
+                      onChange={(e) =>
+                        setManageDrafts((prev) => (prev ? { ...prev, [field]: e.target.value } : prev))
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

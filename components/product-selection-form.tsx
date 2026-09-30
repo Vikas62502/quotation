@@ -260,6 +260,30 @@ function CommercialPdfOptions({
   )
 }
 
+function LithiumBatteryPdfOptions({
+  checked,
+  onChange,
+}: {
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-border/80 bg-muted/30 p-3 space-y-2">
+      <p className="text-xs font-medium text-muted-foreground">Quotation PDF — lithium battery</p>
+      <label className="flex items-start gap-2 text-sm cursor-pointer">
+        <Checkbox
+          checked={checked}
+          onCheckedChange={(value) => onChange(value === true)}
+          className="mt-0.5"
+        />
+        <span>
+          <strong>Include lithium battery</strong> on the proposal PDF with the capacity entered above
+        </span>
+      </label>
+    </div>
+  )
+}
+
 interface Props {
   onSubmit: (products: ProductSelection) => void
   onBack: () => void
@@ -313,6 +337,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       hybridInverter: "",
       batteryCapacity: "",
       batteryPrice: 0,
+      includeLithiumBattery: false,
       customPanels: [],
       dcrPanelBrand: "",
       dcrPanelSize: "",
@@ -2208,6 +2233,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       />
                     </div>
                   </div>
+                  <LithiumBatteryPdfOptions
+                    checked={formData.includeLithiumBattery === true}
+                    onChange={(checked) => updateFormData("includeLithiumBattery", checked)}
+                  />
                 </div>
               )}
 
@@ -2855,6 +2884,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       />
                     </div>
                   </div>
+                  <LithiumBatteryPdfOptions
+                    checked={formData.includeLithiumBattery === true}
+                    onChange={(checked) => updateFormData("includeLithiumBattery", checked)}
+                  />
                 </div>
               )}
 
@@ -3282,6 +3315,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         />
                       </div>
                     </div>
+                    <LithiumBatteryPdfOptions
+                      checked={formData.includeLithiumBattery === true}
+                      onChange={(checked) => updateFormData("includeLithiumBattery", checked)}
+                    />
                   </div>
                 </>
               )}

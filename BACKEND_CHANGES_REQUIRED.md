@@ -6661,7 +6661,7 @@ New tables and admin APIs so Subvendor is not localStorage-only.
 
 ### Tables
 
-1. `subvendors` — `kind` `office_inside` | `office_outside`; unique `dealer_id` when inside.
+1. `subvendors` — `kind` `office_inside` | `office_outside`; unique `dealer_id` when inside; `profit_ratio` percent 0–100 on create/edit.
 2. `subvendor_ledger` — one row per `quotation_id`; editable INR columns (loan, received, remaining, proposal, cost of site, file charges, PI, GST, others).
 
 ### Endpoints
@@ -6676,6 +6676,104 @@ Auth: admin JWT.
 Frontend: `/dashboard/subvendors` and Admin → ⋯ → Subvendor. `lib/api.ts` → `api.admin.subvendors`.
 
 **Copy-paste:** `BACKEND_SUBVENDORS.ts`
+
+---
+
+## §BE — Subvendor profit ratio on create/edit (Sep 2026)
+
+Admin Subvendor create/edit now sends **profit ratio** (%). Persist it on `subvendors` so refresh / other devices keep the value.
+
+Frontend: `POST/PATCH /admin/subvendors` body includes `profitRatio` (also `profit_ratio`). GET list must echo it. SPA reads camelCase first.
+
+### Migration
+
+```sql
+ALTER TABLE subvendors
+  ADD COLUMN IF NOT EXISTS profit_ratio NUMERIC(6, 2) NOT NULL DEFAULT 0;
+```
+
+Sequelize field: `profitRatio` → `profit_ratio`, `DECIMAL(6, 2)`, default `0`.
+
+### Contract
+
+- Percent **0–100**, two decimals. Invalid / empty → `0`. Values `> 100` → `400 VAL_PROFIT` (or clamp to 100).
+- **POST** `/admin/subvendors` — save `profitRatio` / `profit_ratio`.
+- **PATCH** `/admin/subvendors/:id` — if the key is sent, update; if omitted, **do not reset to 0**.
+- **GET** `/admin/subvendors` (and GET by id) — always return both:
+
+```json
+{
+  "profitRatio": 10,
+  "profit_ratio": 10
+}
+```
+
+Missing column or null → `0`, never omit the keys.
+
+Same admin JWT as **§BD**. No new route.
+
+**Copy-paste:** `BACKEND_SUBVENDORS.ts` (`roundProfitRatio`, `publicSubvendor`)
+
+---
+
+## §BF — Accept ACDB/DCDB `As per the set` (catalog validation) — Sep 2026
+
+**Live 400 on save/revise** (Tata package, final amount already filled):
+
+```
+Invalid ACDB option: As per the set
+Invalid DCDB option: As per the set
+```
+
+Frontend may surface this as **VAL_003 / Final amount is required** — that code is wrong for catalog failures. `finalAmount` is present.
+
+### Must
+
+In `validateProductSelection` (create + `PATCH /api/quotations/:id/products`):
+
+- Treat `acdb` and `dcdb` values **`As per the set`** and **`As per Set`** as **valid** (same as inverter/panel package-set in **§2.2**).
+- Skip the catalog SKU allowlist for those two fields when `isAsPerSet`.
+- **Persist verbatim.** GET must echo `As per the set` — do not rewrite to `Havells+Elmex (1-Phase)` on GET.
+- Catalog errors → product validation code (`VAL_PRODUCT` or existing product code), **not** `VAL_003`.
+
+SPA currently maps ACDB/DCDB to Havells+Elmex / Elmex on POST only as a workaround. Backend should accept the package-set string so that workaround is unnecessary.
+
+**Copy-paste:** `BACKEND_QUOTATION_ACDB_LITHIUM.ts` (`isAsPerSetLabel`)
+
+---
+
+## §BG — Lithium battery include flag on quotation products — Sep 2026
+
+Dealer Battery Configuration has **Include lithium battery**. Proposal PDF shows **Lithium Battery** + capacity only when the flag is true.
+
+### Persist on products (JSONB or `quotation_products`)
+
+| Field | Type | Notes |
+|-------|------|--------|
+| `includeLithiumBattery` / `include_lithium_battery` | boolean | default `false` |
+| `batteryCapacity` / `battery_capacity` | string | e.g. `100kWh` |
+| `hybridInverter` / `hybrid_inverter` | string | hybrid inverter model |
+| `batteryPrice` / `battery_price` | number | INR |
+
+### Contract
+
+- **POST** `/api/quotations` and **PATCH** `/api/quotations/:id/products` — save camelCase + snake_case.
+- **GET** — always echo `includeLithiumBattery` + `include_lithium_battery` (missing → `false`, never omit).
+- PATCH: omitted flag → keep stored value; sent `false` → save `false`.
+
+```json
+{
+  "includeLithiumBattery": true,
+  "include_lithium_battery": true,
+  "batteryCapacity": "100kWh",
+  "hybridInverter": "Vsole",
+  "batteryPrice": 2006000
+}
+```
+
+No new route. Same dealer JWT as create quotation.
+
+**Copy-paste:** `BACKEND_QUOTATION_ACDB_LITHIUM.ts` (`publicLithiumBatteryFields`)
 
 ---
 

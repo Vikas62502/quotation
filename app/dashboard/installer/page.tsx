@@ -698,18 +698,16 @@ export default function InstallerDashboardPage() {
 
     const inverterConfig = [p.inverterBrand, p.inverterSize, p.inverterType].filter(Boolean).join(" - ")
 
-    const batteryConfig = (() => {
-      const parts = [p.batteryCapacity, p.batteryPrice ? `₹${p.batteryPrice}` : undefined].filter(Boolean)
-      return parts.join(" - ")
-    })()
-
     return [
       { label: "System Type", value: p.systemType },
       { label: "Panel Configuration", value: panelConfig },
       { label: "Inverter", value: inverterConfig },
       { label: "Phase", value: p.phase },
       { label: "Hybrid Inverter", value: p.hybridInverter },
-      { label: "Battery", value: batteryConfig },
+      {
+        label: "Lithium Battery",
+        value: p.includeLithiumBattery ? p.batteryCapacity || "Included" : undefined,
+      },
       { label: "Battery Capacity", value: p.batteryCapacity },
       { label: "Battery Price", value: p.batteryPrice ? `₹${p.batteryPrice}` : undefined },
       { label: "Structure", value: [p.structureType, p.structureSize].filter(Boolean).join(" - ") },

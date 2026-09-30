@@ -21,6 +21,8 @@ import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
 import { formatPersonName } from "@/lib/name-display"
 import {
   buildQuotationProposalDocumentData,
+  isLithiumBatteryIncluded,
+  lithiumBatteryCapacityLabel,
   mergeQuotationTimestampsFromApi,
   resolveProposalQuotationDates,
   type QuotationProposalDocumentData,
@@ -1232,10 +1234,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         )}
                       </>
                     )}
-                    {products.batteryCapacity && (
+                    {isLithiumBatteryIncluded(products) && (
                       <div>
-                        <span className="font-semibold">Battery: </span>
-                        {products.batteryCapacity}
+                        <span className="font-semibold">Lithium Battery: </span>
+                        {lithiumBatteryCapacityLabel(products) || "Included"}
                       </div>
                     )}
                 </>

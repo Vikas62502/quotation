@@ -398,6 +398,7 @@ export const createQuotation = async (req: Request, res: Response): Promise<void
       hybridInverter: products.hybridInverter,
       batteryCapacity: products.batteryCapacity,
       batteryPrice: products.batteryPrice,
+      includeLithiumBattery: products.includeLithiumBattery === true,
       centralSubsidy: finalPricing.centralSubsidy,
       stateSubsidy: finalPricing.stateSubsidy,
       subtotal: finalPricing.subtotal,        // Set price (complete package price)

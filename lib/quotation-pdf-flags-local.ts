@@ -11,6 +11,8 @@ export type StoredQuotationPdfFlags = {
   pdfUsePanelSizeRange: boolean
   /** True once dealer saved — empty range must stay empty on reopen (not re-defaulted). */
   pdfPanelRangeChoiceSaved: boolean
+  includeLithiumBattery: boolean
+  includeLithiumBatteryChoiceSaved: boolean
   /** Exact panel size/qty for PDF when API catalog snaps wattage (e.g. 625W). */
   panelSize?: string
   panelQuantity?: number
@@ -59,6 +61,9 @@ export function readLocalQuotationPdfFlags(quotationId: string): StoredQuotation
       pdfCommercialSet: parsed.pdfCommercialSet === true,
       pdfUsePanelSizeRange: parsed.pdfUsePanelSizeRange === true,
       pdfPanelRangeChoiceSaved: parsed.pdfPanelRangeChoiceSaved === true || "pdfUsePanelSizeRange" in parsed,
+      includeLithiumBattery: parsed.includeLithiumBattery === true,
+      includeLithiumBatteryChoiceSaved:
+        parsed.includeLithiumBatteryChoiceSaved === true || "includeLithiumBattery" in parsed,
       panelSize: parsed.panelSize,
       panelQuantity: parsed.panelQuantity,
       dcrPanelSize: parsed.dcrPanelSize,
@@ -92,6 +97,10 @@ export function writeLocalQuotationPdfFlags(quotationId: string, products: Produ
     pdfCommercialSet: isPdfCommercialSet(sanitized),
     pdfUsePanelSizeRange: Boolean(primaryKey),
     pdfPanelRangeChoiceSaved: true,
+    includeLithiumBattery: Boolean(
+      sanitized.includeLithiumBattery || (sanitized as ProductSelection & Record<string, unknown>).include_lithium_battery,
+    ),
+    includeLithiumBatteryChoiceSaved: true,
     panelSize,
     dcrPanelSize,
     ...(Number.isFinite(panelQuantity) && panelQuantity > 0 ? { panelQuantity } : {}),
@@ -174,6 +183,11 @@ export function applyLocalQuotationPdfFlags(
     }
   } else if (stored.dcrPanelQuantity != null && stored.dcrPanelQuantity > 0) {
     next = { ...next, dcrPanelQuantity: stored.dcrPanelQuantity }
+  }
+
+  if (stored.includeLithiumBatteryChoiceSaved) {
+    next = { ...next, includeLithiumBattery: stored.includeLithiumBattery }
+    ;(next as ProductSelection & Record<string, unknown>).include_lithium_battery = stored.includeLithiumBattery
   }
 
   // Drop cached Adani/Waaree keys that do not match the current panel brand (e.g. RenewSys).

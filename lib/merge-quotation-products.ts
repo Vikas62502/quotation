@@ -39,6 +39,10 @@ const PRODUCT_FIELD_KEYS = [
   "acdb",
   "dcdb",
   "meterBrand",
+  "hybridInverter",
+  "batteryCapacity",
+  "batteryPrice",
+  "includeLithiumBattery",
 ] as const
 
 const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string>> = {
@@ -75,6 +79,10 @@ const CAMEL_TO_SNAKE: Partial<Record<(typeof PRODUCT_FIELD_KEYS)[number], string
   dcCableBrand: "dc_cable_brand",
   dcCableSize: "dc_cable_size",
   meterBrand: "meter_brand",
+  hybridInverter: "hybrid_inverter",
+  batteryCapacity: "battery_capacity",
+  batteryPrice: "battery_price",
+  includeLithiumBattery: "include_lithium_battery",
 }
 
 function isNonEmptyPlainObject(value: unknown): value is RecordLike {
@@ -209,6 +217,14 @@ function normalizePdfDisplayFields(out: RecordLike): void {
   if (allowNonDcr3480 === true || String(allowNonDcr3480).toLowerCase() === "true") {
     out.allowNonDcr3480W = true
     out.allow_non_dcr_3480_w = true
+  }
+  const lithium = out.includeLithiumBattery ?? out.include_lithium_battery
+  if (lithium === true || String(lithium).toLowerCase() === "true") {
+    out.includeLithiumBattery = true
+    out.include_lithium_battery = true
+  } else if (lithium === false || lithium === null || lithium === "") {
+    out.includeLithiumBattery = false
+    out.include_lithium_battery = false
   }
 }
 

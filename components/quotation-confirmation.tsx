@@ -14,6 +14,8 @@ import { QuotationProposalPdf } from "@/components/quotation-proposal-pdf"
 import { formatPersonName } from "@/lib/name-display"
 import {
   buildQuotationProposalDocumentData,
+  isLithiumBatteryIncluded,
+  lithiumBatteryCapacityLabel,
   mergeQuotationTimestampsFromApi,
   resolveProposalQuotationDates,
   type ProposalDateSource,
@@ -552,6 +554,15 @@ export function QuotationConfirmation({
             }
             errorMessage += "\nThis error should not occur. Please contact support if you see this message."
           } else if (errorCode === "VAL_003") {
+            const details = Array.isArray(errorDetails) ? errorDetails : []
+            const catalogLines = details.filter((d: { field?: string; message?: string }) =>
+              /acdb|dcdb|invalid option/i.test(`${d.field || ""} ${d.message || ""}`),
+            )
+            if (catalogLines.length > 0) {
+              errorMessage =
+                "Could not save this system.\n\n" +
+                catalogLines.map((d: { message?: string }) => `- ${d.message}`).join("\n")
+            } else {
             errorMessage = "Final Amount Validation Error\n\n"
             errorMessage += "Final amount is required.\n\n"
             if (errorDetails && Array.isArray(errorDetails)) {
@@ -561,6 +572,7 @@ export function QuotationConfirmation({
               })
             }
             errorMessage += "\nThis error should not occur. Please contact support if you see this message."
+            }
           } else if (errorCode === "SYS_001" || errorMessage === "Internal server error") {
             errorMessage =
               "The server failed while saving the quotation (internal error).\n\n" +
@@ -960,10 +972,12 @@ const getStructureDetails = (products: ProductSelection) => {
                     )}
                   </>
                 )}
-                {products.systemType === "hybrid" && products.batteryCapacity && (
+                {isLithiumBatteryIncluded(products) && (
                   <div className="flex justify-between">
-                    <span className="text-sm text-muted-foreground">Battery</span>
-                    <span className="text-sm font-medium">{products.batteryCapacity}</span>
+                    <span className="text-sm text-muted-foreground">Lithium Battery</span>
+                    <span className="text-sm font-medium">
+                      {lithiumBatteryCapacityLabel(products) || "Included"}
+                    </span>
                   </div>
                 )}
               </div>

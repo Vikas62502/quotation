@@ -345,6 +345,39 @@ export function isHybridInverterType(inverterType?: string | null): boolean {
   return /hybrid/i.test(String(inverterType || "").trim())
 }
 
+export function isLithiumBatteryIncluded(products?: object | null): boolean {
+  if (!products) return false
+  const raw = products as Record<string, unknown>
+  const flag =
+    raw.includeLithiumBattery ??
+    raw.include_lithium_battery ??
+    raw.pdfIncludeLithiumBattery ??
+    raw.pdf_include_lithium_battery
+  return flag === true || String(flag).toLowerCase() === "true"
+}
+
+export function lithiumBatteryCapacityLabel(products: object): string {
+  const raw = products as Record<string, unknown>
+  return pickNonEmpty(raw.batteryCapacity, raw.battery_capacity)
+}
+
+function lithiumBatterySpecRow(products: ProductsLike): SpecRow {
+  const capacity = lithiumBatteryCapacityLabel(products)
+  const specification = !capacity
+    ? "Lithium Battery"
+    : /lithium/i.test(capacity)
+      ? capacity
+      : `${capacity} Lithium Battery`
+  const brandModel =
+    pickNonEmpty(products.hybridInverter, (products as Record<string, unknown>).hybrid_inverter) || "Lithium"
+  return {
+    component: "Lithium Battery",
+    specification,
+    brandModel,
+    qty: "1 Set",
+  }
+}
+
 /** Same brand/model string shown on the Solar Inverter PDF spec row. */
 export function resolveInverterBrandForPdf(products: ProductsLike): string {
   const raw = products as Record<string, unknown>
@@ -539,6 +572,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
       brandModel: invBrand,
       qty: "1 Unit",
     },
+    ...(isLithiumBatteryIncluded(p) ? [lithiumBatterySpecRow(p)] : []),
     {
       component: "Mounting Structure",
       specification: getMountingStructurePdfSpecification(),
