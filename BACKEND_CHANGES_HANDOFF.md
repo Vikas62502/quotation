@@ -4260,6 +4260,40 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 
 ---
 
+## 54. Structure type **Mono Real** (**§BH**) — Oct 2026
+
+**Frontend (shipped):** Structure Configuration dropdown always includes **Mono Real** (merged even when catalog only lists GI). PDF mounting spec is **Mono Real Structure**. Prices match GI (1/3/5/10kW).
+
+**Backend (P0):**
+1. `validateProductSelection` — accept `structureType: "Mono Real"` (and `mono real` / optional `Mono Rail`). Do **not** 400 as unknown catalog type.
+2. Persist verbatim on create + `PATCH …/products`. GET echo `structureType` + `structure_type`. **Do not rewrite to GI Structure.**
+3. `GET /api/quotations/product-catalog` — merge `"Mono Real"` into `structures.types`.
+4. Pricing `structures[]` — seed Mono Real rows (₹8000 / 24000 / 40000 / 80000). Missing row → fall back to GI same size; do not 400.
+5. Catalog failures → `VAL_PRODUCT`, **not** `VAL_003`.
+
+**QA:** Pick Mono Real + 5kW → save → reopen still **Mono Real** → PDF **Mono Real Structure**.
+
+**Copy-paste:** `BACKEND_QUOTATION_MONO_REAL.ts` · REQUIRED **§BH**
+
+---
+
+## 55. PDF range checkbox — extra panel 8 → 9 (**§BI**) — Oct 2026
+
+**Frontend (shipped):** Unchecked PDF panel-range boxes keep package quantity (e.g. **8 × 620W**). Checking a range (540–580 / 610–625 / 600–630) allows **one extra panel (9)**. Uncheck clamps back to 8. Quantity stays visible.
+
+**Backend (P0):**
+1. Persist `panelQuantity` as sent (9). Do **not** rewrite to 8 or 0 because `pdfPanelRangeKey` is set.
+2. If you cap DC watts, when a range key is set allow **+1 panel**: `maxW = systemKw×1000 + 400 + panelW`.
+3. Same for `dcrPanelQuantity` + `pdfDcrPanelRangeKey` and `nonDcrPanelQuantity` + `pdfNonDcrPanelRangeKey`.
+4. GET echo `panelQuantity` + the range key. Do not recompute qty on GET.
+5. Do not change package pricing from the extra panel. Failures → `VAL_PRODUCT`, not `VAL_003`.
+
+**QA:** Adani 620W, 8 panels, boxes off → save 8. Tick a range → **9** → save → reopen still 9 + checkbox on. Untick → 8.
+
+**Copy-paste:** `BACKEND_QUOTATION_EXTRA_PANEL.ts` · REQUIRED **§BI**
+
+---
+
 
 
 

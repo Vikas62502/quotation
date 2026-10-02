@@ -65,6 +65,36 @@ export function buildInverterBrandDropdownOptions(catalogBrands?: string[]): str
   return result
 }
 
+/** Extra structure type always offered in the quotation form (catalog may only list GI). */
+export const QUOTATION_EXTRA_STRUCTURE_TYPE_OPTIONS = ["Mono Real"] as const
+
+export function buildStructureTypeDropdownOptions(catalogTypes?: string[]): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+
+  for (const type of catalogTypes ?? []) {
+    const trimmed = type?.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(trimmed)
+  }
+
+  for (const extra of QUOTATION_EXTRA_STRUCTURE_TYPE_OPTIONS) {
+    const key = extra.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(extra)
+  }
+
+  return result
+}
+
+export function isMonoRealStructureType(type?: string | null): boolean {
+  return /mono\s*real/i.test(String(type || "").trim())
+}
+
 /** Combined meter label for quotation form dropdown and PDF. */
 export const QUOTATION_COMBINED_METER_BRAND = "L&T/HPL/Genus/Secure"
 
@@ -646,7 +676,12 @@ export const MOUNTING_STRUCTURE_PDF_SPEC_LINES = [
   "Parlin-40*40",
 ] as const
 
-export function getMountingStructurePdfSpecification(): string {
+export function getMountingStructurePdfSpecification(
+  products?: Pick<ProductSelection, "structureType"> | null,
+): string {
+  if (isMonoRealStructureType(products?.structureType)) {
+    return "Mono Real Structure"
+  }
   return MOUNTING_STRUCTURE_PDF_SPEC_LINES.join("\n")
 }
 

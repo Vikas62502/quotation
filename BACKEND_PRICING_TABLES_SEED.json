@@ -2491,6 +2491,26 @@
       "type": "MS Structure",
       "size": "5kW",
       "price": 45000
+    },
+    {
+      "type": "Mono Real",
+      "size": "1kW",
+      "price": 8000
+    },
+    {
+      "type": "Mono Real",
+      "size": "3kW",
+      "price": 24000
+    },
+    {
+      "type": "Mono Real",
+      "size": "5kW",
+      "price": 40000
+    },
+    {
+      "type": "Mono Real",
+      "size": "10kW",
+      "price": 80000
     }
   ],
   "meters": [

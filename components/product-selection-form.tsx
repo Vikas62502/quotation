@@ -50,6 +50,7 @@ import { usePricingTables } from "@/lib/use-pricing-tables"
 import { useProductCatalog } from "@/lib/use-product-catalog"
 import {
   buildInverterBrandDropdownOptions,
+  buildStructureTypeDropdownOptions,
   QUOTATION_AS_PER_THE_SET_LABEL,
   isAsPerTheSetLabel,
   isPanelRowComplete,
@@ -306,7 +307,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   const inverterTypesList = catalog?.inverters?.types || []
   const inverterSizesList = catalog?.inverters?.sizes || []
   const inverterBrandsList = buildInverterBrandDropdownOptions(catalog?.inverters?.brands)
-  const structureTypesList = catalog?.structures?.types || []
+  const structureTypesList = buildStructureTypeDropdownOptions(catalog?.structures?.types)
   // Get structure sizes from pricing tables instead of catalog
   const structureSizesList = getAvailableStructureSizes(pricingTables || undefined)
   const meterBrandsList = buildMeterBrandDropdownOptions(catalog?.meters?.brands)
@@ -664,9 +665,44 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
   }
 
   const parseNominalKwFromContext = (products: ProductSelection): number => {
-    const source = String(products.structureSize || products.inverterSize || "").trim()
-    const kw = Number.parseFloat(source.replace(/kW/i, ""))
-    return Number.isFinite(kw) && kw > 0 ? kw : 0
+    const structureKw = Number.parseFloat(String(products.structureSize || "").replace(/kW/i, ""))
+    const inverterKw = Number.parseFloat(String(products.inverterSize || "").replace(/kW/i, ""))
+    const kw = Math.max(
+      Number.isFinite(structureKw) && structureKw > 0 ? structureKw : 0,
+      Number.isFinite(inverterKw) && inverterKw > 0 ? inverterKw : 0,
+    )
+    return kw > 0 ? kw : 0
+  }
+
+  const panelQtyCapOptions = (
+    products: ProductSelection,
+    side: "primary" | "dcr" | "nonDcr",
+    panelSize?: string | null,
+  ) => {
+    const size =
+      panelSize ||
+      (side === "nonDcr"
+        ? products.nonDcrPanelSize
+        : side === "dcr"
+          ? products.dcrPanelSize
+          : products.panelSize)
+    return {
+      allow3480W:
+        side === "nonDcr" ? Boolean(products.allowNonDcr3480W) : Boolean(products.allow3480W),
+      panelSize: size,
+    }
+  }
+
+  const maxPanelQtyForSide = (
+    products: ProductSelection,
+    side: "primary" | "dcr" | "nonDcr",
+    panelSize?: string | null,
+  ) => {
+    const cap = panelQtyCapOptions(products, side, panelSize)
+    const size = cap.panelSize
+    const nominalKw = parseNominalKwFromContext(products)
+    if (nominalKw <= 0 || !size || isAsPerTheSetLabel(String(size))) return 0
+    return panelQuantityForNominalSystemKw(nominalKw, size, cap)
   }
 
   const applyPanelCapacityOption = (
@@ -680,7 +716,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const qty = allow3480W ? PANEL_CAPACITY_EXTENDED_QTY : PANEL_CAPACITY_DEFAULT_QTY
       const capped =
         nominalKw > 0 && size
-          ? clampPanelQuantityToNominalSystemKw(nominalKw, size, qty, { allow3480W })
+          ? clampPanelQuantityToNominalSystemKw(nominalKw, size, qty, {
+              ...panelQtyCapOptions(prev, side, size),
+              allow3480W,
+            })
           : qty
       if (side === "nonDcr") {
         return { ...prev, allowNonDcr3480W: allow3480W, nonDcrPanelQuantity: capped }
@@ -711,7 +750,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       if (parsedPanelW <= 0) return next
 
       const suggestedQty = panelQuantityForNominalSystemKw(nominalKw, rawSize, {
-        allow3480W: Boolean(prev.allow3480W || prev.allowNonDcr3480W),
+        ...panelQtyCapOptions(next, field === "nonDcrPanelSize" ? "nonDcr" : field === "dcrPanelSize" ? "dcr" : "primary", rawSize),
       })
       if (suggestedQty <= 0) return next
 
@@ -721,7 +760,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const allow3480W = Boolean(prev.allow3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         const capped =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, {
+                ...panelQtyCapOptions(next, "primary", rawSize),
+                allow3480W,
+              })
             : keepQty
         next.panelQuantity = capped
         next.allow3480W = allow3480W
@@ -731,7 +773,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const allow3480W = Boolean(prev.allow3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         next.dcrPanelQuantity =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, {
+                ...panelQtyCapOptions(next, "dcr", rawSize),
+                allow3480W,
+              })
             : keepQty
         next.allow3480W = allow3480W
       } else {
@@ -740,7 +785,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         const allow3480W = Boolean(prev.allowNonDcr3480W) && canUse3480WPanelOption(nominalKw, rawSize)
         next.nonDcrPanelQuantity =
           nominalKw > 0
-            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, { allow3480W })
+            ? clampPanelQuantityToNominalSystemKw(nominalKw, rawSize, keepQty, {
+                ...panelQtyCapOptions(next, "nonDcr", rawSize),
+                allow3480W,
+              })
             : keepQty
         next.allowNonDcr3480W = allow3480W
       }
@@ -873,10 +921,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
     setError("")
   }
 
-  const hidePrimaryPanelQty = Boolean(formData.pdfPanelRangeKey)
-  const hideDcrPanelQty = Boolean(formData.pdfDcrPanelRangeKey)
-  const hideNonDcrPanelQty = Boolean(formData.pdfNonDcrPanelRangeKey)
-
   const isTataDcrPackage =
     effectiveSystemType === "dcr" && formData.panelBrand?.trim().toLowerCase() === "tata"
   const isTataPanelPackage = isTataPanelSelection(formData)
@@ -890,7 +934,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       (isAsPerTheSetLabel(formData.panelSize) ||
         isAsPerTheSetLabel(formData.inverterSize) ||
         isAsPerTheSetLabel(formData.inverterBrand)))
-  const hidePanelQtyForSet = hidePrimaryPanelQty || dcrPackageAsPerSet
+  const hidePanelQtyForSet = dcrPackageAsPerSet
   const tataDcrPanelRangeLabel =
     isTataDcrPackage && formData.pdfPanelRangeKey
       ? getPanelPdfRangeLabel(formData.pdfPanelRangeKey)
@@ -1637,7 +1681,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   })()}
                 </div>
                 <div
-                  className={`grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100 ${hideDcrPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                  className="grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-green-50/50 rounded-lg border border-green-100 sm:grid-cols-3"
                 >
                   <div>
                     <Label>DCR Panel Brand *</Label>
@@ -1662,12 +1706,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       placeholder={`e.g., ${panelSizesList.join(", ")}`}
                     />
                   </div>
-                  {!hideDcrPanelQty && (
-                    <div>
-                      <Label>DCR Panel Quantity *</Label>
+                  <div>
+                    <Label>DCR Panel Quantity *</Label>
                       <Input
                         type="number"
                         min="1"
+                        max={maxPanelQtyForSide(formData, "dcr") || undefined}
                         value={formData.dcrPanelQuantity || ""}
                         onChange={(e) => {
                           const raw = Number.parseInt(e.target.value, 10)
@@ -1675,14 +1719,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             updateFormData("dcrPanelQuantity", 0)
                             return
                           }
-                          const nominalKw = parseNominalKwFromContext(formData)
-                          const qty =
-                            nominalKw > 0 && formData.dcrPanelSize
-                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.dcrPanelSize, raw, {
-                                  allow3480W: Boolean(formData.allow3480W),
-                                })
-                              : raw
-                          updateFormData("dcrPanelQuantity", qty)
+                          setFormData((prev) => {
+                            const nominalKw = parseNominalKwFromContext(prev)
+                            const qty =
+                              nominalKw > 0 && prev.dcrPanelSize
+                                ? clampPanelQuantityToNominalSystemKw(nominalKw, prev.dcrPanelSize, raw, {
+                                    ...panelQtyCapOptions(prev, "dcr"),
+                                  })
+                                : raw
+                            return { ...prev, dcrPanelQuantity: qty }
+                          })
                         }}
                         placeholder="Enter quantity"
                       />
@@ -1699,7 +1745,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         ) : null
                       })()}
                     </div>
-                  )}
                 </div>
                 <PanelCapacity2900Or3480Options
                   visible={canUse3480WPanelOption(
@@ -1747,7 +1792,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                   })()}
                 </div>
                 <div
-                  className={`grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100 ${hideNonDcrPanelQty ? "sm:grid-cols-2" : "sm:grid-cols-3"}`}
+                  className="grid grid-cols-1 gap-3 sm:gap-4 p-3 sm:p-4 bg-blue-50/50 rounded-lg border border-blue-100 sm:grid-cols-3"
                 >
                   <div>
                     <Label>Non-DCR Panel Brand *</Label>
@@ -1775,12 +1820,12 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         placeholder={`e.g., ${panelSizesList.join(", ")}`}
                       />
                   </div>
-                  {!hideNonDcrPanelQty && (
-                    <div>
-                      <Label>Non-DCR Panel Quantity *</Label>
+                  <div>
+                    <Label>Non-DCR Panel Quantity *</Label>
                       <Input
                         type="number"
                         min="1"
+                        max={maxPanelQtyForSide(formData, "nonDcr") || undefined}
                         value={formData.nonDcrPanelQuantity || ""}
                         onChange={(e) => {
                           const raw = Number.parseInt(e.target.value, 10)
@@ -1788,14 +1833,16 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                             updateFormData("nonDcrPanelQuantity", 0)
                             return
                           }
-                          const nominalKw = parseNominalKwFromContext(formData)
-                          const qty =
-                            nominalKw > 0 && formData.nonDcrPanelSize
-                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.nonDcrPanelSize, raw, {
-                                  allow3480W: Boolean(formData.allowNonDcr3480W),
-                                })
-                              : raw
-                          updateFormData("nonDcrPanelQuantity", qty)
+                          setFormData((prev) => {
+                            const nominalKw = parseNominalKwFromContext(prev)
+                            const qty =
+                              nominalKw > 0 && prev.nonDcrPanelSize
+                                ? clampPanelQuantityToNominalSystemKw(nominalKw, prev.nonDcrPanelSize, raw, {
+                                    ...panelQtyCapOptions(prev, "nonDcr"),
+                                  })
+                                : raw
+                            return { ...prev, nonDcrPanelQuantity: qty }
+                          })
                         }}
                         placeholder="Enter quantity"
                       />
@@ -1812,7 +1859,6 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         ) : null
                       })()}
                     </div>
-                  )}
                 </div>
                 <PanelCapacity2900Or3480Options
                   visible={canUse3480WPanelOption(
@@ -2399,10 +2445,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                       <Input
                         type="number"
                         min="1"
+                        max={maxPanelQtyForSide(formData, "primary") || undefined}
                         value={formData.panelQuantity || ""}
                         onChange={(e) => {
                           const text = e.target.value
-                          // Allow clearing the field so the dealer can type a new quantity (e.g. 8).
                           if (text.trim() === "") {
                             setFormData((prev) => ({
                               ...prev,
@@ -2414,20 +2460,20 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                           }
                           const raw = Number.parseInt(text, 10)
                           if (Number.isNaN(raw) || raw < 0) return
-                          const nominalKw = Number.parseFloat(
-                            String(formData.structureSize || formData.inverterSize || "").replace(/kW/i, ""),
-                          )
-                          const qty =
-                            nominalKw > 0 && formData.panelSize && raw > 0
-                              ? clampPanelQuantityToNominalSystemKw(nominalKw, formData.panelSize, raw, {
-                                  allow3480W: Boolean(formData.allow3480W),
-                                })
-                              : raw
-                          setFormData((prev) => ({
-                            ...prev,
-                            panelQuantity: qty,
-                            ...(prev.systemType === "dcr" ? { dcrPanelQuantity: qty } : {}),
-                          }))
+                          setFormData((prev) => {
+                            const nominalKw = parseNominalKwFromContext(prev)
+                            const qty =
+                              nominalKw > 0 && prev.panelSize && raw > 0
+                                ? clampPanelQuantityToNominalSystemKw(nominalKw, prev.panelSize, raw, {
+                                    ...panelQtyCapOptions(prev, "primary"),
+                                  })
+                                : raw
+                            return {
+                              ...prev,
+                              panelQuantity: qty,
+                              ...(prev.systemType === "dcr" ? { dcrPanelQuantity: qty } : {}),
+                            }
+                          })
                           setError("")
                         }}
                         placeholder="Enter quantity"
@@ -2436,15 +2482,10 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
                         const panelW = formData.panelSize ? parsePanelSizeWatts(formData.panelSize) : 0
                         const quantity = formData.panelQuantity || 0
                         const totalW = panelW * quantity
-                        const nominalKw = Number.parseFloat(
-                          String(formData.inverterSize || formData.structureSize || "").replace(/kW/i, ""),
-                        )
+                        const nominalKw = parseNominalKwFromContext(formData)
                         const maxW =
                           nominalKw > 0
-                            ? maxAllowedWattsForNominalSystemKw(nominalKw, {
-                                allow3480W: Boolean(formData.allow3480W),
-                                panelSize: formData.panelSize,
-                              })
+                            ? maxAllowedWattsForNominalSystemKw(nominalKw, panelQtyCapOptions(formData, "primary"))
                             : 0
                         const overMax = maxW > 0 && totalW > maxW
                         return totalW > 0 ? (

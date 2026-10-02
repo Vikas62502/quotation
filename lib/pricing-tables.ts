@@ -400,6 +400,10 @@ export const defaultStructurePricing: StructurePricing[] = [
   { type: "MS Structure", size: "1kW", price: 9000 },
   { type: "MS Structure", size: "3kW", price: 27000 },
   { type: "MS Structure", size: "5kW", price: 45000 },
+  { type: "Mono Real", size: "1kW", price: 8000 },
+  { type: "Mono Real", size: "3kW", price: 24000 },
+  { type: "Mono Real", size: "5kW", price: 40000 },
+  { type: "Mono Real", size: "10kW", price: 80000 },
 ]
 
 export const defaultMeterPricing: MeterPricing[] = [
@@ -1598,6 +1602,8 @@ export const PANEL_CAPACITY_EXTENDED_QTY = 6
 
 export type PanelQuantityCapOptions = {
   allow3480W?: boolean
+  /** +1 panel above the package cap when a PDF size-range checkbox is on (e.g. 8 → 9). */
+  allowExtraPanel?: boolean
   panelSize?: string | number | null
 }
 
@@ -1619,17 +1625,22 @@ export function maxAllowedWattsForNominalSystemKw(
 ): number {
   if (!Number.isFinite(systemKw) || systemKw <= 0) return 0
   const base = systemKw * 1000 + MAX_PACKAGE_OVERSHOOT_WATTS
+  let maxW = base
   if (options?.allow3480W && canUse3480WPanelOption(systemKw, options.panelSize ?? PANEL_CAPACITY_580W)) {
-    return Math.max(base, PANEL_CAPACITY_EXTENDED_W)
+    maxW = Math.max(maxW, PANEL_CAPACITY_EXTENDED_W)
   }
-  return base
+  if (options?.allowExtraPanel) {
+    const panelW = parsePanelSizeWatts(options.panelSize)
+    if (panelW > 0) maxW += panelW
+  }
+  return maxW
 }
 
 export function isPanelCapacityWithinPackageTolerance(
   systemKw: number,
   panelSize: string | number | undefined | null,
   panelQuantity: number,
-  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
+  options?: PanelQuantityCapOptions,
 ): boolean {
   const panelW = parsePanelSizeWatts(panelSize)
   if (panelW <= 0 || panelQuantity <= 0) return false
@@ -1643,11 +1654,12 @@ export function isPanelCapacityWithinPackageTolerance(
  * Panel count for a pricing slab: actual DC watts may exceed nominal by at most {@link MAX_PACKAGE_OVERSHOOT_WATTS}.
  * Example: 8kW + 610W → 13 panels (7930W), not 14 (8540W).
  * 3kW + 580W defaults to 5 panels (2,900W); pass allow3480W for 6 panels (3,480W).
+ * Pass allowExtraPanel for one extra module when a PDF range checkbox is checked.
  */
 export function panelQuantityForNominalSystemKw(
   systemKw: number,
   panelSize: string | number | undefined | null,
-  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
+  options?: PanelQuantityCapOptions,
 ): number {
   const panelW = parsePanelSizeWatts(panelSize)
   if (!Number.isFinite(systemKw) || systemKw <= 0 || panelW <= 0) return 0
@@ -1661,7 +1673,7 @@ export function clampPanelQuantityToNominalSystemKw(
   systemKw: number,
   panelSize: string | number | undefined | null,
   panelQuantity: number,
-  options?: Pick<PanelQuantityCapOptions, "allow3480W">,
+  options?: PanelQuantityCapOptions,
 ): number {
   const capped = panelQuantityForNominalSystemKw(systemKw, panelSize, options)
   if (capped <= 0) return panelQuantity

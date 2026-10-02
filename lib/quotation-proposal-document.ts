@@ -575,7 +575,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
     ...(isLithiumBatteryIncluded(p) ? [lithiumBatterySpecRow(p)] : []),
     {
       component: "Mounting Structure",
-      specification: getMountingStructurePdfSpecification(),
+      specification: getMountingStructurePdfSpecification(p),
       brandModel: getMountingStructurePdfBrandModel(p),
       qty: "As Required",
     },

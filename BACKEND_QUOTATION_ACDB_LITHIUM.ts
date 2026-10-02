@@ -109,3 +109,5 @@ export const QUOTATION_PRODUCT_ERROR_CODES = {
   VAL_003: "VAL_003", // finalAmount missing only — not catalog
   VAL_PRODUCT: "VAL_PRODUCT",
 }
+
+/** Structure type "Mono Real": see BACKEND_QUOTATION_MONO_REAL.ts (§BH). */

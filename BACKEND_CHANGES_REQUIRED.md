@@ -5327,6 +5327,8 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Sheet auto-sync cron** — every **30 min** `POST …/sync-all` + socket | **§AZ**, HANDOFF **§47** | `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` |
 | **High** | **PDF panel range clear** — empty `pdfPanelRangeKey` must clear on save (INA 500–600 / Waaree 580 Topcon) | **§BA**, HANDOFF **§48** | products PATCH + GET echo |
 | **High** | **Final settlement → PostgreSQL** — gap-only `d`, absolute discount SET, Completed survives refresh, Revert | **§BB**, HANDOFF **§49** | `POST …/final-settlement`, GET echo, revert |
+| **High** | **Structure type `Mono Real`** — catalog allowlist + persist verbatim (do not rewrite to GI) | **§BH**, HANDOFF **§54** | `validateProductSelection`, product-catalog GET, pricing `structures` |
+| **High** | **PDF range extra panel** — checked range allows +1 panel (e.g. 8 → 9); persist qty, do not clamp | **§BI**, HANDOFF **§55** | `validateProductSelection`, products PATCH + GET echo |
 | **High** | **Calling queue priority** — finish `in_progress`, then Social Media assigned | **§AT**, HANDOFF **§4.5.3** | `BACKEND_CALLING_QUEUE_CURRENT.ts` |
 | Medium | **PDF warranty inverter + Hybrid Type** — round-trip `inverterBrand` / `inverterType` (SPA PDF) | **§AO**, HANDOFF **§45** | `lib/quotation-proposal-document.ts` |
 | **High** | **Admin Quotations → Send to Metering** — `PATCH` `pending_metering`, GET reflects stage, metering queue | **§L.1**, HANDOFF **§11** | `sendQuotationToMetering`, `getAdminQuotationsTabSendToMeteringState` |
@@ -6774,6 +6776,103 @@ Dealer Battery Configuration has **Include lithium battery**. Proposal PDF shows
 No new route. Same dealer JWT as create quotation.
 
 **Copy-paste:** `BACKEND_QUOTATION_ACDB_LITHIUM.ts` (`publicLithiumBatteryFields`)
+
+---
+
+## §BH — Structure type `Mono Real` (catalog + persist) — Oct 2026
+
+Dealer Structure Configuration now includes **Mono Real** (label as typed; industry “mono rail”). Live catalog `structures.types` often only has `GI Structure`, so `validateProductSelection` will 400 the same way as **§BF** ACDB (`Invalid structure type: Mono Real`). Do not wrap that as **VAL_003**.
+
+Canonical string: **`Mono Real`**. Accept case/spacing variants (`Mono real`, `mono real`). Optional alias `Mono Rail` → persist as **`Mono Real`**.
+
+### Must
+
+1. **`validateProductSelection`** (create + `PATCH /api/quotations/:id/products`) — treat `Mono Real` as valid even if it is missing from the stored catalog. Skip the catalog type allowlist when `isMonoRealStructureType`. Same size list as GI (`1kW` … `20kW`, plus existing catalog sizes).
+2. **Persist verbatim.** GET must echo `structureType: "Mono Real"` (also `structure_type`). Do **not** rewrite to `GI Structure`.
+3. **`GET /api/quotations/product-catalog`** — always include `"Mono Real"` in `structures.types` (merge on GET if the JSON blob does not have it). Admin `PUT` catalog must allow the same string.
+4. **Pricing tables** `structures[]` — add rows (same INR as GI):
+
+| type | size | price |
+|------|------|-------|
+| Mono Real | 1kW | 8000 |
+| Mono Real | 3kW | 24000 |
+| Mono Real | 5kW | 40000 |
+| Mono Real | 10kW | 80000 |
+
+If lookup misses, fall back to GI Structure at the same size. Do not 400 on missing price.
+
+5. Catalog errors → `VAL_PRODUCT` (or existing product code), **not** `VAL_003`.
+
+```json
+{
+  "structureType": "Mono Real",
+  "structure_type": "Mono Real",
+  "structureSize": "5kW",
+  "structurePrice": 40000
+}
+```
+
+No new route. Same dealer JWT as create quotation.
+
+**Copy-paste:** `BACKEND_QUOTATION_MONO_REAL.ts`
+
+---
+
+## §BI — PDF range checkbox allows +1 extra panel — Oct 2026
+
+Dealer Panel Quantity is capped to the package (nominal kW + 400W). Example: Adani **620W** on a **5kW / 5.4kW** package → **8** panels (4,960W).
+
+A **Quotation PDF — panel size range** checkbox (e.g. 540–580W Bifacial, 610–625W Topcon, 600W–630W) now also unlocks **one extra panel**. Checked → **9** (5,580W). Unchecked → back to **8**. Quantity stays visible and is saved.
+
+No new field. The existing `pdfPanelRangeKey` / `pdfDcrPanelRangeKey` / `pdfNonDcrPanelRangeKey` is the flag.
+
+### Must
+
+On `POST /api/quotations` and `PATCH /api/quotations/:id/products` (`validateProductSelection` / any DC-watt cap):
+
+1. **Persist `panelQuantity` as sent.** Do not rewrite 9 → 8 (or 0) because a PDF range key is set. §X **2.3** still allows qty **0** for Tata / as-per-set; it must **not** force qty 0 when the dealer sent 9.
+2. **Watt cap when a range key is set:** allow **+1 panel** above `floor((systemKw × 1000 + 400) / panelW)`.
+
+```
+baseMaxW = systemKw * 1000 + 400
+maxW     = pdfRangeKey ? baseMaxW + panelW : baseMaxW
+maxQty   = floor(maxW / panelW)
+```
+
+Example: 5kW + 620W, `pdfPanelRangeKey = "adani_610_625_bifacial_topcon"` → maxQty **9**, not 8.
+
+3. Same rule for `dcrPanelQuantity` when `pdfDcrPanelRangeKey` is set, and `nonDcrPanelQuantity` when `pdfNonDcrPanelRangeKey` is set.
+4. **GET** must echo `panelQuantity: 9` **and** the range key. Do not recompute/clamp quantity on GET.
+5. Do **not** use the extra panel (or the range key) in pricing / subsidy. Package price stays the selected system slab.
+6. Catalog / capacity failures → `VAL_PRODUCT`, **not** `VAL_003`.
+
+```json
+{
+  "systemType": "dcr",
+  "panelBrand": "Adani",
+  "panelSize": "620W",
+  "panelQuantity": 9,
+  "structureSize": "5kW",
+  "inverterSize": "5.4kW",
+  "pdfPanelRangeKey": "adani_610_625_bifacial_topcon",
+  "pdfUsePanelSizeRange": true
+}
+```
+
+Unchecked (no extra panel):
+
+```json
+{
+  "panelSize": "620W",
+  "panelQuantity": 8,
+  "pdfPanelRangeKey": "",
+  "pdfUsePanelSizeRange": false
+}
+```
+
+No new route. Same dealer JWT as create quotation.
+
+**Copy-paste:** `BACKEND_QUOTATION_EXTRA_PANEL.ts`
 
 ---
 

@@ -585,8 +585,8 @@ export function preserveInaDisplayFromPrior(
 }
 
 /**
- * When a PDF panel range is selected, quantity input is hidden — backfill a catalog-valid
- * count from nominal kW + panel size so create/update APIs do not reject panelQuantity: 0.
+ * When a PDF panel range is selected, backfill catalog-valid quantity if empty.
+ * Range checked → allow one extra panel vs the package cap.
  */
 export function backfillPanelQuantityForPdfRange(products: ProductSelection): ProductSelection {
   const nominalKw = parseNominalSystemKw(products.structureSize, products.inverterSize)
@@ -603,6 +603,8 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
   ) {
     const qty = panelQuantityForNominalSystemKw(nominalKw, next.panelSize, {
       allow3480W: Boolean(next.allow3480W),
+      allowExtraPanel: true,
+      panelSize: next.panelSize,
     })
     if (qty > 0) {
       next = { ...next, panelQuantity: qty }
@@ -628,6 +630,8 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
         : nominalKw
     const qty = panelQuantityForNominalSystemKw(dcrKw > 0 ? dcrKw : nominalKw, next.dcrPanelSize, {
       allow3480W: Boolean(next.allow3480W),
+      allowExtraPanel: true,
+      panelSize: next.dcrPanelSize,
     })
     if (qty > 0) {
       next = { ...next, dcrPanelQuantity: qty }
@@ -651,6 +655,8 @@ export function backfillPanelQuantityForPdfRange(products: ProductSelection): Pr
         : nominalKw
     const qty = panelQuantityForNominalSystemKw(nonDcrKw > 0 ? nonDcrKw : nominalKw, next.nonDcrPanelSize, {
       allow3480W: Boolean(next.allowNonDcr3480W),
+      allowExtraPanel: true,
+      panelSize: next.nonDcrPanelSize,
     })
     if (qty > 0) {
       next = { ...next, nonDcrPanelQuantity: qty }

@@ -65,7 +65,7 @@ VALUES (
       "sizes": ["3kW", "5kW", "6kW", "8kW", "10kW", "15kW", "20kW", "25kW"]
     },
     "structures": {
-      "types": ["GI Structure", "Aluminum Structure", "MS Structure"],
+      "types": ["GI Structure", "Aluminum Structure", "MS Structure", "Mono Real"],
       "sizes": ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
     },
     "meters": {
@@ -394,7 +394,7 @@ curl -X PUT http://localhost:3050/api/config/products \
       "sizes": ["3kW", "5kW", "6kW", "8kW", "10kW", "15kW", "20kW", "25kW"]
     },
     "structures": {
-      "types": ["GI Structure", "Aluminum Structure", "MS Structure"],
+      "types": ["GI Structure", "Aluminum Structure", "MS Structure", "Mono Real"],
       "sizes": ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
     },
     "meters": {

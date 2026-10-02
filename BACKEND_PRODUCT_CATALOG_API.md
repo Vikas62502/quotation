@@ -54,7 +54,7 @@ The frontend is calling `PUT /api/config/products` but this endpoint does not ex
     "sizes": ["3kW", "5kW", "6kW", "8kW", "10kW", "15kW", "20kW", "25kW"]
   },
   "structures": {
-    "types": ["GI Structure", "Aluminum Structure", "MS Structure"],
+    "types": ["GI Structure", "Aluminum Structure", "MS Structure", "Mono Real"],
     "sizes": ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
   },
   "meters": {
@@ -89,7 +89,7 @@ The frontend is calling `PUT /api/config/products` but this endpoint does not ex
       "sizes": ["3kW", "5kW", "6kW", "8kW", "10kW", "15kW", "20kW", "25kW"]
     },
     "structures": {
-      "types": ["GI Structure", "Aluminum Structure", "MS Structure"],
+      "types": ["GI Structure", "Aluminum Structure", "MS Structure", "Mono Real"],
       "sizes": ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
     },
     "meters": {
@@ -441,7 +441,7 @@ The frontend sends the following structure:
     "sizes": ["3kW", "5kW", "6kW", "8kW", "10kW", "15kW", "20kW", "25kW"]
   },
   "structures": {
-    "types": ["GI Structure", "Aluminum Structure", "MS Structure"],
+    "types": ["GI Structure", "Aluminum Structure", "MS Structure", "Mono Real"],
     "sizes": ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
   },
   "meters": {

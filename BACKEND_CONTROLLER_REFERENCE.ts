@@ -368,7 +368,7 @@ export const createQuotation = async (req: Request, res: Response): Promise<void
       systemType: products.systemType,
       panelBrand: products.panelBrand,
       panelSize: products.panelSize,
-      panelQuantity: products.panelQuantity,
+      panelQuantity: products.panelQuantity, // extra +1 allowed when pdfPanelRangeKey is set (§BI)
       panelPrice: products.panelPrice,
       dcrPanelBrand: products.dcrPanelBrand,
       dcrPanelSize: products.dcrPanelSize,
@@ -380,7 +380,7 @@ export const createQuotation = async (req: Request, res: Response): Promise<void
       inverterBrand: products.inverterBrand,
       inverterSize: products.inverterSize,
       inverterPrice: products.inverterPrice,
-      structureType: products.structureType,
+      structureType: products.structureType, // may be "Mono Real" — persist verbatim (§BH)
       structureSize: products.structureSize,
       structurePrice: products.structurePrice,
       meterBrand: products.meterBrand,

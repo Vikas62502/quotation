@@ -12,7 +12,8 @@ export const panelSizes = ["440W", "445W", "540W", "545W", "550W", "555W"]
 export const inverterSizes = ["3kW", "5kW", "6kW", "8kW", "10kW", "12kW", "15kW", "20kW", "25kW", "30kW", "50kW", "80kW", "100kW", "125kW"]
 
 // Structure Types and Sizes
-export const structureTypes = ["GI Structure", "Aluminum Structure", "MS Structure"]
+export const MONO_REAL_STRUCTURE_TYPE = "Mono Real"
+export const structureTypes = ["GI Structure", "Aluminum Structure", "MS Structure", MONO_REAL_STRUCTURE_TYPE]
 export const structureSizes = ["1kW", "2kW", "3kW", "5kW", "10kW", "15kW", "20kW"]
 
 // Meter Brands
