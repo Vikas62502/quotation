@@ -4265,7 +4265,7 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 **Frontend (shipped):** Structure Configuration dropdown always includes **Mono Real** (merged even when catalog only lists GI). PDF mounting spec is **Mono Real Structure**. Prices match GI (1/3/5/10kW).
 
 **Backend (P0):**
-1. `validateProductSelection` — accept `structureType: "Mono Real"` (and `mono real` / optional `Mono Rail`). Do **not** 400 as unknown catalog type.
+1. `validateProductSelection` — accept `structureType: "Mono Real"` (and `mono rail` / optional `Mono Rail`). Do **not** 400 as unknown catalog type.
 2. Persist verbatim on create + `PATCH …/products`. GET echo `structureType` + `structure_type`. **Do not rewrite to GI Structure.**
 3. `GET /api/quotations/product-catalog` — merge `"Mono Real"` into `structures.types`.
 4. Pricing `structures[]` — seed Mono Real rows (₹8000 / 24000 / 40000 / 80000). Missing row → fall back to GI same size; do not 400.

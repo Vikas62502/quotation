@@ -30,7 +30,7 @@ export const MONO_REAL_STRUCTURE_TYPE = "Mono Real"
 
 export function isMonoRealStructureType(value) {
   const v = String(value || "").trim().toLowerCase().replace(/\s+/g, " ")
-  return v === "mono real" || v === "mono rail"
+  return v === "mono rail" || v === "mono rail"
 }
 
 export function canonicalStructureType(value) {

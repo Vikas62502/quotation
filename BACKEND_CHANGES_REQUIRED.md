@@ -6783,7 +6783,7 @@ No new route. Same dealer JWT as create quotation.
 
 Dealer Structure Configuration now includes **Mono Real** (label as typed; industry “mono rail”). Live catalog `structures.types` often only has `GI Structure`, so `validateProductSelection` will 400 the same way as **§BF** ACDB (`Invalid structure type: Mono Real`). Do not wrap that as **VAL_003**.
 
-Canonical string: **`Mono Real`**. Accept case/spacing variants (`Mono real`, `mono real`). Optional alias `Mono Rail` → persist as **`Mono Real`**.
+Canonical string: **`Mono Real`**. Accept case/spacing variants (`Mono real`, `mono rail`). Optional alias `Mono Rail` → persist as **`Mono Real`**.
 
 ### Must
 
