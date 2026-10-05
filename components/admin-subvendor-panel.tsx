@@ -40,14 +40,21 @@ import { cn } from "@/lib/utils"
 import {
   getLedgerAmounts,
   isApprovedQuotation,
-  LEDGER_AMOUNT_FIELDS,
+  LEDGER_FIELD_LABELS,
+  OFFICE_INSIDE_AMOUNT_FIELDS,
+  amountsFromLedgerDrafts,
+  applyOfficeInsideGstToAmounts,
+  applyOfficeInsideGstToDrafts,
+  draftsFromLedgerAmounts,
   ledgerPatchToApiBody,
+  officeInsideGstCharges,
+  officeInsideDeductedTotal,
+  officeInsideProfitFromAmounts,
+  parseLedgerAmountInput,
   paymentTypeLabelForLedger,
   pickLedgerMapFromApi,
-  pickSiteCostFromQuotation,
   quotationLoanCashAmountsForLedger,
   quotationPaymentTypeForLedger,
-  readAccountSiteCostMap,
   readSubvendorLedger,
   upsertLedgerAmounts,
   writeSubvendorLedger,
@@ -70,26 +77,6 @@ function formatLedgerSystemSize(kw: number) {
   return `${label}kW`
 }
 
-function parseAmountInput(raw: string) {
-  const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
-  if (cleaned === "") return 0
-  const n = Number(cleaned)
-  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
-}
-
-const LEDGER_FIELD_LABELS: Record<LedgerAmountField, string> = {
-  loanAmount: "Loan amount",
-  cashAmount: "Cash amount",
-  receivedAmount: "Received amount",
-  remaining: "Remaining",
-  proposal: "Proposal",
-  costOfSite: "Cost of site",
-  fileCharges: "File charges",
-  pi: "PI",
-  gstCharges: "GST charges",
-  others: "Others",
-}
-
 type InsideLedgerRow = {
   quotationId: string
   dealerId: string
@@ -100,6 +87,7 @@ type InsideLedgerRow = {
   systemSize: string
   paymentType: LedgerPaymentType
   paymentTypeLabel: string
+  subtotal: number
   loanAmount: number
   cashAmount: number
   receivedAmount: number
@@ -242,7 +230,6 @@ export function AdminSubvendorPanel({
   const ledgerRows = useMemo(() => {
     const approved = quotations.filter(isApprovedQuotation)
     const current = keepCurrentQuotationsOnly(approved, approved)
-    const siteCosts = readAccountSiteCostMap()
     const q = ledgerSearch.trim().toLowerCase()
     return current
       .filter((quotation) => {
@@ -272,9 +259,13 @@ export function AdminSubvendorPanel({
         const vendor = vendorsByDealerId.get(dealerId)
         const payment = summarizeQuotationPayment(quotation)
         const stored = getLedgerAmounts(ledgerMap, quotation.id)
-        const proposal = stored.proposal ?? payment.subtotal
+        const proposal = stored.proposal ?? 0
+        const pi = stored.pi ?? 0
         const paymentType = quotationPaymentTypeForLedger(quotation)
-        const loanCash = quotationLoanCashAmountsForLedger(quotation, proposal)
+        const loanCash = quotationLoanCashAmountsForLedger(
+          quotation,
+          proposal > 0 ? proposal : payment.subtotal,
+        )
         return {
           quotationId: quotation.id,
           dealerId,
@@ -294,15 +285,22 @@ export function AdminSubvendorPanel({
           systemSize: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
           paymentType,
           paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
+          subtotal: payment.subtotal,
           loanAmount: stored.loanAmount ?? loanCash.loanAmount,
           cashAmount: stored.cashAmount ?? loanCash.cashAmount,
           receivedAmount: stored.receivedAmount ?? payment.paidAmount,
           remaining: stored.remaining ?? payment.remainingAmount,
           proposal,
-          costOfSite: stored.costOfSite ?? pickSiteCostFromQuotation(quotation, siteCosts),
+          costOfSite: officeInsideDeductedTotal({
+            proposal,
+            pi,
+            fileCharges: stored.fileCharges ?? 0,
+            gstCharges: officeInsideGstCharges(proposal, pi),
+            others: stored.others ?? 0,
+          }),
           fileCharges: stored.fileCharges ?? 0,
-          pi: stored.pi ?? 0,
-          gstCharges: stored.gstCharges ?? 0,
+          pi,
+          gstCharges: officeInsideGstCharges(proposal, pi),
           others: stored.others ?? 0,
         }
       })
@@ -862,12 +860,6 @@ function VendorGrid({
   )
 }
 
-function draftsFromLedgerRow(row: InsideLedgerRow): Record<LedgerAmountField, string> {
-  return Object.fromEntries(
-    LEDGER_AMOUNT_FIELDS.map((field) => [field, row[field] > 0 ? String(row[field]) : ""]),
-  ) as Record<LedgerAmountField, string>
-}
-
 function InsideVendorLedger({
   rows,
   totals,
@@ -894,7 +886,7 @@ function InsideVendorLedger({
 
   const openManage = (row: InsideLedgerRow) => {
     setManageRowId(row.quotationId)
-    setManageDrafts(draftsFromLedgerRow(row))
+    setManageDrafts(applyOfficeInsideGstToDrafts(draftsFromLedgerAmounts(row)))
   }
 
   const closeManage = () => {
@@ -904,9 +896,7 @@ function InsideVendorLedger({
 
   const saveManage = async () => {
     if (!manageRowId || !manageDrafts) return
-    const patch = Object.fromEntries(
-      LEDGER_AMOUNT_FIELDS.map((field) => [field, parseAmountInput(manageDrafts[field])]),
-    ) as SubvendorLedgerAmounts
+    const patch = applyOfficeInsideGstToAmounts(amountsFromLedgerDrafts(manageDrafts))
     setSaving(true)
     try {
       await onSaveAmounts(manageRowId, patch)
@@ -1083,7 +1073,9 @@ function InsideVendorLedger({
                           ["GST", row.gstCharges],
                           ["Others", row.others],
                         ] as const
-                      ).map(([label, value]) => (
+                      )
+                        .filter(([label]) => label !== "GST" || row.pi > 0)
+                        .map(([label, value]) => (
                         <p key={label} className="text-[10px] leading-tight tabular-nums">
                           <span className="text-muted-foreground">{label}</span> {formatLedgerInr(value)}
                         </p>
@@ -1140,8 +1132,8 @@ function InsideVendorLedger({
                   </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Proposal</p>
-                  <p className="text-base font-semibold tabular-nums">{formatLedgerInr(manageRow.proposal)}</p>
+                  <p className="text-xs text-muted-foreground">Subtotal</p>
+                  <p className="text-base font-semibold tabular-nums">{formatLedgerInr(manageRow.subtotal)}</p>
                   <p
                     className={cn(
                       "text-[11px] mt-1",
@@ -1153,7 +1145,12 @@ function InsideVendorLedger({
                 </div>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {LEDGER_AMOUNT_FIELDS.map((field) => (
+                {OFFICE_INSIDE_AMOUNT_FIELDS.filter(
+                  (field) =>
+                    field !== "gstCharges" || parseLedgerAmountInput(manageDrafts.pi) > 0,
+                ).map((field) => {
+                  const isGst = field === "gstCharges"
+                  return (
                   <div key={field} className="space-y-1.5">
                     <Label htmlFor={`ledger-${field}`}>{LEDGER_FIELD_LABELS[field]}</Label>
                     <Input
@@ -1161,13 +1158,71 @@ function InsideVendorLedger({
                       inputMode="numeric"
                       className="tabular-nums"
                       placeholder="0"
+                      readOnly={isGst}
+                      disabled={isGst}
                       value={manageDrafts[field]}
-                      onChange={(e) =>
-                        setManageDrafts((prev) => (prev ? { ...prev, [field]: e.target.value } : prev))
-                      }
+                      onChange={(e) => {
+                        if (isGst) return
+                        const raw = e.target.value
+                        setManageDrafts((prev) => {
+                          if (!prev) return prev
+                          const next = { ...prev, [field]: raw }
+                          return field === "proposal" || field === "pi"
+                            ? applyOfficeInsideGstToDrafts(next)
+                            : next
+                        })
+                      }}
                     />
+                    {isGst ? (
+                      <p className="text-[11px] text-muted-foreground">(Proposal − PI) × 8.9%</p>
+                    ) : null}
                   </div>
-                ))}
+                  )
+                })}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
+                  {(() => {
+                    const liveSiteCost = officeInsideDeductedTotal(
+                      amountsFromLedgerDrafts(manageDrafts),
+                    )
+                    return (
+                      <>
+                        <p className="text-lg font-semibold tabular-nums">
+                          {formatLedgerInr(liveSiteCost)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          PI + file charges + others + GST
+                        </p>
+                      </>
+                    )
+                  })()}
+                </div>
+                <div>
+                <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+                {(() => {
+                  const liveProfit = officeInsideProfitFromAmounts(
+                    manageRow.subtotal,
+                    amountsFromLedgerDrafts(manageDrafts),
+                  )
+                  return (
+                    <>
+                      <p
+                        className={cn(
+                          "text-lg font-semibold tabular-nums",
+                          liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                        )}
+                      >
+                        {formatLedgerInr(liveProfit)}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Subtotal − cost of site
+                      </p>
+                    </>
+                  )
+                })()}
+                </div>
               </div>
             </div>
           ) : null}

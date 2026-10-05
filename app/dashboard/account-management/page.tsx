@@ -62,6 +62,33 @@ import {
 } from "@/lib/quotation-current"
 import { confirmSave } from "@/lib/confirm-save"
 import {
+  LEDGER_FIELD_LABELS,
+  OFFICE_INSIDE_AMOUNT_FIELDS,
+  amountsFromLedgerDrafts,
+  applyOfficeInsideGstToAmounts,
+  applyOfficeInsideGstToDrafts,
+  draftsFromLedgerAmounts,
+  getLedgerAmounts,
+  ledgerPatchToApiBody,
+  officeInsideDeductedTotal,
+  officeInsideProfitFromAmounts,
+  normalVendorSiteCost,
+  parseLedgerAmountInput,
+  pickLedgerMapFromApi,
+  quotationLoanCashAmountsForLedger,
+  readSubvendorLedger,
+  upsertLedgerAmounts,
+  writeSubvendorLedger,
+  type LedgerAmountField,
+  type SubvendorLedgerAmounts,
+} from "@/lib/admin-subvendor-ledger"
+import {
+  pickSubvendorListFromApi,
+  readAdminSubvendors,
+  writeAdminSubvendors,
+  type AdminSubvendorRecord,
+} from "@/lib/admin-subvendors"
+import {
   formatJourneyStageStatusLabel,
   getJourneyFileStatusStages,
   getJourneyHoldInfo,
@@ -1083,6 +1110,25 @@ function getPaymentSiteProfit(payment: CustomerPayment, siteCostOverride?: numbe
   return Math.round(subtotal - siteCost)
 }
 
+function getOfficeInsidePaymentProfit(
+  payment: CustomerPayment,
+  amounts: SubvendorLedgerAmounts,
+): number {
+  return officeInsideProfitFromAmounts(getPaymentEffectiveCap(payment), amounts)
+}
+
+function getOfficeInsideSiteCost(amounts: SubvendorLedgerAmounts): number {
+  return officeInsideDeductedTotal(amounts)
+}
+
+function getNormalVendorRowSiteCost(
+  payment: CustomerPayment,
+  amounts: SubvendorLedgerAmounts,
+): number {
+  if (amounts.pi != null || amounts.others != null) return normalVendorSiteCost(amounts)
+  return Math.max(0, Math.round(Number(payment.siteCost) || 0))
+}
+
 function parseSiteCostInput(raw: string): number {
   const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
   if (cleaned === "") return 0
@@ -1486,6 +1532,8 @@ export default function AccountManagementPage() {
   const [paymentDealerFilter, setPaymentDealerFilter] = useState("all")
   const [paymentBankFilter, setPaymentBankFilter] = useState("all")
   const [paymentIfscFilter, setPaymentIfscFilter] = useState("all")
+  /** Office inside subvendor: all files, all inside vendors, or one vendor dealer id. */
+  const [officeInsideVendorFilter, setOfficeInsideVendorFilter] = useState("all")
   /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [paymentFiltersOpen, setPaymentFiltersOpen] = useState(false)
@@ -1497,6 +1545,15 @@ export default function AccountManagementPage() {
   const [activeTab, setActiveTab] = useState("payments")
   const [installmentDialogOpen, setInstallmentDialogOpen] = useState(false)
   const [activePaymentId, setActivePaymentId] = useState<string | null>(null)
+  const [officeInsideVendors, setOfficeInsideVendors] = useState<AdminSubvendorRecord[]>(() =>
+    readAdminSubvendors().filter((row) => row.kind === "office_inside"),
+  )
+  const [subvendorLedgerMap, setSubvendorLedgerMap] = useState<Record<string, SubvendorLedgerAmounts>>(
+    () => readSubvendorLedger(),
+  )
+  const [subvendorLedgerDrafts, setSubvendorLedgerDrafts] = useState<Record<LedgerAmountField, string> | null>(
+    null,
+  )
   const [isSavingInstallments, setIsSavingInstallments] = useState(false)
   const [isSavingFinalSettlement, setIsSavingFinalSettlement] = useState(false)
   const [isRevertingFinalSettlement, setIsRevertingFinalSettlement] = useState(false)
@@ -1978,6 +2035,47 @@ export default function AccountManagementPage() {
     }
   }, [isAuthenticated, role, dealer, access, router, isInitialLoad, loadApprovedQuotations])
 
+  useEffect(() => {
+    let cancelled = false
+    const loadOfficeInside = async () => {
+      const local = readAdminSubvendors().filter((row) => row.kind === "office_inside")
+      setOfficeInsideVendors(local)
+      setSubvendorLedgerMap(readSubvendorLedger())
+      if (!useApi) return
+      try {
+        const [vendorsRes, ledgerRes] = await Promise.all([
+          api.admin.subvendors.getAll(),
+          api.admin.subvendors.ledger.getAll(),
+        ])
+        if (cancelled) return
+        const vendors = pickSubvendorListFromApi(vendorsRes)
+        writeAdminSubvendors(vendors.length ? vendors : readAdminSubvendors())
+        setOfficeInsideVendors(
+          (vendors.length ? vendors : readAdminSubvendors()).filter((row) => row.kind === "office_inside"),
+        )
+        const ledger = pickLedgerMapFromApi(ledgerRes)
+        writeSubvendorLedger({ ...readSubvendorLedger(), ...ledger })
+        setSubvendorLedgerMap((prev) => ({ ...prev, ...ledger }))
+      } catch {
+        // Keep local cache when the subvendor API is not live yet.
+      }
+    }
+    void loadOfficeInside()
+    return () => {
+      cancelled = true
+    }
+  }, [useApi])
+
+  const officeInsideDealerIds = useMemo(
+    () => new Set(officeInsideVendors.map((row) => row.dealerId).filter(Boolean)),
+    [officeInsideVendors],
+  )
+
+  const isOfficeInsideDealer = useCallback(
+    (dealerId?: string | null) => Boolean(dealerId && officeInsideDealerIds.has(dealerId)),
+    [officeInsideDealerIds],
+  )
+
   // Initialize payment phases for quotations (permission-scoped — Selected one / office / everyone)
   useEffect(() => {
     const payments: CustomerPayment[] = permissionVisibleQuotations.map((q) => {
@@ -2373,6 +2471,11 @@ export default function AccountManagementPage() {
         (paymentDealerFilter === "__unassigned__"
           ? !payment.dealerId
           : payment.dealerId === paymentDealerFilter)
+      const matchesOfficeInside =
+        officeInsideVendorFilter === "all" ||
+        (officeInsideVendorFilter === "inside"
+          ? isOfficeInsideDealer(payment.dealerId)
+          : payment.dealerId === officeInsideVendorFilter)
       const isLoanOrMix = paymentTypeValue === "loan" || paymentTypeValue === "mix"
       const matchesBank =
         paymentBankFilter === "all" ||
@@ -2393,6 +2496,7 @@ export default function AccountManagementPage() {
         matchesFileStatus &&
         matchesSendToInstallation &&
         matchesDealer &&
+        matchesOfficeInside &&
         matchesBank &&
         matchesIfsc &&
         matchesApproveDateRange
@@ -2409,6 +2513,8 @@ export default function AccountManagementPage() {
       fileStatusFilter,
       sendToInstallationFilter,
       paymentDealerFilter,
+      officeInsideVendorFilter,
+      officeInsideDealerIds,
       paymentBankFilter,
       paymentIfscFilter,
       approveDateRange,
@@ -2470,10 +2576,24 @@ export default function AccountManagementPage() {
       // Invariant: Total = Paid + Pending.
       totalAmount += getPaymentEffectiveCap(payment)
       pendingAmount += getDisplayRemaining(payment)
-      const draftRaw = siteCostDrafts[payment.quotationId]
-      const liveSiteCost =
-        draftRaw !== undefined ? parseSiteCostInput(draftRaw) : undefined
-      totalProfit += getPaymentSiteProfit(payment, liveSiteCost)
+      if (isOfficeInsideDealer(payment.dealerId)) {
+        const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+        const liveAmounts =
+          activePayment?.quotationId === payment.quotationId && subvendorLedgerDrafts
+            ? amountsFromLedgerDrafts(subvendorLedgerDrafts)
+            : stored
+        totalProfit += getOfficeInsidePaymentProfit(payment, liveAmounts)
+      } else {
+        const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+        const liveAmounts =
+          activePayment?.quotationId === payment.quotationId && subvendorLedgerDrafts
+            ? amountsFromLedgerDrafts(subvendorLedgerDrafts)
+            : stored
+        totalProfit += getPaymentSiteProfit(
+          payment,
+          getNormalVendorRowSiteCost(payment, liveAmounts),
+        )
+      }
     }
 
     // Remaining only for Installation · Approved among Pending & Partial (same mapped pool as
@@ -2501,6 +2621,10 @@ export default function AccountManagementPage() {
     permissionScopedCustomerPayments,
     paymentMatchesRowFilters,
     siteCostDrafts,
+    subvendorLedgerMap,
+    subvendorLedgerDrafts,
+    activePayment,
+    isOfficeInsideDealer,
   ])
 
   const updatePaymentSiteCost = async (quotationId: string, raw: string) => {
@@ -2830,7 +2954,26 @@ export default function AccountManagementPage() {
         fileLoginStatusLabel(payment.fileLoginStatus) || "",
         getPaymentOriginalSubtotal(payment),
         ...(showAccountsSiteProfit
-          ? [payment.siteCost || 0, getPaymentSiteProfit(payment)]
+          ? [
+              isOfficeInsideDealer(payment.dealerId)
+                ? getOfficeInsideSiteCost(getLedgerAmounts(subvendorLedgerMap, payment.quotationId))
+                : getNormalVendorRowSiteCost(
+                    payment,
+                    getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
+                  ),
+              isOfficeInsideDealer(payment.dealerId)
+                ? getOfficeInsidePaymentProfit(
+                    payment,
+                    getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
+                  )
+                : getPaymentSiteProfit(
+                    payment,
+                    getNormalVendorRowSiteCost(
+                      payment,
+                      getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
+                    ),
+                  ),
+            ]
           : []),
         loanAmt,
         cashAmt,
@@ -3478,6 +3621,106 @@ export default function AccountManagementPage() {
     })
   }
 
+  const seedOfficeInsideLedgerDrafts = (payment: CustomerPayment) => {
+    const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+    if (!isOfficeInsideDealer(payment.dealerId)) {
+      const pi = stored.pi ?? 0
+      const others =
+        stored.others != null
+          ? stored.others
+          : pi <= 0
+            ? Math.max(0, Math.round(Number(payment.siteCost) || 0))
+            : 0
+      setSubvendorLedgerDrafts(
+        draftsFromLedgerAmounts({
+          ...stored,
+          pi,
+          others,
+          costOfSite: normalVendorSiteCost({ pi, others }),
+        }),
+      )
+      return
+    }
+    const proposal = stored.proposal ?? 0
+    const loanCash = quotationLoanCashAmountsForLedger(
+      payment.quotation,
+      proposal > 0 ? proposal : Math.round(Number(payment.subtotal) || 0),
+    )
+    const paid = Math.round(getTotalPaidPhases(payment.phases) || 0)
+    const remaining =
+      stored.remaining ??
+      Math.max(0, Math.round(Number(payment.remainingFromApi ?? getPaymentEffectiveCap(payment) - paid) || 0))
+    setSubvendorLedgerDrafts(
+      applyOfficeInsideGstToDrafts(
+        draftsFromLedgerAmounts({
+          loanAmount: stored.loanAmount ?? loanCash.loanAmount,
+          cashAmount: stored.cashAmount ?? loanCash.cashAmount,
+          receivedAmount: stored.receivedAmount ?? paid,
+          remaining,
+          proposal,
+          costOfSite: stored.costOfSite ?? payment.siteCost ?? 0,
+          fileCharges: stored.fileCharges ?? 0,
+          pi: stored.pi ?? 0,
+          gstCharges: stored.gstCharges ?? 0,
+          others: stored.others ?? 0,
+        }),
+      ),
+    )
+  }
+
+  const persistDerivedSiteCost = (quotationId: string, siteCost: number) => {
+    setCustomerPayments((prev) =>
+      prev.map((p) =>
+        p.quotationId === quotationId ? { ...p, siteCost: siteCost > 0 ? siteCost : undefined } : p,
+      ),
+    )
+    persistSiteCostForQuotation(quotationId, siteCost)
+    if (siteCost > 0) siteCostSessionRef.current[quotationId] = siteCost
+    else delete siteCostSessionRef.current[quotationId]
+  }
+
+  const commitOfficeInsideLedger = async (quotationId: string, drafts: Record<LedgerAmountField, string>) => {
+    const patch = applyOfficeInsideGstToAmounts(amountsFromLedgerDrafts(drafts))
+    const next = upsertLedgerAmounts(quotationId, patch)
+    setSubvendorLedgerMap(next)
+    persistDerivedSiteCost(quotationId, getOfficeInsideSiteCost(patch))
+    if (!useApi) return
+    try {
+      await api.admin.subvendors.ledger.update(quotationId, ledgerPatchToApiBody(patch))
+    } catch (error) {
+      toast({
+        title: "Office inside amounts saved on this device",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Backend subvendor ledger route is not live yet.",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const commitNormalVendorCharges = async (quotationId: string, drafts: Record<LedgerAmountField, string>) => {
+    const amounts = amountsFromLedgerDrafts(drafts)
+    const siteCost = normalVendorSiteCost(amounts)
+    const patch = { pi: amounts.pi ?? 0, others: amounts.others ?? 0, costOfSite: siteCost }
+    const next = upsertLedgerAmounts(quotationId, patch)
+    setSubvendorLedgerMap(next)
+    persistDerivedSiteCost(quotationId, siteCost)
+    if (!useApi) return
+    try {
+      await api.admin.subvendors.ledger.update(quotationId, ledgerPatchToApiBody(patch))
+    } catch (error) {
+      toast({
+        title: "PI and others saved on this device",
+        description:
+          error instanceof ApiError
+            ? error.message
+            : "Backend subvendor ledger route is not live yet.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const applySingleInstallmentPlan = (quotationId: string) => {
     const payment = customerPayments.find((p) => p.quotationId === quotationId)
     if (!payment) return
@@ -3501,14 +3744,19 @@ export default function AccountManagementPage() {
   const submitInstallments = async () => {
     if (!activePayment) return
 
-    // Use draft Cost of site if user typed but didn't blur yet.
+    const officeInside = isOfficeInsideDealer(activePayment.dealerId)
+    const liveAmounts = subvendorLedgerDrafts ? amountsFromLedgerDrafts(subvendorLedgerDrafts) : null
     const draftRaw = siteCostDrafts[activePayment.quotationId]
     const resolvedSiteCost =
-      draftRaw !== undefined
-        ? parseSiteCostInput(draftRaw)
-        : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
+      liveAmounts && officeInside
+        ? getOfficeInsideSiteCost(applyOfficeInsideGstToAmounts(liveAmounts))
+        : liveAmounts && !officeInside
+          ? normalVendorSiteCost(liveAmounts)
+          : draftRaw !== undefined
+            ? parseSiteCostInput(draftRaw)
+            : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
 
-    if (draftRaw !== undefined) {
+    if (draftRaw !== undefined || liveAmounts != null) {
       setCustomerPayments((prev) =>
         prev.map((p) =>
           p.quotationId === activePayment.quotationId
@@ -3534,6 +3782,11 @@ export default function AccountManagementPage() {
       return
     }
     if (!confirmSave("Save installment / payment details?")) return
+    if (subvendorLedgerDrafts && isOfficeInsideDealer(activePayment.dealerId)) {
+      await commitOfficeInsideLedger(activePayment.quotationId, subvendorLedgerDrafts)
+    } else if (subvendorLedgerDrafts) {
+      await commitNormalVendorCharges(activePayment.quotationId, subvendorLedgerDrafts)
+    }
     const paymentStatus: CustomerPayment["paymentStatus"] =
       totalPaid <= 0
         ? "pending"
@@ -3632,10 +3885,13 @@ export default function AccountManagementPage() {
 
       toast({
         title: "Payment details saved",
-        description: "Installments, cost of site, and profit updated successfully.",
+        description: isOfficeInsideDealer(activePayment.dealerId)
+          ? "Installments, office inside amounts, cost of site, and profit updated."
+          : "Installments, PI, others, cost of site, and profit updated successfully.",
       })
       setInstallmentDialogOpen(false)
       setActivePaymentId(null)
+      setSubvendorLedgerDrafts(null)
     } catch (error) {
       const message = error instanceof ApiError ? error.message : "Failed to save payment details."
       toast({
@@ -4428,7 +4684,7 @@ export default function AccountManagementPage() {
                             ₹{paymentDashboardStats.totalProfit.toLocaleString()}
                           </p>
                           <p className="text-[11px] text-muted-foreground">
-                            Sum of (subtotal − cost of site); 0 if cost unset
+                            Subtotal − cost of site
                           </p>
                         </div>
                       </CardContent>
@@ -4763,23 +5019,42 @@ export default function AccountManagementPage() {
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
                                   Cost of site
                                 </p>
+                                {(() => {
+                                  const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+                                  const rowSiteCost = isOfficeInsideDealer(payment.dealerId)
+                                    ? getOfficeInsideSiteCost(ledger)
+                                    : getNormalVendorRowSiteCost(payment, ledger)
+                                  return (
                                 <p className="text-sm font-semibold tabular-nums">
-                                  ₹{Math.max(0, Math.round(Number(payment.siteCost) || 0)).toLocaleString("en-IN")}
+                                  ₹{rowSiteCost.toLocaleString("en-IN")}
                                 </p>
+                                  )
+                                })()}
                               </div>
 
                               <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+                                {(() => {
+                                  const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+                                  const rowProfit = isOfficeInsideDealer(payment.dealerId)
+                                    ? getOfficeInsidePaymentProfit(payment, ledger)
+                                    : getPaymentSiteProfit(
+                                        payment,
+                                        getNormalVendorRowSiteCost(payment, ledger),
+                                      )
+                                  return (
                                 <p
                                   className={cn(
                                     "text-sm font-semibold tabular-nums",
-                                    getPaymentSiteProfit(payment) >= 0
+                                    rowProfit >= 0
                                       ? "text-emerald-700"
                                       : "text-rose-700",
                                   )}
                                 >
-                                  ₹{getPaymentSiteProfit(payment).toLocaleString("en-IN")}
+                                  ₹{rowProfit.toLocaleString("en-IN")}
                                 </p>
+                                  )
+                                })()}
                               </div>
                               </>
                               ) : null}
@@ -4849,6 +5124,7 @@ export default function AccountManagementPage() {
                                     onClick={() => {
                                       if (accountsReadOnly || !canWriteAccounts) return
                                       setActivePaymentId(payment.quotationId)
+                                      seedOfficeInsideLedgerDrafts(payment)
                                       setInstallmentDialogOpen(true)
                                     }}
                                   >
@@ -4998,6 +5274,28 @@ export default function AccountManagementPage() {
               </Select>
             </div>
             <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Office inside vendor</Label>
+              <Select value={officeInsideVendorFilter} onValueChange={setOfficeInsideVendorFilter}>
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue placeholder="Office inside vendor" />
+                </SelectTrigger>
+                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="inside">Office inside (all vendors)</SelectItem>
+                  {officeInsideVendors
+                    .filter((vendor) => vendor.dealerId)
+                    .map((vendor) => (
+                      <SelectItem key={vendor.id} value={vendor.dealerId}>
+                        {vendor.name || vendor.contactName || vendor.dealerId}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Filter office inside subvendor files, then enter the same ledger amounts in Manage.
+              </p>
+            </div>
+            <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Bank</Label>
               <Select value={paymentBankFilter} onValueChange={setPaymentBankFilter}>
                 <SelectTrigger className="h-9 w-full text-sm">
@@ -5050,6 +5348,7 @@ export default function AccountManagementPage() {
                   setFileStatusFilter("all")
                   setSendToInstallationFilter("all")
                   setPaymentDealerFilter("all")
+                  setOfficeInsideVendorFilter("all")
                   setPaymentBankFilter("all")
                   setPaymentIfscFilter("all")
                 }}
@@ -5082,14 +5381,23 @@ export default function AccountManagementPage() {
         open={installmentDialogOpen}
         onOpenChange={(open) => {
           if (!open && activePaymentId) {
-            const draft = siteCostDrafts[activePaymentId]
-            if (draft !== undefined) {
-              void updatePaymentSiteCost(activePaymentId, draft)
+            if (
+              subvendorLedgerDrafts &&
+              activePayment &&
+              !isOfficeInsideDealer(activePayment.dealerId)
+            ) {
+              void commitNormalVendorCharges(activePaymentId, subvendorLedgerDrafts)
+            } else {
+              const draft = siteCostDrafts[activePaymentId]
+              if (draft !== undefined) {
+                void updatePaymentSiteCost(activePaymentId, draft)
+              }
             }
           }
           setInstallmentDialogOpen(open)
           if (!open) {
             setActivePaymentId(null)
+            setSubvendorLedgerDrafts(null)
           }
         }}
       >
@@ -5646,120 +5954,77 @@ export default function AccountManagementPage() {
                   )}
                 </div>
               )}
-              {showAccountsSiteProfit ? (
-              <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
-                    <div className="relative">
-                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                        ₹
-                      </span>
-                      <Input
-                        type="number"
-                        min={0}
-                        step={1}
-                        inputMode="numeric"
-                        className="h-9 pl-6 pr-9 text-sm font-medium tabular-nums bg-background"
-                        placeholder="0"
-                        disabled={savingSiteCostId === activePayment.quotationId}
-                        value={
-                          siteCostDrafts[activePayment.quotationId] ??
-                          (activePayment.siteCost && activePayment.siteCost > 0
-                            ? String(activePayment.siteCost)
-                            : "")
-                        }
-                        onChange={(e) => {
-                          const raw = e.target.value
-                          setSiteCostDrafts((prev) => ({
-                            ...prev,
-                            [activePayment.quotationId]: raw,
-                          }))
-                        }}
-                        onBlur={(e) =>
-                          void updatePaymentSiteCost(activePayment.quotationId, e.target.value)
-                        }
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") e.currentTarget.blur()
-                        }}
-                      />
-                      {savingSiteCostId === activePayment.quotationId ? (
-                        <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
-                      ) : null}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Saves on blur, close, or Submit — kept after refresh
-                    </p>
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
-                    {(() => {
-                      const draftRaw = siteCostDrafts[activePayment.quotationId]
-                      const liveSiteCost =
-                        draftRaw !== undefined
-                          ? parseSiteCostInput(draftRaw)
-                          : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
-                      const liveProfit = getPaymentSiteProfit(activePayment, liveSiteCost)
-                      return (
-                        <>
-                          <p
-                            className={cn(
-                              "text-lg font-semibold tabular-nums",
-                              liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
-                            )}
-                          >
-                            ₹{liveProfit.toLocaleString("en-IN")}
-                          </p>
-                          <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Subtotal − cost of site (₹0 when cost is unset)
-                          </p>
-                        </>
-                      )
-                    })()}
-                  </div>
-                </div>
-              </div>
-              ) : null}
-
+              {!isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
               <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
                 <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
+                  <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-end">
+                    <div className="space-y-1.5 min-w-0">
                       <p className="text-xs font-medium text-muted-foreground">PI upload</p>
-                      <p className="text-[11px] text-muted-foreground">
-                        Upload multiple PDFs or images (JPG, PNG, WEBP, HEIC). Select several files at once.
-                      </p>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id={`am-pi-upload-${activePayment.quotationId}`}
+                          type="file"
+                          accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
+                          multiple
+                          className="hidden"
+                          disabled={uploadingPiId === activePayment.quotationId}
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || [])
+                            e.currentTarget.value = ""
+                            void uploadPaymentPiFiles(activePayment.quotationId, files)
+                          }}
+                        />
+                        <Label
+                          htmlFor={`am-pi-upload-${activePayment.quotationId}`}
+                          className={cn(
+                            "inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium shrink-0",
+                            uploadingPiId === activePayment.quotationId
+                              ? "cursor-not-allowed opacity-60"
+                              : "cursor-pointer hover:bg-muted/40",
+                          )}
+                        >
+                          {uploadingPiId === activePayment.quotationId ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="w-3.5 h-3.5" />
+                          )}
+                          {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI"}
+                        </Label>
+                      </div>
                     </div>
-                    <div>
+                    <div className="space-y-1.5 min-w-0">
+                      <Label htmlFor="accounts-normal-pi">{LEDGER_FIELD_LABELS.pi}</Label>
                       <Input
-                        id={`am-pi-upload-${activePayment.quotationId}`}
-                        type="file"
-                        accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
-                        multiple
-                        className="hidden"
-                        disabled={uploadingPiId === activePayment.quotationId}
+                        id="accounts-normal-pi"
+                        inputMode="numeric"
+                        className="tabular-nums h-9"
+                        placeholder="0"
+                        disabled={accountsReadOnly || !canWriteAccounts}
+                        value={subvendorLedgerDrafts.pi}
                         onChange={(e) => {
-                          const files = Array.from(e.target.files || [])
-                          e.currentTarget.value = ""
-                          void uploadPaymentPiFiles(activePayment.quotationId, files)
+                          const raw = e.target.value
+                          setSubvendorLedgerDrafts((prev) =>
+                            prev ? { ...prev, pi: raw } : prev,
+                          )
                         }}
                       />
-                      <Label
-                        htmlFor={`am-pi-upload-${activePayment.quotationId}`}
-                        className={cn(
-                          "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium",
-                          uploadingPiId === activePayment.quotationId
-                            ? "cursor-not-allowed opacity-60"
-                            : "cursor-pointer hover:bg-muted/40",
-                        )}
-                      >
-                        {uploadingPiId === activePayment.quotationId ? (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="w-3.5 h-3.5" />
-                        )}
-                        {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI (multiple)"}
-                      </Label>
+                    </div>
+                    <div className="space-y-1.5 min-w-0">
+                      <Label htmlFor="accounts-normal-others">{LEDGER_FIELD_LABELS.others}</Label>
+                      <Input
+                        id="accounts-normal-others"
+                        inputMode="numeric"
+                        className="tabular-nums h-9"
+                        placeholder="0"
+                        disabled={accountsReadOnly || !canWriteAccounts}
+                        value={subvendorLedgerDrafts.others}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setSubvendorLedgerDrafts((prev) =>
+                            prev ? { ...prev, others: raw } : prev,
+                          )
+                        }}
+                      />
                     </div>
                   </div>
                   {(() => {
@@ -5806,7 +6071,242 @@ export default function AccountManagementPage() {
                     )
                   })()}
                 </div>
+                {showAccountsSiteProfit ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
+                    {(() => {
+                      const liveSiteCost = normalVendorSiteCost(
+                        amountsFromLedgerDrafts(subvendorLedgerDrafts),
+                      )
+                      return (
+                        <>
+                          <p className="text-lg font-semibold tabular-nums">
+                            ₹{liveSiteCost.toLocaleString("en-IN")}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            PI + others
+                          </p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+                    {(() => {
+                      const liveSiteCost = normalVendorSiteCost(
+                        amountsFromLedgerDrafts(subvendorLedgerDrafts),
+                      )
+                      const liveProfit = getPaymentSiteProfit(activePayment, liveSiteCost)
+                      return (
+                        <>
+                          <p
+                            className={cn(
+                              "text-lg font-semibold tabular-nums",
+                              liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                            )}
+                          >
+                            ₹{liveProfit.toLocaleString("en-IN")}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">
+                            Subtotal − cost of site
+                          </p>
+                        </>
+                      )
+                    })()}
+                  </div>
+                </div>
+                ) : null}
               </div>
+              ) : null}
+              {isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
+                <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
+                  <p className="text-sm font-medium">Office inside amounts</p>
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-[3fr_2fr] gap-3 items-end">
+                      <div className="space-y-1.5 min-w-0">
+                        <p className="text-xs font-medium text-muted-foreground">PI upload</p>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            id={`am-pi-upload-${activePayment.quotationId}`}
+                            type="file"
+                            accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
+                            multiple
+                            className="hidden"
+                            disabled={uploadingPiId === activePayment.quotationId}
+                            onChange={(e) => {
+                              const files = Array.from(e.target.files || [])
+                              e.currentTarget.value = ""
+                              void uploadPaymentPiFiles(activePayment.quotationId, files)
+                            }}
+                          />
+                          <Label
+                            htmlFor={`am-pi-upload-${activePayment.quotationId}`}
+                            className={cn(
+                              "inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium shrink-0",
+                              uploadingPiId === activePayment.quotationId
+                                ? "cursor-not-allowed opacity-60"
+                                : "cursor-pointer hover:bg-muted/40",
+                            )}
+                          >
+                            {uploadingPiId === activePayment.quotationId ? (
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            ) : (
+                              <Upload className="w-3.5 h-3.5" />
+                            )}
+                            {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI"}
+                          </Label>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 min-w-0">
+                        <Label htmlFor="accounts-ledger-pi">{LEDGER_FIELD_LABELS.pi}</Label>
+                        <Input
+                          id="accounts-ledger-pi"
+                          inputMode="numeric"
+                          className="tabular-nums h-9"
+                          placeholder="0"
+                          disabled={accountsReadOnly || !canWriteAccounts}
+                          value={subvendorLedgerDrafts.pi}
+                          onChange={(e) => {
+                            const raw = e.target.value
+                            setSubvendorLedgerDrafts((prev) =>
+                              prev ? applyOfficeInsideGstToDrafts({ ...prev, pi: raw }) : prev,
+                            )
+                          }}
+                        />
+                      </div>
+                    </div>
+                    {(() => {
+                      const piUrls = getActivePaymentPiUrls(activePayment)
+                      if (piUrls.length === 0) {
+                        return (
+                          <p className="text-xs text-muted-foreground">No PI documents uploaded yet.</p>
+                        )
+                      }
+                      return (
+                        <ul className="space-y-1.5">
+                          {piUrls.map((url, index) => {
+                            const href = toPublicOpenHref(url) || url
+                            const label =
+                              url.split("/").pop()?.split("?")[0] || `PI document ${index + 1}`
+                            return (
+                              <li
+                                key={`${activePayment.quotationId}-pi-${index}-${url}`}
+                                className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5"
+                              >
+                                <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                                <a
+                                  href={href}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="min-w-0 flex-1 truncate text-xs text-primary underline-offset-2 hover:underline"
+                                  title={label}
+                                >
+                                  {decodeURIComponent(label)}
+                                </a>
+                                <button
+                                  type="button"
+                                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                  aria-label={`Remove ${label}`}
+                                  disabled={uploadingPiId === activePayment.quotationId}
+                                  onClick={() => void removePaymentPiUrl(activePayment.quotationId, url)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      )
+                    })()}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {OFFICE_INSIDE_AMOUNT_FIELDS.filter((field) => {
+                      if (field === "pi") return false
+                      if (field === "gstCharges") {
+                        return parseLedgerAmountInput(subvendorLedgerDrafts.pi) > 0
+                      }
+                      return true
+                    }).map((field) => {
+                      const isGst = field === "gstCharges"
+                      return (
+                      <div key={field} className="space-y-1.5">
+                        <Label htmlFor={`accounts-ledger-${field}`}>{LEDGER_FIELD_LABELS[field]}</Label>
+                        <Input
+                          id={`accounts-ledger-${field}`}
+                          inputMode="numeric"
+                          className="tabular-nums"
+                          placeholder="0"
+                          readOnly={isGst}
+                          disabled={accountsReadOnly || !canWriteAccounts || isGst}
+                          value={subvendorLedgerDrafts[field]}
+                          onChange={(e) => {
+                            if (isGst) return
+                            const raw = e.target.value
+                            setSubvendorLedgerDrafts((prev) => {
+                              if (!prev) return prev
+                              const next = { ...prev, [field]: raw }
+                              return field === "proposal"
+                                ? applyOfficeInsideGstToDrafts(next)
+                                : next
+                            })
+                          }}
+                        />
+                        {isGst ? (
+                          <p className="text-[11px] text-muted-foreground">
+                            (Proposal − PI) × 8.9%
+                          </p>
+                        ) : null}
+                      </div>
+                      )
+                    })}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
+                      {(() => {
+                        const liveSiteCost = getOfficeInsideSiteCost(
+                          amountsFromLedgerDrafts(subvendorLedgerDrafts),
+                        )
+                        return (
+                          <>
+                            <p className="text-lg font-semibold tabular-nums">
+                              ₹{liveSiteCost.toLocaleString("en-IN")}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              PI + file charges + others + GST
+                            </p>
+                          </>
+                        )
+                      })()}
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+                      {(() => {
+                        const liveProfit = getOfficeInsidePaymentProfit(
+                          activePayment,
+                          amountsFromLedgerDrafts(subvendorLedgerDrafts),
+                        )
+                        return (
+                          <>
+                            <p
+                              className={cn(
+                                "text-lg font-semibold tabular-nums",
+                                liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                              )}
+                            >
+                              ₹{liveProfit.toLocaleString("en-IN")}
+                            </p>
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              Subtotal − cost of site
+                            </p>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               {/* Submit while Remaining > 0 and not yet settled — no other blockers */}
               {!isFinalSettlementApplied(activePayment) &&

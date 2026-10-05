@@ -18,6 +18,108 @@ export const LEDGER_AMOUNT_FIELDS = [
 
 export type LedgerAmountField = (typeof LEDGER_AMOUNT_FIELDS)[number]
 
+/** Visible office-inside amount fields (Proposal and PI are manual; GST is derived). */
+export const OFFICE_INSIDE_AMOUNT_FIELDS = [
+  "pi",
+  "proposal",
+  "fileCharges",
+  "gstCharges",
+  "others",
+] as const
+
+export type OfficeInsideAmountField = (typeof OFFICE_INSIDE_AMOUNT_FIELDS)[number]
+
+/** GST = (proposal − PI) × 8.9%. Hidden / zero when PI is 0. */
+export const OFFICE_INSIDE_GST_RATE = 0.089
+
+export const LEDGER_FIELD_LABELS: Record<LedgerAmountField, string> = {
+  loanAmount: "Loan amount",
+  cashAmount: "Cash amount",
+  receivedAmount: "Received amount",
+  remaining: "Remaining",
+  proposal: "Proposal",
+  costOfSite: "Cost of site",
+  fileCharges: "File charges",
+  pi: "PI",
+  gstCharges: "GST charges",
+  others: "Others",
+}
+
+export function parseLedgerAmountInput(raw: string) {
+  const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
+  if (cleaned === "") return 0
+  const n = Number(cleaned)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
+}
+
+export function draftsFromLedgerAmounts(
+  amounts: SubvendorLedgerAmounts,
+): Record<LedgerAmountField, string> {
+  return Object.fromEntries(
+    LEDGER_AMOUNT_FIELDS.map((field) => {
+      const n = Math.round(Number(amounts[field]) || 0)
+      return [field, n > 0 ? String(n) : ""]
+    }),
+  ) as Record<LedgerAmountField, string>
+}
+
+export function amountsFromLedgerDrafts(
+  drafts: Record<LedgerAmountField, string>,
+): SubvendorLedgerAmounts {
+  return Object.fromEntries(
+    LEDGER_AMOUNT_FIELDS.map((field) => [field, parseLedgerAmountInput(drafts[field])]),
+  ) as SubvendorLedgerAmounts
+}
+
+export function officeInsideGstCharges(proposal: number, pi: number): number {
+  const proposalAmt = Math.max(0, Math.round(Number(proposal) || 0))
+  const piAmt = Math.max(0, Math.round(Number(pi) || 0))
+  if (piAmt <= 0) return 0
+  return Math.round(Math.max(0, proposalAmt - piAmt) * OFFICE_INSIDE_GST_RATE)
+}
+
+export function officeInsideDeductedTotal(amounts: SubvendorLedgerAmounts): number {
+  const pi = Math.max(0, Math.round(Number(amounts.pi) || 0))
+  const fileCharges = Math.max(0, Math.round(Number(amounts.fileCharges) || 0))
+  const others = Math.max(0, Math.round(Number(amounts.others) || 0))
+  const gstCharges = officeInsideGstCharges(amounts.proposal ?? 0, pi)
+  return pi + fileCharges + gstCharges + others
+}
+
+/** Normal (non–office-inside) vendors: cost of site = PI + others. */
+export function normalVendorSiteCost(amounts: Pick<SubvendorLedgerAmounts, "pi" | "others">): number {
+  return (
+    Math.max(0, Math.round(Number(amounts.pi) || 0)) +
+    Math.max(0, Math.round(Number(amounts.others) || 0))
+  )
+}
+
+export function officeInsideProfitFromAmounts(
+  subtotal: number,
+  amounts: SubvendorLedgerAmounts,
+): number {
+  return Math.round(Math.max(0, Number(subtotal) || 0) - officeInsideDeductedTotal(amounts))
+}
+
+export function applyOfficeInsideGstToDrafts(
+  drafts: Record<LedgerAmountField, string>,
+): Record<LedgerAmountField, string> {
+  const gst = officeInsideGstCharges(
+    parseLedgerAmountInput(drafts.proposal),
+    parseLedgerAmountInput(drafts.pi),
+  )
+  return { ...drafts, gstCharges: gst > 0 ? String(gst) : "" }
+}
+
+export function applyOfficeInsideGstToAmounts(
+  amounts: SubvendorLedgerAmounts,
+): SubvendorLedgerAmounts {
+  const gstCharges = officeInsideGstCharges(amounts.proposal ?? 0, amounts.pi ?? 0)
+  const next = { ...amounts, gstCharges }
+  next.costOfSite = officeInsideDeductedTotal(next)
+  return next
+}
+
 export type SubvendorLedgerAmounts = Partial<Record<LedgerAmountField, number>>
 
 /** @deprecated use SubvendorLedgerAmounts */

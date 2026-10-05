@@ -400,10 +400,10 @@ export const defaultStructurePricing: StructurePricing[] = [
   { type: "MS Structure", size: "1kW", price: 9000 },
   { type: "MS Structure", size: "3kW", price: 27000 },
   { type: "MS Structure", size: "5kW", price: 45000 },
-  { type: "Mono Real", size: "1kW", price: 8000 },
-  { type: "Mono Real", size: "3kW", price: 24000 },
-  { type: "Mono Real", size: "5kW", price: 40000 },
-  { type: "Mono Real", size: "10kW", price: 80000 },
+  { type: "Mono Rail", size: "1kW", price: 0 },
+  { type: "Mono Rail", size: "3kW", price: 0 },
+  { type: "Mono Rail", size: "5kW", price: 0 },
+  { type: "Mono Rail", size: "10kW", price: 0 },
 ]
 
 export const defaultMeterPricing: MeterPricing[] = [

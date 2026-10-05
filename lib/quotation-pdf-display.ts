@@ -66,7 +66,11 @@ export function buildInverterBrandDropdownOptions(catalogBrands?: string[]): str
 }
 
 /** Extra structure type always offered in the quotation form (catalog may only list GI). */
-export const QUOTATION_EXTRA_STRUCTURE_TYPE_OPTIONS = ["Mono Real"] as const
+export const QUOTATION_EXTRA_STRUCTURE_TYPE_OPTIONS = ["Mono Rail"] as const
+
+export function isMonoRealStructureType(type?: string | null): boolean {
+  return /mono\s*(real|rail)/i.test(String(type || "").trim())
+}
 
 export function buildStructureTypeDropdownOptions(catalogTypes?: string[]): string[] {
   const seen = new Set<string>()
@@ -75,24 +79,20 @@ export function buildStructureTypeDropdownOptions(catalogTypes?: string[]): stri
   for (const type of catalogTypes ?? []) {
     const trimmed = type?.trim()
     if (!trimmed) continue
-    const key = trimmed.toLowerCase()
+    const key = isMonoRealStructureType(trimmed) ? "mono-rail" : trimmed.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    result.push(trimmed)
+    result.push(isMonoRealStructureType(trimmed) ? "Mono Rail" : trimmed)
   }
 
   for (const extra of QUOTATION_EXTRA_STRUCTURE_TYPE_OPTIONS) {
-    const key = extra.toLowerCase()
+    const key = isMonoRealStructureType(extra) ? "mono-rail" : extra.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
     result.push(extra)
   }
 
   return result
-}
-
-export function isMonoRealStructureType(type?: string | null): boolean {
-  return /mono\s*real/i.test(String(type || "").trim())
 }
 
 /** Combined meter label for quotation form dropdown and PDF. */
@@ -680,7 +680,7 @@ export function getMountingStructurePdfSpecification(
   products?: Pick<ProductSelection, "structureType"> | null,
 ): string {
   if (isMonoRealStructureType(products?.structureType)) {
-    return "Mono Real Structure"
+    return "Mono Rail"
   }
   return MOUNTING_STRUCTURE_PDF_SPEC_LINES.join("\n")
 }
@@ -690,6 +690,9 @@ export function getMountingStructurePdfBrandModel(
 ): string {
   const type = products.structureType?.trim()
   const size = products.structureSize?.trim()
+  if (isMonoRealStructureType(type)) {
+    return size || "As Required"
+  }
   if (type && size) return `${type} — ${size}`
   if (type) return type
   return `GI Structure for RCC/Tin Roof — ${size || "As Required"}`
