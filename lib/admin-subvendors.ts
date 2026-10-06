@@ -25,8 +25,16 @@ export type AdminSubvendorRecord = {
   notes: string
   /** Vendor profit ratio as a percent (0–100). */
   profitRatio: number
+  /** File charges rate: INR per rounded kW (4.4 → 4, 4.6 → 5). */
+  fileCostPerKw: number
+  /** Amount paid on this vendor's leaser. */
+  leaserPaid: number
+  /** Amount remaining on this vendor's leaser. */
+  leaserRemaining: number
   createdAt: string
 }
+
+export const DEFAULT_FILE_COST_PER_KW = 1000
 
 const newId = () =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -55,6 +63,38 @@ export function formatProfitRatioLabel(value: number) {
   return `${n}%`
 }
 
+export function parseInrAmount(raw: unknown): number {
+  const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
+  if (cleaned === "") return 0
+  const n = Number(cleaned)
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : 0
+}
+
+export function formatInrAmountInput(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return ""
+  return String(Math.round(value))
+}
+
+/** 4.4 kW → 4, 4.6 kW → 5. */
+export function roundKwForFileCost(kw: number): number {
+  if (!Number.isFinite(kw) || kw <= 0) return 0
+  return Math.round(kw)
+}
+
+export function parseFileCostPerKw(raw: unknown): number {
+  const n = parseInrAmount(raw)
+  return n > 0 ? n : DEFAULT_FILE_COST_PER_KW
+}
+
+export function formatFileCostPerKwInput(value: number) {
+  const n = parseFileCostPerKw(value)
+  return n > 0 ? String(n) : String(DEFAULT_FILE_COST_PER_KW)
+}
+
+export function fileChargesFromVendorRate(kw: number, ratePerKw: number): number {
+  return roundKwForFileCost(kw) * parseFileCostPerKw(ratePerKw)
+}
+
 export function normalizeAdminSubvendor(raw: unknown): AdminSubvendorRecord | null {
   if (!raw || typeof raw !== "object") return null
   const row = raw as Record<string, unknown>
@@ -72,6 +112,11 @@ export function normalizeAdminSubvendor(raw: unknown): AdminSubvendorRecord | nu
     category: asText(row.category).trim() || "Other",
     notes: asText(row.notes).trim(),
     profitRatio: parseProfitRatio(row.profitRatio ?? row.profit_ratio),
+    fileCostPerKw: parseFileCostPerKw(
+      row.fileCostPerKw ?? row.file_cost_per_kw ?? row.fileCost ?? row.file_cost,
+    ),
+    leaserPaid: parseInrAmount(row.leaserPaid ?? row.leaser_paid),
+    leaserRemaining: parseInrAmount(row.leaserRemaining ?? row.leaser_remaining),
     createdAt: asText(row.createdAt ?? row.created_at) || new Date().toISOString(),
   }
 }
@@ -172,6 +217,12 @@ export function subvendorToApiBody(
     notes: row.notes,
     profitRatio: parseProfitRatio(row.profitRatio),
     profit_ratio: parseProfitRatio(row.profitRatio),
+    fileCostPerKw: parseFileCostPerKw(row.fileCostPerKw),
+    file_cost_per_kw: parseFileCostPerKw(row.fileCostPerKw),
+    leaserPaid: parseInrAmount(row.leaserPaid),
+    leaser_paid: parseInrAmount(row.leaserPaid),
+    leaserRemaining: parseInrAmount(row.leaserRemaining),
+    leaser_remaining: parseInrAmount(row.leaserRemaining),
   }
 }
 

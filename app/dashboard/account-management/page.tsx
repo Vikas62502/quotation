@@ -83,11 +83,15 @@ import {
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
 import {
+  fileChargesFromVendorRate,
   pickSubvendorListFromApi,
   readAdminSubvendors,
   writeAdminSubvendors,
   type AdminSubvendorRecord,
 } from "@/lib/admin-subvendors"
+import { getQuotationSystemKw, getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
+import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
+import { normalizeInverterBrandForDisplay } from "@/lib/quotation-pdf-display"
 import {
   formatJourneyStageStatusLabel,
   getJourneyFileStatusStages,
@@ -1178,17 +1182,67 @@ function formatAdminDate(iso?: string | null) {
   return d ? d.toLocaleString("en-IN") : "—"
 }
 
+function formatAdminDateOnly(iso?: string | null) {
+  if (!iso) return "—"
+  const d = parseFlexibleAdminDate(String(iso))
+  return d
+    ? d.toLocaleDateString("en-IN", { day: "numeric", month: "numeric", year: "numeric" })
+    : "—"
+}
+
 function formatFileStatusApprovedAt(iso?: string | null) {
   if (!iso) return ""
   const d = parseFlexibleAdminDate(String(iso))
   if (!d) return ""
-  return d.toLocaleString("en-IN", {
+  return d.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "numeric",
     year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
   })
+}
+
+function getPaymentSystemKwLabel(quotation: Quotation): string {
+  const fromPdf = getQuotationSystemKwLabelForPdf(quotation.products)
+  if (fromPdf && fromPdf !== "—") return fromPdf.replace(/\s+/g, "")
+  const kw = getQuotationSystemKw(quotation)
+  if (!(kw > 0)) return ""
+  const rounded = Math.round(kw * 100) / 100
+  const label =
+    Math.abs(rounded - Math.round(rounded)) < 1e-9
+      ? String(Math.round(rounded))
+      : String(rounded).replace(/\.?0+$/, "")
+  return `${label}kW`
+}
+
+function getPaymentPanelInverterLine(quotation: Quotation): string[] {
+  const products = mergeQuotationProductSources(quotation) as unknown as {
+    systemType?: string
+    panelBrand?: string
+    dcrPanelBrand?: string
+    nonDcrPanelBrand?: string
+    inverterBrand?: string
+    inverterSize?: string
+  }
+  const systemType = String(products.systemType || "").toLowerCase()
+  let panelBrand = String(products.panelBrand || "").trim()
+  if (systemType === "both") {
+    const dcr = String(products.dcrPanelBrand || products.panelBrand || "").trim()
+    const nonDcr = String(products.nonDcrPanelBrand || "").trim()
+    if (dcr && nonDcr && dcr.toLowerCase() !== nonDcr.toLowerCase()) {
+      panelBrand = `${dcr} / ${nonDcr}`
+    } else {
+      panelBrand = dcr || nonDcr
+    }
+  } else if (!panelBrand) {
+    panelBrand = String(products.dcrPanelBrand || products.nonDcrPanelBrand || "").trim()
+  }
+  const inverterBrand = normalizeInverterBrandForDisplay(String(products.inverterBrand || ""))
+  const inverterSize = String(products.inverterSize || "").trim()
+  const bits: string[] = []
+  if (panelBrand) bits.push(`p- ${panelBrand}`.toLowerCase())
+  const inverter = [inverterBrand, inverterSize].filter(Boolean).join(" ")
+  if (inverter) bits.push(`i- ${inverter}`.toLowerCase())
+  return bits
 }
 
 /** Normalize API date / epoch / Date for display pipeline. */
@@ -2949,7 +3003,7 @@ export default function AccountManagementPage() {
         getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
         bankCell === "—" ? "" : bankCell,
         (getEffectivePaymentStatus(payment) || "pending").toUpperCase(),
-        payment.statusApprovedAt ? formatAdminDate(payment.statusApprovedAt) : "",
+        payment.statusApprovedAt ? formatAdminDateOnly(payment.statusApprovedAt) : "",
         payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
         fileLoginStatusLabel(payment.fileLoginStatus) || "",
         getPaymentOriginalSubtotal(payment),
@@ -3650,6 +3704,13 @@ export default function AccountManagementPage() {
     const remaining =
       stored.remaining ??
       Math.max(0, Math.round(Number(payment.remainingFromApi ?? getPaymentEffectiveCap(payment) - paid) || 0))
+    const vendor = officeInsideVendors.find((row) => row.dealerId === payment.dealerId)
+    const autoFileCharges = fileChargesFromVendorRate(
+      getQuotationSystemKw(payment.quotation),
+      vendor?.fileCostPerKw ?? 0,
+    )
+    const fileCharges =
+      stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
     setSubvendorLedgerDrafts(
       applyOfficeInsideGstToDrafts(
         draftsFromLedgerAmounts({
@@ -3659,7 +3720,7 @@ export default function AccountManagementPage() {
           remaining,
           proposal,
           costOfSite: stored.costOfSite ?? payment.siteCost ?? 0,
-          fileCharges: stored.fileCharges ?? 0,
+          fileCharges,
           pi: stored.pi ?? 0,
           gstCharges: stored.gstCharges ?? 0,
           others: stored.others ?? 0,
@@ -4775,8 +4836,8 @@ export default function AccountManagementPage() {
                               className={cn(
                                 "grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full",
                                 showAccountsSiteProfit
-                                  ? "xl:grid-cols-[minmax(10rem,1.2fr)_minmax(4.25rem,0.55fr)_minmax(4.25rem,0.55fr)_minmax(4.75rem,0.6fr)_minmax(5.25rem,0.65fr)_minmax(5.75rem,0.7fr)_minmax(12.5rem,1.35fr)_minmax(6rem,0.85fr)_minmax(4.25rem,0.5fr)_minmax(4.25rem,0.5fr)_minmax(6.75rem,7.25rem)]"
-                                  : "xl:grid-cols-[minmax(10rem,1.35fr)_minmax(4.5rem,0.65fr)_minmax(4.5rem,0.65fr)_minmax(5rem,0.7fr)_minmax(5.5rem,0.75fr)_minmax(6rem,0.8fr)_minmax(12.5rem,1.45fr)_minmax(7rem,1fr)_minmax(6.75rem,7.25rem)]",
+                                  ? "xl:grid-cols-[minmax(9.5rem,1.1fr)_minmax(8.25rem,0.95fr)_minmax(4.25rem,0.5fr)_minmax(4.75rem,0.55fr)_minmax(5rem,0.55fr)_minmax(5.5rem,0.6fr)_minmax(11rem,1.05fr)_minmax(5.75rem,0.7fr)_minmax(4.25rem,0.45fr)_minmax(4.25rem,0.45fr)_minmax(6.75rem,7.25rem)]"
+                                  : "xl:grid-cols-[minmax(9.5rem,1.2fr)_minmax(8.5rem,1fr)_minmax(4.5rem,0.55fr)_minmax(5rem,0.6fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.65fr)_minmax(11rem,1.1fr)_minmax(6.25rem,0.8fr)_minmax(6.75rem,7.25rem)]",
                               )}
                             >
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
@@ -4818,6 +4879,27 @@ export default function AccountManagementPage() {
                                     ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
                                   </p>
                                 )}
+                                {(() => {
+                                  const systemKw = getPaymentSystemKwLabel(payment.quotation)
+                                  const panelInverter = getPaymentPanelInverterLine(payment.quotation)
+                                  return (
+                                    <>
+                                      {systemKw ? (
+                                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                                          {systemKw}
+                                        </p>
+                                      ) : null}
+                                      {panelInverter.map((line) => (
+                                        <p
+                                          key={line}
+                                          className="text-[10px] lowercase leading-snug text-muted-foreground"
+                                        >
+                                          {line}
+                                        </p>
+                                      ))}
+                                    </>
+                                  )
+                                })()}
                               </div>
 
                               <div className="min-w-0">
@@ -4932,7 +5014,7 @@ export default function AccountManagementPage() {
                               <div className="min-w-0">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Approve date</p>
                                 <p className="text-xs font-medium leading-snug">
-                                  {formatAdminDate(payment.statusApprovedAt)}
+                                  {formatAdminDateOnly(payment.statusApprovedAt)}
                                 </p>
                               </div>
 
@@ -4970,7 +5052,7 @@ export default function AccountManagementPage() {
                                 </p>
                               </div>
 
-                              <div className="min-w-[12.5rem]">
+                              <div className="min-w-[11rem]">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File status</p>
                                 <div className="mt-0.5 space-y-1">
                                   {getJourneyFileStatusStages(payment.quotation).map((item) => {
@@ -4994,12 +5076,12 @@ export default function AccountManagementPage() {
                                           >
                                             {item.statusLabel}
                                           </Badge>
+                                          {approvedAtLabel ? (
+                                            <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
+                                              {approvedAtLabel}
+                                            </span>
+                                          ) : null}
                                         </div>
-                                        {approvedAtLabel ? (
-                                          <p className="text-[9px] leading-tight text-muted-foreground tabular-nums mt-0.5">
-                                            {approvedAtLabel}
-                                          </p>
-                                        ) : null}
                                       </div>
                                     )
                                   })}

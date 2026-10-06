@@ -22,9 +22,14 @@ import {
   createAdminSubvendor,
   dealerDisplayName,
   deleteAdminSubvendor,
+  formatFileCostPerKwInput,
   formatProfitRatioInput,
   formatProfitRatioLabel,
+  parseFileCostPerKw,
+  parseInrAmount,
   parseProfitRatio,
+  fileChargesFromVendorRate,
+  formatInrAmountInput,
   pickSubvendorListFromApi,
   pickSubvendorRecordFromApi,
   readAdminSubvendors,
@@ -116,6 +121,9 @@ const emptyForm = {
   category: "Other",
   notes: "",
   profitRatio: "",
+  fileCostPerKw: "1000",
+  leaserPaid: "",
+  leaserRemaining: "",
 }
 
 function matchesSearch(row: AdminSubvendorRecord, q: string) {
@@ -266,6 +274,12 @@ export function AdminSubvendorPanel({
           quotation,
           proposal > 0 ? proposal : payment.subtotal,
         )
+        const autoFileCharges = fileChargesFromVendorRate(
+          getQuotationSystemKw(quotation),
+          vendor?.fileCostPerKw ?? 0,
+        )
+        const fileCharges =
+          stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
         return {
           quotationId: quotation.id,
           dealerId,
@@ -294,11 +308,11 @@ export function AdminSubvendorPanel({
           costOfSite: officeInsideDeductedTotal({
             proposal,
             pi,
-            fileCharges: stored.fileCharges ?? 0,
+            fileCharges,
             gstCharges: officeInsideGstCharges(proposal, pi),
             others: stored.others ?? 0,
           }),
-          fileCharges: stored.fileCharges ?? 0,
+          fileCharges,
           pi,
           gstCharges: officeInsideGstCharges(proposal, pi),
           others: stored.others ?? 0,
@@ -396,6 +410,9 @@ export function AdminSubvendorPanel({
       category: row.category || "Other",
       notes: row.notes,
       profitRatio: formatProfitRatioInput(row.profitRatio),
+      fileCostPerKw: formatFileCostPerKwInput(row.fileCostPerKw),
+      leaserPaid: formatInrAmountInput(row.leaserPaid),
+      leaserRemaining: formatInrAmountInput(row.leaserRemaining),
     })
     setDialogOpen(true)
   }
@@ -411,6 +428,9 @@ export function AdminSubvendorPanel({
         category: form.category.trim() || "Other",
         notes: form.notes.trim(),
         profitRatio: parseProfitRatio(form.profitRatio),
+        fileCostPerKw: parseFileCostPerKw(form.fileCostPerKw),
+        leaserPaid: parseInrAmount(form.leaserPaid),
+        leaserRemaining: parseInrAmount(form.leaserRemaining),
       }
     } else {
       const name = form.name.trim()
@@ -426,6 +446,9 @@ export function AdminSubvendorPanel({
         category: form.category.trim() || "Other",
         notes: form.notes.trim(),
         profitRatio: parseProfitRatio(form.profitRatio),
+        fileCostPerKw: parseFileCostPerKw(form.fileCostPerKw),
+        leaserPaid: parseInrAmount(form.leaserPaid),
+        leaserRemaining: parseInrAmount(form.leaserRemaining),
       }
     }
 
@@ -615,7 +638,7 @@ export function AdminSubvendorPanel({
       </CardContent>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {kind === "office_inside"
@@ -704,6 +727,19 @@ export function AdminSubvendorPanel({
               </Select>
             </div>
             <div>
+              <Label>File cost (₹ / kW)</Label>
+              <Input
+                inputMode="numeric"
+                className="tabular-nums"
+                placeholder="1000"
+                value={form.fileCostPerKw}
+                onChange={(e) => setForm((p) => ({ ...p, fileCostPerKw: e.target.value }))}
+              />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                File charges = rounded kW × this rate. 4.4 kW → 4, 4.6 kW → 5.
+              </p>
+            </div>
+            <div>
               <Label>Profit ratio (%)</Label>
               <Input
                 inputMode="decimal"
@@ -713,6 +749,36 @@ export function AdminSubvendorPanel({
                 onChange={(e) => setForm((p) => ({ ...p, profitRatio: e.target.value }))}
               />
               <p className="text-[11px] text-muted-foreground mt-1">Percent of this vendor's profit, 0–100.</p>
+              {editingId ? (
+                <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300 mt-1.5">
+                  Profit {formatLedgerInr(vendorProfitById[editingId] ?? 0)}
+                </p>
+              ) : null}
+            </div>
+            <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-3 space-y-3">
+              <p className="text-sm font-medium">Leaser</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Paid</Label>
+                  <Input
+                    inputMode="numeric"
+                    className="tabular-nums"
+                    placeholder="0"
+                    value={form.leaserPaid}
+                    onChange={(e) => setForm((p) => ({ ...p, leaserPaid: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <Label>Remaining</Label>
+                  <Input
+                    inputMode="numeric"
+                    className="tabular-nums"
+                    placeholder="0"
+                    value={form.leaserRemaining}
+                    onChange={(e) => setForm((p) => ({ ...p, leaserRemaining: e.target.value }))}
+                  />
+                </div>
+              </div>
             </div>
             <div>
               <Label>Notes</Label>
@@ -844,14 +910,31 @@ function VendorGrid({
               </Button>
             </div>
           </div>
-          <div className="mt-3">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
-            <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-              {formatLedgerInr(profitAmount)}
-            </p>
-            <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
-              {formatProfitRatioLabel(row.profitRatio)}
-            </p>
+          <div className="mt-3 space-y-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+              <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                {formatLedgerInr(profitAmount)}
+              </p>
+              <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+                {formatProfitRatioLabel(row.profitRatio)}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File cost</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  ₹{parseFileCostPerKw(row.fileCostPerKw).toLocaleString("en-IN")}/kW
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Leaser</p>
+                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(row.leaserPaid)}</p>
+                <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
+                  Remaining {formatLedgerInr(row.leaserRemaining)}
+                </p>
+              </div>
+            </div>
           </div>
         </div>
         )
