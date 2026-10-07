@@ -12,44 +12,7 @@ import { isQuotationAdminAccess } from "@/lib/admin-access"
 import { fetchAllPaginatedQuotationListPages } from "@/lib/fetch-paginated-quotation-list"
 import { flattenQuotationListRow } from "@/lib/operational-install-queue"
 import type { Quotation } from "@/lib/quotation-context"
-import type { SubvendorDealerOption } from "@/lib/admin-subvendors"
-
-function pickDealerList(response: unknown): SubvendorDealerOption[] {
-  if (!response || typeof response !== "object") return []
-  const root = response as Record<string, unknown>
-  const nested =
-    root.data && typeof root.data === "object" && !Array.isArray(root.data)
-      ? (root.data as Record<string, unknown>)
-      : null
-  const raw = [
-    root.dealers,
-    nested?.dealers,
-    nested?.items,
-    root.items,
-    Array.isArray(root.data) ? root.data : null,
-    Array.isArray(response) ? response : null,
-  ].find((value) => Array.isArray(value))
-  if (!Array.isArray(raw)) return []
-  return raw
-    .map((row) => {
-      if (!row || typeof row !== "object") return null
-      const d = row as Record<string, unknown>
-      const id = String(d.id || "").trim()
-      if (!id) return null
-      const address =
-        d.address && typeof d.address === "object" ? (d.address as { city?: string }) : null
-      return {
-        id,
-        username: String(d.username || ""),
-        firstName: String(d.firstName || d.first_name || ""),
-        lastName: String(d.lastName || d.last_name || ""),
-        mobile: String(d.mobile || d.phone || ""),
-        email: String(d.email || ""),
-        address,
-      } satisfies SubvendorDealerOption
-    })
-    .filter((row): row is SubvendorDealerOption => Boolean(row))
-}
+import { pickDealerList, type SubvendorDealerOption } from "@/lib/admin-subvendors"
 
 export default function SubvendorsPage() {
   const { isAuthenticated, role, dealer, authReady } = useAuth()

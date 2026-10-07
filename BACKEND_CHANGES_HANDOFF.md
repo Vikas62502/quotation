@@ -4294,6 +4294,19 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 
 ---
 
+## 56. Office Inside Excel — dealer + install/meter date-or-status (**§BJ**) — Oct 2026
+
+**Frontend (shipped):** Download Excel includes **Dealer Name** and **Dealer Mobile**. Installation / Metering columns show **date only** when approved, otherwise Pending / In Progress. Removed Payment Status, File login, Installment Count, Admin Approval, Final Confirmation, File Status.
+
+**Backend (P0):** No new download endpoint. On `GET /quotations?status=approved` and `GET /admin/quotations`:
+1. Always nest `dealer: { id, firstName, lastName, mobile }` (echo snake_case too).
+2. Persist and echo installer / metering approved-at timestamps (`installerApprovedAt`, `mcoAt` / `meteringApprovedAt`).
+3. Keep `installationStatus` + metering status fields (UI + Excel).
+
+**Copy-paste:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts` · REQUIRED **§BJ**
+
+---
+
 
 
 

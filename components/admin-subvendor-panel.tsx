@@ -10,7 +10,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
-import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck } from "lucide-react"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import { summarizeQuotationPayment } from "@/lib/dealer-payment-summary"
@@ -18,7 +27,6 @@ import { getQuotationSystemKw } from "@/lib/quotation-system-kw"
 import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
 import { useToast } from "@/hooks/use-toast"
 import {
-  SUBVENDOR_CATEGORIES,
   createAdminSubvendor,
   dealerDisplayName,
   deleteAdminSubvendor,
@@ -33,6 +41,12 @@ import {
   pickSubvendorListFromApi,
   pickSubvendorRecordFromApi,
   readAdminSubvendors,
+  readLeaserPayments,
+  writeLeaserPayments,
+  pickLeaserPaymentList,
+  leaserPaymentsToApiBody,
+  newLeaserPaymentId,
+  LEASER_PAYMENT_TYPES,
   snapshotFromDealer,
   subvendorToApiBody,
   updateAdminSubvendor,
@@ -40,6 +54,7 @@ import {
   type AdminSubvendorRecord,
   type SubvendorDealerOption,
   type SubvendorKind,
+  type SubvendorLeaserPayment,
 } from "@/lib/admin-subvendors"
 import { cn } from "@/lib/utils"
 import {
@@ -90,6 +105,7 @@ type InsideLedgerRow = {
   vendorName: string
   vendorMobile: string
   systemSize: string
+  systemKw: number
   paymentType: LedgerPaymentType
   paymentTypeLabel: string
   subtotal: number
@@ -137,15 +153,31 @@ function matchesSearch(row: AdminSubvendorRecord, q: string) {
 export function AdminSubvendorPanel({
   dealers = [],
   quotations = [],
+  lockKind,
+  embedded = false,
+  search: searchProp,
+  onSearchChange,
+  hideSearch = false,
 }: {
   dealers?: SubvendorDealerOption[]
   quotations?: Quotation[]
+  lockKind?: SubvendorKind
+  embedded?: boolean
+  search?: string
+  onSearchChange?: (value: string) => void
+  hideSearch?: boolean
 }) {
   const { toast } = useToast()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
   const [rows, setRows] = useState<AdminSubvendorRecord[]>(() => readAdminSubvendors())
-  const [kind, setKind] = useState<SubvendorKind>("office_inside")
-  const [search, setSearch] = useState("")
+  const [kindState, setKind] = useState<SubvendorKind>(lockKind ?? "office_inside")
+  const kind = lockKind ?? kindState
+  const [internalSearch, setInternalSearch] = useState("")
+  const search = searchProp ?? internalSearch
+  const setSearch = (value: string) => {
+    if (onSearchChange) onSearchChange(value)
+    else setInternalSearch(value)
+  }
   const [ledgerSearch, setLedgerSearch] = useState("")
   const [ledgerVendorId, setLedgerVendorId] = useState("all")
   const [ledgerMap, setLedgerMap] = useState<Record<string, SubvendorLedgerAmounts>>(() =>
@@ -155,15 +187,17 @@ export function AdminSubvendorPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyForm)
   const [savingVendor, setSavingVendor] = useState(false)
+  const [leaserPayments, setLeaserPayments] = useState<SubvendorLeaserPayment[]>(() => readLeaserPayments())
 
   useEffect(() => {
     let cancelled = false
     const loadRemote = async () => {
       if (!useApi) return
       try {
-        const [vendorsRes, ledgerRes] = await Promise.all([
+        const [vendorsRes, ledgerRes, leaserRes] = await Promise.all([
           api.admin.subvendors.getAll(),
           api.admin.subvendors.ledger.getAll(),
+          api.admin.subvendors.leaser.getAll().catch(() => null),
         ])
         if (cancelled) return
         const vendors = pickSubvendorListFromApi(vendorsRes)
@@ -172,6 +206,11 @@ export function AdminSubvendorPanel({
         const ledger = pickLedgerMapFromApi(ledgerRes)
         writeSubvendorLedger(ledger)
         setLedgerMap(ledger)
+        if (leaserRes) {
+          const payments = pickLeaserPaymentList(leaserRes)
+          writeLeaserPayments(payments)
+          setLeaserPayments(payments)
+        }
       } catch {
         // Keep local cache when the subvendor API is not live yet.
       }
@@ -297,6 +336,7 @@ export function AdminSubvendorPanel({
             }),
           vendorMobile: vendor?.mobile || quotation.dealer?.mobile || "",
           systemSize: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
+          systemKw: getQuotationSystemKw(quotation),
           paymentType,
           paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
           subtotal: payment.subtotal,
@@ -351,6 +391,65 @@ export function AdminSubvendorPanel({
       ),
     [ledgerRows],
   )
+
+  const vendorLeaserStats = useMemo(() => {
+    const paidByVendor: Record<string, number> = {}
+    for (const payment of leaserPayments) {
+      paidByVendor[payment.vendorId] = (paidByVendor[payment.vendorId] || 0) + payment.amount
+    }
+    const stats: Record<string, VendorLeaserStats> = {}
+    for (const vendor of insideRows) {
+      stats[vendor.id] = {
+        totalFile: 0,
+        fileAmount: 0,
+        totalKw: 0,
+        totalProfit: vendorProfitById[vendor.id] ?? 0,
+        paid: paidByVendor[vendor.id] ?? 0,
+        currentBalance: 0,
+      }
+    }
+    const approved = quotations.filter(isApprovedQuotation)
+    const current = keepCurrentQuotationsOnly(approved, approved)
+    for (const quotation of current) {
+      const dealerId = String(quotation.dealerId || quotation.dealer?.id || "")
+      const vendor = vendorsByDealerId.get(dealerId)
+      if (!vendor || !stats[vendor.id]) continue
+      const stored = getLedgerAmounts(ledgerMap, quotation.id)
+      const autoFileCharges = fileChargesFromVendorRate(
+        getQuotationSystemKw(quotation),
+        vendor.fileCostPerKw ?? 0,
+      )
+      const fileCharges =
+        stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
+      stats[vendor.id].totalFile += 1
+      stats[vendor.id].fileAmount += fileCharges
+      stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
+    }
+    for (const vendor of insideRows) {
+      const item = stats[vendor.id]
+      item.currentBalance = item.paid
+    }
+    return stats
+  }, [insideRows, ledgerMap, leaserPayments, quotations, vendorProfitById, vendorsByDealerId])
+
+  const customersByVendorId = useMemo(() => {
+    const out: Record<string, { quotationId: string; name: string; mobile: string; kw: string }[]> = {}
+    const approved = quotations.filter(isApprovedQuotation)
+    const current = keepCurrentQuotationsOnly(approved, approved)
+    for (const quotation of current) {
+      const dealerId = String(quotation.dealerId || quotation.dealer?.id || "")
+      const vendor = vendorsByDealerId.get(dealerId)
+      if (!vendor) continue
+      const payment = summarizeQuotationPayment(quotation)
+      ;(out[vendor.id] ||= []).push({
+        quotationId: quotation.id,
+        name: payment.customerName,
+        mobile: payment.customerMobile,
+        kw: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
+      })
+    }
+    return out
+  }, [quotations, vendorsByDealerId])
 
   useEffect(() => {
     if (ledgerVendorId !== "all" && !insideDealerIds.has(ledgerVendorId)) {
@@ -514,11 +613,154 @@ export function AdminSubvendorPanel({
     setRows(readAdminSubvendors())
   }
 
+  const saveLeaser = async (id: string, paidRaw: string, remainingRaw: string) => {
+    const row = rows.find((item) => item.id === id)
+    if (!row) return
+    const payload: Omit<AdminSubvendorRecord, "id" | "createdAt"> = {
+      kind: row.kind,
+      dealerId: row.dealerId,
+      name: row.name,
+      contactName: row.contactName,
+      mobile: row.mobile,
+      email: row.email,
+      city: row.city,
+      category: row.category || "Other",
+      notes: row.notes,
+      profitRatio: row.profitRatio,
+      fileCostPerKw: row.fileCostPerKw,
+      leaserPaid: parseInrAmount(paidRaw),
+      leaserRemaining: parseInrAmount(remainingRaw),
+    }
+    if (useApi) {
+      try {
+        const response = await api.admin.subvendors.update(id, subvendorToApiBody(payload))
+        const remote = pickSubvendorRecordFromApi(response)
+        updateAdminSubvendor(id, remote ?? payload)
+      } catch {
+        updateAdminSubvendor(id, payload)
+      }
+    } else {
+      updateAdminSubvendor(id, payload)
+    }
+    setRows(readAdminSubvendors())
+  }
+
+  const saveLeaserPayments = async (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => {
+    const all = [
+      ...leaserPayments.filter((row) => row.vendorId !== vendorId),
+      ...nextPayments.filter((row) => row.vendorId === vendorId),
+    ]
+    writeLeaserPayments(all)
+    setLeaserPayments(all)
+    const paid = nextPayments.reduce((sum, row) => sum + row.amount, 0)
+    const fileAmount = vendorLeaserStats[vendorId]?.fileAmount ?? 0
+    const remaining = Math.max(0, fileAmount - paid)
+    await saveLeaser(vendorId, String(paid), String(remaining))
+    if (!useApi) return
+    try {
+      await api.admin.subvendors.leaser.replace(
+        vendorId,
+        leaserPaymentsToApiBody(vendorId, nextPayments, {
+          leaserPaid: paid,
+          leaserRemaining: remaining,
+        }),
+      )
+    } catch (error) {
+      toast({
+        title: "Leaser saved on this device",
+        description:
+          error instanceof ApiError
+            ? apiErrorToUserMessage(error)
+            : "Backend dealer leaser route is not live yet.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const canSave =
     kind === "office_inside" ? Boolean(form.dealerId) : Boolean(form.name.trim())
 
+  const outsideVendorBody = (
+    <>
+      <VendorToolbar
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Search office outside vendors..."
+        addLabel="Register vendor"
+        onAdd={openCreate}
+        hideSearch={hideSearch}
+      />
+      <VendorGrid
+        rows={filtered}
+        emptyLabel={outsideRows.length === 0 ? "No office outside vendors yet" : "No matching vendors"}
+        emptyHint={
+          outsideRows.length === 0
+            ? "Register an external vendor with basic details."
+            : undefined
+        }
+        kindLabel="Office outside"
+        onEdit={openEdit}
+        onRemove={remove}
+        onAdd={openCreate}
+        addLabel="Register vendor"
+        showAdd={outsideRows.length === 0}
+        compact={embedded}
+      />
+    </>
+  )
+
+  const insideVendorBody = (
+    <>
+      <VendorToolbar
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Search office vendors..."
+        addLabel="Select dealer"
+        onAdd={openCreate}
+        addDisabled={availableDealers.length === 0 && !editingId}
+        hideSearch={hideSearch}
+      />
+      <VendorGrid
+        rows={filtered}
+        emptyLabel={insideRows.length === 0 ? "No office vendors yet" : "No matching vendors"}
+        emptyHint={
+          insideRows.length === 0
+            ? dealers.length === 0
+              ? "Add dealers in Users first, then select them here."
+              : "Select a dealer to add them as an office vendor."
+            : undefined
+        }
+        kindLabel="Office vendor"
+        onEdit={openEdit}
+        onRemove={remove}
+        onAdd={openCreate}
+        addLabel="Select dealer"
+        showAdd={insideRows.length === 0 && availableDealers.length > 0}
+        compact
+        showStats={false}
+        profitById={vendorProfitById}
+      />
+      {filtered.length > 0 ? (
+        <DealerLeaserManager
+          vendors={filtered}
+          statsById={vendorLeaserStats}
+          customersByVendorId={customersByVendorId}
+          payments={leaserPayments}
+          onSave={saveLeaserPayments}
+        />
+      ) : null}
+    </>
+  )
+
   return (
-    <Card>
+    <>
+      {embedded && lockKind === "office_outside" ? (
+        <div className="space-y-3">{outsideVendorBody}</div>
+      ) : embedded && lockKind === "office_inside" ? (
+        <div className="space-y-3">{insideVendorBody}</div>
+      ) : (
+    <Card className={embedded ? "border-0 shadow-none py-0" : undefined}>
+              {embedded ? null : (
       <CardHeader>
         <div>
           <CardTitle>Subvendors</CardTitle>
@@ -528,12 +770,14 @@ export function AdminSubvendorPanel({
             </p>
         </div>
       </CardHeader>
-      <CardContent>
+              )}
+      <CardContent className={embedded ? "p-0" : undefined}>
         <Tabs
           value={kind}
           onValueChange={(value) => {
+            if (lockKind) return
             setKind(value === "office_outside" ? "office_outside" : "office_inside")
-            setSearch("")
+            if (!onSearchChange) setSearch("")
           }}
           className="space-y-4"
         >
@@ -611,31 +855,12 @@ export function AdminSubvendorPanel({
           </TabsContent>
 
           <TabsContent value="office_outside" className="space-y-4">
-            <VendorToolbar
-              search={search}
-              onSearch={setSearch}
-              searchPlaceholder="Search office outside vendors..."
-              addLabel="Register vendor"
-              onAdd={openCreate}
-            />
-            <VendorGrid
-              rows={filtered}
-              emptyLabel={outsideRows.length === 0 ? "No office outside vendors yet" : "No matching vendors"}
-              emptyHint={
-                outsideRows.length === 0
-                  ? "Register an external vendor with basic details."
-                  : undefined
-              }
-              kindLabel="Office outside"
-              onEdit={openEdit}
-              onRemove={remove}
-              onAdd={openCreate}
-              addLabel="Register vendor"
-              showAdd={outsideRows.length === 0}
-            />
+            {outsideVendorBody}
           </TabsContent>
         </Tabs>
       </CardContent>
+    </Card>
+      )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
@@ -712,21 +937,6 @@ export function AdminSubvendorPanel({
               </>
             )}
             <div>
-              <Label>Category</Label>
-              <Select value={form.category} onValueChange={(v) => setForm((p) => ({ ...p, category: v }))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {SUBVENDOR_CATEGORIES.map((cat) => (
-                    <SelectItem key={cat} value={cat}>
-                      {cat}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
               <Label>File cost (₹ / kW)</Label>
               <Input
                 inputMode="numeric"
@@ -802,7 +1012,427 @@ export function AdminSubvendorPanel({
           </div>
         </DialogContent>
       </Dialog>
-    </Card>
+    </>
+  )
+}
+
+type VendorLeaserStats = {
+  totalFile: number
+  fileAmount: number
+  totalKw: number
+  totalProfit: number
+  paid: number
+  currentBalance: number
+}
+
+const emptyVendorLeaserStats: VendorLeaserStats = {
+  totalFile: 0,
+  fileAmount: 0,
+  totalKw: 0,
+  totalProfit: 0,
+  paid: 0,
+  currentBalance: 0,
+}
+
+type LeaserCustomerOption = {
+  quotationId: string
+  name: string
+  mobile: string
+  kw: string
+}
+
+type LeaserPaymentDraft = {
+  key: string
+  paymentNumber: number
+  date: string
+  amount: string
+  paymentType: string
+  remark: string
+  customerIds: string[]
+}
+
+function todayInputDate() {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${y}-${m}-${day}`
+}
+
+function emptyLeaserDraft(paymentNumber = 1): LeaserPaymentDraft {
+  return {
+    key: newLeaserPaymentId(),
+    paymentNumber,
+    date: todayInputDate(),
+    amount: "",
+    paymentType: "Cash",
+    remark: "",
+    customerIds: [],
+  }
+}
+
+function LeaserCustomerPicker({
+  customers,
+  selectedIds,
+  onChange,
+}: {
+  customers: LeaserCustomerOption[]
+  selectedIds: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const selected = customers.filter((row) => selectedIds.includes(row.quotationId))
+  const triggerLabel =
+    selected.length === 0
+      ? "Search customers..."
+      : selected.length === 1
+        ? selected[0].name
+        : `${selected[0].name} +${selected.length - 1}`
+
+  const toggleCustomer = (quotationId: string) => {
+    onChange(
+      selectedIds.includes(quotationId)
+        ? selectedIds.filter((id) => id !== quotationId)
+        : [...selectedIds, quotationId],
+    )
+  }
+
+  return (
+    <div className="min-w-0">
+      <Label>Customers</Label>
+      {customers.length === 0 ? (
+        <p className="text-xs text-muted-foreground mt-1">No customers yet.</p>
+      ) : (
+        <Popover modal={false} open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-1 h-9 w-full justify-between px-3 font-normal"
+            >
+              <span className={cn("truncate text-left", selected.length === 0 && "text-muted-foreground")}>
+                {triggerLabel}
+              </span>
+              <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-[min(22rem,calc(100vw-2rem))] p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Search name, mobile, kW..." />
+              <CommandList className="max-h-56">
+                <CommandEmpty>No customer found.</CommandEmpty>
+                <CommandGroup>
+                  {customers.map((customer) => {
+                    const checked = selectedIds.includes(customer.quotationId)
+                    return (
+                      <CommandItem
+                        key={customer.quotationId}
+                        value={`${customer.name} ${customer.mobile} ${customer.kw} ${customer.quotationId}`}
+                        onSelect={() => toggleCustomer(customer.quotationId)}
+                      >
+                        <Check className={cn("h-4 w-4", checked ? "opacity-100" : "opacity-0")} />
+                        <span className="min-w-0">
+                          <span className="block truncate leading-tight">{customer.name}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {customer.mobile || "No mobile"} · {customer.kw}
+                          </span>
+                        </span>
+                      </CommandItem>
+                    )
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  )
+}
+
+function DealerLeaserManager({
+  vendors,
+  statsById,
+  customersByVendorId,
+  payments,
+  onSave,
+}: {
+  vendors: AdminSubvendorRecord[]
+  statsById: Record<string, VendorLeaserStats>
+  customersByVendorId: Record<string, LeaserCustomerOption[]>
+  payments: SubvendorLeaserPayment[]
+  onSave: (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => Promise<void> | void
+}) {
+  const [manageVendorId, setManageVendorId] = useState<string | null>(null)
+  const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
+  const [saving, setSaving] = useState(false)
+  const manageVendor = vendors.find((row) => row.id === manageVendorId) ?? null
+  const customers = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
+  const manageStats = manageVendorId ? statsById[manageVendorId] ?? emptyVendorLeaserStats : null
+
+  const openManage = (vendorId: string) => {
+    const existing = payments
+      .filter((row) => row.vendorId === vendorId)
+      .slice()
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+      .map((row, index) => ({
+        key: row.id,
+        paymentNumber: row.sortOrder > 0 ? row.sortOrder : index + 1,
+        date: row.date || todayInputDate(),
+        amount: row.amount ? formatInrAmountInput(row.amount) : "",
+        paymentType: row.paymentType || "Cash",
+        remark: row.remark,
+        customerIds: row.customerIds.slice(),
+      }))
+    setManageVendorId(vendorId)
+    setDrafts(existing.length ? [...existing].reverse() : [emptyLeaserDraft(1)])
+  }
+
+  const closeManage = () => {
+    setManageVendorId(null)
+    setDrafts([])
+  }
+
+  const addPayment = () => {
+    setDrafts((prev) => {
+      const nextNumber = prev.reduce((max, row) => Math.max(max, row.paymentNumber), 0) + 1
+      return [emptyLeaserDraft(nextNumber), ...prev]
+    })
+  }
+
+  const removePayment = (key: string) => {
+    setDrafts((prev) => {
+      const next = prev.filter((row) => row.key !== key)
+      return next.length ? next : [emptyLeaserDraft(1)]
+    })
+  }
+
+  const patchDraft = (key: string, patch: Partial<LeaserPaymentDraft>) => {
+    setDrafts((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)))
+  }
+
+  const saveManage = async () => {
+    if (!manageVendorId) return
+    const next = drafts
+      .slice()
+      .sort((a, b) => a.paymentNumber - b.paymentNumber)
+      .map((draft) => ({
+        id: draft.key,
+        vendorId: manageVendorId,
+        date: draft.date.trim(),
+        amount: parseInrAmount(draft.amount),
+        paymentType: draft.paymentType || "Cash",
+        remark: draft.remark.trim(),
+        customerIds: draft.customerIds,
+        sortOrder: draft.paymentNumber,
+      }))
+      .filter((row) => row.amount > 0 || row.remark || row.customerIds.length > 0)
+    setSaving(true)
+    try {
+      await onSave(manageVendorId, next)
+      closeManage()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border border-border/70 bg-card p-3 sm:p-4 space-y-3">
+      <div>
+        <p className="text-sm font-semibold">Dealer leaser</p>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Total file, kW, current balance, and profit for each office vendor.
+        </p>
+      </div>
+      <div className="space-y-2">
+        {vendors.map((vendor) => {
+          const stats = statsById[vendor.id] ?? emptyVendorLeaserStats
+          return (
+            <div
+              key={vendor.id}
+              className="grid grid-cols-2 sm:grid-cols-[minmax(0,1.3fr)_repeat(4,minmax(5rem,0.7fr))_auto] gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5"
+            >
+              <div className="col-span-2 sm:col-span-1 min-w-0">
+                <p className="text-sm font-medium truncate">{vendor.name}</p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {vendor.mobile || vendor.contactName || vendor.dealerId}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total file</p>
+                <p className="text-sm font-semibold tabular-nums">{stats.totalFile}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">kW</p>
+                <p className="text-sm font-semibold tabular-nums">{formatLedgerSystemSize(stats.totalKw)}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Current balance</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {formatLedgerInr(stats.currentBalance)}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
+                <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                  {formatLedgerInr(stats.totalProfit)}
+                </p>
+              </div>
+              <div className="col-span-2 sm:col-span-1 flex justify-end">
+                <Button size="sm" className="h-8" onClick={() => openManage(vendor.id)}>
+                  Manage
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <Dialog
+        open={Boolean(manageVendorId)}
+        onOpenChange={(open) => {
+          if (!open) closeManage()
+        }}
+      >
+        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-6xl w-full max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <DialogTitle>Dealer leaser</DialogTitle>
+                <DialogDescription>
+                  Add date, amount, payment type, remark, and customers. Each payment stays in one row.
+                </DialogDescription>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button type="button" variant="outline" size="sm" className="h-9" onClick={addPayment}>
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  Add payment
+                </Button>
+                <Button size="sm" className="h-9" onClick={() => void saveManage()} disabled={saving}>
+                  {saving ? "Saving..." : "Save payments"}
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+          {manageVendor ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
+                <div>
+                  <p className="text-sm font-semibold">{manageVendor.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {manageVendor.mobile || manageVendor.contactName || manageVendor.dealerId}
+                  </p>
+                </div>
+                {manageStats ? (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total file</p>
+                      <p className="text-sm font-semibold tabular-nums">{manageStats.totalFile}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">kW</p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatLedgerSystemSize(manageStats.totalKw)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Current balance</p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatLedgerInr(manageStats.currentBalance)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
+                      <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                        {formatLedgerInr(manageStats.totalProfit)}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+              <div className="space-y-2">
+                {drafts.map((draft) => (
+                  <div
+                    key={draft.key}
+                    className="rounded-lg border border-border/60 px-3 py-2.5 grid grid-cols-1 md:grid-cols-[auto_8.5rem_7.5rem_8.5rem_minmax(8rem,1fr)_minmax(14rem,1.5fr)_auto] gap-2 items-end"
+                  >
+                    <div>
+                      <Label className="opacity-0 select-none">Payment</Label>
+                      <p className="h-9 flex items-center text-xs font-semibold text-muted-foreground whitespace-nowrap">
+                        Payment {draft.paymentNumber}
+                      </p>
+                    </div>
+                    <div>
+                      <Label>Date</Label>
+                      <Input
+                        type="date"
+                        className="h-9"
+                        value={draft.date}
+                        onChange={(e) => patchDraft(draft.key, { date: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Amount</Label>
+                      <Input
+                        inputMode="numeric"
+                        className="h-9 tabular-nums"
+                        placeholder="0"
+                        value={draft.amount}
+                        onChange={(e) => patchDraft(draft.key, { amount: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label>Payment type</Label>
+                      <Select
+                        value={draft.paymentType}
+                        onValueChange={(value) => patchDraft(draft.key, { paymentType: value })}
+                      >
+                        <SelectTrigger className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {LEASER_PAYMENT_TYPES.map((type) => (
+                            <SelectItem key={type} value={type}>
+                              {type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div>
+                      <Label>Remark</Label>
+                      <Input
+                        className="h-9"
+                        value={draft.remark}
+                        onChange={(e) => patchDraft(draft.key, { remark: e.target.value })}
+                      />
+                    </div>
+                    <LeaserCustomerPicker
+                      customers={customers}
+                      selectedIds={draft.customerIds}
+                      onChange={(customerIds) => patchDraft(draft.key, { customerIds })}
+                    />
+                    {drafts.length > 1 ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-9 text-destructive"
+                        onClick={() => removePayment(draft.key)}
+                      >
+                        Remove
+                      </Button>
+                    ) : (
+                      <span />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 
@@ -813,6 +1443,7 @@ function VendorToolbar({
   addLabel,
   onAdd,
   addDisabled,
+  hideSearch = false,
 }: {
   search: string
   onSearch: (value: string) => void
@@ -820,19 +1451,22 @@ function VendorToolbar({
   addLabel: string
   onAdd: () => void
   addDisabled?: boolean
+  hideSearch?: boolean
 }) {
   return (
-    <div className="flex flex-col sm:flex-row gap-3">
-      <div className="relative flex-1">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-        <Input
-          placeholder={searchPlaceholder}
-          value={search}
-          onChange={(e) => onSearch(e.target.value)}
-          className="pl-9"
-        />
-      </div>
-      <Button size="sm" className="shrink-0 h-10" onClick={onAdd} disabled={addDisabled}>
+    <div className={hideSearch ? "flex justify-end" : "flex flex-col sm:flex-row gap-3"}>
+      {hideSearch ? null : (
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder={searchPlaceholder}
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+      )}
+      <Button size="sm" className="shrink-0 h-9" onClick={onAdd} disabled={addDisabled}>
         <Plus className="w-4 h-4 mr-1" />
         {addLabel}
       </Button>
@@ -852,6 +1486,7 @@ function VendorGrid({
   showAdd,
   compact,
   profitById,
+  showStats = true,
 }: {
   rows: AdminSubvendorRecord[]
   emptyLabel: string
@@ -864,6 +1499,7 @@ function VendorGrid({
   showAdd: boolean
   compact?: boolean
   profitById?: Record<string, number>
+  showStats?: boolean
 }) {
   if (rows.length === 0) {
     return (
@@ -893,7 +1529,6 @@ function VendorGrid({
                 <Badge variant="outline" className="text-[10px] font-medium">
                   {kindLabel}
                 </Badge>
-                <span className="text-xs text-muted-foreground">{row.category || "Other"}</span>
               </div>
             </div>
             <div className="flex shrink-0 gap-1">
@@ -910,6 +1545,7 @@ function VendorGrid({
               </Button>
             </div>
           </div>
+          {showStats ? (
           <div className="mt-3 space-y-2">
             <div>
               <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
@@ -936,6 +1572,7 @@ function VendorGrid({
               </div>
             </div>
           </div>
+          ) : null}
         </div>
         )
       })}

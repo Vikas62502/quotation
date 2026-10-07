@@ -4770,6 +4770,24 @@ export const api = {
           })
         },
       },
+
+      leaser: {
+        getAll: async (params?: { vendorId?: string }) => {
+          const queryParams = new URLSearchParams()
+          if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
+          const query = queryParams.toString()
+          return apiRequest(`/admin/subvendors/leaser${query ? `?${query}` : ""}`, {
+            suppressErrorLog: true,
+          })
+        },
+
+        replace: async (vendorId: string, body: Record<string, unknown>) => {
+          return apiRequest(`/admin/subvendors/${vendorId}/leaser`, {
+            method: "PUT",
+            body,
+          })
+        },
+      },
     },
   },
 

@@ -6876,4 +6876,61 @@ No new route. Same dealer JWT as create quotation.
 
 ---
 
+## §BG — Dealer leaser payments (Subvendor office) — Oct 2026
+
+Account Management → **Subvendor office** → Dealer leaser → **Manage** currently stores payments in `localStorage` only.
+
+Persist each payment (date, amount, payment type, remark, multi-select customer quotation ids) and vendor file-cost / leaser totals so refresh and other devices keep the same rows.
+
+### Tables
+
+1. `subvendors` columns (frontend already sends these on POST/PATCH vendor):
+   - `file_cost_per_kw` default `1000`
+   - `leaser_paid` default `0` — **this is Current balance**
+   - `leaser_remaining` default `0`
+2. `subvendor_leaser_payments` — rows per office_inside vendor; `customer_ids` JSONB array of quotation ids.
+
+### Current balance
+
+**Initially 0.** After save, `currentBalance = SUM(payment.amount) = leaser_paid`.
+
+Do **not** set current balance from file charges × kW or from approved-customer count.
+
+### Endpoints
+
+- `GET /admin/subvendors/leaser` (optional `?vendorId=`)
+- `GET /admin/subvendors/:id/leaser`
+- `PUT /admin/subvendors/:id/leaser` — **replace all** payments for that vendor
+
+Auth: same admin JWT as **§BD**.
+
+Frontend: `lib/api.ts` → `api.admin.subvendors.leaser`. SPA falls back to localStorage if the route is not live yet.
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts`
+
+---
+
+## §BJ — Office Inside Download Excel: dealer + date-or-status (Oct 2026)
+
+Account Management → **Office Inside** → **Download Excel** is still client-side CSV (no new download route).
+
+### Must on `GET /api/quotations?status=approved` (and `GET /api/admin/quotations`)
+
+1. Nested **`dealer`** on every row: `id`, `firstName`/`first_name`, `lastName`/`last_name`, **`mobile`** (alias `phone`). If `dealer` is missing, Excel **Dealer Name** / **Dealer Mobile** are blank.
+2. Installation / metering **approved timestamps** (ISO):
+   - Installation: `installerApprovedAt` / `installer_approved_at` (aliases `installationApprovedAt`, `installationCompletedAt`)
+   - Metering: `mcoAt` / `mco_at` when completed; else `meteringApprovedAt` / `metering_approved_at`
+3. Keep returning `installationStatus` + metering fields (same as **§AC**) so the SPA can decide Pending / In Progress / approved.
+
+### Excel cell rules (SPA)
+
+- **Installation Status** / **Metering Status**: if that stage is completed/approved → **date only**; otherwise status text (`Pending` / `In Progress`).
+- No longer exported: Payment Status, File login date/status, Installment Count, Admin Approval Status, Final Confirmation Status, File Status.
+
+Do **not** drop those fields from GET — the payment cards still use them.
+
+**Copy-paste:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`
+
+---
+
 

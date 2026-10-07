@@ -249,3 +249,159 @@ export const SUBVENDOR_CATEGORIES = [
   "Transport",
   "Other",
 ] as const
+
+export function pickDealerList(response: unknown): SubvendorDealerOption[] {
+  if (!response || typeof response !== "object") return []
+  const root = response as Record<string, unknown>
+  const nested =
+    root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? (root.data as Record<string, unknown>)
+      : null
+  const raw = [
+    root.dealers,
+    nested?.dealers,
+    nested?.items,
+    root.items,
+    Array.isArray(root.data) ? root.data : null,
+    Array.isArray(response) ? response : null,
+  ].find((value) => Array.isArray(value))
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map((row) => {
+      if (!row || typeof row !== "object") return null
+      const d = row as Record<string, unknown>
+      const id = String(d.id || "").trim()
+      if (!id) return null
+      const address =
+        d.address && typeof d.address === "object" ? (d.address as { city?: string }) : null
+      return {
+        id,
+        username: String(d.username || ""),
+        firstName: String(d.firstName || d.first_name || ""),
+        lastName: String(d.lastName || d.last_name || ""),
+        mobile: String(d.mobile || d.phone || ""),
+        email: String(d.email || ""),
+        address,
+      } satisfies SubvendorDealerOption
+    })
+    .filter((row): row is SubvendorDealerOption => Boolean(row))
+}
+
+export const ADMIN_LEASER_PAYMENTS_STORAGE_KEY = "adminSubvendorLeaserPayments"
+
+export type SubvendorLeaserPayment = {
+  id: string
+  vendorId: string
+  date: string
+  amount: number
+  paymentType: string
+  remark: string
+  customerIds: string[]
+  sortOrder: number
+}
+
+export const LEASER_PAYMENT_TYPES = ["Cash", "Bank", "UPI", "Cheque", "Other"] as const
+
+function normalizeLeaserPayment(raw: unknown): SubvendorLeaserPayment | null {
+  if (!raw || typeof raw !== "object") return null
+  const row = raw as Record<string, unknown>
+  const id = asText(row.id).trim()
+  const vendorId = asText(row.vendorId ?? row.vendor_id).trim()
+  if (!id || !vendorId) return null
+  const customerIds = Array.isArray(row.customerIds)
+    ? row.customerIds.map((value) => asText(value).trim()).filter(Boolean)
+    : Array.isArray(row.customer_ids)
+      ? row.customer_ids.map((value) => asText(value).trim()).filter(Boolean)
+      : []
+  return {
+    id,
+    vendorId,
+    date: asText(row.date ?? row.payment_date).trim(),
+    amount: parseInrAmount(row.amount),
+    paymentType: asText(row.paymentType ?? row.payment_type).trim() || "Cash",
+    remark: asText(row.remark ?? row.remarks).trim(),
+    customerIds,
+    sortOrder: parseInrAmount(row.sortOrder ?? row.sort_order ?? row.paymentNumber),
+  }
+}
+
+export function readLeaserPayments(): SubvendorLeaserPayment[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADMIN_LEASER_PAYMENTS_STORAGE_KEY) || "[]")
+    if (!Array.isArray(raw)) return []
+    return raw.map(normalizeLeaserPayment).filter((row): row is SubvendorLeaserPayment => Boolean(row))
+  } catch {
+    return []
+  }
+}
+
+export function writeLeaserPayments(rows: SubvendorLeaserPayment[]) {
+  if (typeof window === "undefined") return
+  try {
+    localStorage.setItem(ADMIN_LEASER_PAYMENTS_STORAGE_KEY, JSON.stringify(rows))
+  } catch {
+    // no-op
+  }
+}
+
+export function newLeaserPaymentId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `lp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+export function pickLeaserPaymentList(response: unknown): SubvendorLeaserPayment[] {
+  if (!response || typeof response !== "object") return []
+  const root = response as Record<string, unknown>
+  const nested =
+    root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? (root.data as Record<string, unknown>)
+      : null
+  const raw = [
+    nested?.payments,
+    nested?.items,
+    nested?.leaserPayments,
+    nested?.leaser_payments,
+    root.payments,
+    root.items,
+    Array.isArray(root.data) ? root.data : null,
+    Array.isArray(response) ? response : null,
+  ].find((value) => Array.isArray(value))
+  if (!Array.isArray(raw)) return []
+  return raw
+    .map(normalizeLeaserPayment)
+    .filter((row): row is SubvendorLeaserPayment => Boolean(row))
+}
+
+export function leaserPaymentsToApiBody(
+  vendorId: string,
+  rows: SubvendorLeaserPayment[],
+  totals?: { leaserPaid: number; leaserRemaining: number },
+): Record<string, unknown> {
+  const payments = rows
+    .filter((row) => row.vendorId === vendorId)
+    .map((row, index) => ({
+      id: row.id,
+      vendorId,
+      vendor_id: vendorId,
+      date: row.date,
+      amount: row.amount,
+      paymentType: row.paymentType || "Cash",
+      payment_type: row.paymentType || "Cash",
+      remark: row.remark,
+      customerIds: row.customerIds,
+      customer_ids: row.customerIds,
+      sortOrder: row.sortOrder > 0 ? row.sortOrder : index + 1,
+      sort_order: row.sortOrder > 0 ? row.sortOrder : index + 1,
+    }))
+  const leaserPaid = totals?.leaserPaid ?? payments.reduce((sum, row) => sum + row.amount, 0)
+  const leaserRemaining = totals?.leaserRemaining ?? 0
+  return {
+    payments,
+    leaserPaid,
+    leaser_paid: leaserPaid,
+    leaserRemaining,
+    leaser_remaining: leaserRemaining,
+  }
+}

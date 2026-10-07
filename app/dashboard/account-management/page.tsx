@@ -15,7 +15,6 @@ import {
   Download,
   FileText,
   Search,
-  Eye,
   IndianRupee,
   Calendar as CalendarIcon,
   ChevronDown,
@@ -26,6 +25,9 @@ import {
   Filter,
   Upload,
   X,
+  Building2,
+  UserPlus,
+  Truck,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
@@ -37,12 +39,10 @@ import {
   canWriteWorkflowModule,
   shouldLoadAllAccountsQuotations,
 } from "@/lib/module-field-permissions"
-import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
-import { matchesCityFilter } from "@/lib/service-cities"
 import { useToast } from "@/hooks/use-toast"
 import { useIncrementalList } from "@/hooks/use-incremental-list"
 import { IncrementalListSentinel } from "@/components/incremental-list-sentinel"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -52,12 +52,11 @@ import { Calendar } from "@/components/ui/calendar"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
+import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
 import { api, ApiError, retrieveQuotationFromInstallation } from "@/lib/api"
-import { calculateSystemSize } from "@/lib/pricing-tables"
 import { formatPersonName } from "@/lib/name-display"
 import {
   getCurrentQuotationIds,
-  groupQuotationsByCustomerCurrentFirst,
   keepCurrentQuotationsOnly,
 } from "@/lib/quotation-current"
 import { confirmSave } from "@/lib/confirm-save"
@@ -84,10 +83,12 @@ import {
 } from "@/lib/admin-subvendor-ledger"
 import {
   fileChargesFromVendorRate,
+  pickDealerList,
   pickSubvendorListFromApi,
   readAdminSubvendors,
   writeAdminSubvendors,
   type AdminSubvendorRecord,
+  type SubvendorDealerOption,
 } from "@/lib/admin-subvendors"
 import { getQuotationSystemKw, getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
@@ -95,8 +96,6 @@ import { normalizeInverterBrandForDisplay } from "@/lib/quotation-pdf-display"
 import {
   formatJourneyStageStatusLabel,
   getJourneyFileStatusStages,
-  getJourneyHoldInfo,
-  getJourneyStageProgress,
   journeyStageStatusBadgeClass,
   paymentMatchesFileStatusFilter,
   type FileStatusFilter,
@@ -1201,6 +1200,18 @@ function formatFileStatusApprovedAt(iso?: string | null) {
   })
 }
 
+/** Excel: approved → date only; otherwise Pending / In Progress / Approved. */
+function excelStageDateOrStatus(
+  status: "completed" | "pending" | "in_progress",
+  stage: "installation" | "metering",
+  approvedAt?: string,
+) {
+  if (status === "completed") {
+    return formatFileStatusApprovedAt(approvedAt) || formatJourneyStageStatusLabel(status, stage)
+  }
+  return formatJourneyStageStatusLabel(status, stage)
+}
+
 function getPaymentSystemKwLabel(quotation: Quotation): string {
   const fromPdf = getQuotationSystemKwLabelForPdf(quotation.products)
   if (fromPdf && fromPdf !== "—") return fromPdf.replace(/\s+/g, "")
@@ -1214,7 +1225,20 @@ function getPaymentSystemKwLabel(quotation: Quotation): string {
   return `${label}kW`
 }
 
-function getPaymentPanelInverterLine(quotation: Quotation): string[] {
+function normalizeCompactKwLabel(raw: string): string {
+  const compact = String(raw || "").replace(/\s+/g, "").toLowerCase()
+  if (!compact || compact === "—" || compact.startsWith("asper")) return ""
+  const num = compact.replace(/kw$/i, "")
+  if (!/^\d+(\.\d+)?$/.test(num) || Number(num) <= 0) return ""
+  return `${num}kw`
+}
+
+function getPaymentPanelInverterMeta(quotation: Quotation): {
+  panel: string
+  panelKw: string
+  inverter: string
+  inverterKw: string
+} {
   const products = mergeQuotationProductSources(quotation) as unknown as {
     systemType?: string
     panelBrand?: string
@@ -1237,12 +1261,13 @@ function getPaymentPanelInverterLine(quotation: Quotation): string[] {
     panelBrand = String(products.dcrPanelBrand || products.nonDcrPanelBrand || "").trim()
   }
   const inverterBrand = normalizeInverterBrandForDisplay(String(products.inverterBrand || ""))
-  const inverterSize = String(products.inverterSize || "").trim()
-  const bits: string[] = []
-  if (panelBrand) bits.push(`p- ${panelBrand}`.toLowerCase())
-  const inverter = [inverterBrand, inverterSize].filter(Boolean).join(" ")
-  if (inverter) bits.push(`i- ${inverter}`.toLowerCase())
-  return bits
+  const inverterSize = normalizeCompactKwLabel(String(products.inverterSize || ""))
+  return {
+    panel: panelBrand ? `p- ${panelBrand}`.toLowerCase() : "",
+    panelKw: normalizeCompactKwLabel(getPaymentSystemKwLabel(quotation)),
+    inverter: inverterBrand ? `i- ${inverterBrand}`.toLowerCase() : "",
+    inverterKw: inverterSize,
+  }
 }
 
 /** Normalize API date / epoch / Date for display pipeline. */
@@ -1573,8 +1598,6 @@ export default function AccountManagementPage() {
   const { toast } = useToast()
   const [quotations, setQuotations] = useState<Quotation[]>([])
   const [customerPayments, setCustomerPayments] = useState<CustomerPayment[]>([])
-  const [searchTerm, setSearchTerm] = useState("")
-  const [filterCities, setFilterCities] = useState<string[]>([])
   const [paymentSearchTerm, setPaymentSearchTerm] = useState("")
   const [paymentTypeFilter, setPaymentTypeFilter] = useState<PaymentTypeFilterValue[]>([])
   const [paymentStatusFilter, setPaymentStatusFilter] = useState<"all" | "pending" | "partial" | "completed">("all")
@@ -1602,6 +1625,7 @@ export default function AccountManagementPage() {
   const [officeInsideVendors, setOfficeInsideVendors] = useState<AdminSubvendorRecord[]>(() =>
     readAdminSubvendors().filter((row) => row.kind === "office_inside"),
   )
+  const [subvendorDealers, setSubvendorDealers] = useState<SubvendorDealerOption[]>([])
   const [subvendorLedgerMap, setSubvendorLedgerMap] = useState<Record<string, SubvendorLedgerAmounts>>(
     () => readSubvendorLedger(),
   )
@@ -2120,6 +2144,28 @@ export default function AccountManagementPage() {
     }
   }, [useApi])
 
+  useEffect(() => {
+    if (!useApi) return
+    let cancelled = false
+    const loadDealers = async () => {
+      try {
+        const dealersRes = await api.admin.dealers.getAll({ includeInactive: true, limit: 2000 })
+        if (!cancelled) setSubvendorDealers(pickDealerList(dealersRes))
+      } catch {
+        // Select-dealer still works from any cached Users list.
+      }
+    }
+    void loadDealers()
+    return () => {
+      cancelled = true
+    }
+  }, [useApi])
+
+  useEffect(() => {
+    if (activeTab !== "payments") return
+    setOfficeInsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_inside"))
+  }, [activeTab])
+
   const officeInsideDealerIds = useMemo(
     () => new Set(officeInsideVendors.map((row) => row.dealerId).filter(Boolean)),
     [officeInsideVendors],
@@ -2390,33 +2436,6 @@ export default function AccountManagementPage() {
     }
   }, [paymentSectionTab, paymentStatusFilter])
 
-  const filteredQuotations = permissionVisibleQuotations.filter(
-    (q) =>
-      ((q.customer?.firstName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (q.customer?.lastName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (q.customer?.mobile || "").includes(searchTerm) ||
-        (q.id || "").toLowerCase().includes(searchTerm.toLowerCase())) &&
-      matchesCityFilter(q, filterCities),
-  )
-
-  // One row per customer — same as dealer Quotations (current version only).
-  const sortedQuotations = keepCurrentQuotationsOnly(
-    [...filteredQuotations].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    ),
-    permissionVisibleQuotations,
-  )
-
-  const accountOlderCountById = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const group of groupQuotationsByCustomerCurrentFirst(permissionVisibleQuotations)) {
-      map.set(group.current.id, group.history.length)
-    }
-    return map
-  }, [permissionVisibleQuotations])
-
-  const totalApprovedValue = permissionVisibleQuotations.reduce((sum, q) => sum + Math.abs(q.finalAmount || q.totalAmount || 0), 0)
-
   const getPaymentTypeValue = (payment: CustomerPayment) => {
     return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
   }
@@ -2491,6 +2510,7 @@ export default function AccountManagementPage() {
         payment.customerName.toLowerCase().includes(search) ||
         payment.customerMobile.includes(paymentSearchTerm) ||
         payment.quotationId.toLowerCase().includes(search) ||
+        String(payment.dealerName || "").toLowerCase().includes(search) ||
         bankName.toLowerCase().includes(search) ||
         bankIfsc.toLowerCase().includes(search)
       const paymentTypeValue = getPaymentTypeValue(payment)
@@ -2955,12 +2975,11 @@ export default function AccountManagementPage() {
       "Quotation ID",
       "Customer Name",
       "Customer Mobile",
+      "Dealer Name",
+      "Dealer Mobile",
       "Payment Type",
       "Bank & IFSC",
-      "Payment Status",
       "Approve date",
-      "File login date",
-      "File login status",
       "Subtotal",
       ...(showAccountsSiteProfit ? (["Cost of Site", "Profit"] as const) : []),
       "Loan Amount",
@@ -2972,21 +2991,15 @@ export default function AccountManagementPage() {
       "Remaining Amount",
       "Loan Remaining",
       "Cash Remaining",
-      "Installment Count",
-      "Admin Approval Status",
       "Installation Status",
       "Metering Status",
-      "Final Confirmation Status",
-      "File Status",
     ]
 
     const rows = displayedCustomerPayments.map((payment) => {
       const paidAmount = getTotalPaidPhases(payment.phases)
       const remainingAmount = getDisplayRemaining(payment)
       const bankCell = getFinancingBankDisplay(payment)
-      const journey = getJourneyStageProgress(payment.quotation)
       const fileStatusStages = getJourneyFileStatusStages(payment.quotation)
-      const fileStatus = getJourneyHoldInfo(payment.quotation).stageLabel
       const paymentTypeValue = getPaymentTypeValue(payment)
       const isMix = paymentTypeValue === "mix"
       const isLoan = paymentTypeValue === "loan"
@@ -3000,12 +3013,11 @@ export default function AccountManagementPage() {
         payment.quotationId,
         payment.customerName,
         payment.customerMobile,
+        payment.dealerName || "",
+        payment.dealerMobile || "",
         getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
         bankCell === "—" ? "" : bankCell,
-        (getEffectivePaymentStatus(payment) || "pending").toUpperCase(),
         payment.statusApprovedAt ? formatAdminDateOnly(payment.statusApprovedAt) : "",
-        payment.fileLoginAt ? formatAdminDate(payment.fileLoginAt) : "",
-        fileLoginStatusLabel(payment.fileLoginStatus) || "",
         getPaymentOriginalSubtotal(payment),
         ...(showAccountsSiteProfit
           ? [
@@ -3038,18 +3050,16 @@ export default function AccountManagementPage() {
         remainingAmount,
         loanRem,
         cashRem,
-        payment.phases.length,
-        formatJourneyStageStatusLabel(journey.adminApproval, "adminApproval"),
-        fileStatusStages[0].approvedAt
-          ? `${formatJourneyStageStatusLabel(journey.installation, "installation")} · ${formatFileStatusApprovedAt(fileStatusStages[0].approvedAt)}`
-          : formatJourneyStageStatusLabel(journey.installation, "installation"),
-        fileStatusStages[1].approvedAt
-          ? `${formatJourneyStageStatusLabel(journey.metering, "metering")} · ${formatFileStatusApprovedAt(fileStatusStages[1].approvedAt)}`
-          : formatJourneyStageStatusLabel(journey.metering, "metering"),
-        fileStatusStages[2].approvedAt
-          ? `${formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation")} · ${formatFileStatusApprovedAt(fileStatusStages[2].approvedAt)}`
-          : formatJourneyStageStatusLabel(journey.finalConfirmation, "finalConfirmation"),
-        fileStatus,
+        excelStageDateOrStatus(
+          fileStatusStages[0].status,
+          "installation",
+          fileStatusStages[0].approvedAt,
+        ),
+        excelStageDateOrStatus(
+          fileStatusStages[1].status,
+          "metering",
+          fileStatusStages[1].approvedAt,
+        ),
       ]
     })
 
@@ -3065,66 +3075,6 @@ export default function AccountManagementPage() {
     link.download = `payment-management-${stamp}.csv`
     link.click()
     window.URL.revokeObjectURL(url)
-  }
-
-  const getSystemSize = (quotation: Quotation): string => {
-    const products = quotation.products
-    if (!products) return "N/A"
-
-    // For BOTH system type
-    if (products.systemType === "both") {
-      const dcrSize = products.dcrPanelSize && products.dcrPanelQuantity
-        ? calculateSystemSize(products.dcrPanelSize, products.dcrPanelQuantity)
-        : null
-      const nonDcrSize = products.nonDcrPanelSize && products.nonDcrPanelQuantity
-        ? calculateSystemSize(products.nonDcrPanelSize, products.nonDcrPanelQuantity)
-        : null
-      
-      if (dcrSize && nonDcrSize && dcrSize !== "0kW" && nonDcrSize !== "0kW") {
-        const dcrKw = Number.parseFloat(dcrSize.replace("kW", ""))
-        const nonDcrKw = Number.parseFloat(nonDcrSize.replace("kW", ""))
-        if (!Number.isNaN(dcrKw) && !Number.isNaN(nonDcrKw)) {
-          return `${dcrKw + nonDcrKw}kW`
-        }
-      }
-      if (dcrSize && dcrSize !== "0kW") return dcrSize
-      if (nonDcrSize && nonDcrSize !== "0kW") return nonDcrSize
-      return "BOTH"
-    }
-
-    // For CUSTOMIZE system type
-    if (products.systemType === "customize" && products.customPanels && products.customPanels.length > 0) {
-      const totalKw = products.customPanels.reduce((sum, panel) => {
-        if (!panel.size || !panel.quantity) return sum
-        try {
-          const sizeW = Number.parseInt(panel.size.replace("W", ""))
-          if (Number.isNaN(sizeW)) return sum
-          return sum + (sizeW * panel.quantity)
-        } catch {
-          return sum
-        }
-      }, 0) / 1000
-      if (totalKw > 0) return `${totalKw}kW`
-      return "CUSTOMIZE"
-    }
-
-    // For DCR, NON DCR, or other system types
-    if (products.panelSize && products.panelQuantity && products.panelQuantity > 0) {
-      const systemSize = calculateSystemSize(products.panelSize, products.panelQuantity)
-      if (systemSize !== "0kW") return systemSize
-    }
-
-    // Fallback: Show system type if available
-    if (products.systemType && products.systemType !== "N/A" && products.systemType.trim() !== "") {
-      const systemType = products.systemType.toLowerCase()
-      if (systemType === "dcr") return "DCR"
-      if (systemType === "non-dcr") return "NON DCR"
-      if (systemType === "both") return "BOTH"
-      if (systemType === "customize") return "CUSTOMIZE"
-      return products.systemType.toUpperCase()
-    }
-
-    return "N/A"
   }
 
   const handleAddSubsidyCheque = () => {
@@ -3973,7 +3923,7 @@ export default function AccountManagementPage() {
     })
     // Clear any cached data
     setQuotations([])
-    setSearchTerm("")
+    setPaymentSearchTerm("")
     setSelectedQuotation(null)
     // Navigate to landing page
     router.push("/")
@@ -4292,280 +4242,103 @@ export default function AccountManagementPage() {
       </header>
       ) : null}
 
-      <main className="w-full max-w-[1600px] mx-auto px-3 sm:px-4 py-4 sm:py-5">
-        <div className="mb-5">
-          <div className="flex items-center gap-2.5 mb-1.5">
-            <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-              <FileText className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-foreground">
-                Account Management
-                {accountManager && (
-                  <span className="text-sm font-normal text-muted-foreground ml-1.5">
-                    - Welcome, {accountDisplayName}!
-                  </span>
-                )}
-              </h1>
-              <p className="text-sm text-muted-foreground">Approved quotations from admin panel - ready for processing</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Tabbed Interface */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <div className="mb-3 w-full">
-            <TabsList className="h-auto w-full justify-start bg-muted/40 p-1 gap-1 flex-wrap rounded-lg">
+      <main className="w-full max-w-[1600px] mx-auto px-3 sm:px-4 py-3 sm:py-4">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-1">
+          <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+            <TabsList className="h-auto w-full sm:w-auto justify-start bg-muted/40 p-1 gap-1 flex-wrap rounded-lg">
               <TabsTrigger value="payments" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
-                <Wallet className="w-4 h-4" />
-                Payment Management
+                <Building2 className="w-4 h-4" />
+                Office Inside
               </TabsTrigger>
               <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
-                <FileText className="w-4 h-4" />
-                Approved Quotations
+                <UserPlus className="w-4 h-4" />
+                Office Outside
+              </TabsTrigger>
+              <TabsTrigger value="subvendors" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
+                <Truck className="w-4 h-4" />
+                Subvendor office
               </TabsTrigger>
             </TabsList>
+            {activeTab === "subvendors" ? null : (
+            <div className="relative w-full sm:w-72 min-w-0">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+              <Input
+                placeholder="Search name, mobile, bank, vendor…"
+                value={paymentSearchTerm}
+                onChange={(e) => setPaymentSearchTerm(e.target.value)}
+                className="pl-8 h-9 text-sm"
+              />
+            </div>
+            )}
           </div>
 
-          {/* Approved Quotations Tab */}
-          <TabsContent value="approved" className="space-y-6">
-            {/* Stats Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Approved Quotations</CardTitle>
-                  <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
-                    <FileText className="w-5 h-5 text-green-500" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{quotations.length}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Total approved</p>
-                </CardContent>
-              </Card>
-              <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Value</CardTitle>
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                    <IndianRupee className="w-5 h-5 text-amber-500" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">₹{(totalApprovedValue / 100000).toFixed(1)}L</div>
-                  <p className="text-xs text-muted-foreground mt-1">Approved quotation value</p>
-                </CardContent>
-              </Card>
-              <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Last Updated</CardTitle>
-                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                    <CalendarIcon className="w-5 h-5 text-blue-500" />
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-sm font-bold">
-                    {quotations.length > 0 
-                      ? new Date(quotations[0]?.createdAt || Date.now()).toLocaleDateString("en-IN")
-                      : "N/A"}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Most recent approval</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Approved Quotations Table */}
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-lg">Approved Quotations</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-1">Only quotations approved by admin are visible here</p>
-                  </div>
-                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-                    <div className="relative w-full sm:w-72">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search by name, mobile, ID..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="pl-10 h-10"
-                      />
-                    </div>
-                    <CityMultiSelectFilter
-                      value={filterCities}
-                      onChange={setFilterCities}
-                      className="w-full sm:w-48"
-                    />
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {isLoading ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4 animate-pulse">
-                      <FileText className="w-8 h-8 text-primary opacity-50" />
-                    </div>
-                    <p className="font-medium text-foreground">Loading approved quotations...</p>
-                    <p className="text-sm mt-1">Fetching only approved quotations from admin panel</p>
-                  </div>
-                ) : sortedQuotations.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">
-                    <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-                      <FileText className="w-8 h-8 opacity-50" />
-                    </div>
-                    <p className="font-medium">No approved quotations</p>
-                    <p className="text-sm mt-1">Only quotations approved by admin will appear here</p>
-                    <p className="text-xs mt-2 text-muted-foreground/80">Waiting for admin approval...</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
-                        <tr className="border-b border-border">
-                          <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Quotation ID
-                          </th>
-                          <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Customer Information
-                          </th>
-                          <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">
-                            Dealer/Admin
-                          </th>
-                          <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">
-                            System
-                          </th>
-                          <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Amount
-                          </th>
-                          <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Status
-                          </th>
-                          <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">
-                            Approved Date
-                          </th>
-                          <th className="text-right py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                            Action
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedQuotations.map((quotation) => (
-                          <tr
-                            key={quotation.id}
-                            className="border-b border-border last:border-0 hover:bg-green-50 dark:hover:bg-green-950/20 transition-colors bg-green-50/50 dark:bg-green-950/10"
-                          >
-                            <td className="py-4 px-3 text-sm font-mono text-muted-foreground font-semibold">
-                              <div className="flex flex-col gap-1">
-                                <span>{quotation.id || "N/A"}</span>
-                                {(accountOlderCountById.get(quotation.id) || 0) > 0 ? (
-                                  <Badge variant="outline" className="w-fit text-[10px]">
-                                    {accountOlderCountById.get(quotation.id)} older
-                                  </Badge>
-                                ) : null}
-                              </div>
-                            </td>
-                            <td className="py-4 px-3">
-                              <div>
-                                <p className="text-sm font-semibold text-foreground">
-                                  {formatPersonName(quotation.customer?.firstName, quotation.customer?.lastName, "Unknown")}
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-0.5">{quotation.customer?.mobile || "No mobile"}</p>
-                                {quotation.customer?.email && (
-                                  <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xs">{quotation.customer.email}</p>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-4 px-3 text-sm hidden lg:table-cell">
-                              {quotation.dealer ? (
-                                <div>
-                                  <p className="text-sm font-medium text-foreground">
-                                    {formatPersonName(quotation.dealer.firstName, quotation.dealer.lastName, "Unknown")}
-                                  </p>
-                                  <Badge 
-                                    variant="outline" 
-                                    className={`text-xs mt-1 ${
-                                      quotation.dealer.role === "admin" 
-                                        ? "border-purple-500 text-purple-700 dark:text-purple-400" 
-                                        : "border-blue-500 text-blue-700 dark:text-blue-400"
-                                    }`}
-                                  >
-                                    {quotation.dealer.role === "admin" ? "Admin" : "Dealer"}
-                                  </Badge>
-                                  <p className="text-xs text-muted-foreground mt-1 truncate max-w-xs">
-                                    {quotation.dealer.email}
-                                  </p>
-                                </div>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">N/A</span>
-                              )}
-                            </td>
-                            <td className="py-4 px-3 text-sm hidden sm:table-cell">
-                              <span className="px-2.5 py-1 bg-primary/10 text-primary rounded-full text-xs font-medium uppercase">
-                                {getSystemSize(quotation)}
-                              </span>
-                            </td>
-                            <td className="py-4 px-3 text-sm text-right font-semibold text-foreground">
-                              ₹{Math.abs(
-                                quotation.pricing?.subtotal ??
-                                  quotation.subtotal ??
-                                  quotation.totalAmount ??
-                                  quotation.finalAmount ??
-                                  0,
-                              ).toLocaleString()}
-                            </td>
-                            <td className="py-4 px-3 text-sm">
-                              <Badge className="text-xs bg-green-600 text-white">
-                                Approved
-                              </Badge>
-                            </td>
-                            <td className="py-4 px-3 text-sm text-right text-muted-foreground hidden md:table-cell">
-                              {new Date(quotation.createdAt).toLocaleDateString("en-IN")}
-                            </td>
-                            <td className="py-4 px-3 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  onClick={() => {
-                                    setSelectedQuotation(quotation)
-                                    setDialogOpen(true)
-                                  }}
-                                  className="h-8 w-8 p-0 flex items-center justify-center rounded-md hover:bg-muted transition-colors"
-                                  title="View Details"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+          <TabsContent value="approved" className="mt-0 space-y-0">
+            <Card className="border-border/50 shadow-sm py-0">
+              <CardContent className="p-3 sm:p-4">
+                <AdminSubvendorPanel
+                  lockKind="office_outside"
+                  embedded
+                  hideSearch
+                  search={paymentSearchTerm}
+                  onSearchChange={setPaymentSearchTerm}
+                />
               </CardContent>
             </Card>
           </TabsContent>
 
-          {/* Payment Management Tab */}
-          <TabsContent value="payments" className="space-y-4">
-            <Card className="border-border/50 shadow-sm">
-              <CardHeader className="pb-3">
-                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="min-w-0 shrink-0">
-                    <CardTitle className="text-base">Payment Management</CardTitle>
-                    <p className="text-xs text-muted-foreground mt-0.5 truncate">
-                      Installments, subsidy cheques (cash / cash + loan), and balances
-                    </p>
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:flex-wrap lg:justify-end w-full lg:w-auto min-w-0">
-                    <div className="relative w-full sm:w-56 min-w-0">
-                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-                      <Input
-                        placeholder="Search name, mobile, bank, IFSC…"
-                        value={paymentSearchTerm}
-                        onChange={(e) => setPaymentSearchTerm(e.target.value)}
-                        className="pl-8 h-9 text-sm"
-                      />
-                    </div>
+          <TabsContent value="subvendors" className="mt-0 space-y-0">
+            <Card className="border-border/50 shadow-sm py-0">
+              <CardContent className="p-3 sm:p-4">
+                <AdminSubvendorPanel
+                  lockKind="office_inside"
+                  embedded
+                  dealers={subvendorDealers}
+                  quotations={quotations}
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="payments" className="mt-0 space-y-0">
+            <Card className="border-border/50 shadow-sm py-0">
+              <CardContent className="px-2 sm:px-6 py-1.5 space-y-1.5">
+                <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:justify-between">
+                <Tabs
+                  value={paymentSectionTab}
+                  onValueChange={(value) => setPaymentSectionTab(value as PaymentSectionTab)}
+                  className="min-w-0 flex-1"
+                >
+                  <TabsList className="h-auto w-full justify-start bg-muted/40 p-1 gap-1 flex-wrap">
+                    <TabsTrigger
+                      value="active"
+                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                    >
+                      Pending & Partial
+                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
+                        {paymentSectionBuckets.activePayments.length}
+                      </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="overdue"
+                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                    >
+                      Outstanding 30+ days
+                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
+                        {paymentSectionBuckets.overduePayments.length}
+                      </Badge>
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="completed"
+                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                    >
+                      Completed
+                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
+                        {paymentSectionBuckets.completedPayments.length}
+                      </Badge>
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <div className="flex shrink-0 gap-2">
                     <Button
                       type="button"
                       variant="outline"
@@ -4604,52 +4377,8 @@ export default function AccountManagementPage() {
                       <Download className="w-3.5 h-3.5" />
                       Download Excel
                     </Button>
-                  </div>
                 </div>
-              </CardHeader>
-              <CardContent className="pt-0 px-2 sm:px-6 space-y-3">
-                <Tabs
-                  value={paymentSectionTab}
-                  onValueChange={(value) => setPaymentSectionTab(value as PaymentSectionTab)}
-                  className="space-y-3"
-                >
-                  <TabsList className="h-auto w-full justify-start bg-muted/40 p-1 gap-1 flex-wrap">
-                    <TabsTrigger
-                      value="active"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
-                    >
-                      Pending & Partial
-                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                        {paymentSectionBuckets.activePayments.length}
-                      </Badge>
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="overdue"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
-                    >
-                      Outstanding 30+ days
-                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                        {paymentSectionBuckets.overduePayments.length}
-                      </Badge>
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="completed"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
-                    >
-                      Completed
-                      <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
-                        {paymentSectionBuckets.completedPayments.length}
-                      </Badge>
-                    </TabsTrigger>
-                  </TabsList>
-                  <p className="text-[11px] text-muted-foreground px-0.5">
-                    {paymentSectionTab === "completed"
-                      ? "Fully paid files — installments complete or final settlement applied."
-                      : paymentSectionTab === "overdue"
-                        ? "Pending or partial with remaining balance · no due date, payment, or approve activity in the last 30 days."
-                        : "All pending and partial payments — not limited to the last 30 days."}
-                  </p>
-                </Tabs>
+                </div>
                 {!isLoading && permissionScopedCustomerPayments.length > 0 && (
                   <div
                     className={cn(
@@ -4657,37 +4386,37 @@ export default function AccountManagementPage() {
                       showAccountsSiteProfit ? "xl:grid-cols-5" : "xl:grid-cols-4",
                     )}
                   >
-                    <Card className="border-border/60 bg-card shadow-sm">
-                      <CardContent className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                          <IndianRupee className="w-5 h-5 text-primary" />
+                    <Card className="border-border/60 bg-card shadow-sm py-0">
+                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                          <IndianRupee className="w-3.5 h-3.5 text-primary" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground/70">Total Amount</p>
-                          <p className="text-xl font-bold text-foreground truncate">
+                          <p className="text-[11px] font-medium text-foreground/70 leading-tight">Total Amount</p>
+                          <p className="text-base font-bold text-foreground truncate leading-tight">
                             ₹{paymentDashboardStats.totalAmount.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">Sum of subtotals (net of settlement)</p>
+                          <p className="text-[10px] text-muted-foreground leading-tight">Sum of subtotals (net of settlement)</p>
                         </div>
                       </CardContent>
                     </Card>
-                    <Card className="border-border/60 bg-card shadow-sm">
-                      <CardContent className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                          <Clock className="w-5 h-5 text-amber-700" />
+                    <Card className="border-border/60 bg-card shadow-sm py-0">
+                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-md bg-amber-100 flex items-center justify-center shrink-0">
+                          <Clock className="w-3.5 h-3.5 text-amber-700" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground/70">Pending Amount</p>
-                          <p className="text-xl font-bold text-primary truncate">
+                          <p className="text-[11px] font-medium text-foreground/70 leading-tight">Pending Amount</p>
+                          <p className="text-base font-bold text-primary truncate leading-tight">
                             ₹{paymentDashboardStats.pendingAmount.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">Sum of remaining</p>
+                          <p className="text-[10px] text-muted-foreground leading-tight">Sum of remaining</p>
                         </div>
                       </CardContent>
                     </Card>
                     <Card
                       className={cn(
-                        "border-border/60 bg-card shadow-sm cursor-pointer transition-colors hover:border-emerald-400/80",
+                        "border-border/60 bg-card shadow-sm py-0 cursor-pointer transition-colors hover:border-emerald-400/80",
                         fileStatusFilter === "installation:completed" && "border-emerald-500 ring-1 ring-emerald-500/30",
                       )}
                       role="button"
@@ -4710,16 +4439,16 @@ export default function AccountManagementPage() {
                         }
                       }}
                     >
-                      <CardContent className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                          <CheckCircle2 className="w-5 h-5 text-emerald-700" />
+                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-md bg-emerald-100 flex items-center justify-center shrink-0">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground/70">Installation completed</p>
-                          <p className="text-xl font-bold text-emerald-700 truncate">
+                          <p className="text-[11px] font-medium text-foreground/70 leading-tight">Installation completed</p>
+                          <p className="text-base font-bold text-emerald-700 truncate leading-tight">
                             ₹{paymentDashboardStats.installationCompletedRemaining.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">
+                          <p className="text-[10px] text-muted-foreground leading-tight">
                             Pending remaining · {paymentDashboardStats.installationCompletedCount.toLocaleString()}{" "}
                             {paymentDashboardStats.installationCompletedCount === 1 ? "customer" : "customers"}
                             {fileStatusFilter === "installation:completed" ? " · filter on" : " · click to filter"}
@@ -4728,15 +4457,15 @@ export default function AccountManagementPage() {
                       </CardContent>
                     </Card>
                     {showAccountsSiteProfit ? (
-                    <Card className="border-border/60 bg-card shadow-sm">
-                      <CardContent className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                          <IndianRupee className="w-5 h-5 text-emerald-700" />
+                    <Card className="border-border/60 bg-card shadow-sm py-0">
+                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-md bg-emerald-100 flex items-center justify-center shrink-0">
+                          <IndianRupee className="w-3.5 h-3.5 text-emerald-700" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground/70">Total Profit</p>
+                          <p className="text-[11px] font-medium text-foreground/70 leading-tight">Total Profit</p>
                           <p
-                            className={`text-xl font-bold truncate ${
+                            className={`text-base font-bold truncate leading-tight ${
                               paymentDashboardStats.totalProfit >= 0
                                 ? "text-emerald-700"
                                 : "text-red-700"
@@ -4744,24 +4473,24 @@ export default function AccountManagementPage() {
                           >
                             ₹{paymentDashboardStats.totalProfit.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">
+                          <p className="text-[10px] text-muted-foreground leading-tight">
                             Subtotal − cost of site
                           </p>
                         </div>
                       </CardContent>
                     </Card>
                     ) : null}
-                    <Card className="border-border/60 bg-card shadow-sm">
-                      <CardContent className="p-4 flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
-                          <Users className="w-5 h-5 text-sky-700" />
+                    <Card className="border-border/60 bg-card shadow-sm py-0">
+                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                        <div className="w-7 h-7 rounded-md bg-sky-100 flex items-center justify-center shrink-0">
+                          <Users className="w-3.5 h-3.5 text-sky-700" />
                         </div>
                         <div className="min-w-0">
-                          <p className="text-xs font-medium text-foreground/70">No. of Customers</p>
-                          <p className="text-xl font-bold text-foreground">
+                          <p className="text-[11px] font-medium text-foreground/70 leading-tight">No. of Customers</p>
+                          <p className="text-base font-bold text-foreground leading-tight">
                             {paymentDashboardStats.customerCount.toLocaleString()}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">Matching current section & filters</p>
+                          <p className="text-[10px] text-muted-foreground leading-tight">Matching current section & filters</p>
                         </div>
                       </CardContent>
                     </Card>
@@ -4785,7 +4514,7 @@ export default function AccountManagementPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-2.5 overflow-y-auto overscroll-y-contain pr-1">
+                  <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-1.5 overflow-y-auto overscroll-y-contain pr-1">
                     {displayedCustomerPayments.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-md">
                         {paymentSectionTab === "completed"
@@ -4822,7 +4551,7 @@ export default function AccountManagementPage() {
                           <Card
                             key={payment.quotationId}
                             className={cn(
-                              "shadow-none px-3 py-2.5 border border-border/70 border-l-4 overflow-hidden",
+                              "shadow-none px-2.5 py-1.5 border border-border/70 border-l-4 overflow-hidden",
                               isCompletedPayment
                                 ? "border-l-emerald-500 bg-card"
                                 : isPartialPayment
@@ -4834,21 +4563,21 @@ export default function AccountManagementPage() {
                           >
                             <div
                               className={cn(
-                                "grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full",
+                                "grid grid-cols-2 sm:grid-cols-3 gap-x-1.5 gap-y-1 items-start w-full",
                                 showAccountsSiteProfit
                                   ? "xl:grid-cols-[minmax(9.5rem,1.1fr)_minmax(8.25rem,0.95fr)_minmax(4.25rem,0.5fr)_minmax(4.75rem,0.55fr)_minmax(5rem,0.55fr)_minmax(5.5rem,0.6fr)_minmax(11rem,1.05fr)_minmax(5.75rem,0.7fr)_minmax(4.25rem,0.45fr)_minmax(4.25rem,0.45fr)_minmax(6.75rem,7.25rem)]"
                                   : "xl:grid-cols-[minmax(9.5rem,1.2fr)_minmax(8.5rem,1fr)_minmax(4.5rem,0.55fr)_minmax(5rem,0.6fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.65fr)_minmax(11rem,1.1fr)_minmax(6.25rem,0.8fr)_minmax(6.75rem,7.25rem)]",
                               )}
                             >
                               <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
-                                <p className="text-sm font-semibold leading-tight break-words">
+                                <p className="text-[13px] font-semibold leading-tight break-words">
                                   {payment.customerName}
                                   <span className="font-normal text-muted-foreground">
                                     {" "}
                                     ({payment.customerMobile || "N/A"})
                                   </span>
                                 </p>
-                                <p className="text-xs text-muted-foreground mt-0.5 break-words">
+                                <p className="text-[10px] text-muted-foreground mt-0.5 break-words">
                                   Dealer: {payment.dealerName || "Unassigned"} •{" "}
                                   {payment.dealerMobile || "No contact"}
                                 </p>
@@ -4880,24 +4609,27 @@ export default function AccountManagementPage() {
                                   </p>
                                 )}
                                 {(() => {
-                                  const systemKw = getPaymentSystemKwLabel(payment.quotation)
-                                  const panelInverter = getPaymentPanelInverterLine(payment.quotation)
+                                  const { panel, panelKw, inverter, inverterKw } =
+                                    getPaymentPanelInverterMeta(payment.quotation)
                                   return (
-                                    <>
-                                      {systemKw ? (
-                                        <p className="text-[11px] text-muted-foreground mt-0.5 leading-tight">
-                                          {systemKw}
+                                    <div className="mt-0.5 space-y-0">
+                                      {panel || panelKw ? (
+                                        <p className="flex items-baseline gap-1 text-[10px] lowercase leading-tight text-muted-foreground">
+                                          <span className="min-w-0 truncate">{panel}</span>
+                                          {panelKw ? (
+                                            <span className="shrink-0 tabular-nums">{panelKw}</span>
+                                          ) : null}
                                         </p>
                                       ) : null}
-                                      {panelInverter.map((line) => (
-                                        <p
-                                          key={line}
-                                          className="text-[10px] lowercase leading-snug text-muted-foreground"
-                                        >
-                                          {line}
+                                      {inverter || inverterKw ? (
+                                        <p className="flex items-baseline gap-1 text-[10px] lowercase leading-tight text-muted-foreground">
+                                          <span className="min-w-0 truncate">{inverter}</span>
+                                          {inverterKw ? (
+                                            <span className="shrink-0 tabular-nums">{inverterKw}</span>
+                                          ) : null}
                                         </p>
-                                      ))}
-                                    </>
+                                      ) : null}
+                                    </div>
                                   )
                                 })()}
                               </div>
@@ -5054,7 +4786,7 @@ export default function AccountManagementPage() {
 
                               <div className="min-w-[11rem]">
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File status</p>
-                                <div className="mt-0.5 space-y-1">
+                                <div className="mt-0.5 space-y-px">
                                   {getJourneyFileStatusStages(payment.quotation).map((item) => {
                                     const stageLabel =
                                       item.label === "Final confirmation"
