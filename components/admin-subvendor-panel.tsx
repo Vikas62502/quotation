@@ -8,6 +8,13 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { downloadCsvFile } from "@/lib/excel-column-export"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -19,7 +26,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
-import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown } from "lucide-react"
+import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown, Download } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import { summarizeQuotationPayment } from "@/lib/dealer-payment-summary"
@@ -95,6 +102,28 @@ function formatLedgerSystemSize(kw: number) {
       ? String(Math.round(rounded))
       : String(rounded).replace(/\.?0+$/, "")
   return `${label}kW`
+}
+
+function slugForFilename(name: string) {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "dealer"
+  )
+}
+
+function downloadCsvTable(
+  filename: string,
+  table: Array<Array<string | number | boolean | null | undefined>>,
+) {
+  if (!table.length) return
+  downloadCsvFile({
+    filename,
+    headers: table[0].map((cell) => (cell == null ? "" : String(cell))),
+    rows: table.slice(1),
+  })
 }
 
 type InsideLedgerRow = {
@@ -403,9 +432,12 @@ export function AdminSubvendorPanel({
         totalFile: 0,
         fileAmount: 0,
         totalKw: 0,
+        subtotal: 0,
+        costOfSite: 0,
         totalProfit: vendorProfitById[vendor.id] ?? 0,
         paid: paidByVendor[vendor.id] ?? 0,
         currentBalance: 0,
+        totalRemaining: 0,
       }
     }
     const approved = quotations.filter(isApprovedQuotation)
@@ -415,19 +447,32 @@ export function AdminSubvendorPanel({
       const vendor = vendorsByDealerId.get(dealerId)
       if (!vendor || !stats[vendor.id]) continue
       const stored = getLedgerAmounts(ledgerMap, quotation.id)
+      const payment = summarizeQuotationPayment(quotation)
       const autoFileCharges = fileChargesFromVendorRate(
         getQuotationSystemKw(quotation),
         vendor.fileCostPerKw ?? 0,
       )
       const fileCharges =
         stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
+      const proposal = stored.proposal ?? 0
+      const pi = stored.pi ?? 0
+      const costOfSite = officeInsideDeductedTotal({
+        proposal,
+        pi,
+        fileCharges,
+        gstCharges: officeInsideGstCharges(proposal, pi),
+        others: stored.others ?? 0,
+      })
       stats[vendor.id].totalFile += 1
       stats[vendor.id].fileAmount += fileCharges
       stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
+      stats[vendor.id].subtotal += Math.max(0, Math.round(payment.subtotal || 0))
+      stats[vendor.id].costOfSite += costOfSite
     }
     for (const vendor of insideRows) {
       const item = stats[vendor.id]
       item.currentBalance = item.paid
+      item.totalRemaining = Math.round(item.totalProfit - item.paid)
     }
     return stats
   }, [insideRows, ledgerMap, leaserPayments, quotations, vendorProfitById, vendorsByDealerId])
@@ -450,6 +495,62 @@ export function AdminSubvendorPanel({
     }
     return out
   }, [quotations, vendorsByDealerId])
+
+  const filesByVendorId = useMemo(() => {
+    const out: Record<string, InsideLedgerRow[]> = {}
+    const approved = quotations.filter(isApprovedQuotation)
+    const current = keepCurrentQuotationsOnly(approved, approved)
+    for (const quotation of current) {
+      const dealerId = String(quotation.dealerId || quotation.dealer?.id || "")
+      const vendor = vendorsByDealerId.get(dealerId)
+      if (!vendor) continue
+      const payment = summarizeQuotationPayment(quotation)
+      const stored = getLedgerAmounts(ledgerMap, quotation.id)
+      const proposal = stored.proposal ?? 0
+      const pi = stored.pi ?? 0
+      const paymentType = quotationPaymentTypeForLedger(quotation)
+      const loanCash = quotationLoanCashAmountsForLedger(
+        quotation,
+        proposal > 0 ? proposal : payment.subtotal,
+      )
+      const autoFileCharges = fileChargesFromVendorRate(
+        getQuotationSystemKw(quotation),
+        vendor.fileCostPerKw ?? 0,
+      )
+      const fileCharges =
+        stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
+      ;(out[vendor.id] ||= []).push({
+        quotationId: quotation.id,
+        dealerId,
+        customerName: payment.customerName,
+        customerMobile: payment.customerMobile,
+        vendorName: vendor.name,
+        vendorMobile: vendor.mobile,
+        systemSize: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
+        systemKw: getQuotationSystemKw(quotation),
+        paymentType,
+        paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
+        subtotal: payment.subtotal,
+        loanAmount: stored.loanAmount ?? loanCash.loanAmount,
+        cashAmount: stored.cashAmount ?? loanCash.cashAmount,
+        receivedAmount: stored.receivedAmount ?? payment.paidAmount,
+        remaining: stored.remaining ?? payment.remainingAmount,
+        proposal,
+        costOfSite: officeInsideDeductedTotal({
+          proposal,
+          pi,
+          fileCharges,
+          gstCharges: officeInsideGstCharges(proposal, pi),
+          others: stored.others ?? 0,
+        }),
+        fileCharges,
+        pi,
+        gstCharges: officeInsideGstCharges(proposal, pi),
+        others: stored.others ?? 0,
+      })
+    }
+    return out
+  }, [ledgerMap, quotations, vendorsByDealerId])
 
   useEffect(() => {
     if (ledgerVendorId !== "all" && !insideDealerIds.has(ledgerVendorId)) {
@@ -745,6 +846,7 @@ export function AdminSubvendorPanel({
           vendors={filtered}
           statsById={vendorLeaserStats}
           customersByVendorId={customersByVendorId}
+          filesByVendorId={filesByVendorId}
           payments={leaserPayments}
           onSave={saveLeaserPayments}
         />
@@ -1020,18 +1122,24 @@ type VendorLeaserStats = {
   totalFile: number
   fileAmount: number
   totalKw: number
+  subtotal: number
+  costOfSite: number
   totalProfit: number
   paid: number
   currentBalance: number
+  totalRemaining: number
 }
 
 const emptyVendorLeaserStats: VendorLeaserStats = {
   totalFile: 0,
   fileAmount: 0,
   totalKw: 0,
+  subtotal: 0,
+  costOfSite: 0,
   totalProfit: 0,
   paid: 0,
   currentBalance: 0,
+  totalRemaining: 0,
 }
 
 type LeaserCustomerOption = {
@@ -1154,21 +1262,132 @@ function DealerLeaserManager({
   vendors,
   statsById,
   customersByVendorId,
+  filesByVendorId,
   payments,
   onSave,
 }: {
   vendors: AdminSubvendorRecord[]
   statsById: Record<string, VendorLeaserStats>
   customersByVendorId: Record<string, LeaserCustomerOption[]>
+  filesByVendorId: Record<string, InsideLedgerRow[]>
   payments: SubvendorLeaserPayment[]
   onSave: (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => Promise<void> | void
 }) {
+  const { toast } = useToast()
   const [manageVendorId, setManageVendorId] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
   const [saving, setSaving] = useState(false)
   const manageVendor = vendors.find((row) => row.id === manageVendorId) ?? null
   const customers = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
+  const fileRows = manageVendorId ? filesByVendorId[manageVendorId] || [] : []
   const manageStats = manageVendorId ? statsById[manageVendorId] ?? emptyVendorLeaserStats : null
+
+  const enteredTransactions = () =>
+    drafts
+      .filter((row) => parseInrAmount(row.amount) > 0 || row.remark.trim() || row.customerIds.length > 0)
+      .slice()
+      .sort((a, b) => a.paymentNumber - b.paymentNumber)
+
+  const customerLabel = (ids: string[]) =>
+    ids
+      .map((id) => {
+        const match = customers.find((row) => row.quotationId === id)
+        return match ? `${match.name}${match.mobile ? ` (${match.mobile})` : ""}` : id
+      })
+      .filter(Boolean)
+      .join("; ")
+
+  const downloadMiniStatement = () => {
+    if (!manageVendor) return
+    const rows = enteredTransactions()
+    if (rows.length === 0) {
+      toast({
+        title: "No transactions to download",
+        description: "Add at least one leaser payment first.",
+        variant: "destructive",
+      })
+      return
+    }
+    const stamp = new Date().toISOString().slice(0, 10)
+    downloadCsvTable(`leaser-mini-${slugForFilename(manageVendor.name)}-${stamp}.csv`, [
+      ["Payment", "Date", "Amount", "Payment type", "Remark", "Customers"],
+      ...rows.map((row) => [
+        `Payment ${row.paymentNumber}`,
+        row.date,
+        parseInrAmount(row.amount),
+        row.paymentType,
+        row.remark,
+        customerLabel(row.customerIds),
+      ]),
+    ])
+  }
+
+  const downloadFullStatement = () => {
+    if (!manageVendor || !manageStats) return
+    const txns = enteredTransactions()
+    const stamp = new Date().toISOString().slice(0, 10)
+    const table: Array<Array<string | number>> = [
+      ["Dealer leaser full statement"],
+      ["Dealer", manageVendor.name],
+      ["Mobile", manageVendor.mobile || manageVendor.contactName || ""],
+      [],
+      ["Total file", manageStats.totalFile],
+      ["kW", formatLedgerSystemSize(manageStats.totalKw)],
+      ["Subtotal", manageStats.subtotal],
+      ["Cost of site", manageStats.costOfSite],
+      ["Total profit", manageStats.totalProfit],
+      ["Total payment", manageStats.currentBalance],
+      ["Total remaining", manageStats.totalRemaining],
+      [],
+      ["Files"],
+      [
+        "Customer",
+        "Mobile",
+        "kW",
+        "Payment type",
+        "Subtotal",
+        "Cost of site",
+        "Proposal",
+        "PI",
+        "File charges",
+        "GST",
+        "Others",
+        "Received",
+        "Remaining",
+        "Quotation ID",
+      ],
+      ...fileRows.map((row) => [
+        row.customerName,
+        row.customerMobile,
+        row.systemSize,
+        row.paymentTypeLabel,
+        row.subtotal,
+        row.costOfSite,
+        row.proposal,
+        row.pi,
+        row.fileCharges,
+        row.gstCharges,
+        row.others,
+        row.receivedAmount,
+        row.remaining,
+        row.quotationId,
+      ]),
+      [],
+      ["Transactions"],
+      ["Payment", "Date", "Amount", "Payment type", "Remark", "Customers"],
+      ...(txns.length
+        ? txns.map((row) => [
+            `Payment ${row.paymentNumber}`,
+            row.date,
+            parseInrAmount(row.amount),
+            row.paymentType,
+            row.remark,
+            customerLabel(row.customerIds),
+          ])
+        : [["No transactions entered"]]),
+    ]
+    downloadCsvTable(`leaser-full-${slugForFilename(manageVendor.name)}-${stamp}.csv`, table)
+  }
 
   const openManage = (vendorId: string) => {
     const existing = payments
@@ -1241,7 +1460,7 @@ function DealerLeaserManager({
       <div>
         <p className="text-sm font-semibold">Dealer leaser</p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Total file, kW, current balance, and profit for each office vendor.
+          Total file, kW, subtotal, cost of site, profit, payment, and remaining for each office vendor.
         </p>
       </div>
       <div className="space-y-2">
@@ -1250,9 +1469,9 @@ function DealerLeaserManager({
           return (
             <div
               key={vendor.id}
-              className="grid grid-cols-2 sm:grid-cols-[minmax(0,1.3fr)_repeat(4,minmax(5rem,0.7fr))_auto] gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5"
+              className="grid grid-cols-2 lg:grid-cols-[minmax(0,1.15fr)_repeat(7,minmax(4.5rem,0.55fr))_auto] gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5"
             >
-              <div className="col-span-2 sm:col-span-1 min-w-0">
+              <div className="col-span-2 lg:col-span-1 min-w-0">
                 <p className="text-sm font-medium truncate">{vendor.name}</p>
                 <p className="text-[11px] text-muted-foreground truncate">
                   {vendor.mobile || vendor.contactName || vendor.dealerId}
@@ -1267,10 +1486,12 @@ function DealerLeaserManager({
                 <p className="text-sm font-semibold tabular-nums">{formatLedgerSystemSize(stats.totalKw)}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Current balance</p>
-                <p className="text-sm font-semibold tabular-nums">
-                  {formatLedgerInr(stats.currentBalance)}
-                </p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.subtotal)}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.costOfSite)}</p>
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
@@ -1278,7 +1499,24 @@ function DealerLeaserManager({
                   {formatLedgerInr(stats.totalProfit)}
                 </p>
               </div>
-              <div className="col-span-2 sm:col-span-1 flex justify-end">
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {formatLedgerInr(stats.currentBalance)}
+                </p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total remaining</p>
+                <p
+                  className={cn(
+                    "text-sm font-semibold tabular-nums",
+                    stats.totalRemaining < 0 ? "text-rose-700" : undefined,
+                  )}
+                >
+                  {formatLedgerInr(stats.totalRemaining)}
+                </p>
+              </div>
+              <div className="col-span-2 lg:col-span-1 flex justify-end">
                 <Button size="sm" className="h-8" onClick={() => openManage(vendor.id)}>
                   Manage
                 </Button>
@@ -1304,6 +1542,22 @@ function DealerLeaserManager({
                 </DialogDescription>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" size="sm" className="h-9">
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Download
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="z-[200]">
+                    <DropdownMenuItem onClick={downloadMiniStatement}>
+                      Mini statement
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={downloadFullStatement}>
+                      Full statement
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button type="button" variant="outline" size="sm" className="h-9" onClick={addPayment}>
                   <Plus className="w-3.5 h-3.5 mr-1" />
                   Add payment
@@ -1324,7 +1578,7 @@ function DealerLeaserManager({
                   </p>
                 </div>
                 {manageStats ? (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total file</p>
                       <p className="text-sm font-semibold tabular-nums">{manageStats.totalFile}</p>
@@ -1336,15 +1590,38 @@ function DealerLeaserManager({
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Current balance</p>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
                       <p className="text-sm font-semibold tabular-nums">
-                        {formatLedgerInr(manageStats.currentBalance)}
+                        {formatLedgerInr(manageStats.subtotal)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatLedgerInr(manageStats.costOfSite)}
                       </p>
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
                       <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                         {formatLedgerInr(manageStats.totalProfit)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
+                      <p className="text-sm font-semibold tabular-nums">
+                        {formatLedgerInr(manageStats.currentBalance)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total remaining</p>
+                      <p
+                        className={cn(
+                          "text-sm font-semibold tabular-nums",
+                          manageStats.totalRemaining < 0 ? "text-rose-700" : undefined,
+                        )}
+                      >
+                        {formatLedgerInr(manageStats.totalRemaining)}
                       </p>
                     </div>
                   </div>

@@ -83,12 +83,18 @@ import {
 } from "@/lib/admin-subvendor-ledger"
 import {
   fileChargesFromVendorRate,
+  leaserPaymentsToApiBody,
   pickDealerList,
+  pickLeaserPaymentList,
   pickSubvendorListFromApi,
   readAdminSubvendors,
+  readLeaserPayments,
+  updateAdminSubvendor,
   writeAdminSubvendors,
+  writeLeaserPayments,
   type AdminSubvendorRecord,
   type SubvendorDealerOption,
+  type SubvendorLeaserPayment,
 } from "@/lib/admin-subvendors"
 import { getQuotationSystemKw, getQuotationSystemKwLabelForPdf } from "@/lib/quotation-system-kw"
 import { mergeQuotationProductSources } from "@/lib/merge-quotation-products"
@@ -131,6 +137,12 @@ interface PaymentPhase {
   paidAmount: number
   paymentDate?: string
   paymentMode?: string
+  /** Office inside + cash/UPI: vendor keeps the money (self) or sends it to Chairbord. */
+  collectDestination?: "self" | "chairbord"
+  /** Complete = full paid amount to self or Chairbord. Partial = split amounts. */
+  collectKind?: "complete" | "partial"
+  collectSelfAmount?: number
+  collectChairbordAmount?: number
   transactionId?: string
   note?: string
 }
@@ -466,6 +478,106 @@ function normalizePaymentMode(raw?: string | null): PaymentModeSelectValue | und
   const simple = s.toLowerCase()
   if ((PAYMENT_MODE_SELECT_VALUES as readonly string[]).includes(simple)) return simple as PaymentModeSelectValue
   return undefined
+}
+
+function isCashOrUpiPaymentMode(raw?: string | null): boolean {
+  const mode = normalizePaymentMode(raw)
+  return mode === "cash" || mode === "upi"
+}
+
+function normalizeCollectDestination(raw?: string | null): "self" | "chairbord" | undefined {
+  const s = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  if (s === "self" || s === "collect_self") return "self"
+  if (s === "chairbord" || s === "to_chairbord" || s === "company") return "chairbord"
+  return undefined
+}
+
+function normalizeCollectKind(raw?: string | null): "complete" | "partial" | undefined {
+  const s = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  if (s === "complete" || s === "full" || s === "complete_collect") return "complete"
+  if (s === "partial" || s === "split" || s === "partial_collect") return "partial"
+  return undefined
+}
+
+function roundCollectInr(raw: unknown): number {
+  const n = Math.round(Number(raw) || 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+function officeInsideSelfLeaserAmount(phase: PaymentPhase): number {
+  if (!isCashOrUpiPaymentMode(phase.paymentMode)) return 0
+  if (phase.collectDestination !== "self") return 0
+  const paid = roundCollectInr(phase.paidAmount)
+  if (paid <= 0) return 0
+  if (normalizeCollectKind(phase.collectKind) === "partial") {
+    return Math.min(paid, roundCollectInr(phase.collectSelfAmount))
+  }
+  return paid
+}
+
+function withPartialCollectSplit(
+  phase: PaymentPhase,
+  next: { self?: number; chairbord?: number },
+): PaymentPhase {
+  const paid = roundCollectInr(phase.paidAmount)
+  let self = roundCollectInr(next.self ?? phase.collectSelfAmount)
+  let chairbord = roundCollectInr(next.chairbord ?? phase.collectChairbordAmount)
+  if (next.self != null) {
+    self = Math.min(self, paid)
+    chairbord = Math.max(0, paid - self)
+  } else if (next.chairbord != null) {
+    chairbord = Math.min(chairbord, paid)
+    self = Math.max(0, paid - chairbord)
+  } else {
+    self = Math.min(self, paid)
+    chairbord = Math.max(0, paid - self)
+  }
+  return {
+    ...phase,
+    collectKind: "partial",
+    collectSelfAmount: self,
+    collectChairbordAmount: chairbord,
+  }
+}
+
+function pickCollectKindFromPhase(phase: any): "complete" | "partial" | undefined {
+  return normalizeCollectKind(phase?.collectKind ?? phase?.collect_kind ?? phase?.collectType)
+}
+
+function pickCollectSelfAmountFromPhase(phase: any): number | undefined {
+  const n = optionalFiniteNumber(
+    phase?.collectSelfAmount ?? phase?.collect_self_amount ?? phase?.selfAmount ?? phase?.self_amount,
+  )
+  return n == null ? undefined : roundCollectInr(n)
+}
+
+function pickCollectChairbordAmountFromPhase(phase: any): number | undefined {
+  const n = optionalFiniteNumber(
+    phase?.collectChairbordAmount ??
+      phase?.collect_chairbord_amount ??
+      phase?.chairbordAmount ??
+      phase?.chairbord_amount,
+  )
+  return n == null ? undefined : roundCollectInr(n)
+}
+
+function officeInsideSelfLeaserId(quotationId: string, phaseNumber: number) {
+  return `lp-self-${quotationId}-${phaseNumber}`
+}
+
+function phaseDateYmd(phase: PaymentPhase): string {
+  const raw = phase.paymentDate || phase.dueDate
+  if (!raw) return calendarDateLocalYmd(new Date())
+  const parsed = new Date(raw)
+  if (!Number.isNaN(parsed.getTime())) return calendarDateLocalYmd(parsed)
+  const text = String(raw).trim()
+  return text.length >= 10 ? text.slice(0, 10) : calendarDateLocalYmd(new Date())
 }
 
 function pickFirstFiniteNumber(...vals: unknown[]): number {
@@ -1502,6 +1614,12 @@ function extractPhasesFromPaymentUpdateResponse(response: unknown): PaymentPhase
       paidAmount: Number(phase.paidAmount || 0),
       paymentDate: phase.paymentDate,
       paymentMode: normalizePaymentMode(phase.paymentMode || phase.mode || phase.payment_method),
+      collectDestination: normalizeCollectDestination(
+        phase.collectDestination || phase.collect_destination || phase.collectedBy || phase.collected_by,
+      ),
+      collectKind: pickCollectKindFromPhase(phase),
+      collectSelfAmount: pickCollectSelfAmountFromPhase(phase),
+      collectChairbordAmount: pickCollectChairbordAmountFromPhase(phase),
       transactionId: phase.transactionId,
       note: phase.note || phase.remarks || "",
     })),
@@ -1522,7 +1640,25 @@ function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
       paymentMode = last || "cash"
       last = paymentMode
     }
-    return { ...phase, paymentMode }
+    const cashOrUpi = isCashOrUpiPaymentMode(paymentMode)
+    const collectDestination = cashOrUpi
+      ? normalizeCollectDestination(phase.collectDestination) ?? phase.collectDestination
+      : undefined
+    const collectKind = cashOrUpi
+      ? normalizeCollectKind(phase.collectKind) ?? phase.collectKind
+      : undefined
+    const collectSelfAmount =
+      cashOrUpi && collectKind === "partial" ? roundCollectInr(phase.collectSelfAmount) : undefined
+    const collectChairbordAmount =
+      cashOrUpi && collectKind === "partial" ? roundCollectInr(phase.collectChairbordAmount) : undefined
+    return {
+      ...phase,
+      paymentMode,
+      collectDestination,
+      collectKind,
+      collectSelfAmount,
+      collectChairbordAmount,
+    }
   })
 }
 
@@ -1531,6 +1667,50 @@ function calendarDateLocalYmd(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, "0")
   const day = String(d.getDate()).padStart(2, "0")
   return `${y}-${m}-${day}`
+}
+
+function upsertOfficeInsideSelfLeaserPayments(opts: {
+  vendor: AdminSubvendorRecord
+  quotationId: string
+  customerName: string
+  phases: PaymentPhase[]
+  existingAll?: SubvendorLeaserPayment[]
+}): SubvendorLeaserPayment[] {
+  const prefix = `lp-self-${opts.quotationId}-`
+  const all = opts.existingAll ?? readLeaserPayments()
+  const kept = all.filter((row) => !(row.vendorId === opts.vendor.id && row.id.startsWith(prefix)))
+  const vendorKept = kept.filter((row) => row.vendorId === opts.vendor.id)
+  let sortOrder = vendorKept.reduce((max, row) => Math.max(max, row.sortOrder || 0), 0)
+  const created: SubvendorLeaserPayment[] = []
+  for (const phase of opts.phases) {
+    const amount = officeInsideSelfLeaserAmount(phase)
+    if (amount <= 0) continue
+    sortOrder += 1
+    const paid = roundCollectInr(phase.paidAmount)
+    const chairbord = Math.max(0, paid - amount)
+    const isPartial = normalizeCollectKind(phase.collectKind) === "partial"
+    created.push({
+      id: officeInsideSelfLeaserId(opts.quotationId, phase.phaseNumber),
+      vendorId: opts.vendor.id,
+      date: phaseDateYmd(phase),
+      amount,
+      paymentType: normalizePaymentMode(phase.paymentMode) === "upi" ? "UPI" : "Cash",
+      remark:
+        phase.note?.trim() ||
+        (isPartial
+          ? `Installment ${phase.phaseNumber} — ${opts.customerName} (self ₹${amount.toLocaleString("en-IN")} / chairbord ₹${chairbord.toLocaleString("en-IN")})`
+          : `Installment ${phase.phaseNumber} — ${opts.customerName} (collect self)`),
+      customerIds: [opts.quotationId],
+      sortOrder,
+    })
+  }
+  const next = [...kept, ...created]
+  writeLeaserPayments(next)
+  const paid = next
+    .filter((row) => row.vendorId === opts.vendor.id)
+    .reduce((sum, row) => sum + row.amount, 0)
+  updateAdminSubvendor(opts.vendor.id, { leaserPaid: paid })
+  return next.filter((row) => row.vendorId === opts.vendor.id)
 }
 
 function paymentDateRangeToFilterStrings(range?: DateRange) {
@@ -2219,6 +2399,15 @@ export default function AccountManagementPage() {
                 paymentMode: normalizePaymentMode(
                   phase.paymentMode || phase.mode || phase.payment_method,
                 ),
+                collectDestination: normalizeCollectDestination(
+                  phase.collectDestination ||
+                    phase.collect_destination ||
+                    phase.collectedBy ||
+                    phase.collected_by,
+                ),
+                collectKind: pickCollectKindFromPhase(phase),
+                collectSelfAmount: pickCollectSelfAmountFromPhase(phase),
+                collectChairbordAmount: pickCollectChairbordAmountFromPhase(phase),
                 transactionId: phase.transactionId,
                 note: phase.note || phase.remarks || "",
               })),
@@ -3732,25 +3921,25 @@ export default function AccountManagementPage() {
     }
   }
 
-  const applySingleInstallmentPlan = (quotationId: string) => {
-    const payment = customerPayments.find((p) => p.quotationId === quotationId)
-    if (!payment) return
-    const cap = Math.round(getPaymentEffectiveCap(payment))
-    if (cap <= 0) return
-    if (payment.phases.length > 0) {
-      if (!confirmSave(`Replace current installments with one installment of ₹${cap.toLocaleString("en-IN")}?`)) {
-        return
-      }
-    }
-    const phases = buildFullPaymentSingleInstallment(payment, false)
-    setCustomerPayments((prev) =>
-      prev.map((p) => (p.quotationId === quotationId ? { ...p, phases } : p)),
-    )
-    toast({
-      title: "Single installment created",
-      description: "Enter paid amount or use Pay full in 1 installment.",
-    })
-  }
+  // const applySingleInstallmentPlan = (quotationId: string) => {
+  //   const payment = customerPayments.find((p) => p.quotationId === quotationId)
+  //   if (!payment) return
+  //   const cap = Math.round(getPaymentEffectiveCap(payment))
+  //   if (cap <= 0) return
+  //   if (payment.phases.length > 0) {
+  //     if (!confirmSave(`Replace current installments with one installment of ₹${cap.toLocaleString("en-IN")}?`)) {
+  //       return
+  //     }
+  //   }
+  //   const phases = buildFullPaymentSingleInstallment(payment, false)
+  //   setCustomerPayments((prev) =>
+  //     prev.map((p) => (p.quotationId === quotationId ? { ...p, phases } : p)),
+  //   )
+  //   toast({
+  //     title: "Single installment created",
+  //     description: "Enter paid amount or use Pay full in 1 installment.",
+  //   })
+  // }
 
   const submitInstallments = async () => {
     if (!activePayment) return
@@ -3792,6 +3981,27 @@ export default function AccountManagementPage() {
       })
       return
     }
+    if (isOfficeInsideDealer(activePayment.dealerId)) {
+      const splitError = activePayment.phases.find((phase) => {
+        if (!isCashOrUpiPaymentMode(phase.paymentMode)) return false
+        if (phase.collectDestination !== "self") return false
+        if (normalizeCollectKind(phase.collectKind) !== "partial") return false
+        const paid = roundCollectInr(phase.paidAmount)
+        if (paid <= 0) return false
+        const self = roundCollectInr(phase.collectSelfAmount)
+        const chairbord = roundCollectInr(phase.collectChairbordAmount)
+        return Math.abs(self + chairbord - paid) > 0.5
+      })
+      if (splitError) {
+        const paid = roundCollectInr(splitError.paidAmount)
+        toast({
+          title: "Cannot save",
+          description: `Installment ${splitError.phaseNumber}: To Chairbord + Self must equal collected ₹${paid.toLocaleString("en-IN")}.`,
+          variant: "destructive",
+        })
+        return
+      }
+    }
     if (!confirmSave("Save installment / payment details?")) return
     if (subvendorLedgerDrafts && isOfficeInsideDealer(activePayment.dealerId)) {
       await commitOfficeInsideLedger(activePayment.quotationId, subvendorLedgerDrafts)
@@ -3827,6 +4037,40 @@ export default function AccountManagementPage() {
           (Number(phase.paidAmount) || 0) > 0 ||
           phase.status === "partial" ||
           phase.status === "completed"
+        const officeCollect =
+          isOfficeInsideDealer(activePayment.dealerId) &&
+          isCashOrUpiPaymentMode(modeNorm || phase.paymentMode)
+        const collectKind: "complete" | "partial" | undefined = officeCollect
+          ? phase.collectDestination === "self" &&
+            normalizeCollectKind(phase.collectKind) === "partial"
+            ? "partial"
+            : "complete"
+          : undefined
+        const paid = roundCollectInr(phase.paidAmount)
+        const collectSelfAmount = officeCollect
+          ? collectKind === "partial"
+            ? roundCollectInr(phase.collectSelfAmount)
+            : phase.collectDestination === "self"
+              ? paid
+              : 0
+          : undefined
+        const collectChairbordAmount = officeCollect
+          ? collectKind === "partial"
+            ? roundCollectInr(phase.collectChairbordAmount)
+            : phase.collectDestination === "self"
+              ? 0
+              : paid
+          : undefined
+        const collectDestination: "self" | "chairbord" | undefined = officeCollect
+          ? collectKind === "partial"
+            ? roundCollectInr(collectSelfAmount) > 0 &&
+              roundCollectInr(collectSelfAmount) >= roundCollectInr(collectChairbordAmount)
+              ? "self"
+              : "chairbord"
+            : phase.collectDestination === "self"
+              ? "self"
+              : "chairbord"
+          : undefined
         return {
           phaseNumber: phase.phaseNumber,
           phaseName: phase.phaseName,
@@ -3836,6 +4080,14 @@ export default function AccountManagementPage() {
           dueDate: phase.dueDate || undefined,
           paymentDate: phase.paymentDate || undefined,
           paymentMode: modeNorm || (needsMode ? paymentModeFromPhases : undefined),
+          collectDestination,
+          collect_destination: collectDestination,
+          collectKind,
+          collect_kind: collectKind,
+          collectSelfAmount,
+          collect_self_amount: collectSelfAmount,
+          collectChairbordAmount,
+          collect_chairbord_amount: collectChairbordAmount,
           transactionId: phase.transactionId || undefined,
           note: phase.note?.trim() || undefined,
         }
@@ -3852,7 +4104,17 @@ export default function AccountManagementPage() {
       } else {
         const response = await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
         const phasesFromResponse = extractPhasesFromPaymentUpdateResponse(response)
-        phasesToApply = phasesFromResponse ?? phasesToApply
+        const sentPhases = payload.phases as PaymentPhase[]
+        phasesToApply = (phasesFromResponse ?? phasesToApply).map((phase) => {
+          const sent = sentPhases.find((row) => row.phaseNumber === phase.phaseNumber)
+          return {
+            ...phase,
+            collectDestination: sent?.collectDestination ?? phase.collectDestination,
+            collectKind: sent?.collectKind ?? phase.collectKind,
+            collectSelfAmount: sent?.collectSelfAmount ?? phase.collectSelfAmount,
+            collectChairbordAmount: sent?.collectChairbordAmount ?? phase.collectChairbordAmount,
+          }
+        })
         if (resolvedSiteCost > 0) {
           siteCostSessionRef.current[activePayment.quotationId] = resolvedSiteCost
         } else {
@@ -3893,6 +4155,51 @@ export default function AccountManagementPage() {
       )
 
       persistSubsidyChequesForQuotation(activePayment.quotationId, activePayment.subsidyCheques || [])
+
+      if (isOfficeInsideDealer(activePayment.dealerId) && activePayment.dealerId) {
+        const vendor = officeInsideVendors.find((row) => row.dealerId === activePayment.dealerId)
+        if (vendor) {
+          let existingAll = readLeaserPayments()
+          if (useApi) {
+            try {
+              const leaserRes = await api.admin.subvendors.leaser.getAll({ vendorId: vendor.id })
+              const remote = pickLeaserPaymentList(leaserRes)
+              if (remote.length) {
+                existingAll = [
+                  ...existingAll.filter((row) => row.vendorId !== vendor.id),
+                  ...remote,
+                ]
+              }
+            } catch {
+              // Keep local leaser rows if the route is not live yet.
+            }
+          }
+          const vendorRows = upsertOfficeInsideSelfLeaserPayments({
+            vendor,
+            quotationId: activePayment.quotationId,
+            customerName: activePayment.customerName,
+            phases: phasesToApply,
+            existingAll,
+          })
+          const paid = vendorRows.reduce((sum, row) => sum + row.amount, 0)
+          setOfficeInsideVendors((prev) =>
+            prev.map((row) => (row.id === vendor.id ? { ...row, leaserPaid: paid } : row)),
+          )
+          if (useApi) {
+            try {
+              await api.admin.subvendors.leaser.replace(
+                vendor.id,
+                leaserPaymentsToApiBody(vendor.id, vendorRows, {
+                  leaserPaid: paid,
+                  leaserRemaining: vendor.leaserRemaining,
+                }),
+              )
+            } catch {
+              // Installment save already succeeded; leaser stays on this device.
+            }
+          }
+        }
+      }
 
       toast({
         title: "Payment details saved",
@@ -5215,14 +5522,14 @@ export default function AccountManagementPage() {
           }
         }}
       >
-        <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-          <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
-            <DialogTitle>Payment management</DialogTitle>
+        <DialogContent className="w-[min(92vw,72rem)] sm:max-w-[72rem] max-h-[90vh] overflow-y-auto p-5 gap-3">
+          <DialogHeader className="flex flex-row items-center justify-between gap-3 space-y-0 pr-8">
+            <DialogTitle className="text-base">Payment management</DialogTitle>
             {activePayment ? (
               <Button
                 type="button"
                 size="sm"
-                className="shrink-0"
+                className="shrink-0 h-8"
                 onClick={submitInstallments}
                 disabled={isSavingInstallments || isSavingFinalSettlement || isRevertingFinalSettlement}
               >
@@ -5231,54 +5538,53 @@ export default function AccountManagementPage() {
             ) : null}
           </DialogHeader>
           {activePayment && (
-            <div className="space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 rounded-lg border border-border/60 bg-muted/20 px-4 py-3">
-                <div>
-                  <p className="text-sm font-semibold">{activePayment.customerName}</p>
-                  <p className="text-xs text-muted-foreground">
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-x-6 gap-y-1.5 rounded-lg border border-border/60 bg-muted/20 px-4 py-2.5">
+                <div className="min-w-0 space-y-0.5">
+                  <p className="text-sm font-semibold leading-tight">{activePayment.customerName}</p>
+                  <p className="text-xs text-muted-foreground leading-tight">
                     Customer No: {activePayment.customerMobile || "N/A"}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                    <span className="mx-1.5 text-border">·</span>
                     Dealer: {activePayment.dealerName || "Unassigned"} • {activePayment.dealerMobile || "No contact"}
                   </p>
-                 
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-muted-foreground">Subtotal</p>
-                  {isFinalSettlementApplied(activePayment) ||
-                  getPaymentDiscountAmount(activePayment) > 0 ? (
-                    <>
-                      <p className="text-sm line-through text-muted-foreground tabular-nums">
+                <div className="sm:text-right shrink-0 space-y-0.5">
+                  <div className="flex items-baseline justify-start sm:justify-end gap-2">
+                    <span className="text-[11px] text-muted-foreground">Subtotal</span>
+                    {isFinalSettlementApplied(activePayment) ||
+                    getPaymentDiscountAmount(activePayment) > 0 ? (
+                      <>
+                        <span className="text-xs line-through text-muted-foreground tabular-nums">
+                          ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                        </span>
+                        <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                          ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
+                        </span>
+                        <span className="text-[11px] text-amber-700 dark:text-amber-400">
+                          − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()}
+                          {getSettlementDiscountAmount(activePayment) > 0
+                            ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
+                            : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-sm font-semibold tabular-nums">
                         ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
-                      </p>
-                      <p className="text-base font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                        ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
-                      </p>
-                      <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-0.5">
-                        − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()} discount
-                        {getSettlementDiscountAmount(activePayment) > 0
-                          ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
-                          : ""}
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-base font-semibold">
-                      ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
-                    </p>
-                  )}
-                  <p
-                    className={cn(
-                      "text-[11px] mt-1",
-                      getDisplayRemaining(activePayment) <= 0
-                        ? "font-semibold text-emerald-700"
-                        : "text-muted-foreground",
+                      </span>
                     )}
-                  >
-                    Remaining: ₹
-                    {getDisplayRemaining(activePayment).toLocaleString("en-IN")}
-                  </p>
-                  <p className="text-[11px] mt-1">
-                    <span className="text-muted-foreground">Payment status: </span>
+                  </div>
+                  <p className="text-[11px] leading-tight">
+                    <span
+                      className={cn(
+                        getDisplayRemaining(activePayment) <= 0
+                          ? "font-semibold text-emerald-700"
+                          : "text-muted-foreground",
+                      )}
+                    >
+                      Remaining: ₹{getDisplayRemaining(activePayment).toLocaleString("en-IN")}
+                    </span>
+                    <span className="mx-1.5 text-border">·</span>
+                    <span className="text-muted-foreground">Status: </span>
                     <span
                       className={
                         getEffectivePaymentStatus(activePayment) === "completed"
@@ -5298,49 +5604,46 @@ export default function AccountManagementPage() {
                 </div>
               </div>
               {["loan", "mix"].includes(getPaymentTypeValue(activePayment)) && (
-                <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-sm space-y-2">
-                  <div>
+                <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-xs leading-snug">
+                  <p className="truncate">
                     <span className="text-muted-foreground">Bank · IFSC </span>
-                    <span className="font-medium break-words">{getFinancingBankDisplay(activePayment)}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-6 gap-y-1">
-                    <span>
-                      <span className="text-muted-foreground">Loan amount: </span>
-                      <span className="font-medium">
-                        {getMixLoanCap(activePayment) > 0
-                          ? `₹${getMixLoanCap(activePayment).toLocaleString("en-IN")}`
-                          : activePayment.loanAmount != null && activePayment.loanAmount > 0
-                            ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
-                            : "—"}
-                      </span>
+                    <span className="font-medium">{getFinancingBankDisplay(activePayment)}</span>
+                    <span className="mx-2 text-border">·</span>
+                    <span className="text-muted-foreground">Loan amount: </span>
+                    <span className="font-medium">
+                      {getMixLoanCap(activePayment) > 0
+                        ? `₹${getMixLoanCap(activePayment).toLocaleString("en-IN")}`
+                        : activePayment.loanAmount != null && activePayment.loanAmount > 0
+                          ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
+                          : "—"}
                     </span>
-                    {getPaymentTypeValue(activePayment) === "mix" && (
+                    {getPaymentTypeValue(activePayment) === "mix" ? (
                       <>
-                        <span>
-                          <span className="text-muted-foreground">Cash amount: </span>
-                          <span className="font-medium">
-                            {getMixCashCap(activePayment) > 0
-                              ? `₹${getMixCashCap(activePayment).toLocaleString("en-IN")}`
-                              : activePayment.cashAmount != null && activePayment.cashAmount > 0
-                                ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
-                                : "—"}
-                          </span>
-                        </span>
-                        <span>
-                          <span className="text-muted-foreground">Loan remaining: </span>
-                          <span className="font-medium text-amber-700 dark:text-amber-400">
-                            ₹{getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")}
-                          </span>
-                        </span>
-                        <span>
-                          <span className="text-muted-foreground">Cash remaining: </span>
-                          <span className="font-medium text-amber-700 dark:text-amber-400">
-                            ₹{getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
-                          </span>
+                        <span className="mx-2 text-border">·</span>
+                        <span className="text-muted-foreground">Cash amount: </span>
+                        <span className="font-medium">
+                          {getMixCashCap(activePayment) > 0
+                            ? `₹${getMixCashCap(activePayment).toLocaleString("en-IN")}`
+                            : activePayment.cashAmount != null && activePayment.cashAmount > 0
+                              ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
+                              : "—"}
                         </span>
                       </>
-                    )}
-                  </div>
+                    ) : null}
+                  </p>
+                  {getPaymentTypeValue(activePayment) === "mix" ? (
+                    <p className="mt-0.5">
+                      <span className="text-muted-foreground">Loan remaining: </span>
+                      <span className="font-medium text-amber-700 dark:text-amber-400">
+                        ₹{getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")}
+                      </span>
+                      <span className="mx-2 text-border">·</span>
+                      <span className="text-muted-foreground">Cash remaining: </span>
+                      <span className="font-medium text-amber-700 dark:text-amber-400">
+                        ₹{getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
+                      </span>
+                    </p>
+                  ) : null}
                 </div>
               )}
 
@@ -5366,14 +5669,14 @@ export default function AccountManagementPage() {
                     >
                       Pay full in 1 installment
                     </Button>
-                    <Button
+                    {/* <Button
                       type="button"
                       variant="outline"
                       onClick={() => applySingleInstallmentPlan(activePayment.quotationId)}
                       disabled={isSavingInstallments || isSavingFinalSettlement}
                     >
                       1 installment (enter paid later)
-                    </Button>
+                    </Button> */}
                     <Button
                       type="button"
                       variant="outline"
@@ -5439,261 +5742,459 @@ export default function AccountManagementPage() {
                     </div>
                   </div>
                               
-                  <div className="space-y-3">
+                  <div className="space-y-2">
                     {[...activePayment.phases]
                       .sort((a, b) => b.phaseNumber - a.phaseNumber)
                       .map((phase) => {
-                                  const isCompleted = phase.status === "completed"
-                                  const isPartial = phase.status === "partial"
-                                  const isPending = phase.status === "pending"
-                      const remainingBefore = getRemainingBeforeInstallment(activePayment, phase)
-                      const isMix = getPaymentTypeValue(activePayment) === "mix"
-                      const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
-                      const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
-                                  
-                                  return (
-                                    <div
-                                      key={phase.phaseNumber}
-                          className={`rounded-lg border px-4 py-3 ${
-                                        isCompleted
-                                          ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
-                                          : isPartial
-                                          ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
-                                          : "bg-gray-50 dark:bg-gray-950/20 border-border"
-                                      }`}
-                                    >
-                                      <div className="flex items-center justify-between mb-3">
-                                        <div className="flex items-center gap-2">
-                                          <div
-                                            className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
-                                              isCompleted
-                                                ? "bg-green-500 text-white"
-                                                : isPartial
-                                                ? "bg-amber-500 text-white"
-                                                : "bg-gray-300 dark:bg-gray-700 text-gray-600 dark:text-gray-400"
-                                            }`}
-                                          >
-                                            {phase.phaseNumber}
-                                          </div>
-                                          <div>
-                                            <p className="text-sm font-semibold">{phase.phaseName}</p>
-                                            <p className="text-xs text-muted-foreground">
-                                  {isMix ? `${sideLabel} remaining` : "Remaining"} before this installment: ₹
+                        const isCompleted = phase.status === "completed"
+                        const isPartial = phase.status === "partial"
+                        const remainingBefore = getRemainingBeforeInstallment(activePayment, phase)
+                        const isMix = getPaymentTypeValue(activePayment) === "mix"
+                        const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
+                        const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
+                        const showCollect =
+                          isOfficeInsideDealer(activePayment.dealerId) &&
+                          isCashOrUpiPaymentMode(
+                            normalizePaymentMode(phase.paymentMode) ||
+                              defaultInstallmentPaymentMode(activePayment),
+                          )
+
+                        return (
+                          <div
+                            key={phase.phaseNumber}
+                            className={cn(
+                              "rounded-lg border px-3 py-2.5 space-y-2",
+                              isCompleted
+                                ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
+                                : isPartial
+                                  ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
+                                  : "bg-muted/30 border-border",
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <div
+                                  className={cn(
+                                    "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
+                                    isCompleted
+                                      ? "bg-green-500 text-white"
+                                      : isPartial
+                                        ? "bg-amber-500 text-white"
+                                        : "bg-muted-foreground/30 text-muted-foreground",
+                                  )}
+                                >
+                                  {phase.phaseNumber}
+                                </div>
+                                <p className="text-sm font-semibold truncate">{phase.phaseName}</p>
+                                <span className="text-[11px] text-muted-foreground truncate">
+                                  {isMix ? `${sideLabel} remaining` : "Remaining"} before: ₹
                                   {remainingBefore.toLocaleString()}
-                                            </p>
-                                          </div>
-                                        </div>
-                                        <Badge
-                                          className={
-                                            isCompleted
-                                              ? "bg-green-600 text-white"
-                                              : isPartial
-                                              ? "bg-amber-600 text-white"
-                                              : "bg-gray-500 text-white"
-                                          }
-                                        >
-                                          {isCompleted ? (
-                                <>
-                                  <CheckCircle2 className="w-3 h-3 mr-1" /> Completed
-                                </>
-                                          ) : isPartial ? (
-                                <>
-                                  <Clock className="w-3 h-3 mr-1" /> Partial
-                                </>
-                                          ) : (
-                                <>
-                                  <AlertCircle className="w-3 h-3 mr-1" /> Pending
-                                </>
-                                          )}
-                                        </Badge>
-                                      </div>
-                                      
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Paid Amount</Label>
-                                          <Input
-                                            type="number"
-                                            value={phase.paidAmount}
-                                            onChange={(e) => {
-                                              const paid = Number.parseFloat(e.target.value) || 0
-                                              const updated = customerPayments.map((p) =>
-                                                p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: coercePhasesPaymentModes(
-                                                        p.phases.map((ph) =>
-                                                          ph.phaseNumber === phase.phaseNumber
-                                                            ? (() => {
-                                                                const nextStatus: PaymentPhase["status"] =
-                                                                  paid >= ph.amount
-                                                                    ? "completed"
-                                                                    : paid > 0
-                                                                      ? "partial"
-                                                                      : "pending"
-                                                                return {
-                                                                  ...ph,
-                                                                  paidAmount: paid,
-                                                                  status: nextStatus,
-                                                                  paymentDate:
-                                                                    paid > 0 ? new Date().toISOString() : undefined,
-                                                                }
-                                                              })()
-                                                            : ph,
-                                                        ),
-                                                      ),
-                                                    }
-                                                  : p,
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                            placeholder="0"
-                                          />
-                                        </div>
-                                        <div>
-                                          <Label className="text-xs text-muted-foreground">Due Date</Label>
-                                          <Input
-                                            type="date"
-                                            value={phase.dueDate ? new Date(phase.dueDate).toISOString().split("T")[0] : ""}
-                                            onChange={(e) => {
-                                              const updated = customerPayments.map((p) =>
-                                    p.quotationId === activePayment.quotationId
-                                                  ? {
-                                                      ...p,
-                                                      phases: p.phases.map((ph) =>
-                                                        ph.phaseNumber === phase.phaseNumber
-                                                          ? { ...ph, dueDate: e.target.value }
-                                                          : ph
-                                                      ),
-                                                    }
-                                                  : p
-                                              )
-                                              setCustomerPayments(updated)
-                                            }}
-                                            className="mt-1"
-                                          />
-                                        </div>
-                                      </div>
-                                      
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Payment Mode</Label>
-                              <Select
-                                value={
-                                  normalizePaymentMode(phase.paymentMode) ||
-                                  defaultInstallmentPaymentMode(activePayment)
-                                }
-                                onValueChange={(value) => {
-                                  const updated = customerPayments.map((p) =>
-                                    p.quotationId === activePayment.quotationId
-                                      ? {
-                                          ...p,
-                                          phases: p.phases.map((ph) =>
-                                            ph.phaseNumber === phase.phaseNumber ? { ...ph, paymentMode: value } : ph
-                                          ),
-                                        }
-                                      : p
-                                  )
-                                  setCustomerPayments(updated)
-                                }}
+                                </span>
+                              </div>
+                              <Badge
+                                className={cn(
+                                  "h-5 px-1.5 text-[10px] shrink-0",
+                                  isCompleted
+                                    ? "bg-green-600 text-white"
+                                    : isPartial
+                                      ? "bg-amber-600 text-white"
+                                      : "bg-gray-500 text-white",
+                                )}
                               >
-                                <SelectTrigger className="mt-1">
-                                  <SelectValue placeholder="Select payment mode" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {modeOptions.map((opt) => (
-                                    <SelectItem key={opt.value} value={opt.value}>
-                                      {opt.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                                        </div>
-                            <div>
-                              <Label className="text-xs text-muted-foreground">Notes</Label>
-                              <Input
-                                value={phase.note || ""}
-                                onChange={(e) => {
-                                  const updated = customerPayments.map((p) =>
-                                    p.quotationId === activePayment.quotationId
-                                      ? {
-                                          ...p,
-                                          phases: p.phases.map((ph) =>
-                                            ph.phaseNumber === phase.phaseNumber ? { ...ph, note: e.target.value } : ph,
-                                          ),
+                                {isCompleted ? (
+                                  <>
+                                    <CheckCircle2 className="w-3 h-3 mr-0.5" /> Completed
+                                  </>
+                                ) : isPartial ? (
+                                  <>
+                                    <Clock className="w-3 h-3 mr-0.5" /> Partial
+                                  </>
+                                ) : (
+                                  <>
+                                    <AlertCircle className="w-3 h-3 mr-0.5" /> Pending
+                                  </>
+                                )}
+                              </Badge>
+                            </div>
+
+                            <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+                              <div className="min-w-0">
+                                <Label className="text-[11px] text-muted-foreground">Paid Amount</Label>
+                                <Input
+                                  type="number"
+                                  value={phase.paidAmount}
+                                  onChange={(e) => {
+                                    const paid = Number.parseFloat(e.target.value) || 0
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: coercePhasesPaymentModes(
+                                              p.phases.map((ph) =>
+                                                ph.phaseNumber === phase.phaseNumber
+                                                  ? (() => {
+                                                      const nextStatus: PaymentPhase["status"] =
+                                                        paid >= ph.amount
+                                                          ? "completed"
+                                                          : paid > 0
+                                                            ? "partial"
+                                                            : "pending"
+                                                      const nextPhase: PaymentPhase = {
+                                                        ...ph,
+                                                        paidAmount: paid,
+                                                        status: nextStatus,
+                                                        paymentDate:
+                                                          paid > 0 ? new Date().toISOString() : undefined,
+                                                      }
+                                                      return normalizeCollectKind(ph.collectKind) === "partial"
+                                                        ? withPartialCollectSplit(nextPhase, {
+                                                            self: ph.collectSelfAmount,
+                                                          })
+                                                        : nextPhase
+                                                    })()
+                                                  : ph,
+                                              ),
+                                            ),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                  className="mt-0.5 h-8"
+                                  placeholder="0"
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <Label className="text-[11px] text-muted-foreground">Due Date</Label>
+                                <Input
+                                  type="date"
+                                  value={
+                                    phase.dueDate
+                                      ? new Date(phase.dueDate).toISOString().split("T")[0]
+                                      : ""
+                                  }
+                                  onChange={(e) => {
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: p.phases.map((ph) =>
+                                              ph.phaseNumber === phase.phaseNumber
+                                                ? { ...ph, dueDate: e.target.value }
+                                                : ph,
+                                            ),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                  className="mt-0.5 h-8"
+                                />
+                              </div>
+                              <div className="min-w-0">
+                                <Label className="text-[11px] text-muted-foreground">Payment Mode</Label>
+                                <Select
+                                  value={
+                                    normalizePaymentMode(phase.paymentMode) ||
+                                    defaultInstallmentPaymentMode(activePayment)
+                                  }
+                                  onValueChange={(value) => {
+                                    const keepCollect =
+                                      isOfficeInsideDealer(activePayment.dealerId) &&
+                                      isCashOrUpiPaymentMode(value)
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: p.phases.map((ph) => {
+                                              if (ph.phaseNumber !== phase.phaseNumber) return ph
+                                              const collectDestination: PaymentPhase["collectDestination"] =
+                                                keepCollect
+                                                  ? ph.collectDestination === "self"
+                                                    ? "self"
+                                                    : "chairbord"
+                                                  : undefined
+                                              const collectKind: PaymentPhase["collectKind"] = keepCollect
+                                                ? normalizeCollectKind(ph.collectKind) === "partial"
+                                                  ? "partial"
+                                                  : "complete"
+                                                : undefined
+                                              return {
+                                                ...ph,
+                                                paymentMode: value,
+                                                collectDestination,
+                                                collectKind,
+                                                collectSelfAmount: keepCollect ? ph.collectSelfAmount : undefined,
+                                                collectChairbordAmount: keepCollect
+                                                  ? ph.collectChairbordAmount
+                                                  : undefined,
+                                              }
+                                            }),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                >
+                                  <SelectTrigger className="mt-0.5 h-8">
+                                    <SelectValue placeholder="Select payment mode" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {modeOptions.map((opt) => (
+                                      <SelectItem key={opt.value} value={opt.value}>
+                                        {opt.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="min-w-0">
+                                <Label className="text-[11px] text-muted-foreground">Notes</Label>
+                                <Input
+                                  value={phase.note || ""}
+                                  onChange={(e) => {
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: p.phases.map((ph) =>
+                                              ph.phaseNumber === phase.phaseNumber
+                                                ? { ...ph, note: e.target.value }
+                                                : ph,
+                                            ),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                  className="mt-0.5 h-8"
+                                  placeholder="Optional notes"
+                                />
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap xl:flex-nowrap items-end gap-2">
+                              {showCollect ? (
+                                <>
+                                  <div className="w-[8.5rem] shrink-0">
+                                    <Label className="text-[11px] text-muted-foreground">Collected by</Label>
+                                    <Select
+                                      value={phase.collectDestination === "self" ? "self" : "chairbord"}
+                                      onValueChange={(value) => {
+                                        const dest: PaymentPhase["collectDestination"] =
+                                          value === "self" ? "self" : "chairbord"
+                                        const updated = customerPayments.map((p) =>
+                                          p.quotationId === activePayment.quotationId
+                                            ? {
+                                                ...p,
+                                                phases: p.phases.map((ph) =>
+                                                  ph.phaseNumber === phase.phaseNumber
+                                                    ? dest === "chairbord"
+                                                      ? {
+                                                          ...ph,
+                                                          collectDestination: dest,
+                                                          collectKind: undefined,
+                                                          collectSelfAmount: undefined,
+                                                          collectChairbordAmount: undefined,
+                                                        }
+                                                      : {
+                                                          ...ph,
+                                                          collectDestination: dest,
+                                                          collectKind:
+                                                            normalizeCollectKind(ph.collectKind) === "partial"
+                                                              ? "partial"
+                                                              : "complete",
+                                                        }
+                                                    : ph,
+                                                ),
+                                              }
+                                            : p,
+                                        )
+                                        setCustomerPayments(updated)
+                                      }}
+                                    >
+                                      <SelectTrigger className="mt-0.5 h-8">
+                                        <SelectValue placeholder="Collected by" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="chairbord">Chairbord</SelectItem>
+                                        <SelectItem value="self">Self</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  {phase.collectDestination === "self" ? (
+                                    <div className="w-[8.5rem] shrink-0">
+                                      <Label className="text-[11px] text-muted-foreground">Collect</Label>
+                                      <Select
+                                        value={
+                                          normalizeCollectKind(phase.collectKind) === "partial"
+                                            ? "partial"
+                                            : "complete"
                                         }
-                                      : p,
-                                  )
-                                  setCustomerPayments(updated)
-                                }}
-                                className="mt-1"
-                                placeholder="Installment notes (optional)"
-                              />
+                                        onValueChange={(value) => {
+                                          const updated = customerPayments.map((p) =>
+                                            p.quotationId === activePayment.quotationId
+                                              ? {
+                                                  ...p,
+                                                  phases: p.phases.map((ph) => {
+                                                    if (ph.phaseNumber !== phase.phaseNumber) return ph
+                                                    const paid = roundCollectInr(ph.paidAmount)
+                                                    if (value === "partial") {
+                                                      return withPartialCollectSplit(
+                                                        { ...ph, collectDestination: "self" },
+                                                        { self: paid },
+                                                      )
+                                                    }
+                                                    return {
+                                                      ...ph,
+                                                      collectKind: "complete" as const,
+                                                      collectDestination: "self" as const,
+                                                      collectSelfAmount: undefined,
+                                                      collectChairbordAmount: undefined,
+                                                    }
+                                                  }),
+                                                }
+                                              : p,
+                                          )
+                                          setCustomerPayments(updated)
+                                        }}
+                                      >
+                                        <SelectTrigger className="mt-0.5 h-8">
+                                          <SelectValue placeholder="Collect" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="complete">Complete</SelectItem>
+                                          <SelectItem value="partial">Partial</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  ) : null}
+                                  {phase.collectDestination === "self" &&
+                                  normalizeCollectKind(phase.collectKind) === "partial" ? (
+                                    <>
+                                      <div className="w-[7.75rem] shrink-0">
+                                        <Label className="text-[11px] text-muted-foreground">
+                                          Chairbord
+                                        </Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={phase.collectChairbordAmount ?? 0}
+                                          onChange={(e) => {
+                                            const chairbord = Number.parseFloat(e.target.value) || 0
+                                            const updated = customerPayments.map((p) =>
+                                              p.quotationId === activePayment.quotationId
+                                                ? {
+                                                    ...p,
+                                                    phases: p.phases.map((ph) =>
+                                                      ph.phaseNumber === phase.phaseNumber
+                                                        ? withPartialCollectSplit(
+                                                            { ...ph, collectDestination: "self" },
+                                                            { chairbord },
+                                                          )
+                                                        : ph,
+                                                    ),
+                                                  }
+                                                : p,
+                                            )
+                                            setCustomerPayments(updated)
+                                          }}
+                                          className="mt-0.5 h-8 tabular-nums"
+                                        />
+                                      </div>
+                                      <div className="w-[7.75rem] shrink-0">
+                                        <Label className="text-[11px] text-muted-foreground">Self</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={phase.collectSelfAmount ?? 0}
+                                          onChange={(e) => {
+                                            const self = Number.parseFloat(e.target.value) || 0
+                                            const updated = customerPayments.map((p) =>
+                                              p.quotationId === activePayment.quotationId
+                                                ? {
+                                                    ...p,
+                                                    phases: p.phases.map((ph) =>
+                                                      ph.phaseNumber === phase.phaseNumber
+                                                        ? withPartialCollectSplit(
+                                                            { ...ph, collectDestination: "self" },
+                                                            { self },
+                                                          )
+                                                        : ph,
+                                                    ),
+                                                  }
+                                                : p,
+                                            )
+                                            setCustomerPayments(updated)
+                                          }}
+                                          className="mt-0.5 h-8 tabular-nums"
+                                        />
+                                      </div>
+                                    </>
+                                  ) : null}
+                                </>
+                              ) : null}
+                              <div className="min-w-0 flex-1">
+                                <Label className="text-[11px] text-muted-foreground">Transaction ID</Label>
+                                <Input
+                                  value={phase.transactionId || ""}
+                                  onChange={(e) => {
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: p.phases.map((ph) =>
+                                              ph.phaseNumber === phase.phaseNumber
+                                                ? { ...ph, transactionId: e.target.value }
+                                                : ph,
+                                            ),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                  className="mt-0.5 h-8"
+                                  placeholder="Optional"
+                                />
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0 h-8 ml-auto">
+                                <p className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                  {isMix ? `${sideLabel} remaining` : "Remaining"} after: ₹
+                                  {Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
+                                </p>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const updated = customerPayments.map((p) =>
+                                      p.quotationId === activePayment.quotationId
+                                        ? {
+                                            ...p,
+                                            phases: removePaymentPhase(
+                                              p.phases,
+                                              phase.phaseNumber,
+                                              p.subtotal,
+                                            ),
+                                          }
+                                        : p,
+                                    )
+                                    setCustomerPayments(updated)
+                                  }}
+                                  className="text-destructive h-8 px-2 text-xs"
+                                >
+                                  Remove
+                                </Button>
+                              </div>
                             </div>
                           </div>
-
-                          <div className="mt-3">
-                            <Label className="text-xs text-muted-foreground">Transaction ID</Label>
-                            <Textarea
-                              value={phase.transactionId || ""}
-                              onChange={(e) => {
-                                const updated = customerPayments.map((p) =>
-                                  p.quotationId === activePayment.quotationId
-                                    ? {
-                                        ...p,
-                                        phases: p.phases.map((ph) =>
-                                          ph.phaseNumber === phase.phaseNumber
-                                            ? { ...ph, transactionId: e.target.value }
-                                            : ph,
-                                        ),
-                                      }
-                                    : p,
-                                )
-                                setCustomerPayments(updated)
-                              }}
-                              className="mt-1 resize-y min-h-[64px]"
-                              rows={2}
-                              placeholder="Optional"
-                            />
-                          </div>
-                              
-                          <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-3">
-                            <p className="text-xs text-muted-foreground">
-                              {isMix ? `${sideLabel} remaining` : "Remaining"} after this installment: ₹
-                              {Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
-                            </p>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => {
-                                const updated = customerPayments.map((p) =>
-                                  p.quotationId === activePayment.quotationId
-                                    ? {
-                                        ...p,
-                                        phases: removePaymentPhase(
-                                          p.phases,
-                                          phase.phaseNumber,
-                                          p.subtotal,
-                                        ),
-                                      }
-                                    : p,
-                                )
-                                setCustomerPayments(updated)
-                              }}
-                              className="text-destructive"
-                            >
-                              Remove installment
-                            </Button>
-                                  </div>
-                                  </div>
-                      )
-                    })}
-                                </div>
+                        )
+                      })}
+                  </div>
                 </>
               )}
               {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
-                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-4 py-3 space-y-3">
+                <div className="rounded-lg border border-amber-200/80 bg-amber-50/40 dark:bg-amber-950/20 px-3 py-2.5 space-y-2">
                   <div>
                     <p className="text-sm font-semibold text-amber-950 dark:text-amber-100">Subsidy cheques</p>
                   </div>
@@ -5934,107 +6435,60 @@ export default function AccountManagementPage() {
               </div>
               ) : null}
               {isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
-                <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
+                <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
                   <p className="text-sm font-medium">Office inside amounts</p>
-                  <div className="space-y-2">
-                    <div className="grid grid-cols-1 sm:grid-cols-[3fr_2fr] gap-3 items-end">
-                      <div className="space-y-1.5 min-w-0">
-                        <p className="text-xs font-medium text-muted-foreground">PI upload</p>
-                        <div className="flex items-center gap-2">
-                          <Input
-                            id={`am-pi-upload-${activePayment.quotationId}`}
-                            type="file"
-                            accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
-                            multiple
-                            className="hidden"
-                            disabled={uploadingPiId === activePayment.quotationId}
-                            onChange={(e) => {
-                              const files = Array.from(e.target.files || [])
-                              e.currentTarget.value = ""
-                              void uploadPaymentPiFiles(activePayment.quotationId, files)
-                            }}
-                          />
-                          <Label
-                            htmlFor={`am-pi-upload-${activePayment.quotationId}`}
-                            className={cn(
-                              "inline-flex h-9 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium shrink-0",
-                              uploadingPiId === activePayment.quotationId
-                                ? "cursor-not-allowed opacity-60"
-                                : "cursor-pointer hover:bg-muted/40",
-                            )}
-                          >
-                            {uploadingPiId === activePayment.quotationId ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Upload className="w-3.5 h-3.5" />
-                            )}
-                            {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI"}
-                          </Label>
-                        </div>
-                      </div>
-                      <div className="space-y-1.5 min-w-0">
-                        <Label htmlFor="accounts-ledger-pi">{LEDGER_FIELD_LABELS.pi}</Label>
-                        <Input
-                          id="accounts-ledger-pi"
-                          inputMode="numeric"
-                          className="tabular-nums h-9"
-                          placeholder="0"
-                          disabled={accountsReadOnly || !canWriteAccounts}
-                          value={subvendorLedgerDrafts.pi}
-                          onChange={(e) => {
-                            const raw = e.target.value
-                            setSubvendorLedgerDrafts((prev) =>
-                              prev ? applyOfficeInsideGstToDrafts({ ...prev, pi: raw }) : prev,
-                            )
-                          }}
-                        />
-                      </div>
+                  <div className="flex items-end gap-2 min-w-0">
+                    <div className="space-y-0.5 min-w-0 flex-1">
+                      <Label htmlFor="accounts-ledger-pi" className="text-[11px] text-muted-foreground">
+                        {LEDGER_FIELD_LABELS.pi}
+                      </Label>
+                      <Input
+                        id="accounts-ledger-pi"
+                        inputMode="numeric"
+                        className="tabular-nums h-8"
+                        placeholder="0"
+                        disabled={accountsReadOnly || !canWriteAccounts}
+                        value={subvendorLedgerDrafts.pi}
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setSubvendorLedgerDrafts((prev) =>
+                            prev ? applyOfficeInsideGstToDrafts({ ...prev, pi: raw }) : prev,
+                          )
+                        }}
+                      />
                     </div>
-                    {(() => {
-                      const piUrls = getActivePaymentPiUrls(activePayment)
-                      if (piUrls.length === 0) {
-                        return (
-                          <p className="text-xs text-muted-foreground">No PI documents uploaded yet.</p>
-                        )
-                      }
-                      return (
-                        <ul className="space-y-1.5">
-                          {piUrls.map((url, index) => {
-                            const href = toPublicOpenHref(url) || url
-                            const label =
-                              url.split("/").pop()?.split("?")[0] || `PI document ${index + 1}`
-                            return (
-                              <li
-                                key={`${activePayment.quotationId}-pi-${index}-${url}`}
-                                className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5"
-                              >
-                                <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
-                                <a
-                                  href={href}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="min-w-0 flex-1 truncate text-xs text-primary underline-offset-2 hover:underline"
-                                  title={label}
-                                >
-                                  {decodeURIComponent(label)}
-                                </a>
-                                <button
-                                  type="button"
-                                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
-                                  aria-label={`Remove ${label}`}
-                                  disabled={uploadingPiId === activePayment.quotationId}
-                                  onClick={() => void removePaymentPiUrl(activePayment.quotationId, url)}
-                                >
-                                  <X className="h-3.5 w-3.5" />
-                                </button>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                      )
-                    })()}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-0.5 shrink-0">
+                      <p className="text-[11px] font-medium text-muted-foreground">PI upload</p>
+                      <Input
+                        id={`am-pi-upload-${activePayment.quotationId}`}
+                        type="file"
+                        accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
+                        multiple
+                        className="hidden"
+                        disabled={uploadingPiId === activePayment.quotationId}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || [])
+                          e.currentTarget.value = ""
+                          void uploadPaymentPiFiles(activePayment.quotationId, files)
+                        }}
+                      />
+                      <Label
+                        htmlFor={`am-pi-upload-${activePayment.quotationId}`}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium whitespace-nowrap",
+                          uploadingPiId === activePayment.quotationId
+                            ? "cursor-not-allowed opacity-60"
+                            : "cursor-pointer hover:bg-muted/40",
+                        )}
+                      >
+                        {uploadingPiId === activePayment.quotationId ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="w-3.5 h-3.5" />
+                        )}
+                        {uploadingPiId === activePayment.quotationId ? "Uploading…" : "Upload PI"}
+                      </Label>
+                    </div>
                     {OFFICE_INSIDE_AMOUNT_FIELDS.filter((field) => {
                       if (field === "pi") return false
                       if (field === "gstCharges") {
@@ -6044,12 +6498,14 @@ export default function AccountManagementPage() {
                     }).map((field) => {
                       const isGst = field === "gstCharges"
                       return (
-                      <div key={field} className="space-y-1.5">
-                        <Label htmlFor={`accounts-ledger-${field}`}>{LEDGER_FIELD_LABELS[field]}</Label>
+                      <div key={field} className="space-y-0.5 min-w-0 flex-1">
+                        <Label htmlFor={`accounts-ledger-${field}`} className="text-[11px] text-muted-foreground">
+                          {LEDGER_FIELD_LABELS[field]}
+                        </Label>
                         <Input
                           id={`accounts-ledger-${field}`}
                           inputMode="numeric"
-                          className="tabular-nums"
+                          className="tabular-nums h-8"
                           placeholder="0"
                           readOnly={isGst}
                           disabled={accountsReadOnly || !canWriteAccounts || isGst}
@@ -6066,59 +6522,85 @@ export default function AccountManagementPage() {
                             })
                           }}
                         />
-                        {isGst ? (
-                          <p className="text-[11px] text-muted-foreground">
-                            (Proposal − PI) × 8.9%
-                          </p>
-                        ) : null}
                       </div>
                       )
                     })}
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium text-muted-foreground">Cost of site</p>
                       {(() => {
                         const liveSiteCost = getOfficeInsideSiteCost(
                           amountsFromLedgerDrafts(subvendorLedgerDrafts),
                         )
                         return (
-                          <>
-                            <p className="text-lg font-semibold tabular-nums">
-                              ₹{liveSiteCost.toLocaleString("en-IN")}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
-                              PI + file charges + others + GST
-                            </p>
-                          </>
+                          <p className="h-8 flex items-center text-sm font-semibold tabular-nums">
+                            ₹{liveSiteCost.toLocaleString("en-IN")}
+                          </p>
                         )
                       })()}
                     </div>
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-medium text-muted-foreground">Profit</p>
                       {(() => {
                         const liveProfit = getOfficeInsidePaymentProfit(
                           activePayment,
                           amountsFromLedgerDrafts(subvendorLedgerDrafts),
                         )
                         return (
-                          <>
-                            <p
-                              className={cn(
-                                "text-lg font-semibold tabular-nums",
-                                liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
-                              )}
-                            >
-                              ₹{liveProfit.toLocaleString("en-IN")}
-                            </p>
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
-                              Subtotal − cost of site
-                            </p>
-                          </>
+                          <p
+                            className={cn(
+                              "h-8 flex items-center text-sm font-semibold tabular-nums",
+                              liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                            )}
+                          >
+                            ₹{liveProfit.toLocaleString("en-IN")}
+                          </p>
                         )
                       })()}
                     </div>
                   </div>
+                  {(() => {
+                    const piUrls = getActivePaymentPiUrls(activePayment)
+                    if (piUrls.length === 0) {
+                      return (
+                        <p className="text-xs text-muted-foreground">No PI documents uploaded yet.</p>
+                      )
+                    }
+                    return (
+                      <ul className="space-y-1.5">
+                        {piUrls.map((url, index) => {
+                          const href = toPublicOpenHref(url) || url
+                          const label =
+                            url.split("/").pop()?.split("?")[0] || `PI document ${index + 1}`
+                          return (
+                            <li
+                              key={`${activePayment.quotationId}-pi-${index}-${url}`}
+                              className="flex items-center gap-2 rounded-md border border-border/60 bg-background px-2.5 py-1.5"
+                            >
+                              <FileText className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="min-w-0 flex-1 truncate text-xs text-primary underline-offset-2 hover:underline"
+                                title={label}
+                              >
+                                {decodeURIComponent(label)}
+                              </a>
+                              <button
+                                type="button"
+                                className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                                aria-label={`Remove ${label}`}
+                                disabled={uploadingPiId === activePayment.quotationId}
+                                onClick={() => void removePaymentPiUrl(activePayment.quotationId, url)}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )
+                  })()}
                 </div>
               ) : null}
 

@@ -19,7 +19,7 @@
 | Package / pricing column | **`Crompton set`** (browse `panelType`; keep as `products.panelType`) |
 | Form panel brand | **`Premier Energy`** |
 | Panels | **Premier Energy** within **600W–610W Topcon Bifacial** (typical pick **610W**) |
-| Inverter | **Crompton** **3.6kW** |
+| Inverter | **Crompton** — **3kW** on the 3kW set, **5kW** on the 5kW set (not 3.6kW) |
 | ACDB / DCDB | **Crompton (1-Phase)** |
 | 3kW set price | **₹2,10,000** |
 | 5kW set price | **₹2,95,000** |
@@ -37,7 +37,7 @@
 | 1 | Persist + echo `pdfPanelRangeKey` / `pdf_panel_range_key` = **`premier_energy_600_610`** |
 | 2 | Allow `panelBrand` = **`Premier Energy`** (catalog brand — may be new) |
 | 3 | Persist + echo `panelType` / `panel_type` = **`Crompton set`** (package marker — **required for set price**) |
-| 4 | Allow `inverterBrand` = **`Crompton`**, `inverterSize` = **`3.6kW`** |
+| 4 | Allow `inverterBrand` = **`Crompton`**, `inverterSize` = **`3kW`** (3kW set) / **`5kW`** (5kW set). Still accept legacy **`3.6kW`** on old quotations (do not 400). |
 | 5 | Allow ACDB/DCDB **`Crompton (1-Phase)`** |
 | 6 | Accept panel sizes **`550W` / `600W` / `605W` / `610W`** with normal qty (> 0) |
 | 7 | Set-price when `panelType === "Crompton set"`: **3kW→210000**, **5kW→295000** — do **not** use Premier Energies Topcon matrix |
@@ -71,7 +71,7 @@ Also still valid: existing Waaree / Adani / Premier Topcon / Tata / INA / 80kW N
   "dcrPanelQuantity": 5,
   "inverterType": "String Inverter",
   "inverterBrand": "Crompton",
-  "inverterSize": "3.6kW",
+  "inverterSize": "3kW",
   "structureType": "GI Structure",
   "structureSize": "3kW",
   "acdb": "Crompton (1-Phase)",
@@ -94,7 +94,7 @@ Also still valid: existing Waaree / Adani / Premier Topcon / Tata / INA / 80kW N
   "panelSize": "610W",
   "panelQuantity": 8,
   "inverterBrand": "Crompton",
-  "inverterSize": "3.6kW",
+  "inverterSize": "5kW",
   "structureSize": "5kW",
   "acdb": "Crompton (1-Phase)",
   "dcdb": "Crompton (1-Phase)",
@@ -121,18 +121,18 @@ If `GET /api/quotations/pricing-tables` (or equivalent) is live, include:
     {
       "systemSize": "3kW",
       "phase": "1-Phase",
-      "inverterSize": "3.6kW",
+      "inverterSize": "3kW",
       "panelType": "Crompton set",
       "price": 210000,
-      "notes": "Premier Energy 600W–610W panels; Crompton 3.6kW inverter + ACDB/DCDB"
+      "notes": "Premier Energy 600W–610W panels; Crompton 3kW inverter + ACDB/DCDB"
     },
     {
       "systemSize": "5kW",
       "phase": "1-Phase",
-      "inverterSize": "3.6kW",
+      "inverterSize": "5kW",
       "panelType": "Crompton set",
       "price": 295000,
-      "notes": "Premier Energy 600W–610W panels; Crompton 3.6kW inverter + ACDB/DCDB"
+      "notes": "Premier Energy 600W–610W panels; Crompton 5kW inverter + ACDB/DCDB"
     }
   ]
 }
@@ -140,7 +140,8 @@ If `GET /api/quotations/pricing-tables` (or equivalent) is live, include:
 
 **Lookup notes:**
 - Match primarily on `systemSize` + `phase` + `panelType === "Crompton set"`.
-- Inverter on the package is fixed **3.6kW** for both 3kW and 5kW slabs — do not require `inverterSize === systemSize`.
+- Inverter matches the set: **3kW set → 3kW**, **5kW set → 5kW**. Do **not** force **3.6kW**.
+- Set price still looks up by `panelType` + `systemSize` + `phase` if inverter size differs (legacy 3.6kW).
 - Frontend also falls back to hardcoded `lib/pricing-tables.ts` when API is missing rows.
 
 ---
@@ -158,7 +159,7 @@ Include in `systemConfigurations` (or `systemConfigs`):
     "panelBrand": "Crompton set",
     "panelSize": "610W",
     "inverterBrand": "Crompton",
-    "inverterSize": "3.6kW",
+    "inverterSize": "3kW",
     "inverterType": "String Inverter",
     "structureType": "GI Structure",
     "structureSize": "3kW",
@@ -178,7 +179,7 @@ Include in `systemConfigurations` (or `systemConfigs`):
     "panelBrand": "Crompton set",
     "panelSize": "610W",
     "inverterBrand": "Crompton",
-    "inverterSize": "3.6kW",
+    "inverterSize": "5kW",
     "inverterType": "String Inverter",
     "structureType": "GI Structure",
     "structureSize": "5kW",
@@ -199,7 +200,7 @@ Optional catalog component rows (if product catalog is validated strictly):
 | Table | Brand | Size / phase |
 |-------|-------|----------------|
 | panels | Premier Energy | 600W, 605W, 610W |
-| inverters | Crompton | 3.6kW |
+| inverters | Crompton | **3kW**, **5kW** (keep **3.6kW** for legacy quotations) |
 | acdb / dcdb | Crompton | 1-Phase |
 
 ---
@@ -210,7 +211,7 @@ Optional catalog component rows (if product catalog is validated strictly):
 - `panelBrand` / `dcrPanelBrand`: `Premier Energy`
 - `panelType`: `Crompton set`
 - `inverterBrand`: `Crompton`
-- `inverterSize`: `3.6kW`
+- `inverterSize`: **`3kW`** (3kW set) / **`5kW`** (5kW set); also accept legacy `3.6kW`
 - `acdb` / `dcdb`: `Crompton (1-Phase)`
 - `pdfPanelRangeKey`: `premier_energy_600_610` **or** `premier_energy_540_560_bifacial` (550W)
 - Panel sizes: `550W` / `600W` / `605W` / `610W`
@@ -218,7 +219,8 @@ Optional catalog component rows (if product catalog is validated strictly):
 
 **Do not:**
 - Drop `panelType: "Crompton set"` or remap this package to the Premier Energies Topcon price column
-- Reject `3.6kW` because it is not `3kW` or `5kW`
+- Reject `3kW` / `5kW` because an older allowlist only had `3.6kW`
+- Rewrite saved `inverterSize` to `3.6kW` on GET/PATCH
 - Require 3-Phase Crompton set rows (none exist)
 - Treat this as Non-DCR
 
@@ -246,8 +248,8 @@ Frontend sends computed `subtotal` / `systemPrice` from the selected config; bac
 
 ## QA
 
-1. DCR Browse → **Crompton set** 3kW → save → GET echoes `panelBrand: "Premier Energy"`, `panelType: "Crompton set"`, `inverterBrand: "Crompton"`, `inverterSize: "3.6kW"`, `acdb`/`dcdb` Crompton, `pdfPanelRangeKey: "premier_energy_600_610"`, subtotal **210000**.
-2. Same for 5kW → subtotal **295000**.
+1. DCR Browse → **Crompton set** 3kW → save → GET echoes `panelBrand: "Premier Energy"`, `panelType: "Crompton set"`, `inverterBrand: "Crompton"`, `inverterSize: "3kW"`, `acdb`/`dcdb` Crompton, `pdfPanelRangeKey: "premier_energy_600_610"`, subtotal **210000**.
+2. Same for 5kW → `inverterSize: "5kW"`, subtotal **295000**.
 3. Edit/reload form shows **Panel Brand = Premier Energy**, PDF range checkbox **600W - 610W Topcon Bifacial** checked, ACDB/DCDB Crompton (not remapped to Premier Energies set price).
 4. Uncheck PDF range → PATCH empty key → GET has no stale range.
 5. If pricing-tables API is on: response `dcr` includes both Crompton set rows; presets include both system configs.
@@ -261,7 +263,7 @@ If live `validateProductSelection` still rejects unknown brands/sizes, allowlist
 - **`Premier Energy`** (panel brand)
 - **`Crompton set`** (`panelType`)
 - **`Crompton`** (inverter + ACDB/DCDB)
-- **`3.6kW`**
+- **`3kW`** and **`5kW`** (plus legacy **`3.6kW`**)
 - **`premier_energy_600_610`**
 
 Preferred over aliasing to Adani / Premier Energies (that would break package identity and set price on GET).

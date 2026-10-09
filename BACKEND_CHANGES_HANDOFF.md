@@ -141,7 +141,7 @@ When a range key is set, PDF shows panel spec as **“As per the set”** and in
 | Package | UI | `inverterBrand` on POST/PATCH | `inverterSize` |
 |---------|-----|------------------------------|----------------|
 | **Tata DCR** (`panelBrand` = `Tata`) | Read-only **As per the set** | **`As per the set`** | **`As per the set`** |
-| **Crompton set** (`panelType` = `Crompton set`, form brand `Premier Energy`) | Fixed **Crompton** | **`Crompton`** | **`3.6kW`** |
+| **Crompton set** (`panelType` = `Crompton set`, form brand `Premier Energy`) | Fixed **Crompton** | **`Crompton`** | **`3kW`** (3kW set) / **`5kW`** (5kW set) — not 3.6kW. Legacy `3.6kW` still echoes. |
 | **Other DCR** (Adani, Waaree, Premier Energies, …) | Dropdown; **default** `Vsole/Xwatt`; dealer may pick another catalog brand | User’s choice (default `Vsole/Xwatt` if empty) | Concrete kW e.g. `5kW`, `10kW` |
 
 **Tata DCR also sends:**
@@ -2994,7 +2994,7 @@ upload.fields([
 
 ---
 
-## 27. Crompton DCR set — Premier Energy 600–610W + Crompton 3.6kW (1-Phase)
+## 27. Crompton DCR set — Premier Energy 600–610W + Crompton inverter matching set size (1-Phase)
 
 **Frontend:** DCR Browse → **Crompton set**  
 **Full handoff:** **`BACKEND_CROMPTON_DCR_SET.md`**  
@@ -3004,8 +3004,8 @@ upload.fields([
 
 | System | Inverter | Set price |
 |--------|----------|-----------|
-| **3kW** | Crompton **3.6kW** | **₹2,10,000** |
-| **5kW** | Crompton **3.6kW** | **₹2,95,000** |
+| **3kW** | Crompton **3kW** | **₹2,10,000** |
+| **5kW** | Crompton **5kW** | **₹2,95,000** |
 
 ### Package identity (persist + echo — do not coerce)
 
@@ -3015,14 +3015,14 @@ upload.fields([
 | `panelType` (package marker) | **`Crompton set`** |
 | Panels (PDF) | Premier Energy **600W–610W Topcon Bifacial** via `pdfPanelRangeKey` **`premier_energy_600_610`** |
 | `inverterBrand` | **`Crompton`** |
-| `inverterSize` | **`3.6kW`** |
+| `inverterSize` | **`3kW`** on 3kW set / **`5kW`** on 5kW set (see **§59**) |
 | `acdb` / `dcdb` | **`Crompton (1-Phase)`** |
 
 ### Backend deliverable
 
 | Step | Action |
 |------|--------|
-| 1 | Allowlist **`Premier Energy`**, **`panelType: Crompton set`**, **`Crompton`**, **`3.6kW`**, **`premier_energy_600_610`** |
+| 1 | Allowlist **`Premier Energy`**, **`panelType: Crompton set`**, **`Crompton`**, **`3kW`/`5kW`** (legacy **`3.6kW`** OK), **`premier_energy_600_610`** |
 | 2 | Persist both `panelBrand: "Premier Energy"` **and** `panelType: "Crompton set"` — do not drop the marker |
 | 3 | Set-price when `panelType === "Crompton set"`: 3kW→210000, 5kW→295000 (do **not** use Premier Energies matrix) |
 | 4 | If `GET /quotations/pricing-tables` is live: add two `dcr` rows + two system presets (see md / `.ts`) |
@@ -3030,8 +3030,8 @@ upload.fields([
 
 ### QA (short)
 
-1. Save Crompton set 3kW → GET echoes `panelBrand: "Premier Energy"`, `panelType: "Crompton set"`, Crompton inverter/ACDB/DCDB, `premier_energy_600_610`, subtotal **210000**.
-2. 5kW → subtotal **295000**.
+1. Save Crompton set 3kW → GET echoes `panelBrand: "Premier Energy"`, `panelType: "Crompton set"`, `inverterSize: "3kW"`, Crompton ACDB/DCDB, `premier_energy_600_610`, subtotal **210000**.
+2. 5kW → `inverterSize: "5kW"`, subtotal **295000**.
 3. Reload form: Panel Brand **Premier Energy**, PDF range **600W - 610W Topcon Bifacial** checked.
 4. Premier Energies / Tata / INA packages unchanged.
 
@@ -3233,9 +3233,10 @@ Submit installments with total paid = AM subtotal → **200**. Refresh → phase
 | **§25** (this file) | Installation FILE STATUS — Pending / In Progress / Approved = Admin Installation tabs |
 | **§26** (this file) | Installation completion Multer — Unexpected or too many file fields |
 | **`BACKEND_INSTALLATION_COMPLETION_MULTER.ts`** | **§26** Multer field allow-list + maxCount + routes |
-| **§27** (this file) | Crompton DCR set — Premier Energy 600–610W + Crompton 3.6kW |
+| **§27** (this file) | Crompton DCR set — Premier Energy 600–610W + Crompton 3kW/5kW |
 | **`BACKEND_CROMPTON_DCR_SET.md`** | **§27** full Crompton set prices, range key, pricing-tables |
-| **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** allowlist helpers + pricing/preset merge |
+| **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** / **§59** allowlist helpers + pricing/preset merge |
+| **§59** (this file) | Crompton 3kW set inverter is **3kW**, not 3.6kW |
 | **§28** (this file) | Cash + loan amounts + installment payment modes |
 | **`BACKEND_CASH_LOAN_AMOUNTS.md`** | **§28** approve/GET/installment + Excel fields |
 | **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
@@ -4116,7 +4117,7 @@ Same package prices. New panel size + PDF range.
   "panelType": "Crompton set",
   "panelSize": "550W",
   "inverterBrand": "Crompton",
-  "inverterSize": "3.6kW",
+  "inverterSize": "3kW",
   "pdfPanelRangeKey": "premier_energy_540_560_bifacial",
   "systemPrice": 210000
 }
@@ -4304,6 +4305,57 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 3. Keep `installationStatus` + metering status fields (UI + Excel).
 
 **Copy-paste:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts` · REQUIRED **§BJ**
+
+---
+
+## 57. Office Inside installment — Collect self / To Chairbord (**§BK**) — Oct 2026
+
+**Frontend (shipped):** Office Inside + Cash/UPI **Collected by** Chairbord (default) | Self. Self shows **Collect** Complete | Partial. Partial splits Chairbord + Self; leaser amount is **self only**. Chairbord = existing installment flow, no auto leaser row.
+
+**Backend (P0):**
+1. Persist `collectDestination`, `collectKind`, `collectSelfAmount`, `collectChairbordAmount`; echo on GET. Do not 400 extra phase keys.
+2. Leaser payment `id` is TEXT — keep `lp-self-…` as sent (**§BG** PUT). Amount on that row is the self share.
+3. Do not auto-create leaser rows on installment save (SPA PUTs `/admin/subvendors/:id/leaser`).
+
+**Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts` · REQUIRED **§BK**
+
+---
+
+## 58. Dealer leaser stats + Mini / Full statement (**§BL**) — Oct 2026
+
+**Frontend (shipped):** Dealer leaser row/Manage shows Total file, kW, Subtotal, Cost of site, Total profit, Total payment (`leaser_paid`), Total remaining (profit − payment). **Download** → Mini statement (entered transactions) or Full statement (totals + files + transactions). CSV is client-side.
+
+**Backend (P0):** No new download route. Keep live:
+1. `GET`/`PUT /admin/subvendors/:id/leaser` (**§BG**) — Total payment = SUM(payments).
+2. Ledger GET (**§BD**) for cost of site.
+3. Approved quotations GET with `dealer` + `subtotal` + installment collect fields (**§BK**).
+4. Subvendor `profit_ratio` on GET vendors.
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · REQUIRED **§BL**
+
+---
+
+## 59. Crompton DCR set inverter — 3kW set uses **3kW**, not 3.6kW (**§BM**) — Oct 2026
+
+**Frontend (shipped):** DCR Browse → Crompton set **3kW** now stores `inverterSize: "3kW"` (5kW set stores `"5kW"`). Prices unchanged (210000 / 295000).
+
+**Backend (P0):**
+1. **Do not 400** `inverterSize` `3kW` or `5kW` on Crompton set. Do not require `3.6kW`.
+2. Persist + GET-echo the size the SPA sends. Do **not** rewrite to `3.6kW`.
+3. If `GET /quotations/pricing-tables` is live: Crompton `dcr` rows + presets must use **3kW→3kW**, **5kW→5kW**.
+4. Set-price still by `panelType === "Crompton set"` + `systemSize` + `1-Phase` (ignore inverter mismatch so legacy 3.6kW quotes keep 210000 / 295000).
+5. Catalog allowlist: Crompton inverter **3kW** and **5kW**. Keep **3.6kW** for old files.
+
+```json
+{
+  "panelType": "Crompton set",
+  "inverterBrand": "Crompton",
+  "inverterSize": "3kW",
+  "structureSize": "3kW"
+}
+```
+
+**Copy-paste:** `BACKEND_CROMPTON_DCR_SET.ts` · REQUIRED **§BM** · full spec `BACKEND_CROMPTON_DCR_SET.md`
 
 ---
 

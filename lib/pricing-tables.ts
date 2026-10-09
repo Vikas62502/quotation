@@ -369,7 +369,7 @@ export const defaultPanelPricing: PanelPricing[] = [
 ]
 
 export const defaultInverterPricing: InverterPricing[] = [
-  { brand: "Crompton", size: "3.6kW", price: 42000 },
+  { brand: "Crompton", size: "3kW", price: 42000 },
   { brand: "Growatt", size: "3kW", price: 35000 },
   { brand: "Growatt", size: "5kW", price: 58000 },
   { brand: "Growatt", size: "6kW", price: 70000 },
@@ -523,7 +523,7 @@ export const defaultSystemConfigs: SystemConfigurationPreset[] = [
   { systemType: "dcr", systemSize: "5.1kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5.1kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "As per the set", dcdb: "As per the set", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "6kW", phase: "1-Phase", panelBrand: "Tata", panelSize: "As per the set", inverterBrand: "As per the set", inverterSize: "As per the set", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "6kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "As per the set", dcdb: "As per the set", centralSubsidy: 78000 },
 
-  // Crompton set (DCR, 1-Phase) — Premier Energy 550W bifacial + 600–610W, Crompton 3.6kW inverter + ACDB/DCDB
+  // Crompton set (DCR, 1-Phase) — Premier Energy 550W bifacial + 600–610W, Crompton inverter matches set (3kW / 5kW) + ACDB/DCDB
   { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Crompton set", panelSize: "605W", inverterBrand: "Crompton", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Crompton (1-Phase)", dcdb: "Crompton (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "5kW", phase: "1-Phase", panelBrand: "Crompton set", panelSize: "605W", inverterBrand: "Crompton", inverterSize: "5kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "5kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Crompton (1-Phase)", dcdb: "Crompton (1-Phase)", centralSubsidy: 78000 },
   { systemType: "dcr", systemSize: "3kW", phase: "1-Phase", panelBrand: "Crompton set", panelSize: "550W", inverterBrand: "Crompton", inverterSize: "3kW", inverterType: "String Inverter", structureType: "GI Structure", structureSize: "3kW", meterBrand: "L&T", acCableBrand: "Polycab", acCableSize: "As per Set", dcCableBrand: "Polycab", dcCableSize: "As per Set", acdb: "Crompton (1-Phase)", dcdb: "Crompton (1-Phase)", centralSubsidy: 78000 },
@@ -991,7 +991,7 @@ const DCR_TATA_PRICING_ROWS: { systemSize: string; phase: "1-Phase" | "3-Phase";
   { systemSize: "10kW", phase: "3-Phase", tata: 550000 },
 ]
 
-/** Crompton set — DCR 1-Phase only (Premier Energy 550W bifacial / 600–610W + Crompton 3.6kW). */
+/** Crompton set — DCR 1-Phase only (Premier Energy 550W bifacial / 600–610W + Crompton inverter matching set size). */
 const DCR_CROMPTON_SET_PRICING_ROWS: {
   systemSize: string
   phase: "1-Phase"
@@ -1130,10 +1130,10 @@ function buildDcrPricingFromMatrix(): SystemPricing[] {
     out.push({
       systemSize: row.systemSize,
       phase: row.phase,
-      inverterSize: "3.6kW",
+      inverterSize: row.systemSize,
       panelType: CROMPTON_DCR_SET_NAME,
       price: row.price,
-      notes: "Premier Energy 550W bifacial / 600W–610W panels; Crompton 3.6kW inverter + ACDB/DCDB",
+      notes: `Premier Energy 550W bifacial / 600W–610W panels; Crompton ${row.systemSize} inverter + ACDB/DCDB`,
     })
   }
   return out

@@ -12,6 +12,7 @@ import { buildPanelTechnologyNote } from "@/lib/quotation-panel-technology-notes
 import {
   formatPanelSizeWithQuantityForPdf,
   getMountingStructurePdfBrandModel,
+  getMountingStructurePdfQty,
   getMountingStructurePdfSpecification,
   getPanelPdfRangeLabel,
   INA_DCR_PANEL_RANGE_KEY,
@@ -577,7 +578,7 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
       component: "Mounting Structure",
       specification: getMountingStructurePdfSpecification(p),
       brandModel: getMountingStructurePdfBrandModel(p),
-      qty: "As Required",
+      qty: getMountingStructurePdfQty(p),
     },
     {
       component: "DC Cables",
@@ -616,8 +617,8 @@ export function buildSpecRows(products: ProductSelection | ProductsLike): SpecRo
         const brand = String(p.earthingWireBrand || p.earthing_wire_brand || "").trim()
         const wire = String(p.earthingWireSize || p.earthing_wire_size || "").trim()
         const brandLabel =
-          !brand || isAsPerTheSetLabel(brand)
-            ? `JMP / ${QUOTATION_AS_PER_THE_SET_LABEL}`
+          !brand || isAsPerTheSetLabel(brand) || /^jmp$/i.test(brand)
+            ? "Polycab"
             : brand
         if (!wire || isAsPerTheSetLabel(wire)) {
           return `${brandLabel} Green Earthing Wire`

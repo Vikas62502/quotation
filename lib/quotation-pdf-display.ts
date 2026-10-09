@@ -676,11 +676,14 @@ export const MOUNTING_STRUCTURE_PDF_SPEC_LINES = [
   "Parlin-40*40",
 ] as const
 
+export const MONO_RAIL_MOUNTING_STRUCTURE_PDF_SPEC =
+  "MMS for Tin shed as per Module Layout with Height Mono Rail\nfixing through Lords Glue over the shed/ GI Structure TATA(2mm)"
+
 export function getMountingStructurePdfSpecification(
   products?: Pick<ProductSelection, "structureType"> | null,
 ): string {
   if (isMonoRealStructureType(products?.structureType)) {
-    return "Mono Rail"
+    return MONO_RAIL_MOUNTING_STRUCTURE_PDF_SPEC
   }
   return MOUNTING_STRUCTURE_PDF_SPEC_LINES.join("\n")
 }
@@ -691,9 +694,18 @@ export function getMountingStructurePdfBrandModel(
   const type = products.structureType?.trim()
   const size = products.structureSize?.trim()
   if (isMonoRealStructureType(type)) {
-    return size || "As Required"
+    return "As per Standard"
   }
   if (type && size) return `${type} — ${size}`
   if (type) return type
   return `GI Structure for RCC/Tin Roof — ${size || "As Required"}`
+}
+
+export function getMountingStructurePdfQty(
+  products: Pick<ProductSelection, "structureType" | "structureSize">,
+): string {
+  if (isMonoRealStructureType(products.structureType)) {
+    return products.structureSize?.trim() || "As Required"
+  }
+  return "As Required"
 }

@@ -57,6 +57,7 @@
  *       "dueDate": "2026-06-24",
  *       "paymentDate": "2026-06-24T10:00:00.000Z",
  *       "paymentMode": "loan",
+ *       "collectDestination": "self" | "chairbord",
  *       "transactionId": "BY TRANSFER ...",
  *       "note": "optional"
  *     }
@@ -70,6 +71,11 @@
  *   - mix   → both loan and cash/upi/cheque
  * Persist loanAmount / cashAmount on the quotation; do not clear them on installment replace.
  * See BACKEND_CASH_LOAN_AMOUNTS.md / BACKEND_CASH_LOAN_AMOUNTS.ts
+ *
+ * Office Inside Cash/UPI (Oct 2026): persist collectDestination, collectKind,
+ * collectSelfAmount, collectChairbordAmount. Echo on GET. Do not 400 unknown phase keys.
+ * Do not auto-create leaser rows here — SPA PUTs /admin/subvendors/:id/leaser.
+ * See BACKEND_COLLECT_SELF_LEASER.ts / §BK. Default collectDestination = chairbord.
  *
  * PUT /installments:
  * {
@@ -166,9 +172,59 @@ function normalizePhasesInput(body) {
     dueDate: p.dueDate || null,
     paymentDate: p.paymentDate || null,
     paymentMode: p.paymentMode || null,
+    collectDestination: pickCollectDestination(p),
+    collect_destination: pickCollectDestination(p),
+    collectKind: pickCollectKind(p),
+    collect_kind: pickCollectKind(p),
+    collectSelfAmount: pickCollectShareAmount(p, "self"),
+    collect_self_amount: pickCollectShareAmount(p, "self"),
+    collectChairbordAmount: pickCollectShareAmount(p, "chairbord"),
+    collect_chairbord_amount: pickCollectShareAmount(p, "chairbord"),
     transactionId: p.transactionId || null,
     note: p.note || p.remarks || null,
   }))
+}
+
+function pickCollectDestination(phase) {
+  const mode = String(phase.paymentMode || phase.mode || phase.payment_method || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  if (mode !== "cash" && mode !== "upi") return null
+  const s = String(
+    phase.collectDestination ??
+      phase.collect_destination ??
+      phase.collectedBy ??
+      phase.collected_by ??
+      "",
+  )
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  if (s === "self" || s === "collect_self") return "self"
+  if (s === "chairbord" || s === "to_chairbord" || s === "company") return "chairbord"
+  return null
+}
+
+function pickCollectKind(phase) {
+  const dest = pickCollectDestination(phase)
+  if (!dest) return null
+  const s = String(phase.collectKind ?? phase.collect_kind ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  if (s === "partial" || s === "split" || s === "partial_collect") return "partial"
+  return "complete"
+}
+
+function pickCollectShareAmount(phase, side) {
+  if (!pickCollectDestination(phase)) return null
+  const raw =
+    side === "self"
+      ? phase.collectSelfAmount ?? phase.collect_self_amount
+      : phase.collectChairbordAmount ?? phase.collect_chairbord_amount
+  const n = Math.round(Number(raw) || 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
 }
 
 /**
@@ -310,4 +366,4 @@ export async function patchQuotationPaymentDetailsWithReplace(req, res) {
  * 4. payment-details PATCH with only installationReadyForInstaller does NOT wipe phases (merge release only).
  */
 
-export { shouldReplaceInstallments, normalizePhasesInput }
+export { shouldReplaceInstallments, normalizePhasesInput, pickCollectDestination, pickCollectKind }

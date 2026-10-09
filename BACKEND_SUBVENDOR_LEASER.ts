@@ -24,11 +24,17 @@
  * UI contract (do not invent a different meaning)
  * -----------------------------------------------------------------------------
  *
- * Per office_inside vendor:
- *   Total file      = count of that dealer's current approved customers (frontend-derived)
- *   kW              = sum of those customers' system kW (frontend-derived)
- *   Current balance = SUM(leaser payment amounts) — INITIAL 0
- *   Total profit    = frontend-derived from proposal × profit_ratio
+ * Per office_inside vendor (row + Manage header — all FE-derived except payment):
+ *   Total file        = count of that dealer's current approved customers
+ *   kW                = sum of those customers' system kW
+ *   Subtotal          = sum of file subtotals
+ *   Cost of site      = sum of office-inside ledger cost of site (PI + file charges + GST + others)
+ *   Total profit      = sum of (proposal × vendor profit_ratio)
+ *   Total payment     = SUM(leaser payment amounts) = leaser_paid — INITIAL 0
+ *                       (UI label; same as former Current balance)
+ *   Total remaining   = Total profit − Total payment
+ *
+ * Download Mini / Full statement is **client CSV**. No download endpoint.
  *
  * Each payment row:
  *   date (YYYY-MM-DD), amount (INR int), paymentType (Cash|Bank|UPI|Cheque|Other),
@@ -46,7 +52,7 @@
  *   ADD COLUMN IF NOT EXISTS leaser_remaining NUMERIC(14, 2) NOT NULL DEFAULT 0;
  *
  * CREATE TABLE IF NOT EXISTS subvendor_leaser_payments (
- *   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ *   id             TEXT PRIMARY KEY,
  *   vendor_id      UUID NOT NULL REFERENCES subvendors(id) ON DELETE CASCADE,
  *   payment_date   DATE NOT NULL,
  *   amount         NUMERIC(14, 2) NOT NULL DEFAULT 0,
@@ -73,7 +79,7 @@
  * leaserRemaining: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0, field: 'leaser_remaining' },
  *
  * SubvendorLeaserPayment.init({
- *   id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
+ *   id: { type: DataTypes.STRING(80), primaryKey: true },
  *   vendorId: { type: DataTypes.UUID, allowNull: false, field: 'vendor_id' },
  *   date: { type: DataTypes.DATEONLY, allowNull: false, field: 'payment_date' },
  *   amount: { type: DataTypes.DECIMAL(14, 2), allowNull: false, defaultValue: 0 },
@@ -99,7 +105,9 @@
  *
  * PUT is a full replace for that vendor (matches Manage → Save payments).
  *   - Delete existing rows for vendor_id
- *   - Insert the sent payments (keep client `id` when it is a valid UUID; else generate)
+ *   - Insert the sent payments. Persist client `id` as-is when non-empty
+ *     (UUID **or** `lp-self-{quotationId}-{phaseNumber}` from Collect self).
+ *     Only generate a UUID when id is missing/blank.
  *   - Set subvendors.leaser_paid = SUM(amount)
  *   - Set subvendors.leaser_remaining from body.leaserRemaining if sent, else leave column
  *   - Do NOT compute current balance from file charges / kW / customer count

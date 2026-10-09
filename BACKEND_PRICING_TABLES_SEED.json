@@ -684,18 +684,18 @@
     {
       "systemSize": "3kW",
       "phase": "1-Phase",
-      "inverterSize": "3.6kW",
+      "inverterSize": "3kW",
       "panelType": "Crompton set",
       "price": 210000,
-      "notes": "Premier Energy 600W\u2013610W panels; Crompton 3.6kW inverter + ACDB/DCDB"
+      "notes": "Premier Energy 600W\u2013610W panels; Crompton 3kW inverter + ACDB/DCDB"
     },
     {
       "systemSize": "5kW",
       "phase": "1-Phase",
-      "inverterSize": "3.6kW",
+      "inverterSize": "5kW",
       "panelType": "Crompton set",
       "price": 295000,
-      "notes": "Premier Energy 600W\u2013610W panels; Crompton 3.6kW inverter + ACDB/DCDB"
+      "notes": "Premier Energy 600W\u2013610W panels; Crompton 5kW inverter + ACDB/DCDB"
     }
   ],
   "nonDcr": [
@@ -2352,7 +2352,7 @@
   "inverters": [
     {
       "brand": "Crompton",
-      "size": "3.6kW",
+      "size": "3kW",
       "price": 42000
     },
     {
@@ -2941,7 +2941,7 @@
       "panelBrand": "Crompton set",
       "panelSize": "610W",
       "inverterBrand": "Crompton",
-      "inverterSize": "3.6kW",
+      "inverterSize": "3kW",
       "inverterType": "String Inverter",
       "structureType": "GI Structure",
       "structureSize": "3kW",
@@ -2961,7 +2961,7 @@
       "panelBrand": "Crompton set",
       "panelSize": "610W",
       "inverterBrand": "Crompton",
-      "inverterSize": "3.6kW",
+      "inverterSize": "5kW",
       "inverterType": "String Inverter",
       "structureType": "GI Structure",
       "structureSize": "5kW",

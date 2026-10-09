@@ -4437,6 +4437,7 @@ If validation uses a fixed enum, **extend it** — do not reject dealer-selected
 | Package | UI behaviour | Stored `inverterBrand` | Stored `inverterSize` |
 |---------|--------------|------------------------|------------------------|
 | **Tata DCR** (`panelBrand` = `Tata`) | Read-only “As per the set” | **`As per the set`** | **`As per the set`** |
+| **Crompton set** (`panelType` = `Crompton set`) | Fixed **Crompton** | **`Crompton`** | **`3kW`** on 3kW set / **`5kW`** on 5kW set (**§BM**). Legacy `3.6kW` still echoes. |
 | **Other DCR** (Adani, Waaree, Premier Energies, …) | Dropdown; default **`Vsole/Xwatt`**; dealer may select another catalog brand | **Dealer’s selection** (default `Vsole/Xwatt` if field omitted on create) | Concrete kW (`5kW`, `10kW`, …) |
 
 **Tata DCR POST/PATCH `products` fragment (must round-trip unchanged on GET):**
@@ -4948,6 +4949,7 @@ the server must:
 | `dueDate` | optional | `YYYY-MM-DD` |
 | `paymentDate` | optional | ISO |
 | `paymentMode` | optional | `cash`, `upi`, `loan`, `cheque`, … |
+| `collectDestination` | optional | Office Inside Cash/UPI: `self` \| `chairbord`. Echo on GET. See **§BK**. |
 | `transactionId` | optional | |
 | `note` | optional | |
 
@@ -5359,6 +5361,9 @@ For questions or clarifications about these requirements, please refer to:
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
 - Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
+- Office Inside Collect self / To Chairbord: **`BACKEND_CHANGES_REQUIRED.md` §BK**, **`BACKEND_COLLECT_SELF_LEASER.ts`**, HANDOFF **§57**
+- Dealer leaser stats + Mini/Full statement: **`BACKEND_CHANGES_REQUIRED.md` §BL**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§58**
+- Crompton DCR inverter 3kW set → 3kW (not 3.6kW): **`BACKEND_CHANGES_REQUIRED.md` §BM**, **`BACKEND_CROMPTON_DCR_SET.ts`**, HANDOFF **§59**
 - Account Management Final Settlement (write off remaining as discount `d`): `app/dashboard/account-management/page.tsx` → `submitFinalSettlement`, **`BACKEND_FINAL_SETTLEMENT.md`**
 - Payment Excel journey columns: `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel`, `lib/customer-journey.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**
 - Super Admin quotation login + inventory: `lib/admin-access.ts`, `lib/auth-context.tsx`, `app/dashboard/inventory/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §AD**, **`BACKEND_SUPER_ADMIN_QUOTATION_LOGIN.ts`**
@@ -6886,13 +6891,14 @@ Persist each payment (date, amount, payment type, remark, multi-select customer 
 
 1. `subvendors` columns (frontend already sends these on POST/PATCH vendor):
    - `file_cost_per_kw` default `1000`
-   - `leaser_paid` default `0` — **this is Current balance**
+   - `leaser_paid` default `0` — **this is Total payment** (former Current balance)
    - `leaser_remaining` default `0`
 2. `subvendor_leaser_payments` — rows per office_inside vendor; `customer_ids` JSONB array of quotation ids.
 
 ### Current balance
 
-**Initially 0.** After save, `currentBalance = SUM(payment.amount) = leaser_paid`.
+**Initially 0.** After save, `totalPayment = currentBalance = SUM(payment.amount) = leaser_paid`.
+FE also shows **Total remaining = Total profit − Total payment**. Do not invent a remaining column from file charges.
 
 Do **not** set current balance from file charges × kW or from approved-customer count.
 
@@ -6905,6 +6911,8 @@ Do **not** set current balance from file charges × kW or from approved-customer
 Auth: same admin JWT as **§BD**.
 
 Frontend: `lib/api.ts` → `api.admin.subvendors.leaser`. SPA falls back to localStorage if the route is not live yet.
+
+Office Inside **Collect self** reuses this PUT with ids `lp-self-{quotationId}-{phaseNumber}` — persist those TEXT ids as sent (**§BK**).
 
 **Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts`
 
@@ -6930,6 +6938,91 @@ Account Management → **Office Inside** → **Download Excel** is still client-
 Do **not** drop those fields from GET — the payment cards still use them.
 
 **Copy-paste:** `BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`
+
+---
+
+## §BK — Office Inside installment Collect self / To Chairbord — Oct 2026
+
+Account Management → **Office Inside** → installment **Cash** or **UPI** shows **Complete** / **Partial** collect.
+
+- **Complete + To Chairbord** — existing installment save only.
+- **Complete + Collect self** — leaser row for the full paid amount.
+- **Partial** — split paid amount into `collectChairbordAmount` + `collectSelfAmount` (must sum to paid). Leaser row amount = **self only** (e.g. collected ₹30,000, Chairbord ₹25,000, self ₹5,000 → leaser ₹5,000). Auto id `lp-self-{quotationId}-{phaseNumber}`.
+
+### Must (no new routes)
+
+1. Persist per-phase `collectDestination` (`self` | `chairbord`), `collectKind` (`complete` | `partial`), `collectSelfAmount`, `collectChairbordAmount` on installment replace (**§AB**) and echo on GET. Aliases: `collect_destination`, `collect_kind`, `collect_self_amount`, `collect_chairbord_amount`. Cash/UPI only; otherwise `null`. **Do not 400** unknown phase keys.
+2. **§BG** leaser `PUT /admin/subvendors/:id/leaser`: store client `id` as **TEXT as sent**. Do not replace `lp-self-…` with a generated UUID (duplicates on next save).
+3. Do **not** insert leaser rows from the installment handler — SPA already PUTs leaser after save. Leaser `amount` is the self share, not full `paidAmount`.
+
+**Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts`
+
+UI: **Collected by** Chairbord (default) | Self. **Collect** Complete | Partial appears only when Self. Chairbord → no auto leaser row.
+
+---
+
+## §BL — Dealer leaser stats + Mini / Full statement — Oct 2026
+
+Account Management → **Subvendor office** → Dealer leaser.
+
+### No new routes
+
+- **Mini statement** / **Full statement** are client CSV (`components/admin-subvendor-panel.tsx`). Do **not** add a download endpoint.
+- Stats are computed on the SPA from existing GETs.
+
+### Must still persist / echo (so stats and statements survive refresh)
+
+1. **§BG** `GET`/`PUT /admin/subvendors/:id/leaser` — payment rows + `leaser_paid` (**Total payment**).
+2. **§BD** ledger GET per quotation (proposal, PI, file charges, others) so **Cost of site** is correct.
+3. **GET /quotations?status=approved** with nested `dealer`, `subtotal`, `installments` (including **§BK** collect fields).
+4. Subvendor `profit_ratio` on GET `/admin/subvendors` for **Total profit**.
+
+### FE formulas (do not recompute differently on GET)
+
+| Column | Source |
+|--------|--------|
+| Total file | count of current approved customers for that dealer |
+| kW | sum system kW |
+| Subtotal | sum file subtotals |
+| Cost of site | sum ledger office-inside deducted total |
+| Total profit | sum (proposal × profit_ratio) |
+| Total payment | `SUM(leaser payments)` = `leaser_paid` |
+| Total remaining | Total profit − Total payment |
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` (stats + statement notes) · collect persist `BACKEND_COLLECT_SELF_LEASER.ts`
+
+---
+
+## §BM — Crompton DCR set inverter: 3kW set uses 3kW (not 3.6kW) — Oct 2026
+
+DCR **Crompton set** inverter now matches the system size.
+
+| Set | Persist `inverterBrand` | Persist `inverterSize` | Set price |
+|-----|-------------------------|------------------------|-----------|
+| 3kW / 1-Phase | `Crompton` | **`3kW`** | 210000 |
+| 5kW / 1-Phase | `Crompton` | **`5kW`** | 295000 |
+
+### Must (no new routes)
+
+1. `validateProductSelection` / catalog: allow Crompton **`3kW`** and **`5kW`**. Do **not** 400 because allowlist still has only `3.6kW`.
+2. Persist + GET-echo the size the SPA sends. Do **not** rewrite `3kW`/`5kW` → `3.6kW`.
+3. Legacy quotations with `inverterSize: "3.6kW"`: still GET-echo; still price as Crompton set (210000 / 295000).
+4. If `GET`/`PUT /quotations/pricing-tables` is live: update Crompton `dcr` rows + `systemConfigs` so **3kW set → inverterSize 3kW**, **5kW set → 5kW**.
+5. Set-price lookup: `panelType === "Crompton set"` + `systemSize` + `1-Phase`. Do not require `inverterSize === "3.6kW"`.
+
+```json
+{
+  "systemType": "dcr",
+  "phase": "1-Phase",
+  "panelType": "Crompton set",
+  "panelBrand": "Premier Energy",
+  "inverterBrand": "Crompton",
+  "inverterSize": "3kW",
+  "structureSize": "3kW"
+}
+```
+
+**Copy-paste:** `BACKEND_CROMPTON_DCR_SET.ts` (`cromptonInverterSizeForSystem`) · full spec `BACKEND_CROMPTON_DCR_SET.md` · HANDOFF **§59**
 
 ---
 

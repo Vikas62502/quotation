@@ -1265,7 +1265,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
       const inverterSizeToSet = isTataPackage
         ? DCR_AS_PER_THE_SET
         : isCromptonSet
-          ? "3.6kW"
+          ? (config.inverterSize || systemConfig.inverterSize || config.systemSize || "3kW")
           : config.inverterSize || systemConfig.inverterSize || preFilledData.inverterSize || ""
 
       const effPhase: "1-Phase" | "3-Phase" =
@@ -1375,7 +1375,7 @@ export function ProductSelectionForm({ onSubmit, onBack, initialData }: Props) {
         inverterSize: isTataPackage
           ? DCR_AS_PER_THE_SET
           : isCromptonSet
-            ? "3.6kW"
+            ? (config.inverterSize || config.systemSize || "3kW")
             : config.inverterSize,
         structureType: "GI Structure",
         structureSize: config.systemSize,

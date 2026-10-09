@@ -446,7 +446,7 @@ export function restoreCromptonSetForForm(products: ProductSelection): ProductSe
     dcrPanelBrand: "Premier Energy",
     panelType: "Crompton set",
     inverterBrand: products.inverterBrand?.trim() || "Crompton",
-    inverterSize: products.inverterSize?.trim() || "3.6kW",
+    inverterSize: products.inverterSize?.trim() || products.structureSize?.trim() || "3kW",
     acdb: acdbBrand || `Crompton (${phase})`,
     dcdb: dcdbBrand || `Crompton (${phase})`,
     pdfPanelRangeKey: range || cromptonPdfPanelRangeKeyForPanelSize(products.panelSize || products.dcrPanelSize),
