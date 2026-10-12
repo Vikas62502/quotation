@@ -13,6 +13,8 @@
 | `siteCost` | Manual INR cost (blur / close / Submit) |
 | Profit | FE only: `subtotal − siteCost` |
 
+**Office Inside (Oct 2026 — §BN):** `siteCost` is **PI + others** (table Cost of site). Do **not** store the vendor deducted total (PI + file + GST + others) here — that belongs on ledger `costOfSite`. See `BACKEND_SUBVENDOR_LEASER.ts` / HANDOFF **§60**.
+
 ---
 
 ## DB

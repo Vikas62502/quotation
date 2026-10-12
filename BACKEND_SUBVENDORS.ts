@@ -172,7 +172,7 @@
  *   "receivedAmount": 40000,
  *   "remaining": 60000,
  *   "proposal": 180000,
- *   "costOfSite": 150000,
+ *   "costOfSite": 150000,  // vendor: PI + fileCharges + GST + others — NOT quotations.site_cost (PI + others). See §BN.
  *   "fileCharges": 2000,
  *   "pi": 1500,
  *   "gstCharges": 900,

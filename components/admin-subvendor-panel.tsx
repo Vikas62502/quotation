@@ -144,6 +144,7 @@ type InsideLedgerRow = {
   remaining: number
   proposal: number
   costOfSite: number
+  profitVendor: number
   fileCharges: number
   pi: number
   gstCharges: number
@@ -381,6 +382,13 @@ export function AdminSubvendorPanel({
             gstCharges: officeInsideGstCharges(proposal, pi),
             others: stored.others ?? 0,
           }),
+          profitVendor: officeInsideProfitFromAmounts(payment.subtotal, {
+            proposal,
+            pi,
+            fileCharges,
+            gstCharges: officeInsideGstCharges(proposal, pi),
+            others: stored.others ?? 0,
+          }),
           fileCharges,
           pi,
           gstCharges: officeInsideGstCharges(proposal, pi),
@@ -400,6 +408,7 @@ export function AdminSubvendorPanel({
           remaining: sum.remaining + row.remaining,
           proposal: sum.proposal + row.proposal,
           costOfSite: sum.costOfSite + row.costOfSite,
+          profitVendor: sum.profitVendor + row.profitVendor,
           fileCharges: sum.fileCharges + row.fileCharges,
           pi: sum.pi + row.pi,
           gstCharges: sum.gstCharges + row.gstCharges,
@@ -412,6 +421,7 @@ export function AdminSubvendorPanel({
           remaining: 0,
           proposal: 0,
           costOfSite: 0,
+          profitVendor: 0,
           fileCharges: 0,
           pi: 0,
           gstCharges: 0,
@@ -434,7 +444,7 @@ export function AdminSubvendorPanel({
         totalKw: 0,
         subtotal: 0,
         costOfSite: 0,
-        totalProfit: vendorProfitById[vendor.id] ?? 0,
+        profitVendor: 0,
         paid: paidByVendor[vendor.id] ?? 0,
         currentBalance: 0,
         totalRemaining: 0,
@@ -456,26 +466,28 @@ export function AdminSubvendorPanel({
         stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
       const proposal = stored.proposal ?? 0
       const pi = stored.pi ?? 0
-      const costOfSite = officeInsideDeductedTotal({
+      const vendorAmounts = {
         proposal,
         pi,
         fileCharges,
         gstCharges: officeInsideGstCharges(proposal, pi),
         others: stored.others ?? 0,
-      })
+      }
+      const costOfSite = officeInsideDeductedTotal(vendorAmounts)
       stats[vendor.id].totalFile += 1
       stats[vendor.id].fileAmount += fileCharges
       stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
       stats[vendor.id].subtotal += Math.max(0, Math.round(payment.subtotal || 0))
       stats[vendor.id].costOfSite += costOfSite
+      stats[vendor.id].profitVendor += officeInsideProfitFromAmounts(payment.subtotal, vendorAmounts)
     }
     for (const vendor of insideRows) {
       const item = stats[vendor.id]
       item.currentBalance = item.paid
-      item.totalRemaining = Math.round(item.totalProfit - item.paid)
+      item.totalRemaining = Math.round(item.profitVendor - item.paid)
     }
     return stats
-  }, [insideRows, ledgerMap, leaserPayments, quotations, vendorProfitById, vendorsByDealerId])
+  }, [insideRows, ledgerMap, leaserPayments, quotations, vendorsByDealerId])
 
   const customersByVendorId = useMemo(() => {
     const out: Record<string, { quotationId: string; name: string; mobile: string; kw: string }[]> = {}
@@ -537,6 +549,13 @@ export function AdminSubvendorPanel({
         remaining: stored.remaining ?? payment.remainingAmount,
         proposal,
         costOfSite: officeInsideDeductedTotal({
+          proposal,
+          pi,
+          fileCharges,
+          gstCharges: officeInsideGstCharges(proposal, pi),
+          others: stored.others ?? 0,
+        }),
+        profitVendor: officeInsideProfitFromAmounts(payment.subtotal, {
           proposal,
           pi,
           fileCharges,
@@ -1124,7 +1143,7 @@ type VendorLeaserStats = {
   totalKw: number
   subtotal: number
   costOfSite: number
-  totalProfit: number
+  profitVendor: number
   paid: number
   currentBalance: number
   totalRemaining: number
@@ -1136,7 +1155,7 @@ const emptyVendorLeaserStats: VendorLeaserStats = {
   totalKw: 0,
   subtotal: 0,
   costOfSite: 0,
-  totalProfit: 0,
+  profitVendor: 0,
   paid: 0,
   currentBalance: 0,
   totalRemaining: 0,
@@ -1334,8 +1353,8 @@ function DealerLeaserManager({
       ["Total file", manageStats.totalFile],
       ["kW", formatLedgerSystemSize(manageStats.totalKw)],
       ["Subtotal", manageStats.subtotal],
-      ["Cost of site", manageStats.costOfSite],
-      ["Total profit", manageStats.totalProfit],
+      ["Cost of site vendor", manageStats.costOfSite],
+      ["Profit vendor", manageStats.profitVendor],
       ["Total payment", manageStats.currentBalance],
       ["Total remaining", manageStats.totalRemaining],
       [],
@@ -1346,7 +1365,8 @@ function DealerLeaserManager({
         "kW",
         "Payment type",
         "Subtotal",
-        "Cost of site",
+        "Cost of site vendor",
+        "Profit vendor",
         "Proposal",
         "PI",
         "File charges",
@@ -1363,6 +1383,7 @@ function DealerLeaserManager({
         row.paymentTypeLabel,
         row.subtotal,
         row.costOfSite,
+        row.profitVendor,
         row.proposal,
         row.pi,
         row.fileCharges,
@@ -1460,7 +1481,7 @@ function DealerLeaserManager({
       <div>
         <p className="text-sm font-semibold">Dealer leaser</p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Total file, kW, subtotal, cost of site, profit, payment, and remaining for each office vendor.
+          Total file, kW, subtotal, cost of site vendor, profit vendor, payment, and remaining for each office vendor.
         </p>
       </div>
       <div className="space-y-2">
@@ -1490,13 +1511,13 @@ function DealerLeaserManager({
                 <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.subtotal)}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
                 <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.costOfSite)}</p>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
                 <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                  {formatLedgerInr(stats.totalProfit)}
+                  {formatLedgerInr(stats.profitVendor)}
                 </p>
               </div>
               <div className="min-w-0">
@@ -1596,15 +1617,15 @@ function DealerLeaserManager({
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
                       <p className="text-sm font-semibold tabular-nums">
                         {formatLedgerInr(manageStats.costOfSite)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total profit</p>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
                       <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                        {formatLedgerInr(manageStats.totalProfit)}
+                        {formatLedgerInr(manageStats.profitVendor)}
                       </p>
                     </div>
                     <div>
@@ -1944,7 +1965,7 @@ function InsideVendorLedger({
         </div>
       ) : (
         <div className="p-3 space-y-2">
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+          <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
             {(
               [
                 ["Proposal", totals.proposal],
@@ -1952,7 +1973,8 @@ function InsideVendorLedger({
                 ["Remaining", totals.remaining],
                 ["Loan", totals.loanAmount],
                 ["Cash", totals.cashAmount],
-                ["Cost of site", totals.costOfSite],
+                ["Cost of site vendor", totals.costOfSite],
+                ["Profit vendor", totals.profitVendor],
               ] as const
             ).map(([label, value]) => (
               <div key={label} className="min-w-0">
@@ -1976,7 +1998,7 @@ function InsideVendorLedger({
                       : "border-l-rose-500 bg-card",
                 )}
               >
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full xl:grid-cols-[minmax(11rem,1.35fr)_minmax(4.5rem,0.5fr)_minmax(5rem,0.6fr)_minmax(5rem,0.6fr)_minmax(5rem,0.6fr)_minmax(6.25rem,0.75fr)_minmax(5rem,0.55fr)_minmax(7rem,0.9fr)_minmax(5.5rem,0.4fr)]">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-2 gap-y-2 items-center w-full xl:grid-cols-[minmax(11rem,1.3fr)_minmax(4.5rem,0.5fr)_minmax(5rem,0.55fr)_minmax(5rem,0.55fr)_minmax(5rem,0.55fr)_minmax(6.25rem,0.7fr)_minmax(5.5rem,0.6fr)_minmax(5rem,0.55fr)_minmax(7rem,0.85fr)_minmax(5.5rem,0.4fr)]">
                   <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
                     <p className="text-sm font-semibold leading-tight break-words">
                       {row.customerName}
@@ -2056,8 +2078,20 @@ function InsideVendorLedger({
                   </div>
 
                   <div className="min-w-0">
-                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site</p>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
                     <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(row.costOfSite)}</p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
+                    <p
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        row.profitVendor >= 0 ? "text-emerald-700" : "text-rose-700",
+                      )}
+                    >
+                      {formatLedgerInr(row.profitVendor)}
+                    </p>
                   </div>
 
                   <div className="min-w-0">
@@ -2177,49 +2211,39 @@ function InsideVendorLedger({
                   )
                 })}
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site</p>
-                  {(() => {
-                    const liveSiteCost = officeInsideDeductedTotal(
-                      amountsFromLedgerDrafts(manageDrafts),
-                    )
-                    return (
-                      <>
-                        <p className="text-lg font-semibold tabular-nums">
-                          {formatLedgerInr(liveSiteCost)}
-                        </p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          PI + file charges + others + GST
-                        </p>
-                      </>
-                    )
-                  })()}
-                </div>
-                <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1">Profit</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {(() => {
-                  const liveProfit = officeInsideProfitFromAmounts(
-                    manageRow.subtotal,
-                    amountsFromLedgerDrafts(manageDrafts),
-                  )
+                  const liveAmounts = amountsFromLedgerDrafts(manageDrafts)
+                  const vendorCost = officeInsideDeductedTotal(liveAmounts)
+                  const vendorProfit = officeInsideProfitFromAmounts(manageRow.subtotal, liveAmounts)
                   return (
                     <>
-                      <p
-                        className={cn(
-                          "text-lg font-semibold tabular-nums",
-                          liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
-                        )}
-                      >
-                        {formatLedgerInr(liveProfit)}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Subtotal − cost of site
-                      </p>
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Cost of site vendor</p>
+                        <p className="text-lg font-semibold tabular-nums">
+                          {formatLedgerInr(vendorCost)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          PI + file + GST + others
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-muted-foreground mb-1">Profit vendor</p>
+                        <p
+                          className={cn(
+                            "text-lg font-semibold tabular-nums",
+                            vendorProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                          )}
+                        >
+                          {formatLedgerInr(vendorProfit)}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Subtotal − cost of site vendor
+                        </p>
+                      </div>
                     </>
                   )
                 })()}
-                </div>
               </div>
             </div>
           ) : null}

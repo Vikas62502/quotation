@@ -28,13 +28,41 @@
  *   Total file        = count of that dealer's current approved customers
  *   kW                = sum of those customers' system kW
  *   Subtotal          = sum of file subtotals
- *   Cost of site      = sum of office-inside ledger cost of site (PI + file charges + GST + others)
- *   Total profit      = sum of (proposal × vendor profit_ratio)
+ *   Cost of site vendor = sum of office-inside ledger cost of site (PI + file charges + GST + others)
+ *   Profit vendor     = sum of (file subtotal − cost of site vendor)
  *   Total payment     = SUM(leaser payment amounts) = leaser_paid — INITIAL 0
  *                       (UI label; same as former Current balance)
- *   Total remaining   = Total profit − Total payment
+ *   Total remaining   = Profit vendor − Total payment
  *
  * Download Mini / Full statement is **client CSV**. No download endpoint.
+ *
+ * -----------------------------------------------------------------------------
+ * Two different “cost of site” fields — do not merge (**§BN**)
+ * -----------------------------------------------------------------------------
+ *
+ * Office Inside persist (same Submit):
+ *
+ *   quotations.site_cost / payment-details `siteCost`
+ *     = table Cost of site = PI + others
+ *     Profit (Office Inside table / Excel / Total Profit card)
+ *       = subtotal − site_cost
+ *
+ *   subvendor_ledger.cost_of_site / PATCH ledger `costOfSite`
+ *     = Cost of site vendor = PI + fileCharges + GST + others
+ *     Profit vendor = file subtotal − cost_of_site vendor
+ *
+ * Do **not**:
+ *   - copy `quotations.site_cost` onto ledger `cost_of_site` (or the reverse)
+ *   - overwrite ledger `costOfSite` from `siteCost` on installment save
+ *   - store dealer-leaser remaining from profit_ratio (proposal × %)
+ *   - add a stats/download endpoint — remaining is FE: Profit vendor − SUM(leaser)
+ *
+ * If `subvendors.leaser_remaining` is written on leaser PUT, set it to
+ *   Profit vendor − leaser_paid, **or** leave 0 and let the SPA compute.
+ * Do not set leaser_remaining = (proposal × profit_ratio) − paid.
+ *
+ * Ledger GET must still echo pi, others, fileCharges, gstCharges, proposal, costOfSite
+ * so the SPA can rebuild both pairs after refresh.
  *
  * Each payment row:
  *   date (YYYY-MM-DD), amount (INR int), paymentType (Cash|Bank|UPI|Cheque|Other),

@@ -1244,6 +1244,24 @@ function getNormalVendorRowSiteCost(
   return Math.max(0, Math.round(Number(payment.siteCost) || 0))
 }
 
+/** Account Management table: cost of site is always PI + others. */
+function getAccountsTableSiteCost(
+  payment: CustomerPayment,
+  amounts: SubvendorLedgerAmounts,
+  officeInside: boolean,
+): number {
+  if (officeInside) return normalVendorSiteCost(amounts)
+  return getNormalVendorRowSiteCost(payment, amounts)
+}
+
+function getAccountsTableProfit(
+  payment: CustomerPayment,
+  amounts: SubvendorLedgerAmounts,
+  officeInside: boolean,
+): number {
+  return getPaymentSiteProfit(payment, getAccountsTableSiteCost(payment, amounts, officeInside))
+}
+
 function parseSiteCostInput(raw: string): number {
   const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
   if (cleaned === "") return 0
@@ -2839,24 +2857,13 @@ export default function AccountManagementPage() {
       // Invariant: Total = Paid + Pending.
       totalAmount += getPaymentEffectiveCap(payment)
       pendingAmount += getDisplayRemaining(payment)
-      if (isOfficeInsideDealer(payment.dealerId)) {
-        const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
-        const liveAmounts =
-          activePayment?.quotationId === payment.quotationId && subvendorLedgerDrafts
-            ? amountsFromLedgerDrafts(subvendorLedgerDrafts)
-            : stored
-        totalProfit += getOfficeInsidePaymentProfit(payment, liveAmounts)
-      } else {
-        const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
-        const liveAmounts =
-          activePayment?.quotationId === payment.quotationId && subvendorLedgerDrafts
-            ? amountsFromLedgerDrafts(subvendorLedgerDrafts)
-            : stored
-        totalProfit += getPaymentSiteProfit(
-          payment,
-          getNormalVendorRowSiteCost(payment, liveAmounts),
-        )
-      }
+      const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+      const liveAmounts =
+        activePayment?.quotationId === payment.quotationId && subvendorLedgerDrafts
+          ? amountsFromLedgerDrafts(subvendorLedgerDrafts)
+          : stored
+      const officeInside = isOfficeInsideDealer(payment.dealerId)
+      totalProfit += getAccountsTableProfit(payment, liveAmounts, officeInside)
     }
 
     // Remaining only for Installation · Approved among Pending & Partial (same mapped pool as
@@ -3210,24 +3217,16 @@ export default function AccountManagementPage() {
         getPaymentOriginalSubtotal(payment),
         ...(showAccountsSiteProfit
           ? [
-              isOfficeInsideDealer(payment.dealerId)
-                ? getOfficeInsideSiteCost(getLedgerAmounts(subvendorLedgerMap, payment.quotationId))
-                : getNormalVendorRowSiteCost(
-                    payment,
-                    getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
-                  ),
-              isOfficeInsideDealer(payment.dealerId)
-                ? getOfficeInsidePaymentProfit(
-                    payment,
-                    getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
-                  )
-                : getPaymentSiteProfit(
-                    payment,
-                    getNormalVendorRowSiteCost(
-                      payment,
-                      getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
-                    ),
-                  ),
+              getAccountsTableSiteCost(
+                payment,
+                getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
+                isOfficeInsideDealer(payment.dealerId),
+              ),
+              getAccountsTableProfit(
+                payment,
+                getLedgerAmounts(subvendorLedgerMap, payment.quotationId),
+                isOfficeInsideDealer(payment.dealerId),
+              ),
             ]
           : []),
         loanAmt,
@@ -3883,7 +3882,7 @@ export default function AccountManagementPage() {
     const patch = applyOfficeInsideGstToAmounts(amountsFromLedgerDrafts(drafts))
     const next = upsertLedgerAmounts(quotationId, patch)
     setSubvendorLedgerMap(next)
-    persistDerivedSiteCost(quotationId, getOfficeInsideSiteCost(patch))
+    persistDerivedSiteCost(quotationId, normalVendorSiteCost(patch))
     if (!useApi) return
     try {
       await api.admin.subvendors.ledger.update(quotationId, ledgerPatchToApiBody(patch))
@@ -3949,7 +3948,7 @@ export default function AccountManagementPage() {
     const draftRaw = siteCostDrafts[activePayment.quotationId]
     const resolvedSiteCost =
       liveAmounts && officeInside
-        ? getOfficeInsideSiteCost(applyOfficeInsideGstToAmounts(liveAmounts))
+        ? normalVendorSiteCost(applyOfficeInsideGstToAmounts(liveAmounts))
         : liveAmounts && !officeInside
           ? normalVendorSiteCost(liveAmounts)
           : draftRaw !== undefined
@@ -5142,9 +5141,11 @@ export default function AccountManagementPage() {
                                 </p>
                                 {(() => {
                                   const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
-                                  const rowSiteCost = isOfficeInsideDealer(payment.dealerId)
-                                    ? getOfficeInsideSiteCost(ledger)
-                                    : getNormalVendorRowSiteCost(payment, ledger)
+                                  const rowSiteCost = getAccountsTableSiteCost(
+                                    payment,
+                                    ledger,
+                                    isOfficeInsideDealer(payment.dealerId),
+                                  )
                                   return (
                                 <p className="text-sm font-semibold tabular-nums">
                                   ₹{rowSiteCost.toLocaleString("en-IN")}
@@ -5157,12 +5158,11 @@ export default function AccountManagementPage() {
                                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
                                 {(() => {
                                   const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
-                                  const rowProfit = isOfficeInsideDealer(payment.dealerId)
-                                    ? getOfficeInsidePaymentProfit(payment, ledger)
-                                    : getPaymentSiteProfit(
-                                        payment,
-                                        getNormalVendorRowSiteCost(payment, ledger),
-                                      )
+                                  const rowProfit = getAccountsTableProfit(
+                                    payment,
+                                    ledger,
+                                    isOfficeInsideDealer(payment.dealerId),
+                                  )
                                   return (
                                 <p
                                   className={cn(
@@ -6525,39 +6525,60 @@ export default function AccountManagementPage() {
                       </div>
                       )
                     })}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium text-muted-foreground">Cost of site</p>
-                      {(() => {
-                        const liveSiteCost = getOfficeInsideSiteCost(
-                          amountsFromLedgerDrafts(subvendorLedgerDrafts),
-                        )
-                        return (
-                          <p className="h-8 flex items-center text-sm font-semibold tabular-nums">
-                            ₹{liveSiteCost.toLocaleString("en-IN")}
-                          </p>
-                        )
-                      })()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-medium text-muted-foreground">Profit</p>
-                      {(() => {
-                        const liveProfit = getOfficeInsidePaymentProfit(
-                          activePayment,
-                          amountsFromLedgerDrafts(subvendorLedgerDrafts),
-                        )
-                        return (
-                          <p
-                            className={cn(
-                              "h-8 flex items-center text-sm font-semibold tabular-nums",
-                              liveProfit >= 0 ? "text-emerald-700" : "text-rose-700",
-                            )}
-                          >
-                            ₹{liveProfit.toLocaleString("en-IN")}
-                          </p>
-                        )
-                      })()}
-                    </div>
                   </div>
+                  {showAccountsSiteProfit ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      {(() => {
+                        const liveAmounts = amountsFromLedgerDrafts(subvendorLedgerDrafts)
+                        const vendorCost = getOfficeInsideSiteCost(liveAmounts)
+                        const vendorProfit = getOfficeInsidePaymentProfit(activePayment, liveAmounts)
+                        const tableCost = normalVendorSiteCost(liveAmounts)
+                        const tableProfit = getPaymentSiteProfit(activePayment, tableCost)
+                        return (
+                          <>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-medium text-muted-foreground">Cost of site vendor</p>
+                              <p className="text-sm font-semibold tabular-nums">
+                                ₹{vendorCost.toLocaleString("en-IN")}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">PI + file + GST + others</p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-medium text-muted-foreground">Profit vendor</p>
+                              <p
+                                className={cn(
+                                  "text-sm font-semibold tabular-nums",
+                                  vendorProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                                )}
+                              >
+                                ₹{vendorProfit.toLocaleString("en-IN")}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">Subtotal − cost of site vendor</p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-medium text-muted-foreground">Cost of site</p>
+                              <p className="text-sm font-semibold tabular-nums">
+                                ₹{tableCost.toLocaleString("en-IN")}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">PI + others</p>
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-[11px] font-medium text-muted-foreground">Profit</p>
+                              <p
+                                className={cn(
+                                  "text-sm font-semibold tabular-nums",
+                                  tableProfit >= 0 ? "text-emerald-700" : "text-rose-700",
+                                )}
+                              >
+                                ₹{tableProfit.toLocaleString("en-IN")}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground">Subtotal − cost of site</p>
+                            </div>
+                          </>
+                        )
+                      })()}
+                    </div>
+                  ) : null}
                   {(() => {
                     const piUrls = getActivePaymentPiUrls(activePayment)
                     if (piUrls.length === 0) {

@@ -3237,6 +3237,7 @@ Submit installments with total paid = AM subtotal → **200**. Refresh → phase
 | **`BACKEND_CROMPTON_DCR_SET.md`** | **§27** full Crompton set prices, range key, pricing-tables |
 | **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** / **§59** allowlist helpers + pricing/preset merge |
 | **§59** (this file) | Crompton 3kW set inverter is **3kW**, not 3.6kW |
+| **§60** (this file) | Office Inside table `siteCost` vs ledger vendor cost/profit |
 | **§28** (this file) | Cash + loan amounts + installment payment modes |
 | **`BACKEND_CASH_LOAN_AMOUNTS.md`** | **§28** approve/GET/installment + Excel fields |
 | **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
@@ -4323,7 +4324,7 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 
 ## 58. Dealer leaser stats + Mini / Full statement (**§BL**) — Oct 2026
 
-**Frontend (shipped):** Dealer leaser row/Manage shows Total file, kW, Subtotal, Cost of site, Total profit, Total payment (`leaser_paid`), Total remaining (profit − payment). **Download** → Mini statement (entered transactions) or Full statement (totals + files + transactions). CSV is client-side.
+**Frontend (shipped):** Dealer leaser row/Manage shows Total file, kW, Subtotal, Cost of site vendor, Profit vendor, Total payment (`leaser_paid`), Total remaining (Profit vendor − payment). **Download** → Mini statement (entered transactions) or Full statement (totals + files + transactions). CSV is client-side.
 
 **Backend (P0):** No new download route. Keep live:
 1. `GET`/`PUT /admin/subvendors/:id/leaser` (**§BG**) — Total payment = SUM(payments).
@@ -4356,6 +4357,20 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 ```
 
 **Copy-paste:** `BACKEND_CROMPTON_DCR_SET.ts` · REQUIRED **§BM** · full spec `BACKEND_CROMPTON_DCR_SET.md`
+
+---
+
+## 60. Office Inside table cost/profit vs vendor cost/profit (**§BN**) — Oct 2026
+
+**Frontend (shipped):** Office Inside table Cost of site = **PI + others**, Profit = subtotal − that. Subvendor dealer leaser Cost of site vendor = **PI + file + GST + others**, Profit vendor = subtotal − that. Total remaining = **Profit vendor − Total payment** (ratio Total profit column removed).
+
+**Backend (P0):** No new routes.
+1. Persist `siteCost` = PI + others; do not overwrite with vendor deducted total.
+2. Persist ledger `costOfSite` = vendor deducted total; echo PI / others / file / GST / proposal.
+3. Do not copy the two fields onto each other.
+4. Do not set `leaser_remaining` from `profit_ratio`. Remaining is Profit vendor − paid (or leave 0).
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · REQUIRED **§BN**
 
 ---
 

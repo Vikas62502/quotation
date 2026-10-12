@@ -78,6 +78,7 @@ export function officeInsideGstCharges(proposal: number, pi: number): number {
   return Math.round(Math.max(0, proposalAmt - piAmt) * OFFICE_INSIDE_GST_RATE)
 }
 
+/** Subvendor / office-inside vendor cost of site = PI + file charges + GST + others. */
 export function officeInsideDeductedTotal(amounts: SubvendorLedgerAmounts): number {
   const pi = Math.max(0, Math.round(Number(amounts.pi) || 0))
   const fileCharges = Math.max(0, Math.round(Number(amounts.fileCharges) || 0))
@@ -86,7 +87,15 @@ export function officeInsideDeductedTotal(amounts: SubvendorLedgerAmounts): numb
   return pi + fileCharges + gstCharges + others
 }
 
-/** Normal (non–office-inside) vendors: cost of site = PI + others. */
+export function vendorSiteCost(amounts: SubvendorLedgerAmounts): number {
+  return officeInsideDeductedTotal(amounts)
+}
+
+export function vendorSiteProfit(subtotal: number, amounts: SubvendorLedgerAmounts): number {
+  return Math.round(Math.max(0, Number(subtotal) || 0) - vendorSiteCost(amounts))
+}
+
+/** Table cost of site (Office Inside + other dealers) = PI + others. */
 export function normalVendorSiteCost(amounts: Pick<SubvendorLedgerAmounts, "pi" | "others">): number {
   return (
     Math.max(0, Math.round(Number(amounts.pi) || 0)) +
@@ -98,7 +107,7 @@ export function officeInsideProfitFromAmounts(
   subtotal: number,
   amounts: SubvendorLedgerAmounts,
 ): number {
-  return Math.round(Math.max(0, Number(subtotal) || 0) - officeInsideDeductedTotal(amounts))
+  return vendorSiteProfit(subtotal, amounts)
 }
 
 export function applyOfficeInsideGstToDrafts(

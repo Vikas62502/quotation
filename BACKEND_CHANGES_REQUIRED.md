@@ -5363,6 +5363,7 @@ For questions or clarifications about these requirements, please refer to:
 - Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
 - Office Inside Collect self / To Chairbord: **`BACKEND_CHANGES_REQUIRED.md` §BK**, **`BACKEND_COLLECT_SELF_LEASER.ts`**, HANDOFF **§57**
 - Dealer leaser stats + Mini/Full statement: **`BACKEND_CHANGES_REQUIRED.md` §BL**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§58**
+- Office Inside table vs vendor cost/profit: **`BACKEND_CHANGES_REQUIRED.md` §BN**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§60**
 - Crompton DCR inverter 3kW set → 3kW (not 3.6kW): **`BACKEND_CHANGES_REQUIRED.md` §BM**, **`BACKEND_CROMPTON_DCR_SET.ts`**, HANDOFF **§59**
 - Account Management Final Settlement (write off remaining as discount `d`): `app/dashboard/account-management/page.tsx` → `submitFinalSettlement`, **`BACKEND_FINAL_SETTLEMENT.md`**
 - Payment Excel journey columns: `app/dashboard/account-management/page.tsx` → `downloadFilteredPaymentsExcel`, `lib/customer-journey.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AC**, **`BACKEND_PAYMENT_EXCEL_JOURNEY_STATUS.ts`**
@@ -6975,7 +6976,7 @@ Account Management → **Subvendor office** → Dealer leaser.
 1. **§BG** `GET`/`PUT /admin/subvendors/:id/leaser` — payment rows + `leaser_paid` (**Total payment**).
 2. **§BD** ledger GET per quotation (proposal, PI, file charges, others) so **Cost of site** is correct.
 3. **GET /quotations?status=approved** with nested `dealer`, `subtotal`, `installments` (including **§BK** collect fields).
-4. Subvendor `profit_ratio` on GET `/admin/subvendors` for **Total profit**.
+4. Subvendor `profit_ratio` on GET `/admin/subvendors` (vendor card commission). Dealer leaser remaining uses **Profit vendor**, not ratio profit.
 
 ### FE formulas (do not recompute differently on GET)
 
@@ -6984,10 +6985,10 @@ Account Management → **Subvendor office** → Dealer leaser.
 | Total file | count of current approved customers for that dealer |
 | kW | sum system kW |
 | Subtotal | sum file subtotals |
-| Cost of site | sum ledger office-inside deducted total |
-| Total profit | sum (proposal × profit_ratio) |
+| Cost of site vendor | sum ledger office-inside deducted total (PI + file + GST + others) |
+| Profit vendor | sum (file subtotal − cost of site vendor) |
 | Total payment | `SUM(leaser payments)` = `leaser_paid` |
-| Total remaining | Total profit − Total payment |
+| Total remaining | Profit vendor − Total payment |
 
 **Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` (stats + statement notes) · collect persist `BACKEND_COLLECT_SELF_LEASER.ts`
 
@@ -7023,6 +7024,48 @@ DCR **Crompton set** inverter now matches the system size.
 ```
 
 **Copy-paste:** `BACKEND_CROMPTON_DCR_SET.ts` (`cromptonInverterSizeForSystem`) · full spec `BACKEND_CROMPTON_DCR_SET.md` · HANDOFF **§59**
+
+---
+
+## §BN — Office Inside table cost/profit vs Cost of site vendor / Profit vendor — Oct 2026
+
+Two different amounts. Persist both. Do not merge.
+
+| Surface | Field | Formula |
+|---------|--------|---------|
+| Office Inside **table** / Excel / Total Profit | quotations `siteCost` / `site_cost` | **PI + others**. Profit = subtotal − that |
+| Subvendor **dealer leaser** | ledger `costOfSite` / `cost_of_site` | **PI + fileCharges + GST + others**. Profit vendor = subtotal − that |
+| Dealer leaser **Total remaining** | FE only | **Profit vendor − Total payment** (not profit_ratio) |
+
+### Must (no new routes)
+
+1. `PATCH …/payment-details` `siteCost` / `site_cost` = **PI + others** for Office Inside. Echo on GET approved list/detail (**§30**).
+2. `PATCH /admin/subvendors/ledger/:quotationId` `costOfSite` = **vendor** deducted total. Echo `pi`, `others`, `fileCharges`, `gstCharges`, `proposal`, `costOfSite` on ledger GET (**§BD**).
+3. Do **not** copy `site_cost` ↔ ledger `cost_of_site`. They differ (file + GST are vendor-only).
+4. Do **not** recompute dealer-leaser remaining from `profit_ratio`. If writing `leaser_remaining`, use Profit vendor − `leaser_paid`, or leave 0 (SPA computes).
+5. No stats or statement download endpoint. CSV is client-side (**§BL**).
+
+```json
+{
+  "siteCost": 153775,
+  "site_cost": 153775
+}
+```
+
+```json
+{
+  "pi": 153775,
+  "others": 0,
+  "fileCharges": 3000,
+  "gstCharges": 5004,
+  "proposal": 210000,
+  "costOfSite": 161779
+}
+```
+
+Example: PI 153775, file 3000, GST 5004, others 0 → table `siteCost` **153775**, ledger vendor `costOfSite` **161779**. Profit vendor = subtotal − 161779. Remaining = that − SUM(leaser).
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · HANDOFF **§60** · `siteCost` persist `BACKEND_SITE_COST.md`
 
 ---
 
