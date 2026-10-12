@@ -420,9 +420,17 @@ SPA also loads leads via `GET /hr/leads/uploads/:uploadId` when `GET /hr/sheet-s
 
 `POST /hr/sheet-sources/discover` must **create/update** `hr_sheet_sources` rows and return server `id` (not `local-*`). SPA uses that `id` for PATCH, sync, and getLeads.
 
-### Credentials error (expected before .env)
+### Credentials errors — do not lump every Google failure into “env missing” (**§BO**)
 
-If `GOOGLE_SERVICE_ACCOUNT_JSON` / `GOOGLE_APPLICATION_CREDENTIALS` missing, return clear **500** message (SPA shows “credentials pending”, not a hard crash). After env is set, Discover + Sync must succeed without SPA redeploy.
+| Condition | HTTP | `error.code` | `error.message` |
+|-----------|------|----------------|-----------------|
+| Neither `GOOGLE_SERVICE_ACCOUNT_JSON` nor `GOOGLE_APPLICATION_CREDENTIALS` set | **503** | `GOOGLE_SHEETS_CREDENTIALS_MISSING` | `GOOGLE_SHEETS_CREDENTIALS_MISSING: GOOGLE_SERVICE_ACCOUNT_JSON is not set` |
+| JSON env set but `JSON.parse` fails | **500** | `GOOGLE_SHEETS_CREDENTIALS_INVALID` | `GOOGLE_SERVICE_ACCOUNT_JSON is set but is not valid JSON…` |
+| Env set; Google 403 / Sheets API / share / invalid JWT | **500** | Google/`SYS_001` | **Echo the Google error** (e.g. share sheet with SA email as Editor) |
+
+SPA shows “credentials pending” **only** for `GOOGLE_SHEETS_CREDENTIALS_MISSING`. If `GET /hr/sheet-sources` already returns real tab UUIDs, never treat a later Sync 500 as missing env.
+
+Restart Node after adding `.env`. Copy-paste: `getSheetsClient` in `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`.
 
 ---
 

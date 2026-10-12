@@ -434,21 +434,31 @@ export function defaultSheetSourcesForSpreadsheet(spreadsheetId: string): Social
   }))
 }
 
-/** Backend not configured with Google service account yet (expected before .env is set). */
-export function isGoogleSheetsCredentialsPendingError(error: unknown): boolean {
+function sheetsErrorText(error: unknown): string {
   const message =
     error instanceof Error
       ? error.message
       : typeof error === "object" && error && "message" in error
         ? String((error as { message?: string }).message || "")
         : String(error || "")
-  const lower = message.toLowerCase()
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: string }).code || "")
+      : ""
+  return `${code} ${message}`.toLowerCase()
+}
+
+/** True only when backend env is actually missing — not Google 403 / invalid JSON / API errors. */
+export function isGoogleSheetsCredentialsPendingError(error: unknown): boolean {
+  const lower = sheetsErrorText(error)
+  if (lower.includes("google_sheets_credentials_invalid")) return false
+  if (lower.includes("is set but")) return false
   return (
-    lower.includes("google_service_account_json") ||
-    lower.includes("google_application_credentials") ||
-    (lower.includes("service account") && lower.includes("required")) ||
-    lower.includes("google sheets credentials") ||
-    lower.includes("sheets api") && lower.includes("credential")
+    lower.includes("google_sheets_credentials_missing") ||
+    (lower.includes("google_service_account_json") &&
+      (lower.includes("missing") || lower.includes("not set") || lower.includes("is required"))) ||
+    (lower.includes("google_application_credentials") &&
+      (lower.includes("missing") || lower.includes("not set") || lower.includes("is required")))
   )
 }
 

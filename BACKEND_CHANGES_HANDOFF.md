@@ -3238,6 +3238,7 @@ Submit installments with total paid = AM subtotal → **200**. Refresh → phase
 | **`BACKEND_CROMPTON_DCR_SET.ts`** | **§27** / **§59** allowlist helpers + pricing/preset merge |
 | **§59** (this file) | Crompton 3kW set inverter is **3kW**, not 3.6kW |
 | **§60** (this file) | Office Inside table `siteCost` vs ledger vendor cost/profit |
+| **§61** (this file) | Google Sheets credential MISSING vs INVALID vs 403 |
 | **§28** (this file) | Cash + loan amounts + installment payment modes |
 | **`BACKEND_CASH_LOAN_AMOUNTS.md`** | **§28** approve/GET/installment + Excel fields |
 | **`BACKEND_CASH_LOAN_AMOUNTS.ts`** | **§28** amount validation + remaining-by-side helpers |
@@ -4371,6 +4372,20 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 4. Do not set `leaser_remaining` from `profit_ratio`. Remaining is Profit vendor − paid (or leave 0).
 
 **Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · REQUIRED **§BN**
+
+---
+
+## 61. Google Sheets — do not treat every Sync 500 as missing env (**§BO**) — Oct 2026
+
+**Frontend (shipped):** “Google credentials pending” only for true missing env. If `GET /hr/sheet-sources` already returned real tab ids, Sync/Discover failures show the **actual** error (invalid JSON, sheet not shared, Sheets API).
+
+**Backend (P0):**
+1. `GOOGLE_SHEETS_CREDENTIALS_MISSING` → **503** only when both env vars empty.
+2. `GOOGLE_SHEETS_CREDENTIALS_INVALID` → **500** when JSON is set but not parseable.
+3. Google 403 / API errors → echo Google message; do not say “add GOOGLE_SERVICE_ACCOUNT_JSON”.
+4. Restart Node after `.env` change.
+
+**Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · REQUIRED **§BO**
 
 ---
 

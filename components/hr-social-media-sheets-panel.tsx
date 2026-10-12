@@ -57,6 +57,9 @@ const SHEET_AUTO_SYNC_MS = 30 * 60 * 1000
 
 const isRealSheetSourceId = (id: string) => id && !id.startsWith("local-")
 
+const hasLiveGoogleSheetSources = (list: SocialMediaLeadSource[]) =>
+  list.some((source) => isRealSheetSourceId(source.id))
+
 export function HrSocialMediaSheetsPanel({
   dealers,
   realtimeTick = 0,
@@ -139,7 +142,7 @@ export function HrSocialMediaSheetsPanel({
         setSources(normalized)
         writeHrSheetSourcesToStorage(normalized)
         setApiUnavailable(false)
-        if (normalized.some((s) => isRealSheetSourceId(s.id) && (s.rowCount ?? 0) > 0)) {
+        if (hasLiveGoogleSheetSources(normalized)) {
           setGoogleCredentialsPending(false)
         }
         setActiveSheetTab((prev) => {
@@ -383,20 +386,23 @@ export function HrSocialMediaSheetsPanel({
             : "No tabs returned; showing default list.",
       })
     } catch (error) {
-      const credentialsPending = isGoogleSheetsCredentialsPendingError(error)
-      const discovered = DEFAULT_SOCIAL_SHEET_TAB_NAMES
-      const reconciled = reconcileSheetSourcesWithDiscoveredTabs(
-        sources.length > 0 ? sources : defaultSheetSourcesForSpreadsheet(DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID),
-        discovered,
-        DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID,
-      )
-      writeDiscoveredSheetTabsToStorage(discovered)
-      setSources(reconciled)
-      writeHrSheetSourcesToStorage(reconciled)
-      setActiveSheetTab((prev) => {
-        if (prev && reconciled.some((s) => s.sheetTabName === prev)) return prev
-        return reconciled[0]?.sheetTabName || ""
-      })
+      const credentialsPending =
+        isGoogleSheetsCredentialsPendingError(error) && !hasLiveGoogleSheetSources(sources)
+      if (!hasLiveGoogleSheetSources(sources)) {
+        const discovered = DEFAULT_SOCIAL_SHEET_TAB_NAMES
+        const reconciled = reconcileSheetSourcesWithDiscoveredTabs(
+          sources.length > 0 ? sources : defaultSheetSourcesForSpreadsheet(DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID),
+          discovered,
+          DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID,
+        )
+        writeDiscoveredSheetTabsToStorage(discovered)
+        setSources(reconciled)
+        writeHrSheetSourcesToStorage(reconciled)
+        setActiveSheetTab((prev) => {
+          if (prev && reconciled.some((s) => s.sheetTabName === prev)) return prev
+          return reconciled[0]?.sheetTabName || ""
+        })
+      }
 
       if (credentialsPending) {
         setGoogleCredentialsPending(true)
@@ -407,11 +413,12 @@ export function HrSocialMediaSheetsPanel({
         })
       } else {
         toast({
-          title: "Using default tabs",
+          title: "Discover failed",
           description:
             error instanceof ApiError
               ? error.message
-              : "Could not reach Google Sheets. Default tab list is loaded for configuration.",
+              : "Could not reach Google Sheets. Existing tabs were kept.",
+          variant: "destructive",
         })
       }
     } finally {
@@ -560,7 +567,9 @@ export function HrSocialMediaSheetsPanel({
       await loadLeads(refreshed)
       onSyncComplete?.()
     } catch (error) {
-      if (isGoogleSheetsCredentialsPendingError(error)) {
+      const credentialsPending =
+        isGoogleSheetsCredentialsPendingError(error) && !hasLiveGoogleSheetSources(sources)
+      if (credentialsPending) {
         setGoogleCredentialsPending(true)
         toast({
           title: "Google credentials pending",

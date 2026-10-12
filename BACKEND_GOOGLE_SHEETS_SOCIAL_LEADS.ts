@@ -20,6 +20,12 @@
  *   - Share spreadsheet with service account email (Editor).
  *   - Env: GOOGLE_SERVICE_ACCOUNT_JSON (stringified) OR GOOGLE_APPLICATION_CREDENTIALS path.
  *
+ * Credential errors (SPA **§BO** / HANDOFF **§61**):
+ *   GOOGLE_SHEETS_CREDENTIALS_MISSING  — neither env var set → 503
+ *   GOOGLE_SHEETS_CREDENTIALS_INVALID  — JSON present but unparseable → 500
+ *   Google 403 / API errors            — echo Google message; do NOT use MISSING
+ * Restart the Node process after adding .env. Do not tell the SPA “add env” when env is set.
+ *
  * =============================================================================
  */
 
@@ -230,13 +236,34 @@ function normalizeAssigneeId(value) {
 //   computeHrUploadLeadCounts(leads)
 
 
+function sheetsCredentialError(code, message) {
+  const err = new Error(message)
+  err.code = code
+  return err
+}
+
 function getSheetsClient({ writable = false } = {}) {
   const scope = writable
     ? "https://www.googleapis.com/auth/spreadsheets"
     : "https://www.googleapis.com/auth/spreadsheets.readonly"
-  const json = process.env.GOOGLE_SERVICE_ACCOUNT_JSON
+  const json = String(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || "").trim()
+  const keyFile = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || "").trim()
+  if (!json && !keyFile) {
+    throw sheetsCredentialError(
+      "GOOGLE_SHEETS_CREDENTIALS_MISSING",
+      "GOOGLE_SHEETS_CREDENTIALS_MISSING: GOOGLE_SERVICE_ACCOUNT_JSON is not set",
+    )
+  }
   if (json) {
-    const credentials = JSON.parse(json)
+    let credentials
+    try {
+      credentials = JSON.parse(json)
+    } catch (e) {
+      throw sheetsCredentialError(
+        "GOOGLE_SHEETS_CREDENTIALS_INVALID",
+        "GOOGLE_SERVICE_ACCOUNT_JSON is set but is not valid JSON. Keep private_key newlines as \\n.",
+      )
+    }
     const auth = new google.auth.GoogleAuth({
       credentials,
       scopes: [scope],
@@ -244,7 +271,7 @@ function getSheetsClient({ writable = false } = {}) {
     return google.sheets({ version: "v4", auth })
   }
   const auth = new google.auth.GoogleAuth({
-    keyFile: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    keyFile,
     scopes: [scope],
   })
   return google.sheets({ version: "v4", auth })
@@ -709,7 +736,14 @@ export async function listHrSheetSources(req, res) {
  */
 export async function discoverHrSheetTabs(req, res) {
   const spreadsheetId = req.body?.spreadsheetId || req.body?.spreadsheet_id || DEFAULT_SPREADSHEET_ID
-  const sheets = getSheetsClient()
+  let sheets
+  try {
+    sheets = getSheetsClient()
+  } catch (e) {
+    const code = e.code || "SYS_001"
+    const status = code === "GOOGLE_SHEETS_CREDENTIALS_MISSING" ? 503 : 500
+    return res.status(status).json({ success: false, error: { code, message: e.message } })
+  }
   const meta = await sheets.spreadsheets.get({ spreadsheetId })
   const tabs = (meta.data.sheets || []).map((s) => s.properties?.title).filter(Boolean)
 
@@ -794,7 +828,9 @@ export async function postHrSheetSourceSync(req, res) {
     return res.json({ success: true, data: result })
   } catch (e) {
     await row.update({ last_sync_status: "error", last_sync_error: e.message })
-    return res.status(500).json({ success: false, error: { message: e.message } })
+    const code = e.code || "SYS_001"
+    const status = code === "GOOGLE_SHEETS_CREDENTIALS_MISSING" ? 503 : 500
+    return res.status(status).json({ success: false, error: { code, message: e.message } })
   }
 }
 

@@ -5373,6 +5373,7 @@ For questions or clarifications about these requirements, please refer to:
 - Retrieve from Metering: `lib/api.ts` → `retrieveQuotationFromMetering`, **§AL**, **`BACKEND_RETRIEVE_FROM_METERING.ts`**, HANDOFF **§39** / **§53**
 - Retrieve from Installation: `lib/api.ts` → `retrieveQuotationFromInstallation`, **§AM**, **`BACKEND_RETRIEVE_FROM_INSTALLATION.ts`**, HANDOFF **§40**
 - Google Sheets social leads: `api.hr.sheetSources.*`, **`BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`**, **§AN**, HANDOFF **§41**
+- Google Sheets credential errors (do not fake “env missing”): **§BO**, HANDOFF **§61**, **`BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`**
 - API specification: `API_SPECIFICATION.txt`
 - Endpoints summary: `API_ENDPOINTS_SUMMARY.md`
 
@@ -7066,6 +7067,40 @@ Two different amounts. Persist both. Do not merge.
 Example: PI 153775, file 3000, GST 5004, others 0 → table `siteCost` **153775**, ledger vendor `costOfSite` **161779**. Profit vendor = subtotal − 161779. Remaining = that − SUM(leaser).
 
 **Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · HANDOFF **§60** · `siteCost` persist `BACKEND_SITE_COST.md`
+
+---
+
+## §BO — Google Sheets: credentials missing vs invalid vs Google 403 — Oct 2026
+
+Live Admin Social Media showed **“Google credentials pending”** after Sync even though `GOOGLE_SERVICE_ACCOUNT_JSON` was already in backend `.env`. Backend was returning a generic 500 whose message mentioned that env name; SPA treated every such 500 as “env not added.”
+
+No new routes. Discover / Sync / Sync-all must distinguish:
+
+| `error.code` | HTTP | When |
+|--------------|------|------|
+| `GOOGLE_SHEETS_CREDENTIALS_MISSING` | **503** | Both env vars empty |
+| `GOOGLE_SHEETS_CREDENTIALS_INVALID` | **500** | JSON env set, parse fails (`private_key` newlines) |
+| (Google / `SYS_001`) | **500** | Env loaded; share/API/JWT failure — **echo Google’s message** |
+
+### Must
+
+1. `getSheetsClient`: throw MISSING only when both vars are empty. Invalid JSON → INVALID, not MISSING.
+2. Discover + `POST …/sync` error body: `{ "success": false, "error": { "code", "message" } }`.
+3. Do **not** wrap 403 / invalid JWT as “GOOGLE_SERVICE_ACCOUNT_JSON is required”.
+4. Restart the API process after adding `.env` (PM2/systemd must see the var).
+5. Share the spreadsheet with the service account `client_email` as Editor; enable Google Sheets API.
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "GOOGLE_SHEETS_CREDENTIALS_MISSING",
+    "message": "GOOGLE_SHEETS_CREDENTIALS_MISSING: GOOGLE_SERVICE_ACCOUNT_JSON is not set"
+  }
+}
+```
+
+**Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` (`getSheetsClient`, discover/sync catch) · HANDOFF **§61**
 
 ---
 
