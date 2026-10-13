@@ -571,13 +571,22 @@ function officeInsideSelfLeaserId(quotationId: string, phaseNumber: number) {
   return `lp-self-${quotationId}-${phaseNumber}`
 }
 
-function phaseDateYmd(phase: PaymentPhase): string {
-  const raw = phase.paymentDate || phase.dueDate
-  if (!raw) return calendarDateLocalYmd(new Date())
-  const parsed = new Date(raw)
-  if (!Number.isNaN(parsed.getTime())) return calendarDateLocalYmd(parsed)
+/** Same YYYY-MM-DD as the Office Inside Due Date input. */
+function accountsDueDateInputValue(raw?: string | null): string | null {
+  if (!raw) return null
   const text = String(raw).trim()
-  return text.length >= 10 ? text.slice(0, 10) : calendarDateLocalYmd(new Date())
+  if (!text) return null
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().split("T")[0]
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null
+}
+
+function phaseDateYmd(phase: PaymentPhase): string {
+  return (
+    accountsDueDateInputValue(phase.dueDate) ||
+    accountsDueDateInputValue(phase.paymentDate) ||
+    calendarDateLocalYmd(new Date())
+  )
 }
 
 function pickFirstFiniteNumber(...vals: unknown[]): number {

@@ -3188,26 +3188,28 @@ If `currentLead` is missing but an `in_progress` row exists for this dealer in D
 
 ## H) Tab-specific queue arrays (Scheduled / Dialled / Connected / Not Connected)
 
-`GET /api/dealers/me/calling-queue/next` and `/current` must return **separate** lists (frontend keys in `applyQueueResponse`):
+**Updated Oct 2026 — see §BQ.** Tabs **overlap**. Do not hide Scheduled from Dialled or Connected.
+
+`GET /api/dealers/me/calling-queue/next` and `/current` (frontend keys in `applyQueueResponse`):
 
 | Response key | UI tab | Rule |
 |--------------|--------|------|
-| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | Scheduled | `nextFollowUpAt` in the future |
-| `dialledActions` | Dialled | Completed actions **without** an upcoming future follow-up |
-| `connectedActions` | Connected | Dialled subset where outcome is “connected” (not in not-connected reason list) |
-| `notConnectedActions` | Not Connected | Dialled subset for unanswered / unreachable / switched off, etc. |
+| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | Scheduled | **Connected + Decision Pending** (follow-up / `Follow-up Pending` / `Callback Scheduled`). Not a dump of every future `nextFollowUpAt`. |
+| `dialledActions` | Dialled | **All** completed actions **including** scheduled |
+| `connectedActions` | Connected | Connected outcomes **including** Decision Pending / scheduled |
+| `notConnectedActions` | Not Connected | Unanswered / unreachable / switched off, etc. |
 | `recentActions` / `actionHistory` | Analytics | Union or superset |
 
 Each history item: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `callRemark`, `nextFollowUpAt`, `customerNote`, address fields as available.
 
-**Do not** duplicate future scheduled follow-ups only under `dialledActions`.
+**Do not** drop future follow-ups from `dialledActions` or `connectedActions`. Full mapping: **§BQ**.
 
 ---
 
 ## I) Regression check for backend QA (remarks & tabs)
 
 1. Submit with remarks → `callRemark` visible in admin/HR calling history and dealer GET.
-2. Scheduled tab ≠ Dialled tab data (no shared-only `recentActions` without buckets).
+2. Scheduled is a **subset** of Connected + Dialled (Decision Pending still listed on those tabs). Arrays may overlap; still return all four buckets.
 3. Double **Start** on same lead → same lead until Submit; no skip via `nextLead` on start.
 4. Create Quotation from calling → `POST /customers` stores `notes`/`remarks`.
 5. HR/Admin **GET calling-actions** with `dealerId` + `startDate`/`endDate` returns only rows in range for that dealer (see §J).
@@ -5301,6 +5303,7 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | High | Calling remarks + tab buckets + `start` must not skip lead | Dealer queue §E, §H, HANDOFF §4 | `lib/calling-remark-payload.ts`, `patchDealerCallingQueueAction` |
 | **High** | **Current lead stays `in_progress` until Submit** — no `nextLead` on start; `GET /current` returns open call | **§E.1**, HANDOFF **§4.5.1** | `app/dashboard/calling-data/page.tsx` |
 | **High** | **Reschedule Submit** — `rescheduled` / `follow_up` + `nextFollowUpAt` → `status: rescheduled`, no 500 | **§E.2**, HANDOFF **§4.5.2** | `lib/calling-remark-payload.ts` |
+| **High** | **Calling Data tabs** — Scheduled = Connected DP; Dialled includes scheduled; 3-outcome PATCH | **§BQ**, HANDOFF **§63** | `BACKEND_CALLING_DATA_TABS.ts` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
 | High | HR Dealer Actions summary — persist/return `statusCategory` + `statusText` on calling-actions | §J.1, HANDOFF §7 | `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts` |
@@ -5357,11 +5360,13 @@ For questions or clarifications about these requirements, please refer to:
 - HR/Admin calling-actions list + query params: `lib/api.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J**, **`BACKEND_CHANGES_HANDOFF.md` §4.8**
 - Dealer calling current lead until Submit: `app/dashboard/calling-data/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §E.1**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.1**
 - Dealer calling reschedule (Decision Pending): `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_REQUIRED.md` §E.2**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.2**
+- Calling Data tabs (Scheduled ⊂ Connected, Dialled includes scheduled, 3 outcomes): **`BACKEND_CHANGES_REQUIRED.md` §BQ**, **`BACKEND_CHANGES_HANDOFF.md` §63**, **`BACKEND_CALLING_DATA_TABS.ts`**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
 - Account Management installment replace: `app/dashboard/account-management/page.tsx`, `lib/api.ts` → `updatePaymentDetails`, **`BACKEND_CHANGES_REQUIRED.md` §AB**, **`BACKEND_INSTALLMENT_REPLACE.ts`**
 - Office Inside Collect self / To Chairbord: **`BACKEND_CHANGES_REQUIRED.md` §BK**, **`BACKEND_COLLECT_SELF_LEASER.ts`**, HANDOFF **§57**
+- Dealer leaser date = Accounts Due Date: **`BACKEND_CHANGES_REQUIRED.md` §BP**, **`BACKEND_COLLECT_SELF_LEASER.ts`**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§62**
 - Dealer leaser stats + Mini/Full statement: **`BACKEND_CHANGES_REQUIRED.md` §BL**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§58**
 - Office Inside table vs vendor cost/profit: **`BACKEND_CHANGES_REQUIRED.md` §BN**, **`BACKEND_SUBVENDOR_LEASER.ts`**, HANDOFF **§60**
 - Crompton DCR inverter 3kW set → 3kW (not 3.6kW): **`BACKEND_CHANGES_REQUIRED.md` §BM**, **`BACKEND_CROMPTON_DCR_SET.ts`**, HANDOFF **§59**
@@ -6956,6 +6961,7 @@ Account Management → **Office Inside** → installment **Cash** or **UPI** sho
 1. Persist per-phase `collectDestination` (`self` | `chairbord`), `collectKind` (`complete` | `partial`), `collectSelfAmount`, `collectChairbordAmount` on installment replace (**§AB**) and echo on GET. Aliases: `collect_destination`, `collect_kind`, `collect_self_amount`, `collect_chairbord_amount`. Cash/UPI only; otherwise `null`. **Do not 400** unknown phase keys.
 2. **§BG** leaser `PUT /admin/subvendors/:id/leaser`: store client `id` as **TEXT as sent**. Do not replace `lp-self-…` with a generated UUID (duplicates on next save).
 3. Do **not** insert leaser rows from the installment handler — SPA already PUTs leaser after save. Leaser `amount` is the self share, not full `paidAmount`.
+4. Leaser `date` = installment **Due Date** (same as Accounts). Persist DATEONLY as sent (**§BP**). Do not rewrite to NOW() / `paymentDate`.
 
 **Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts`
 
@@ -7101,6 +7107,150 @@ No new routes. Discover / Sync / Sync-all must distinguish:
 ```
 
 **Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` (`getSheetsClient`, discover/sync catch) · HANDOFF **§61**
+
+---
+
+## §BP — Dealer leaser payment date = Accounts installment Due Date — Oct 2026
+
+Account Management → **Subvendor office** → Dealer leaser Manage.
+
+Collect-self rows (`lp-self-{quotationId}-{phaseNumber}`) send `date` = the Office Inside installment **Due Date**, not the day the installment was saved.
+
+No new routes.
+
+### Must
+
+1. **§BG** `PUT /admin/subvendors/:id/leaser`: persist `payments[].date` / `payment_date` as **DATEONLY `YYYY-MM-DD` as sent**. Empty → today. A sent date must **not** be overwritten with `NOW()`, `created_at`, or installment `paymentDate`.
+2. GET leaser echo `date` **and** `payment_date` as `"YYYY-MM-DD"` (not ISO datetime). Do not shift the calendar day via UTC midnight.
+3. GET installments (approved list, quotation detail, installment save) echo each phase `dueDate` / `due_date` as `"YYYY-MM-DD"` so existing `lp-self-*` rows can overlay after refresh.
+4. Do **not** set leaser date inside the installment handler — SPA already PUTs it.
+
+```json
+{
+  "id": "lp-self-quotation-id-2",
+  "date": "2026-09-18",
+  "payment_date": "2026-09-18",
+  "amount": 5000,
+  "paymentType": "Cash",
+  "customerIds": ["quotation-id"]
+}
+```
+
+QA: Due Date `18/09/2026`, Collect self saved today → GET leaser date is `2026-09-18`. Refresh Manage still shows `18/09/2026`.
+
+**Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts` (`calendarDateYmd`, §C) · `BACKEND_SUBVENDOR_LEASER.ts` (`leaserDateYmd`) · HANDOFF **§62**
+
+---
+
+## §BQ — Calling Data tabs: Scheduled ⊂ Connected, Dialled includes scheduled, 3 outcomes — Oct 2026
+
+Dealer → **Calling Data**. Frontend already derives tabs client-side from analytics + queue arrays. Backend GET/PATCH must match so refresh / other devices / Admin Calling Reports stay correct.
+
+**Supersedes** the old mutually exclusive §H / HANDOFF §4.4 (Scheduled ≠ Dialled). Overlap is required.
+
+### No new routes
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/dealers/me/calling-queue/next` |
+| `GET` | `/api/dealers/me/calling-queue/current` |
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` |
+
+Also echo the same classification on dealer/HR/admin calling-actions GET.
+
+### Tab membership (latest action per `leadId`)
+
+| Tab | Rule |
+|-----|------|
+| **Scheduled** | `classifyCallingConnection` = **connected** AND outcome = **decision_pending** (`follow_up` / `rescheduled`, or status in Follow-up Pending / Callback Scheduled / Callback Later / Follow-up Required / Need More Information / Not Picking on Follow-up / Rescheduled). |
+| **Dialled** | All completed actions (`called`, `follow_up`, `not_interested`, `rescheduled`) — **including** scheduled. |
+| **Connected** | Connected outcomes **including** Decision Pending. Do **not** exclude leads that also sit on Scheduled. |
+| **Not Connected** | Status in unanswered / switched off / not reachable / busy / disconnected / wrong number / invalid / out of service (see `NOT_CONNECTED_STATUSES_LIST` in `lib/calling-action-summary.ts`). |
+
+Connection = not-connected if `status_text` is a not-connected reason or `status_category` = `call_connectivity`. Else connected when a status/action exists. `action: start` is not a dialled row.
+
+### PATCH bodies the SPA sends
+
+Tagged `callRemark`: `[status_category] status_text | free`. Also snake_case via `enrichCallingActionPayload()`.
+
+Dialled first dropdown is **Connected** | **Not Connected**. Second field depends on that. Same PATCH as Current Lead / Scheduled / Connected.
+
+| UI control | `action` | `status_category` | `status_text` | Extra |
+|------------|----------|-------------------|---------------|-------|
+| Dialled/Connected/Scheduled → Interested | `called` | `customer_intent` | `Interested` | |
+| Dialled/Connected/Scheduled → Not Interested | `not_interested` | `competition` | `Not Interested Currently` | |
+| Dialled/Connected/Scheduled → Decision Pending | `follow_up` (accept `rescheduled`) | `schedule` | `Follow-up Pending` | `nextFollowUpAt` ISO when reschedule |
+| Dialled/Not Connected → reason | `not_interested` | `call_connectivity` | `Call Unanswered`, `Busy / Line Busy`, … | |
+| Move to Connected | same as Interested / Not Interested / Decision Pending | | | free remark includes `Transfer Reason: …` |
+
+```json
+{
+  "action": "called",
+  "callRemark": "[customer_intent] Interested | 5kW bill",
+  "call_remark": "[customer_intent] Interested | 5kW bill",
+  "statusCategory": "customer_intent",
+  "status_category": "customer_intent",
+  "statusText": "Interested",
+  "status_text": "Interested",
+  "actionAt": "2026-10-13T07:30:00.000Z"
+}
+```
+
+```json
+{
+  "action": "follow_up",
+  "callRemark": "[schedule] Follow-up Pending | callback",
+  "nextFollowUpAt": "2026-10-16T05:30:00.000Z",
+  "next_follow_up_at": "2026-10-16T05:30:00.000Z"
+}
+```
+
+```json
+{
+  "action": "not_interested",
+  "callRemark": "[call_connectivity] Call Unanswered | no pickup",
+  "statusCategory": "call_connectivity",
+  "status_category": "call_connectivity",
+  "statusText": "Call Unanswered",
+  "status_text": "Call Unanswered"
+}
+```
+
+```json
+{
+  "action": "called",
+  "callRemark": "[customer_intent] Interested | picked up later | Transfer Reason: customer called back"
+}
+```
+
+### Must
+
+1. Persist `status_category`, `status_text`, free `remark`, `call_remark`, `action`, `action_at`, `next_follow_up_at` on every completion PATCH (§E / §4.1).
+2. Decision Pending: `follow_up` **or** `rescheduled` + `nextFollowUpAt` → lead `status = rescheduled`. **400 `VAL_001`** if datetime missing/invalid — **never 500** (§E.2).
+3. Transfer **and Dialled connection change**: classify from the **new** tagged status. Latest action per lead:
+   - Connected outcome → `connectedActions` (+ `scheduledLeads` if DP); leave `notConnectedActions`
+   - Not Connected reason → `notConnectedActions`; leave `connectedActions` / `scheduledLeads`
+   - Always remain in `dialledActions`
+4. GET `scheduledLeads` / `connectedActions` / `dialledActions` / `notConnectedActions` on `/next` and `/current`. Scheduled rows **also** appear in connected + dialled.
+5. Echo `nextFollowUpAt` on queue + calling-actions GET.
+
+### Do not
+
+- Filter `connectedActions` / `dialledActions` with `nextFollowUpAt > NOW()`
+- Put Not Connected holds on `scheduledLeads`
+- Rewrite compact-UI `status_text` (`Interested` / `Not Interested Currently` / `Follow-up Pending`)
+- Require Part 1–4 category pickers on Dialled / Scheduled / Connected (SPA sends Connected \| Not Connected, then the conditional second field)
+
+### QA
+
+1. Current Lead → Connected + Decision Pending → row on Scheduled, Connected (DP filter), Dialled.
+2. Scheduled Update → Interested → gone from Scheduled; Connected + Dialled show Interested.
+3. Dialled Not Connected → Call Unanswered → Update → Not Connected + Dialled; not on Connected.
+4. Dialled Connected → Interested → Update → Connected + Dialled; not on Not Connected.
+5. Not Connected **Move** → Interested → Connected has the lead; Not Connected does not. Refresh matches.
+6. HR/Admin calling-actions: same `statusText` / tagged remark / `nextFollowUpAt`.
+
+**Copy-paste:** `BACKEND_CALLING_DATA_TABS.ts` · HANDOFF **§63** · classifiers `lib/calling-action-summary.ts`
 
 ---
 

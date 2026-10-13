@@ -535,21 +535,23 @@ Accept optional:
 
 Frontend sends **`remarks`** and **`notes`** with the same value when prefilled from Calling Data.
 
-### 4.4 Separate queue arrays per tab (critical)
+### 4.4 Queue arrays per tab (updated Oct 2026 — **§63 / §BQ**)
 
-`GET /api/dealers/me/calling-queue/next` and `GET /api/dealers/me/calling-queue/current` should return **distinct lists** so Scheduled / Dialled / Connected / Not Connected tabs do not show the same rows.
+Tabs **overlap on purpose**. Do **not** hide Scheduled leads from Dialled or Connected.
+
+`GET /api/dealers/me/calling-queue/next` and `GET /api/dealers/me/calling-queue/current`:
 
 | Response key | Tab | Rule |
 |--------------|-----|------|
-| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | **Scheduled** | Future `nextFollowUpAt` > now, status `rescheduled` (or scheduled) |
-| `dialledActions` | **Dialled** | Completed dial attempts: actions in `called`, `follow_up`, `not_interested`, `rescheduled` **without** upcoming future follow-up |
-| `connectedActions` | **Connected** | Subset of dialled where `status_text` is **not** a not-connected reason (see frontend `NOT_CONNECTED_REASONS`) |
-| `notConnectedActions` | **Not Connected** | Subset where `status_text` is call-unanswered / switched off / not reachable / etc. |
+| `scheduledLeads` / `upcomingFollowUps` / `rescheduledLeads` | **Scheduled** | **Connected + Decision Pending** only (follow-up / `rescheduled` / `Follow-up Pending` / `Callback Scheduled`). Not Connected reschedules stay out. |
+| `dialledActions` | **Dialled** | **All** completed dials: connected **and** not-connected **including** scheduled |
+| `connectedActions` | **Connected** | Connected outcomes **including** Decision Pending / scheduled follow-ups |
+| `notConnectedActions` | **Not Connected** | Not-connected reasons only (unanswered / switched off / …) |
 | `recentActions` / `actionHistory` | History / analytics | Union or superset for counts |
 
-**Do not** put future scheduled follow-ups only in `dialledActions` — they belong under **`scheduledLeads`**.
+**Do not** drop a lead from `connectedActions` or `dialledActions` just because `nextFollowUpAt` is in the future.
 
-Each action item should include: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `callRemark`, `nextFollowUpAt`, `kNumber`, `address`, `customerNote` (if stored).
+Each action item should include: `id`, `leadId`, `name`, `mobile`, `action`, `actionAt`, `callRemark`, `nextFollowUpAt`, `kNumber`, `address`, `customerNote` (if stored). Full spec: **§63** / REQUIRED **§BQ**.
 
 ### 4.5 `start` must not skip to the next lead
 
@@ -3219,6 +3221,7 @@ Submit installments with total paid = AM subtotal → **200**. Refresh → phase
 | **§15** (this file) | Calling `/current` 500 SYS_001 + FCFS drain Unassigned/Assigned |
 | **`BACKEND_ASSIGN_UNASSIGNED.ts`** | **§15-C** `POST …/assign-unassigned` + upload `round_robin_all` |
 | **`BACKEND_CALLING_QUEUE_CURRENT.ts`** | **§15** implement `/calling-queue/current` + `/next` (never SYS_001) |
+| **`BACKEND_CALLING_DATA_TABS.ts`** | **§63 / §BQ** Scheduled ⊂ Connected, Dialled includes scheduled, 3-outcome PATCH |
 | **§16** (this file) | Inventory dispatch — `stock_requests_dispatched_by_id_fkey` |
 | **`BACKEND_STOCK_REQUESTS_DISPATCHED_BY.ts`** | **§16** upsert JWT user for `dispatched_by_id` |
 | **§20** (this file) | Inventory Agent sale — `sales_created_by_fkey` |
@@ -4318,6 +4321,7 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 1. Persist `collectDestination`, `collectKind`, `collectSelfAmount`, `collectChairbordAmount`; echo on GET. Do not 400 extra phase keys.
 2. Leaser payment `id` is TEXT — keep `lp-self-…` as sent (**§BG** PUT). Amount on that row is the self share.
 3. Do not auto-create leaser rows on installment save (SPA PUTs `/admin/subvendors/:id/leaser`).
+4. Leaser `date` = installment Due Date (**§BP**). Persist DATEONLY as sent.
 
 **Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts` · REQUIRED **§BK**
 
@@ -4386,6 +4390,96 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 4. Restart Node after `.env` change.
 
 **Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · REQUIRED **§BO**
+
+---
+
+## 62. Dealer leaser date = Accounts Due Date (**§BP**) — Oct 2026
+
+**Frontend (shipped):** Collect-self leaser rows use the Office Inside installment **Due Date** (same calendar day as Accounts), not the save-time `paymentDate`. Manage overlays existing `lp-self-*` dates from `dueDate` after refresh.
+
+**Backend (P0):** No new routes.
+1. `PUT /admin/subvendors/:id/leaser` — persist `date` / `payment_date` as DATEONLY `YYYY-MM-DD` **as sent**. Do not rewrite to NOW() / `created_at` / `paymentDate`.
+2. GET leaser echo `date` + `payment_date` as `"YYYY-MM-DD"` (no ISO datetime / UTC shift).
+3. GET installments echo `dueDate` / `due_date` as `"YYYY-MM-DD"`.
+4. Do not set leaser date in the installment handler.
+
+**Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts` · `BACKEND_SUBVENDOR_LEASER.ts` · REQUIRED **§BP**
+
+---
+
+## 63. Calling Data tabs — Scheduled / Dialled overlap + 3 outcomes (**§BQ**) — Oct 2026
+
+**Frontend (shipped):** `app/dashboard/calling-data/page.tsx`, `lib/calling-action-summary.ts`.
+
+**Problem:** Old §4.4 treated Scheduled vs Dialled vs Connected as **mutually exclusive**. Dealers then could not find Decision Pending rows on Connected, Dialled hid scheduled calls, and Scheduled was empty unless `nextFollowUpAt` was strictly in the future.
+
+### Product (match the SPA)
+
+| Tab | Who appears |
+|-----|-------------|
+| **Scheduled** | Connected leads marked **Decision Pending** (Follow-up Pending / Callback Scheduled / `follow_up` / `rescheduled`) |
+| **Dialled** | Every completed connected **and** not-connected action, **including** scheduled |
+| **Connected** | Connected outcomes **including** Decision Pending |
+| **Not Connected** | Not-connected reasons only |
+
+**Dialled / Scheduled / Connected** no longer send Part 1–4 pickers.
+
+- Dialled first field: **Connected** | **Not Connected**
+- Then: Connected → Interested / Not Interested / Decision Pending; Not Connected → reason (`Call Unanswered`, `Busy / Line Busy`, …)
+
+### No new routes
+
+| Method | Path |
+|--------|------|
+| `GET` | `/api/dealers/me/calling-queue/next` and `/current` |
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` |
+
+### GET arrays
+
+1. **`scheduledLeads`** = latest action per lead where connection = connected **and** outcome = decision_pending. Echo `nextFollowUpAt`, `callRemark`, `statusText`, `statusCategory`.
+2. **`dialledActions`** = all completed actions (`called` / `follow_up` / `not_interested` / `rescheduled`). **Include** scheduled.
+3. **`connectedActions`** = latest connected action per lead. **Include** decision pending. **Do not** filter out `scheduledFollowUpLeadIds`.
+4. **`notConnectedActions`** = latest not-connected action per lead.
+5. After **Not Connected → Connected** transfer PATCH, that lead must **leave** `notConnectedActions` and **appear** in `connectedActions` (and Scheduled if Decision Pending).
+
+### PATCH — Dialled / Scheduled / Connected / transfer
+
+Same `PATCH /api/dealers/me/calling-queue/{leadId}/action`. Classify from the **new** tagged `status_text` / `status_category`.
+
+| UI (1st → 2nd) | `action` | `status_category` | `status_text` | `nextFollowUpAt` |
+|----------------|----------|-------------------|---------------|------------------|
+| Connected → Interested | `called` | `customer_intent` | `Interested` | omit |
+| Connected → Not Interested | `not_interested` | `competition` | `Not Interested Currently` | omit |
+| Connected → Decision Pending | `follow_up` (alias `rescheduled`) | `schedule` | `Follow-up Pending` | ISO when reschedule |
+| Not Connected → reason | `not_interested` | `call_connectivity` | `Call Unanswered` / `Busy / Line Busy` / … | omit |
+| Not Connected tab **Move** | same as Connected rows | | | free remark `Transfer Reason: {text}` |
+
+`callRemark` is tagged, e.g. `[call_connectivity] Call Unanswered | no pickup`. Persist `status_category` + `status_text` + free `remark` + `call_remark` (§4.1 / §E).
+
+After Dialled Update:
+- **Not Connected** reason → latest action on **Not Connected** + **Dialled**; leave **Connected** / **Scheduled**
+- **Connected** outcome → latest action on **Connected** + **Dialled**; leave **Not Connected**; **Scheduled** only if Decision Pending
+
+Decision Pending: accept `follow_up` **or** `rescheduled`; set lead `status = rescheduled` when `nextFollowUpAt` is set; **never 500** (§4.5.2 / §E.2).
+
+### Do not
+
+- Hide scheduled IDs from Connected or Dialled
+- Require `nextFollowUpAt > NOW()` for Scheduled membership (SPA also derives from analytics + connected DP status)
+- Put Not Connected reschedules on Scheduled
+- Return HTTP 500 for valid `follow_up` + `nextFollowUpAt`
+- Require Part 1–4 category pickers on Dialled / Scheduled / Connected (SPA sends Connected | Not Connected, then the conditional second field)
+
+### QA
+
+1. Submit Current Lead → Connected + Decision Pending → row on **Scheduled**, **Connected** (Decision Pending filter), and **Dialled**.
+2. Scheduled Update → Interested → leaves Scheduled, stays on Connected + Dialled as Interested.
+3. Dialled: Not Connected + Call Unanswered → Update → stays Not Connected + Dialled; gone from Connected.
+4. Dialled: change to Connected + Interested → Update → Connected + Dialled; gone from Not Connected.
+5. Not Connected **Move to Connected** + Interested → appears on Connected; gone from Not Connected.
+6. Refresh / second device shows the same buckets (no local-only transfer).
+
+**Copy-paste:** `BACKEND_CALLING_DATA_TABS.ts` · REQUIRED **§BQ**
 
 ---
 

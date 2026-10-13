@@ -867,6 +867,7 @@ export function AdminSubvendorPanel({
           customersByVendorId={customersByVendorId}
           filesByVendorId={filesByVendorId}
           payments={leaserPayments}
+          quotations={quotations}
           onSave={saveLeaserPayments}
         />
       ) : null}
@@ -1186,6 +1187,53 @@ function todayInputDate() {
   return `${y}-${m}-${day}`
 }
 
+/** Same YYYY-MM-DD the Office Inside Due Date input shows. */
+function accountsDueDateInputValue(raw?: string | null): string | null {
+  if (!raw) return null
+  const text = String(raw).trim()
+  if (!text) return null
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().split("T")[0]
+  return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : null
+}
+
+function quotationInstallmentDueDateYmd(
+  quotations: Quotation[],
+  quotationId: string,
+  phaseNumber: number,
+): string | null {
+  const quotation = quotations.find((row) => row.id === quotationId) as
+    | (Quotation & { payment_phases?: unknown; quotationPaymentPhases?: unknown })
+    | undefined
+  if (!quotation) return null
+  const phases =
+    quotation.installments ||
+    quotation.paymentPhases ||
+    quotation.payment_phases ||
+    quotation.quotationPaymentPhases ||
+    []
+  if (!Array.isArray(phases) || phases.length === 0) return null
+  const phase =
+    phases.find((row: { phaseNumber?: number }) => Number(row.phaseNumber) === phaseNumber) ||
+    phases[phaseNumber - 1]
+  const raw = (phase as { dueDate?: string; due_date?: string } | undefined)?.dueDate
+    || (phase as { due_date?: string } | undefined)?.due_date
+  return accountsDueDateInputValue(raw)
+}
+
+function leaserDraftDateFromAccounts(
+  paymentId: string,
+  storedDate: string | undefined,
+  quotations: Quotation[],
+): string {
+  const selfRow = /^lp-self-(.+)-(\d+)$/.exec(paymentId)
+  if (selfRow) {
+    const due = quotationInstallmentDueDateYmd(quotations, selfRow[1], Number(selfRow[2]))
+    if (due) return due
+  }
+  return accountsDueDateInputValue(storedDate) || todayInputDate()
+}
+
 function emptyLeaserDraft(paymentNumber = 1): LeaserPaymentDraft {
   return {
     key: newLeaserPaymentId(),
@@ -1283,6 +1331,7 @@ function DealerLeaserManager({
   customersByVendorId,
   filesByVendorId,
   payments,
+  quotations,
   onSave,
 }: {
   vendors: AdminSubvendorRecord[]
@@ -1290,6 +1339,7 @@ function DealerLeaserManager({
   customersByVendorId: Record<string, LeaserCustomerOption[]>
   filesByVendorId: Record<string, InsideLedgerRow[]>
   payments: SubvendorLeaserPayment[]
+  quotations: Quotation[]
   onSave: (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => Promise<void> | void
 }) {
   const { toast } = useToast()
@@ -1418,7 +1468,7 @@ function DealerLeaserManager({
       .map((row, index) => ({
         key: row.id,
         paymentNumber: row.sortOrder > 0 ? row.sortOrder : index + 1,
-        date: row.date || todayInputDate(),
+        date: leaserDraftDateFromAccounts(row.id, row.date, quotations),
         amount: row.amount ? formatInrAmountInput(row.amount) : "",
         paymentType: row.paymentType || "Cash",
         remark: row.remark,

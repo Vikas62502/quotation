@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { canOpenSection, getPostLoginPath } from "@/lib/user-access"
 import { useAuth } from "@/lib/auth-context"
@@ -54,12 +54,14 @@ import {
   buildCallingActionSummary,
   buildCallingConnectionSummary,
   classifyCallingConnection,
+  getConnectedOutcomeForStatus,
 } from "@/lib/calling-action-summary"
 import { downloadPricingPdf, PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import { PhoneCall, ArrowRightCircle, Pencil, Check, X, Loader2, Download, ChevronDown, Eye, Sheet } from "lucide-react"
+import { PhoneCall, Pencil, Check, X, Loader2, Download, ChevronDown, Eye, Sheet, Sparkles, PhoneOff, PhoneIncoming, CalendarDays, User, Phone, MapPin, Hash, StickyNote, Copy, Inbox } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
+import { cn } from "@/lib/utils"
 import {
   callingLeadToSocialDisplayRow,
   getSocialLeadCardSurfaceClass,
@@ -133,6 +135,18 @@ type ActionLogItem = {
   city?: string
   state?: string
   customerNote?: string
+  sourceType?: string
+  source_type?: string
+  sheetSourceId?: string
+  uploadFileName?: string
+  upload_file_name?: string
+  fileName?: string
+  platform?: string
+  campaignName?: string
+  sheetLeadStatus?: string
+  leadStatus?: string
+  lead_status?: string
+  externalId?: string
 }
 
 /** Four consolidated sections; every original status point is listed under one part. */
@@ -379,6 +393,45 @@ type CallingLeadDealerVisibilityCtx = {
   dealerCallingBatchIds: string[]
 }
 
+function CurrentLeadField({
+  label,
+  icon,
+  className,
+  children,
+}: {
+  label: string
+  icon: ReactNode
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("rounded-lg border px-3 py-2 min-w-0", className)}>
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1">
+        {icon}
+        {label}
+      </p>
+      <div className="mt-0.5 text-sm font-semibold text-foreground break-words">{children}</div>
+    </div>
+  )
+}
+
+function AnalyticsStat({
+  label,
+  value,
+  className,
+}: {
+  label: string
+  value: number
+  className?: string
+}) {
+  return (
+    <div className={cn("rounded-lg border px-3 py-2 min-h-[4.25rem]", className)}>
+      <p className="text-[11px] text-muted-foreground leading-tight">{label}</p>
+      <p className="mt-0.5 text-xl font-semibold tabular-nums tracking-tight">{value}</p>
+    </div>
+  )
+}
+
 /** Explicit assignee match, else pool / HR batch-unassigned (name may be batch label, not empty). */
 function callingLeadVisibleToDealer(lead: CallingLead, ctx: CallingLeadDealerVisibilityCtx): boolean {
   const dealerIdentity = {
@@ -502,6 +555,18 @@ function isFollowUpCallingLead(lead: CallingLead): boolean {
   )
 }
 
+/** Scheduled tab: Connected + Decision Pending (same rule as Connected outcome filter). */
+function isConnectedFollowUpAction(item: ActionLogItem): boolean {
+  if (classifyCallingConnection(item) !== "connected") return false
+  const parsed = parseTaggedCallRemark(item.callRemark)
+  const status = (parsed.status || item.statusText || "").trim()
+  const action = String(item.action || "").toLowerCase()
+  if (action === "follow_up" || action === "rescheduled") return true
+  if (item.nextFollowUpAt && (!status || getConnectedOutcomeForStatus(status) === "decision_pending")) return true
+  if (!status) return false
+  return getConnectedOutcomeForStatus(status) === "decision_pending"
+}
+
 function inferCallFormDefaultsFromStatus(status: string): {
   callConnection: "connected" | "not_connected"
   connectedOutcome: "interested" | "not_interested" | "decision_pending"
@@ -546,8 +611,10 @@ function inferCallFormDefaultsFromStatus(status: string): {
 }
 
 function scheduledLeadFromActionLog(item: ActionLogItem): CallingLead | null {
-  if (!item.nextFollowUpAt) return null
-  const leadId = String(item.leadId || "").trim()
+  if (!isConnectedFollowUpAction(item)) return null
+  const leadId =
+    String(item.leadId || "").trim() ||
+    `sched-${normalizePhoneDigits(item.mobile).slice(-10) || item.id}`
   if (!leadId) return null
   return {
     id: leadId,
@@ -564,8 +631,41 @@ function scheduledLeadFromActionLog(item: ActionLogItem): CallingLead | null {
     status: "rescheduled",
     action: item.action === "follow_up" || item.action === "rescheduled" ? item.action : "follow_up",
     actionAt: item.actionAt,
-    nextFollowUpAt: item.nextFollowUpAt,
+    nextFollowUpAt: item.nextFollowUpAt || item.actionAt,
     callRemark: item.callRemark,
+    sourceType: item.sourceType,
+    sheetSourceId: item.sheetSourceId,
+    uploadFileName: item.uploadFileName,
+    platform: item.platform,
+    campaignName: item.campaignName,
+    sheetLeadStatus: item.sheetLeadStatus,
+    externalId: item.externalId,
+  }
+}
+
+function actionLogFromScheduledLead(lead: CallingLead): ActionLogItem {
+  return {
+    id: `dialled-sched-${lead.id}-${lead.nextFollowUpAt || lead.actionAt || ""}`,
+    leadId: lead.id,
+    name: lead.name,
+    mobile: lead.mobile,
+    action: lead.action === "rescheduled" ? "rescheduled" : "follow_up",
+    actionAt: lead.actionAt || lead.nextFollowUpAt,
+    callRemark: lead.callRemark,
+    nextFollowUpAt: lead.nextFollowUpAt,
+    statusText: parseTaggedCallRemark(lead.callRemark || "").status,
+    kNumber: lead.kNumber,
+    address: lead.address,
+    city: lead.city,
+    state: lead.state,
+    customerNote: lead.customerNote,
+    sourceType: lead.sourceType,
+    sheetSourceId: lead.sheetSourceId,
+    uploadFileName: lead.uploadFileName,
+    platform: lead.platform,
+    campaignName: lead.campaignName,
+    sheetLeadStatus: lead.sheetLeadStatus,
+    externalId: lead.externalId,
   }
 }
 
@@ -695,6 +795,16 @@ export default function CallingDataPage() {
   const [connectedCardOutcomes, setConnectedCardOutcomes] = useState<
     Record<string, "interested" | "not_interested" | "decision_pending">
   >({})
+  const [scheduledCardOutcomes, setScheduledCardOutcomes] = useState<
+    Record<string, "interested" | "not_interested" | "decision_pending">
+  >({})
+  const [dialledCardConnections, setDialledCardConnections] = useState<
+    Record<string, "connected" | "not_connected">
+  >({})
+  const [dialledCardOutcomes, setDialledCardOutcomes] = useState<
+    Record<string, "interested" | "not_interested" | "decision_pending">
+  >({})
+  const [dialledNotConnectedReasons, setDialledNotConnectedReasons] = useState<Record<string, string>>({})
   const [connectedOutcomeFilter, setConnectedOutcomeFilter] = useState<
     "all" | "interested" | "not_interested" | "decision_pending"
   >("all")
@@ -936,6 +1046,12 @@ export default function CallingDataPage() {
   const normalizeActionLog = (entry: any): ActionLogItem => {
     const lead = entry?.lead || entry
     const callRemark = resolveCallingActionRemark(entry) || resolveCallingActionRemark(lead)
+    const leadId = String(entry?.leadId || entry?.lead_id || lead?.id || lead?._id || "").trim()
+    const mobile = String(entry?.mobile || lead?.mobile || lead?.phone || "").trim()
+    const queueLead =
+      (leadId && leads.find((row) => row.id === leadId)) ||
+      (mobile && leads.find((row) => journeyMobilesMatch(row.mobile, mobile))) ||
+      undefined
     const tagged = parseTaggedCallRemark(callRemark)
     return {
       id:
@@ -973,6 +1089,39 @@ export default function CallingDataPage() {
       city: entry?.city || lead?.city || "",
       state: entry?.state || lead?.state || "",
       customerNote: entry?.customerNote || lead?.customerNote || "",
+      sourceType: String(
+        entry?.sourceType ||
+          entry?.source_type ||
+          lead?.sourceType ||
+          lead?.source_type ||
+          lead?.upload?.sourceType ||
+          lead?.upload?.source_type ||
+          queueLead?.sourceType ||
+          "",
+      ).trim() || undefined,
+      source_type: String(entry?.source_type || lead?.source_type || queueLead?.sourceType || "").trim() || undefined,
+      sheetSourceId: String(entry?.sheetSourceId || entry?.sheet_source_id || lead?.sheetSourceId || lead?.sheet_source_id || queueLead?.sheetSourceId || "").trim() || undefined,
+      uploadFileName: String(
+        entry?.uploadFileName ||
+          entry?.upload_file_name ||
+          lead?.uploadFileName ||
+          lead?.upload_file_name ||
+          lead?.fileName ||
+          queueLead?.uploadFileName ||
+          "",
+      ).trim() || undefined,
+      platform: String(entry?.platform || lead?.platform || queueLead?.platform || "").trim() || undefined,
+      campaignName: String(entry?.campaignName || entry?.campaign_name || lead?.campaignName || lead?.campaign_name || queueLead?.campaignName || "").trim() || undefined,
+      sheetLeadStatus: String(
+        entry?.sheetLeadStatus ||
+          entry?.sheet_lead_status ||
+          lead?.sheetLeadStatus ||
+          lead?.lead_status ||
+          "",
+      ).trim() || undefined,
+      leadStatus: String(entry?.leadStatus || lead?.leadStatus || "").trim() || undefined,
+      lead_status: String(entry?.lead_status || lead?.lead_status || "").trim() || undefined,
+      externalId: String(entry?.externalId || entry?.external_id || lead?.externalId || lead?.external_id || "").trim() || undefined,
     }
   }
 
@@ -1034,19 +1183,29 @@ export default function CallingDataPage() {
       }
       if (existingId) {
         const existing = map.get(existingId)!
+        const normalizedIsNewer =
+          new Date(normalized.actionAt || 0).getTime() >= new Date(existing.actionAt || 0).getTime()
+        const newer = normalizedIsNewer ? normalized : existing
+        const older = normalizedIsNewer ? existing : normalized
         const merged: ActionLogItem = {
           ...existing,
           ...normalized,
           id: existing.id,
           leadId: existing.leadId || normalized.leadId,
-          callRemark: pickRicherCallRemark(existing.callRemark, normalized.callRemark),
-          statusText: normalized.statusText || existing.statusText,
-          statusCategory: normalized.statusCategory || existing.statusCategory,
-          nextFollowUpAt: normalized.nextFollowUpAt || existing.nextFollowUpAt,
-          actionAt:
-            new Date(normalized.actionAt || 0).getTime() >= new Date(existing.actionAt || 0).getTime()
-              ? normalized.actionAt || existing.actionAt
-              : existing.actionAt || normalized.actionAt,
+          action: newer.action || older.action,
+          callRemark: newer.callRemark?.trim() || pickRicherCallRemark(existing.callRemark, normalized.callRemark),
+          statusText: newer.statusText || older.statusText,
+          statusCategory: newer.statusCategory || older.statusCategory,
+          nextFollowUpAt: newer.nextFollowUpAt || older.nextFollowUpAt,
+          actionAt: newer.actionAt || older.actionAt,
+          sourceType: newer.sourceType || older.sourceType,
+          source_type: newer.source_type || older.source_type,
+          sheetSourceId: newer.sheetSourceId || older.sheetSourceId,
+          uploadFileName: newer.uploadFileName || older.uploadFileName,
+          platform: newer.platform || older.platform,
+          campaignName: newer.campaignName || older.campaignName,
+          sheetLeadStatus: newer.sheetLeadStatus || older.sheetLeadStatus,
+          externalId: newer.externalId || older.externalId,
         }
         map.set(existingId, merged)
         for (const fingerprint of fingerprints) fingerprintMap.set(fingerprint, existingId)
@@ -1055,6 +1214,25 @@ export default function CallingDataPage() {
       map.set(normalized.id, normalized)
       for (const fingerprint of fingerprints) fingerprintMap.set(fingerprint, normalized.id)
     })
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
+    )
+  }
+
+  const latestActionPerLead = (items: ActionLogItem[]): ActionLogItem[] => {
+    const map = new Map<string, ActionLogItem>()
+    for (const item of items) {
+      const key = item.leadId || (normalizePhoneDigits(item.mobile).slice(-10) || item.id)
+      if (!key) continue
+      const existing = map.get(key)
+      if (!existing) {
+        map.set(key, item)
+        continue
+      }
+      const nextMs = new Date(item.actionAt || 0).getTime()
+      const existingMs = new Date(existing.actionAt || 0).getTime()
+      if (nextMs >= existingMs) map.set(key, item)
+    }
     return Array.from(map.values()).sort(
       (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
     )
@@ -1203,6 +1381,15 @@ export default function CallingDataPage() {
     if (!text) return ""
     const match = text.match(/(?:^|\|\s*)Transfer Reason:\s*([^|]+)/i)
     return (match?.[1] || "").trim()
+  }
+
+  const historyCardClass = (item: ActionLogItem, kind: "connected" | "not_connected") => {
+    if (isSocialMediaCallingLead(item)) {
+      return "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+    }
+    return kind === "connected"
+      ? "border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/40 shadow-sm border-l-4 border-l-emerald-500"
+      : "border-rose-200/80 bg-gradient-to-b from-white to-rose-50/40 shadow-sm border-l-4 border-l-rose-400"
   }
 
   const getStatusGroupKeyByLabel = (label?: string | null) => {
@@ -2051,14 +2238,36 @@ export default function CallingDataPage() {
     }).length
   }, [leads, callingVisibilityCtx])
 
-  const scheduledCount = useMemo(() => {
-    // One row per lead (already deduped by mobile) with a future/today follow-up.
-    return scheduledLeads.filter((lead) => {
-      if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
-      if (!lead.nextFollowUpAt) return false
-      return !Number.isNaN(new Date(lead.nextFollowUpAt).getTime())
-    }).length
-  }, [scheduledLeads, callingVisibilityCtx])
+  const derivedScheduledLeads = useMemo(() => {
+    const fromLogs = latestActionPerLead(
+      mergeActionLogEntries([
+        ...analyticsActions,
+        ...connectedActionItems,
+        ...recentActions,
+        ...dialledActions,
+      ]),
+    )
+      .map(scheduledLeadFromActionLog)
+      .filter((lead): lead is CallingLead => Boolean(lead))
+    const fromQueue = scheduledLeads.filter((lead) =>
+      isConnectedFollowUpAction({
+        id: lead.id,
+        leadId: lead.id,
+        name: lead.name,
+        mobile: lead.mobile,
+        action: lead.action,
+        actionAt: lead.actionAt,
+        callRemark: lead.callRemark,
+        nextFollowUpAt: lead.nextFollowUpAt,
+        statusText: parseTaggedCallRemark(lead.callRemark || "").status,
+      }),
+    )
+    return dedupeScheduledLeads([...fromQueue, ...fromLogs]).sort(
+      (a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime(),
+    )
+  }, [scheduledLeads, analyticsActions, connectedActionItems, recentActions, dialledActions])
+
+  const scheduledCount = useMemo(() => derivedScheduledLeads.length, [derivedScheduledLeads])
 
   const interestedActions = useMemo(
     () =>
@@ -2077,15 +2286,14 @@ export default function CallingDataPage() {
     const endOfToday = new Date(startOfToday)
     endOfToday.setDate(endOfToday.getDate() + 1)
     const nowMs = now.getTime()
-    return scheduledLeads.filter((lead) => {
-      if (!callingLeadVisibleToDealer(lead, callingVisibilityCtx)) return false
+    return derivedScheduledLeads.filter((lead) => {
       const nextAt = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt) : null
-      if (!nextAt || Number.isNaN(nextAt.getTime())) return false
-      const nextAtMs = nextAt.getTime()
+      const nextAtMs = nextAt && !Number.isNaN(nextAt.getTime()) ? nextAt.getTime() : NaN
       const matchesTime =
         scheduledTimeFilter === "all" ||
+        !Number.isFinite(nextAtMs) ||
         (scheduledTimeFilter === "today"
-          ? nextAt >= startOfToday && nextAt < endOfToday
+          ? Number.isFinite(nextAtMs) && nextAtMs >= startOfToday.getTime() && nextAtMs < endOfToday.getTime()
           : scheduledTimeFilter === "next7"
             ? nextAtMs >= nowMs && nextAtMs <= nowMs + 7 * 24 * 60 * 60 * 1000
             : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
@@ -2099,7 +2307,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [scheduledLeads, scheduledSearchTerm, scheduledTimeFilter, callingVisibilityCtx, filterCities])
+  }, [derivedScheduledLeads, scheduledSearchTerm, scheduledTimeFilter, filterCities])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
@@ -2166,6 +2374,10 @@ export default function CallingDataPage() {
     return getSocialLeadCardSurfaceClass(socialLeadStatusDisplay)
   }, [socialLeadStatusDisplay])
 
+  const currentLeadFieldSurface = isSocialMediaCurrentLead
+    ? "border-sky-200/80 bg-white/90"
+    : "border-orange-200/70 bg-white/90"
+
   useEffect(() => {
     if (pinnedCurrentLeadRef.current) return
     const head = dealerAssignedQueue[0]
@@ -2182,34 +2394,30 @@ export default function CallingDataPage() {
         ? "connected"
         : "not_connected"
 
-  const scheduledFutureLeadIds = useMemo(() => {
-    const now = Date.now()
-    return new Set(
-      scheduledLeads
-        .filter((lead) => {
-          const at = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).getTime() : NaN
-          return Number.isFinite(at) && at > now
-        })
-        .map((lead) => lead.id),
-    )
-  }, [scheduledLeads])
-
   const flowDialledActions = useMemo(() => {
     const merged = mergeActionLogEntries([
       ...dialledActions,
+      ...connectedActionItems,
+      ...notConnectedActionItems,
       ...recentActions,
       ...analyticsActions,
+      ...derivedScheduledLeads.map(actionLogFromScheduledLead),
     ])
     return merged.filter((item) => {
-      if (hasUpcomingFollowUp(item)) return false
-      if (!isDialledHistoryAction(item)) return false
       const action = String(item.action || "").toLowerCase()
-      if (item.leadId && scheduledFutureLeadIds.has(item.leadId) && (action === "rescheduled" || action === "follow_up")) {
-        return false
-      }
-      return true
+      if (["start", "queued", "assigned", "pending"].includes(action)) return false
+      if (isDialledHistoryAction(item) || isConnectedFollowUpAction(item)) return true
+      const parsed = parseTaggedCallRemark(item.callRemark)
+      return Boolean(parsed.status)
     })
-  }, [dialledActions, recentActions, analyticsActions, scheduledFutureLeadIds])
+  }, [
+    dialledActions,
+    connectedActionItems,
+    notConnectedActionItems,
+    recentActions,
+    analyticsActions,
+    derivedScheduledLeads,
+  ])
 
   const filteredFlowDialledActions = useMemo(() => {
     const term = dialledSearchTerm.trim()
@@ -2221,17 +2429,23 @@ export default function CallingDataPage() {
   }, [flowDialledActions, dialledSearchTerm, dialledActionFilter])
 
   const flowConnectedActions = useMemo(() => {
-    const merged = mergeActionLogEntries([
-      ...connectedActionItems,
-      ...recentActions,
-      ...analyticsActions,
-    ])
+    const merged = latestActionPerLead(
+      mergeActionLogEntries([
+        ...connectedActionItems,
+        ...recentActions,
+        ...analyticsActions,
+        ...notConnectedActionItems,
+        ...derivedScheduledLeads.map(actionLogFromScheduledLead),
+      ]),
+    )
     return merged.filter((item) => {
-      if (hasUpcomingFollowUp(item)) return false
+      if (classifyCallingConnection(item) === "not_connected") return false
       const parsed = parseTaggedRemark(item.callRemark)
-      return !!parsed.status && !NOT_CONNECTED_REASONS.includes(parsed.status)
+      if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) return false
+      if (isConnectedFollowUpAction(item)) return true
+      return !!parsed.status || ["called", "follow_up", "rescheduled", "not_interested"].includes(String(item.action || "").toLowerCase())
     })
-  }, [connectedActionItems, recentActions, analyticsActions])
+  }, [connectedActionItems, recentActions, analyticsActions, notConnectedActionItems, derivedScheduledLeads])
 
   function getConnectedOutcomeForStatus(status: string): "interested" | "not_interested" | "decision_pending" {
     if (LOST_REASONS.includes(status) || status === "Not Interested" || status === "Not Interested Currently") {
@@ -2251,8 +2465,12 @@ export default function CallingDataPage() {
         : flowConnectedActions.filter((item) => {
             const parsed = parseTaggedRemark(item.callRemark)
             const status = (parsed.status || "").trim()
-            if (!status) return false
-            return getConnectedOutcomeForStatus(status) === connectedOutcomeFilter
+            if (status) return getConnectedOutcomeForStatus(status) === connectedOutcomeFilter
+            if (connectedOutcomeFilter === "decision_pending") return isConnectedFollowUpAction(item)
+            const action = String(item.action || "").toLowerCase()
+            if (connectedOutcomeFilter === "not_interested") return action === "not_interested"
+            if (connectedOutcomeFilter === "interested") return action === "called" && !isConnectedFollowUpAction(item)
+            return false
           })
     return afterOutcomeFilter.filter((item) => {
       const parsed = parseTaggedRemark(item.callRemark)
@@ -2261,17 +2479,20 @@ export default function CallingDataPage() {
   }, [flowConnectedActions, connectedOutcomeFilter, connectedSearchTerm])
 
   const flowNotConnectedActions = useMemo(() => {
-    const merged = mergeActionLogEntries([
-      ...notConnectedActionItems,
-      ...recentActions,
-      ...analyticsActions,
-    ])
+    const merged = latestActionPerLead(
+      mergeActionLogEntries([
+        ...notConnectedActionItems,
+        ...recentActions,
+        ...analyticsActions,
+        ...connectedActionItems,
+      ]),
+    )
     return merged.filter((item) => {
       if (hasUpcomingFollowUp(item)) return false
       const parsed = parseTaggedRemark(item.callRemark)
       return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
     })
-  }, [notConnectedActionItems, recentActions, analyticsActions])
+  }, [notConnectedActionItems, recentActions, analyticsActions, connectedActionItems])
   const filteredFlowNotConnectedActions = useMemo(() => {
     const term = notConnectedSearchTerm.trim()
     return flowNotConnectedActions.filter((item) => {
@@ -2390,11 +2611,11 @@ export default function CallingDataPage() {
     scheduledRemarks[lead.id] ?? getScheduledLeadFreeRemark(lead)
 
   useEffect(() => {
-    if (scheduledLeads.length === 0) return
+    if (derivedScheduledLeads.length === 0) return
 
     setScheduledRemarks((prev) => {
       const next = { ...prev }
-      for (const lead of scheduledLeads) {
+      for (const lead of derivedScheduledLeads) {
         if (next[lead.id] !== undefined) continue
         const freeRemark = getScheduledLeadFreeRemark(lead)
         if (freeRemark) next[lead.id] = freeRemark
@@ -2404,7 +2625,7 @@ export default function CallingDataPage() {
 
     setScheduledStatuses((prev) => {
       const next = { ...prev }
-      for (const lead of scheduledLeads) {
+      for (const lead of derivedScheduledLeads) {
         if (next[lead.id] !== undefined) continue
         const parsed = parseTaggedCallRemark(lead.callRemark || "")
         if (parsed.status) next[lead.id] = parsed.status
@@ -2414,14 +2635,14 @@ export default function CallingDataPage() {
 
     setScheduledStatusGroups((prev) => {
       const next = { ...prev }
-      for (const lead of scheduledLeads) {
+      for (const lead of derivedScheduledLeads) {
         if (next[lead.id] !== undefined) continue
         const parsed = parseTaggedCallRemark(lead.callRemark || "")
         if (parsed.status) next[lead.id] = findStatusGroupKeyForStatus(parsed.status)
       }
       return next
     })
-  }, [scheduledLeads])
+  }, [derivedScheduledLeads])
 
   useEffect(() => {
     if (!currentLead) {
@@ -2616,6 +2837,12 @@ export default function CallingDataPage() {
     payload: { action: string; callRemark?: string; actionAt?: string; nextFollowUpAt?: string },
   ) => {
     if (!payload.callRemark?.trim()) return
+    const fromHistory =
+      notConnectedActionItems.find((row) => row.leadId === leadId) ||
+      connectedActionItems.find((row) => row.leadId === leadId) ||
+      dialledActions.find((row) => row.leadId === leadId) ||
+      recentActions.find((row) => row.leadId === leadId) ||
+      analyticsActions.find((row) => row.leadId === leadId)
     const lead = leads.find((l) => l.id === leadId) || pinnedCurrentLeadRef.current
     const parsed = parseTaggedRemark(payload.callRemark)
     setLeads((prev) =>
@@ -2631,32 +2858,39 @@ export default function CallingDataPage() {
           : l,
       ),
     )
-    if (!lead) return
     const actionItem: ActionLogItem = {
       id: `local-${leadId}-${payload.actionAt || Date.now()}`,
       leadId,
-      name: lead.name,
-      mobile: lead.mobile,
+      name: lead?.name || fromHistory?.name || "Lead",
+      mobile: lead?.mobile || fromHistory?.mobile || "",
       action: payload.action,
       callRemark: payload.callRemark,
       actionAt: payload.actionAt || new Date().toISOString(),
       nextFollowUpAt: payload.nextFollowUpAt,
       statusCategory: parsed.category,
       statusText: parsed.status,
-      kNumber: lead.kNumber,
-      address: lead.address,
-      city: lead.city,
-      state: lead.state,
-      customerNote: lead.customerNote,
+      kNumber: lead?.kNumber || fromHistory?.kNumber,
+      address: lead?.address || fromHistory?.address,
+      city: lead?.city || fromHistory?.city,
+      state: lead?.state || fromHistory?.state,
+      customerNote: lead?.customerNote || fromHistory?.customerNote,
+      sourceType: lead?.sourceType || fromHistory?.sourceType,
+      source_type: fromHistory?.source_type,
+      sheetSourceId: lead?.sheetSourceId || fromHistory?.sheetSourceId,
+      uploadFileName: lead?.uploadFileName || fromHistory?.uploadFileName,
+      platform: lead?.platform || fromHistory?.platform,
+      campaignName: lead?.campaignName || fromHistory?.campaignName,
+      sheetLeadStatus: lead?.sheetLeadStatus || fromHistory?.sheetLeadStatus,
+      externalId: lead?.externalId || fromHistory?.externalId,
     }
     // Backend source of truth: avoid writing call history into local cache.
     setRecentActions((prev) => {
-      const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
+      const withoutDup = prev.filter((a) => a.leadId !== leadId)
       return [actionItem, ...withoutDup]
     })
     // Optimistic analytics update so dashboard numbers move immediately on Submit.
     if (isDialledHistoryAction(actionItem)) {
-      setAnalyticsActions((prev) => mergeActionLogEntries([actionItem, ...prev]))
+      setAnalyticsActions((prev) => mergeActionLogEntries([actionItem, ...prev.filter((a) => a.leadId !== leadId)]))
     }
     const dialAction = String(payload.action || "").toLowerCase()
     if (["called", "follow_up", "not_interested", "rescheduled"].includes(dialAction)) {
@@ -2666,22 +2900,25 @@ export default function CallingDataPage() {
       })
     }
     if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) {
-      setNotConnectedActionItems((prev) => {
-        const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
-        return [actionItem, ...withoutDup]
-      })
+      setConnectedActionItems((prev) => prev.filter((a) => a.leadId !== leadId))
+      setNotConnectedActionItems((prev) => [actionItem, ...prev.filter((a) => a.leadId !== leadId)])
+      setScheduledLeads((prev) => prev.filter((row) => row.id !== leadId))
     } else if (parsed.status) {
-      setConnectedActionItems((prev) => {
-        const withoutDup = prev.filter((a) => !(a.leadId === leadId && a.actionAt === actionItem.actionAt))
-        return [actionItem, ...withoutDup]
-      })
+      setNotConnectedActionItems((prev) => prev.filter((a) => a.leadId !== leadId))
+      setConnectedActionItems((prev) => [actionItem, ...prev.filter((a) => a.leadId !== leadId)])
+      const scheduled = scheduledLeadFromActionLog(actionItem)
+      if (scheduled) {
+        setScheduledLeads((prev) => dedupeScheduledLeads([scheduled, ...prev.filter((row) => row.id !== leadId)]))
+      } else {
+        setScheduledLeads((prev) => prev.filter((row) => row.id !== leadId))
+      }
     }
   }
 
   const submitAction = async (
     leadId: string,
     payload: { action: "start" | "called" | "follow_up" | "not_interested" | "rescheduled"; callRemark?: string; nextFollowUpAt?: string; actionAt?: string },
-    options?: { optimisticOnNotAssigned?: boolean },
+    options?: { optimisticOnNotAssigned?: boolean; skipRescheduleFallback?: boolean; afterSuccess?: () => void },
   ) => {
     if (submittingLeadIdsRef.current.has(leadId)) return
     if (!useApi) {
@@ -2772,7 +3009,12 @@ export default function CallingDataPage() {
 
         // Backend often blocks direct transition for older/recent cards.
         // Fallback to a valid rescheduled transition so status edits still persist.
-        if (!response && isInvalidTransition && payload.action !== "rescheduled") {
+        if (
+          !response &&
+          !options?.skipRescheduleFallback &&
+          isInvalidTransition &&
+          payload.action !== "rescheduled"
+        ) {
           const fallbackNextFollowUpAt =
             payload.nextFollowUpAt ||
             new Date(Date.now() + 60 * 60 * 1000).toISOString()
@@ -2799,6 +3041,7 @@ export default function CallingDataPage() {
           if (payload.action !== "start" && isLeadNotAssignedToDealerError(innerError)) {
             applyOptimisticAssigneeAndStatus(leadId, payload.action)
             finalizeSubmittedLeadAction(leadId, apiPayload)
+            options?.afterSuccess?.()
             return
           }
           throw innerError
@@ -2820,6 +3063,7 @@ export default function CallingDataPage() {
       }
 
       finalizeSubmittedLeadAction(leadId, apiPayload, response)
+      options?.afterSuccess?.()
     } catch (error) {
       if (
         options?.optimisticOnNotAssigned &&
@@ -2833,6 +3077,7 @@ export default function CallingDataPage() {
       if (payload.action !== "start" && isLeadNotAssignedToDealerError(error)) {
         applyOptimisticAssigneeAndStatus(leadId, payload.action)
         finalizeSubmittedLeadAction(leadId, apiPayload)
+        options?.afterSuccess?.()
         return
       }
       if (payload.action === "start" && pinnedCurrentLeadRef.current?.id === leadId) {
@@ -2952,33 +3197,57 @@ export default function CallingDataPage() {
             className="w-full sm:w-56"
           />
         </div>
-        <p className="text-sm text-muted-foreground">
-          One lead at a time. If Start Call is not done yet, Google Sheet / Social Media leads show first; raw
-          CSV comes after. After Start Call, submit the outcome before the next lead appears — repeated Start
-          will not skip leads. Analytics update as soon as you submit an action; the queue also refreshes every 5 minutes
-          (and when you return to this tab).
+        <p className="text-xs text-muted-foreground">
+          One lead at a time. Submit the outcome before the next lead appears. Analytics update on submit; the queue
+          also refreshes every 5 minutes.
         </p>
 
-        <Card className={isSocialMediaCurrentLead ? "border-sky-200/60" : undefined}>
-          <CardHeader className="pb-3">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 space-y-1">
-                <CardTitle className="text-base">
-                  {isSocialMediaCurrentLead ? "Social Media Call Analytics" : "Dealer Call Analytics"}
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  Same counts as Admin → Calling Reports for your login. Filter by daily, weekly, monthly, last month,
-                  custom range, or all time.
-                </p>
+        <Card className={isSocialMediaCurrentLead ? "border-sky-200/70 bg-gradient-to-b from-white to-sky-50/20 shadow-sm" : "border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm"}>
+          <CardHeader className="pb-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 flex items-center gap-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center border shrink-0 ${
+                  isSocialMediaCurrentLead
+                    ? "bg-sky-100 border-sky-200"
+                    : "bg-orange-100 border-orange-200"
+                }`}>
+                  <PhoneCall className={`w-3.5 h-3.5 ${isSocialMediaCurrentLead ? "text-sky-700" : "text-orange-700"}`} />
+                </div>
+                <div className="min-w-0">
+                  <CardTitle className="text-sm sm:text-base">
+                    {isSocialMediaCurrentLead ? "Social Media Call Analytics" : "Dealer Call Analytics"}
+                  </CardTitle>
+                  <p className="text-[11px] text-muted-foreground">
+                    Same counts as Admin → Calling Reports for your login.
+                  </p>
+                </div>
               </div>
               <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">
+                <Select
+                  value={analyticsRange}
+                  onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
+                    setAnalyticsRange(value)
+                  }
+                >
+                  <SelectTrigger className="h-8 w-full sm:w-36">
+                    <SelectValue placeholder="Select range" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">Daily</SelectItem>
+                    <SelectItem value="weekly">Weekly</SelectItem>
+                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="last_month">Last month</SelectItem>
+                    <SelectItem value="custom">Custom date range</SelectItem>
+                    <SelectItem value="all">All time</SelectItem>
+                  </SelectContent>
+                </Select>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-9 gap-1.5 w-full sm:w-auto"
+                      className="h-8 gap-1.5 w-full sm:w-auto"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       View pricing
@@ -3002,7 +3271,7 @@ export default function CallingDataPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-9 gap-1.5 w-full sm:w-auto"
+                      className="h-8 gap-1.5 w-full sm:w-auto"
                       disabled={downloadingPricingPdf}
                     >
                       {downloadingPricingPdf ? (
@@ -3050,60 +3319,44 @@ export default function CallingDataPage() {
               </div>
             </div>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Select
-                value={analyticsRange}
-                onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
-                  setAnalyticsRange(value)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select range" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="last_month">Last month</SelectItem>
-                  <SelectItem value="custom">Custom date range</SelectItem>
-                  <SelectItem value="all">All time</SelectItem>
-                </SelectContent>
-              </Select>
-              {analyticsRange === "custom" ? (
-                <>
-                  <Input type="date" value={analyticsFromDate} onChange={(e) => setAnalyticsFromDate(e.target.value)} />
-                  <Input type="date" value={analyticsToDate} onChange={(e) => setAnalyticsToDate(e.target.value)} />
-                </>
-              ) : null}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Total Calls</p>
-                <p className="text-xl font-semibold">{rangeFilteredActionsForAnalytics.length}</p>
+          <CardContent className="space-y-2 pt-0">
+            {analyticsRange === "custom" ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Input type="date" className="h-8" value={analyticsFromDate} onChange={(e) => setAnalyticsFromDate(e.target.value)} />
+                <Input type="date" className="h-8" value={analyticsToDate} onChange={(e) => setAnalyticsToDate(e.target.value)} />
               </div>
-              <div className="rounded-md border border-slate-300 bg-slate-50/80 p-3">
-                <p className="text-xs text-muted-foreground">Not Connected</p>
-                <p className="text-xl font-semibold">{analyticsConnectionSummary.notConnected}</p>
-              </div>
-              <div className="rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
-                <p className="text-xs text-muted-foreground">Connected</p>
-                <p className="text-xl font-semibold">{analyticsConnectionSummary.connected}</p>
-              </div>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="rounded-md border border-rose-100 bg-rose-50/20 p-3">
-                <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
-                <p className="text-lg font-semibold">{analyticsOutcomeSummary.notInterested}</p>
-              </div>
-              <div className="rounded-md border border-emerald-100 bg-emerald-50/20 p-3">
-                <p className="text-xs text-muted-foreground">Connected — Interested</p>
-                <p className="text-lg font-semibold">{analyticsOutcomeSummary.interested}</p>
-              </div>
-              <div className="rounded-md border border-blue-100 bg-blue-50/20 p-3">
-                <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
-                <p className="text-lg font-semibold">{analyticsOutcomeSummary.followUp}</p>
-              </div>
+            ) : null}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+              <AnalyticsStat
+                label="Total Calls"
+                value={rangeFilteredActionsForAnalytics.length}
+                className="border-orange-200/80 bg-white"
+              />
+              <AnalyticsStat
+                label="Not Connected"
+                value={analyticsConnectionSummary.notConnected}
+                className="border-slate-200 bg-slate-50/80"
+              />
+              <AnalyticsStat
+                label="Connected"
+                value={analyticsConnectionSummary.connected}
+                className="border-emerald-200 bg-emerald-50/50"
+              />
+              <AnalyticsStat
+                label="Not Interested"
+                value={analyticsOutcomeSummary.notInterested}
+                className="border-rose-200 bg-rose-50/40"
+              />
+              <AnalyticsStat
+                label="Interested"
+                value={analyticsOutcomeSummary.interested}
+                className="border-emerald-200 bg-emerald-50/30"
+              />
+              <AnalyticsStat
+                label="Follow Up"
+                value={analyticsOutcomeSummary.followUp}
+                className="border-blue-200 bg-blue-50/40"
+              />
             </div>
           </CardContent>
         </Card>
@@ -3137,20 +3390,28 @@ export default function CallingDataPage() {
             </TabsList>
 
             <TabsContent value="scheduled" className="mt-3 focus-visible:outline-none">
-          <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/30 shadow-sm">
-            <CardHeader>
-              <div className="flex flex-col gap-3">
-                <CardTitle className="text-base">Scheduled Follow Ups</CardTitle>
-                <div className="flex flex-col sm:flex-row gap-2">
+          <Card className="border-blue-200/70 bg-gradient-to-b from-white to-blue-50/25 shadow-sm">
+            <CardHeader className="py-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-blue-100 border border-blue-200 flex items-center justify-center">
+                    <CalendarDays className="w-3.5 h-3.5 text-blue-700" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-sm sm:text-base">Scheduled Follow Ups</CardTitle>
+                    <p className="text-[11px] text-muted-foreground">Change to Interested, Not Interested, or Decision Pending.</p>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
                   <Input
                     value={scheduledSearchTerm}
                     onChange={(e) => setScheduledSearchTerm(e.target.value)}
-                    placeholder="Search by name, mobile, K number..."
-                    className="w-full sm:w-80"
+                    placeholder="Search name, mobile, K number..."
+                    className="h-8 w-full sm:flex-1"
                   />
                   <Select value={scheduledTimeFilter} onValueChange={(value) => setScheduledTimeFilter(value as typeof scheduledTimeFilter)}>
-                    <SelectTrigger className="w-full sm:w-48">
-                      <SelectValue placeholder="Filter by follow-up time" />
+                    <SelectTrigger className="h-8 w-full sm:w-40">
+                      <SelectValue placeholder="Filter time" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Time</SelectItem>
@@ -3162,183 +3423,164 @@ export default function CallingDataPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               {filteredScheduledLeads.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No scheduled follow-ups available.</p>
+                <p className="text-sm text-muted-foreground py-4">No scheduled follow-ups available.</p>
               ) : (
-                <div className="space-y-2">
-                  {pagedScheduled.items.map((lead) => (
-                    <div key={getScheduledLeadDedupeKey(lead)} className="rounded-md border border-blue-200/70 bg-blue-50/35 p-3 text-sm flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                      <div>
-                        <p className="font-medium">{lead.name} • {lead.mobile}</p>
-                        <p className="text-xs text-muted-foreground">Follow-up: {formatDateTime(lead.nextFollowUpAt)}</p>
-                        {(() => {
-                          const parsed = parseTaggedCallRemark(lead.callRemark || "")
-                          if (!parsed.status && !resolveScheduledRemarkForLead(lead)) return null
-                          return (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {parsed.status ? `Status: ${parsed.status}` : null}
-                              {parsed.status && resolveScheduledRemarkForLead(lead) ? " • " : null}
-                              {resolveScheduledRemarkForLead(lead) ? `Remark: ${resolveScheduledRemarkForLead(lead)}` : null}
-                            </p>
-                          )
-                        })()}
+                <div className="space-y-1.5">
+                  {pagedScheduled.items.map((lead) => {
+                    const parsed = parseTaggedCallRemark(lead.callRemark || "")
+                    const outcome =
+                      scheduledCardOutcomes[lead.id] ??
+                      (parsed.status ? getConnectedOutcomeForStatus(parsed.status) : "decision_pending")
+                    const isReschedule = scheduledRescheduleChecks[lead.id] ?? outcome === "decision_pending"
+                    const remark = resolveScheduledRemarkForLead(lead)
+                    const editedTime = scheduledEditTimes[lead.id] ?? formatForDatetimeLocal(lead.nextFollowUpAt)
+                    const socialLead = isSocialMediaCallingLead(lead)
+                    return (
+                      <div
+                        key={getScheduledLeadDedupeKey(lead)}
+                        className={cn(
+                          "rounded-lg px-3 py-2 text-sm space-y-1.5",
+                          socialLead
+                            ? "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+                            : "border-blue-200/80 bg-gradient-to-b from-white to-blue-50/40 shadow-sm border-l-4 border-l-blue-500",
+                        )}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-semibold truncate">{lead.name} • {lead.mobile}</p>
+                          <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-blue-200 bg-blue-50 text-blue-800">
+                            Decision Pending
+                          </Badge>
+                          {socialLead ? (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Social
+                            </Badge>
+                          ) : null}
+                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+                            {formatDateTime(lead.nextFollowUpAt)}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_11rem_auto_12rem_auto_auto_auto] gap-1.5 items-center">
+                          <Input
+                            className="h-8"
+                            placeholder="Remark"
+                            value={remark}
+                            onChange={(e) => setScheduledRemarks((prev) => ({ ...prev, [lead.id]: e.target.value }))}
+                          />
+                          <Select
+                            value={outcome}
+                            onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
+                              setScheduledCardOutcomes((prev) => ({ ...prev, [lead.id]: value }))
+                              if (value === "decision_pending") {
+                                setScheduledRescheduleChecks((prev) => ({ ...prev, [lead.id]: true }))
+                              } else {
+                                setScheduledRescheduleChecks((prev) => ({ ...prev, [lead.id]: false }))
+                              }
+                            }}
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue placeholder="Outcome" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="interested">Interested</SelectItem>
+                              <SelectItem value="not_interested">Not Interested</SelectItem>
+                              <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <label
+                            htmlFor={`scheduled-reschedule-flow-${lead.id}`}
+                            className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap cursor-pointer"
+                          >
+                            <Checkbox
+                              id={`scheduled-reschedule-flow-${lead.id}`}
+                              checked={isReschedule}
+                              disabled={outcome !== "decision_pending"}
+                              onCheckedChange={(checked) =>
+                                setScheduledRescheduleChecks((prev) => ({ ...prev, [lead.id]: checked === true }))
+                              }
+                            />
+                            Reschedule
+                          </label>
+                          <Input
+                            type="datetime-local"
+                            className="h-8"
+                            value={editedTime}
+                            onChange={(e) => setScheduledEditTimes((prev) => ({ ...prev, [lead.id]: e.target.value }))}
+                            disabled={outcome !== "decision_pending" || !isReschedule}
+                          />
+                          <Button
+                            size="sm"
+                            className="h-8 bg-blue-600 hover:bg-blue-700 text-white"
+                            disabled={isLeadSubmitting(lead.id)}
+                            onClick={() => {
+                              let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                              let finalStatus = "Interested"
+                              let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                              let nextFollowUpAt: string | undefined
+                              if (outcome === "not_interested") {
+                                groupKey = "part_4_rejection"
+                                finalStatus = "Not Interested Currently"
+                                nextAction = "not_interested"
+                              } else if (outcome === "decision_pending") {
+                                groupKey = "part_3_followup_sales"
+                                finalStatus = "Follow-up Pending"
+                                nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
+                                const nextFollowUpRaw = editedTime || formatForDatetimeLocal(lead.nextFollowUpAt)
+                                if (isReschedule && !nextFollowUpRaw) {
+                                  toast({
+                                    title: "Select follow-up time",
+                                    description: "Please choose date and time before rescheduling.",
+                                    variant: "destructive",
+                                  })
+                                  return
+                                }
+                                nextFollowUpAt = nextFollowUpRaw ? new Date(nextFollowUpRaw).toISOString() : lead.nextFollowUpAt
+                              }
+                              submitAction(lead.id, {
+                                action: nextAction,
+                                callRemark: buildTaggedRemark(groupKey, finalStatus, remark),
+                                nextFollowUpAt,
+                                actionAt: new Date().toISOString(),
+                              })
+                            }}
+                          >
+                            {isLeadSubmitting(lead.id) ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Saving...
+                              </span>
+                            ) : (
+                              "Update"
+                            )}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 border-blue-300 text-blue-700 hover:bg-blue-50"
+                            disabled={isLeadSubmitting(lead.id)}
+                            onClick={() => handleStartCall(lead)}
+                          >
+                            Start Call
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            onClick={() =>
+                              openNewQuotationWithPrefill(lead, {
+                                customerNote: remark,
+                                callRemark: remark,
+                              })
+                            }
+                          >
+                            Quotation
+                          </Button>
+                        </div>
                       </div>
-                      <div className="w-full space-y-2 md:max-w-3xl">
-                        {(() => {
-                          const statusGroup = scheduledStatusGroups[lead.id] ?? STATUS_GROUPS[0].key
-                          const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
-                          const status = scheduledStatuses[lead.id] ?? getDefaultStatusByGroup(statusGroup)
-                          const otherReason = scheduledOtherReasons[lead.id] ?? ""
-                          const isReschedule = scheduledRescheduleChecks[lead.id] ?? false
-                          const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
-                          return (
-                            <>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                <Select
-                                  value={statusGroup}
-                                  onValueChange={(value) => {
-                                    const nextKey = value as StatusGroupKey
-                                    setScheduledStatusGroups((prev) => ({ ...prev, [lead.id]: nextKey }))
-                                    setScheduledStatuses((prev) => ({ ...prev, [lead.id]: getDefaultStatusByGroup(nextKey) }))
-                                    setScheduledOtherReasons((prev) => ({ ...prev, [lead.id]: "" }))
-                                  }}
-                                >
-                                  <SelectTrigger className="h-8">
-                                    <SelectValue placeholder="Status category" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {STATUS_GROUPS.map((group) => (
-                                      <SelectItem key={group.key} value={group.key}>
-                                        {group.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <Select value={status} onValueChange={(value) => setScheduledStatuses((prev) => ({ ...prev, [lead.id]: value }))}>
-                                  <SelectTrigger className="h-8">
-                                    <SelectValue placeholder="Status" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {groupConfig.options.map((option) => (
-                                      <SelectItem key={option} value={option}>
-                                        {option}
-                                      </SelectItem>
-                                    ))}
-                                    <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              {status === OTHER_STATUS_VALUE ? (
-                                <Input
-                                  className="h-8"
-                                  placeholder="Enter other reason"
-                                  value={otherReason}
-                                  onChange={(e) => setScheduledOtherReasons((prev) => ({ ...prev, [lead.id]: e.target.value }))}
-                                />
-                              ) : null}
-                              <Input
-                                className="h-8"
-                                placeholder="Remark (optional)"
-                                value={resolveScheduledRemarkForLead(lead)}
-                                onChange={(e) => setScheduledRemarks((prev) => ({ ...prev, [lead.id]: e.target.value }))}
-                              />
-                              <div className="flex items-center gap-2">
-                                <Checkbox
-                                  id={`scheduled-reschedule-flow-${lead.id}`}
-                                  checked={isReschedule}
-                                  onCheckedChange={(checked) =>
-                                    setScheduledRescheduleChecks((prev) => ({ ...prev, [lead.id]: checked === true }))
-                                  }
-                                />
-                                <label htmlFor={`scheduled-reschedule-flow-${lead.id}`} className="text-xs text-muted-foreground cursor-pointer">
-                                  Reschedule
-                                </label>
-                              </div>
-                              {isReschedule ? (
-                                <Input
-                                  type="datetime-local"
-                                  value={scheduledEditTimes[lead.id] ?? formatForDatetimeLocal(lead.nextFollowUpAt)}
-                                  onChange={(e) => setScheduledEditTimes((prev) => ({ ...prev, [lead.id]: e.target.value }))}
-                                  className="h-8"
-                                />
-                              ) : null}
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  size="sm"
-                                  className="bg-blue-600 hover:bg-blue-700 text-white"
-                                  disabled={isLeadSubmitting(lead.id)}
-                                  onClick={() => {
-                                    if (!finalStatus) {
-                                      toast({
-                                        title: "Reason required",
-                                        description: "Please select status or add other reason.",
-                                        variant: "destructive",
-                                      })
-                                      return
-                                    }
-                                    const nextFollowUpRaw = scheduledEditTimes[lead.id] ?? formatForDatetimeLocal(lead.nextFollowUpAt)
-                                    if (isReschedule && !nextFollowUpRaw) {
-                                      toast({
-                                        title: "Select follow-up time",
-                                        description: "Please choose date and time before rescheduling.",
-                                        variant: "destructive",
-                                      })
-                                      return
-                                    }
-                                    const remark = buildTaggedRemark(statusGroup, finalStatus, resolveScheduledRemarkForLead(lead))
-                                    submitAction(lead.id, {
-                                      action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
-                                      nextFollowUpAt: isReschedule ? new Date(nextFollowUpRaw).toISOString() : undefined,
-                                      callRemark: remark,
-                                      actionAt: new Date().toISOString(),
-                                    })
-                                  }}
-                                >
-                                  {isLeadSubmitting(lead.id) ? (
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      Submitting...
-                                    </span>
-                                  ) : (
-                                    "Submit Status"
-                                  )}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-blue-300 text-blue-700 hover:bg-blue-50"
-                                  disabled={isLeadSubmitting(lead.id)}
-                                  onClick={() => handleStartCall(lead)}
-                                >
-                                  {isLeadSubmitting(lead.id) ? (
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      Starting...
-                                    </span>
-                                  ) : (
-                                    "Start Call"
-                                  )}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    openNewQuotationWithPrefill(lead, {
-                                      customerNote: resolveScheduledRemarkForLead(lead),
-                                      callRemark: resolveScheduledRemarkForLead(lead),
-                                    })
-                                  }
-                                >
-                                  New Quotation
-                                </Button>
-                              </div>
-                            </>
-                          )
-                        })()}
-                      </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                   {renderFlowPagination(
                     pagedScheduled.safePage,
                     pagedScheduled.totalPages,
@@ -3352,19 +3594,24 @@ export default function CallingDataPage() {
             </TabsContent>
 
             <TabsContent value="dialled" className="mt-3 focus-visible:outline-none">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-2">
-                <CardTitle className="text-base">Dialled Data</CardTitle>
-                <div className="flex flex-col sm:flex-row gap-2">
+          <Card className="border-amber-200/70 bg-gradient-to-b from-white to-amber-50/25 shadow-sm">
+            <CardHeader className="py-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-amber-100 border border-amber-200 flex items-center justify-center">
+                    <PhoneCall className="w-3.5 h-3.5 text-amber-700" />
+                  </div>
+                  <CardTitle className="text-sm sm:text-base">Dialled Data</CardTitle>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
                   <Input
                     value={dialledSearchTerm}
                     onChange={(e) => {
                       setDialledSearchTerm(e.target.value)
                       setDialledPage(1)
                     }}
-                    placeholder="Search by name, mobile, K number..."
-                    className="w-full sm:w-80"
+                    placeholder="Search name, mobile, K number..."
+                    className="h-8 w-full sm:flex-1"
                   />
                   <Select
                     value={dialledActionFilter}
@@ -3373,7 +3620,7 @@ export default function CallingDataPage() {
                       setDialledPage(1)
                     }}
                   >
-                    <SelectTrigger className="w-full sm:w-56">
+                    <SelectTrigger className="h-8 w-full sm:w-44">
                       <SelectValue placeholder="Filter action" />
                     </SelectTrigger>
                     <SelectContent>
@@ -3387,118 +3634,231 @@ export default function CallingDataPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               {filteredFlowDialledActions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No dialled data found.</p>
+                <p className="text-sm text-muted-foreground py-4">No dialled data found.</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {pagedDialled.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const rowKey = actionRowKey(item)
-                    const derivedStatusGroup = getStatusGroupKeyByLabel(parsed.category)
-                    const statusGroup = recentStatusGroups[rowKey] ?? derivedStatusGroup ?? STATUS_GROUPS[0].key
-                    const groupConfig = STATUS_GROUPS.find((group) => group.key === statusGroup) || STATUS_GROUPS[0]
                     const derivedStatus = (parsed.status || "").trim()
-                    const status =
-                      recentStatuses[rowKey] ??
-                      (derivedStatus && (groupConfig.options as readonly string[]).includes(derivedStatus)
-                        ? derivedStatus
-                        : getDefaultStatusByGroup(statusGroup))
-                    const otherReason = recentOtherReasons[rowKey] ?? ""
-                    const isReschedule = recentRescheduleChecks[rowKey] ?? false
-                    const finalStatus = status === OTHER_STATUS_VALUE ? otherReason.trim() : status
+                    const inferred = inferCallFormDefaultsFromStatus(derivedStatus)
+                    const connection =
+                      dialledCardConnections[rowKey] ??
+                      (classifyCallingConnection(item) === "not_connected" ? "not_connected" : "connected")
+                    const outcome = dialledCardOutcomes[rowKey] ?? inferred.connectedOutcome
+                    const ncReason =
+                      dialledNotConnectedReasons[rowKey] ??
+                      inferred.notConnectedReason ??
+                      (NOT_CONNECTED_REASONS.includes(derivedStatus) ? derivedStatus : NOT_CONNECTED_REASONS[0])
+                    const isReschedule =
+                      recentRescheduleChecks[rowKey] ?? (connection === "connected" && outcome === "decision_pending")
                     const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
+                    const socialLead = isSocialMediaCallingLead(item)
+                    const notConnected = connection === "not_connected"
                     return (
-                      <div key={`dialled-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
-                        <p className="font-medium">{item.name} • {item.mobile}</p>
-                        <p className="text-xs text-muted-foreground">Action: {item.action || "N/A"} • At: {formatDateTime(item.actionAt)}</p>
-                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
-                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
-                        <Textarea
-                          rows={2}
-                          placeholder="Edit remark"
-                          value={remark}
-                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                        />
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <div
+                        key={`dialled-${item.id}`}
+                        className={cn(
+                          "rounded-lg px-3 py-2 text-sm space-y-1.5 min-w-0",
+                          socialLead
+                            ? "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+                            : notConnected
+                              ? "border-rose-200/80 bg-gradient-to-b from-white to-rose-50/35 shadow-sm border-l-4 border-l-rose-400"
+                              : "border-amber-200/80 bg-gradient-to-b from-white to-amber-50/35 shadow-sm border-l-4 border-l-amber-400",
+                        )}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "shrink-0 h-5 px-1.5 text-[10px]",
+                              notConnected
+                                ? "border-rose-200 bg-rose-50 text-rose-800"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-800",
+                            )}
+                          >
+                            {notConnected ? "Not Connected" : "Connected"}
+                          </Badge>
+                          {socialLead ? (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Social
+                            </Badge>
+                          ) : null}
+                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+                            {item.action || parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {[
+                            item.kNumber ? `K ${item.kNumber}` : null,
+                            item.address || null,
+                            parsed.status && parsed.status !== item.action ? parsed.status : null,
+                            item.platform,
+                            item.campaignName,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "K No / Address —"}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Input
+                            className="h-8 min-w-[12rem] flex-1 basis-48"
+                            placeholder="Remark"
+                            value={remark}
+                            onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
                           <Select
-                            value={statusGroup}
-                            onValueChange={(value) => {
-                              const nextKey = value as StatusGroupKey
-                              setRecentStatusGroups((prev) => ({ ...prev, [rowKey]: nextKey }))
-                              setRecentStatuses((prev) => ({ ...prev, [rowKey]: getDefaultStatusByGroup(nextKey) }))
-                              setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: "" }))
+                            value={connection}
+                            onValueChange={(value: "connected" | "not_connected") => {
+                              setDialledCardConnections((prev) => ({ ...prev, [rowKey]: value }))
+                              if (value === "not_connected") {
+                                setDialledCardOutcomes((prev) => ({ ...prev, [rowKey]: "not_interested" }))
+                                setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                if (!dialledNotConnectedReasons[rowKey]) {
+                                  setDialledNotConnectedReasons((prev) => ({
+                                    ...prev,
+                                    [rowKey]: ncReason || NOT_CONNECTED_REASONS[0],
+                                  }))
+                                }
+                              } else {
+                                setDialledCardOutcomes((prev) => ({
+                                  ...prev,
+                                  [rowKey]: prev[rowKey] && prev[rowKey] !== "not_interested" ? prev[rowKey] : "interested",
+                                }))
+                              }
                             }}
                           >
-                            <SelectTrigger className="h-8"><SelectValue placeholder="Status category" /></SelectTrigger>
+                            <SelectTrigger className="h-8 w-[10.5rem] shrink-0">
+                              <SelectValue placeholder="Connection" />
+                            </SelectTrigger>
                             <SelectContent>
-                              {STATUS_GROUPS.map((group) => (
-                                <SelectItem key={group.key} value={group.key}>{group.label}</SelectItem>
-                              ))}
+                              <SelectItem value="connected">Connected</SelectItem>
+                              <SelectItem value="not_connected">Not Connected</SelectItem>
                             </SelectContent>
                           </Select>
-                          <Select value={status} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
-                            <SelectTrigger className="h-8"><SelectValue placeholder="Status" /></SelectTrigger>
-                            <SelectContent>
-                              {groupConfig.options.map((option) => (
-                                <SelectItem key={option} value={option}>{option}</SelectItem>
-                              ))}
-                              <SelectItem value={OTHER_STATUS_VALUE}>Others</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        {status === OTHER_STATUS_VALUE ? (
-                          <Input
-                            className="h-8"
-                            placeholder="Enter other reason"
-                            value={otherReason}
-                            onChange={(e) => setRecentOtherReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                          />
-                        ) : null}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          <div className="flex items-center gap-2">
-                            <Checkbox
-                              id={`dialled-reschedule-${rowKey}`}
-                              checked={isReschedule}
-                              onCheckedChange={(checked) =>
-                                setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                          {notConnected ? (
+                            <Select
+                              value={ncReason}
+                              onValueChange={(value) =>
+                                setDialledNotConnectedReasons((prev) => ({ ...prev, [rowKey]: value }))
                               }
-                            />
-                            <label htmlFor={`dialled-reschedule-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
-                              Reschedule
-                            </label>
-                          </div>
-                          <Input
-                            type="datetime-local"
-                            value={editedTime}
-                            onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                          />
-                        </div>
-                        <Button
-                          size="sm"
-                          className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
-                          onClick={() => {
-                            if (!finalStatus) return
-                            if (isReschedule && !editedTime) return
-                            submitAction(item.leadId, {
-                              action: isReschedule ? getRescheduleSubmitAction() : getActionFromStatus(finalStatus),
-                              callRemark: buildTaggedRemark(statusGroup, finalStatus, remark),
-                              nextFollowUpAt: isReschedule ? new Date(editedTime).toISOString() : undefined,
-                              actionAt: new Date().toISOString(),
-                            })
-                          }}
-                        >
-                          {isLeadSubmitting(item.leadId) ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Updating...
-                            </span>
+                            >
+                              <SelectTrigger className="h-8 w-[13.5rem] shrink-0">
+                                <SelectValue placeholder="Reason" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {NOT_CONNECTED_REASONS.map((option) => (
+                                  <SelectItem key={`dialled-nc-${rowKey}-${option}`} value={option}>
+                                    {option}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           ) : (
-                            "Update"
+                            <Select
+                              value={outcome}
+                              onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
+                                setDialledCardOutcomes((prev) => ({ ...prev, [rowKey]: value }))
+                                if (value === "decision_pending") {
+                                  setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: true }))
+                                  setRecentEditTimes((prev) => ({
+                                    ...prev,
+                                    [rowKey]:
+                                      prev[rowKey] ||
+                                      formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+                                  }))
+                                } else {
+                                  setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 w-[13.5rem] shrink-0">
+                                <SelectValue placeholder="Outcome" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="interested">Interested</SelectItem>
+                                <SelectItem value="not_interested">Not Interested</SelectItem>
+                                <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                              </SelectContent>
+                            </Select>
                           )}
-                        </Button>
+                          {connection === "connected" && outcome === "decision_pending" ? (
+                            <>
+                              <label
+                                htmlFor={`dialled-reschedule-${rowKey}`}
+                                className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap cursor-pointer shrink-0"
+                              >
+                                <Checkbox
+                                  id={`dialled-reschedule-${rowKey}`}
+                                  checked={isReschedule}
+                                  onCheckedChange={(checked) =>
+                                    setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                                  }
+                                />
+                                Reschedule
+                              </label>
+                              <Input
+                                type="datetime-local"
+                                className="h-8 w-[13.5rem] shrink-0"
+                                value={editedTime}
+                                onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                                disabled={!isReschedule}
+                              />
+                            </>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            className="h-8 shrink-0 bg-violet-600 hover:bg-violet-700 text-white"
+                            disabled={!item.leadId || isLeadSubmitting(item.leadId)}
+                            onClick={() => {
+                              let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                              let finalStatus = "Interested"
+                              let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                              let nextFollowUpAt: string | undefined
+                              if (connection === "not_connected") {
+                                groupKey = "part_1_call_and_lead"
+                                finalStatus = ncReason
+                                nextAction = "not_interested"
+                              } else if (outcome === "not_interested") {
+                                groupKey = "part_4_rejection"
+                                finalStatus = "Not Interested Currently"
+                                nextAction = "not_interested"
+                              } else if (outcome === "decision_pending") {
+                                groupKey = "part_3_followup_sales"
+                                finalStatus = "Follow-up Pending"
+                                nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
+                                if (isReschedule && !editedTime) {
+                                  toast({
+                                    title: "Select follow-up time",
+                                    description: "Please choose date and time before rescheduling.",
+                                    variant: "destructive",
+                                  })
+                                  return
+                                }
+                                nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
+                              }
+                              submitAction(item.leadId, {
+                                action: nextAction,
+                                callRemark: buildTaggedRemark(groupKey, finalStatus, remark),
+                                nextFollowUpAt,
+                                actionAt: new Date().toISOString(),
+                              })
+                            }}
+                          >
+                            {isLeadSubmitting(item.leadId) ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Updating...
+                              </span>
+                            ) : (
+                              "Update"
+                            )}
+                          </Button>
+                        </div>
                       </div>
                     )
                   })}
@@ -3515,11 +3875,25 @@ export default function CallingDataPage() {
             </TabsContent>
 
             <TabsContent value="connected" className="mt-3 focus-visible:outline-none">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle className="text-base">Connected Data</CardTitle>
-                <div className="w-full sm:w-64">
+          <Card className="border-emerald-200/70 bg-gradient-to-b from-white to-emerald-50/25 shadow-sm">
+            <CardHeader className="py-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-emerald-100 border border-emerald-200 flex items-center justify-center">
+                    <PhoneIncoming className="w-3.5 h-3.5 text-emerald-700" />
+                  </div>
+                  <CardTitle className="text-sm sm:text-base">Connected Data</CardTitle>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
+                  <Input
+                    value={connectedSearchTerm}
+                    onChange={(e) => {
+                      setConnectedSearchTerm(e.target.value)
+                      setConnectedPage(1)
+                    }}
+                    placeholder="Search name, mobile, reason..."
+                    className="h-8 w-full sm:flex-1"
+                  />
                   <Select
                     value={connectedOutcomeFilter}
                     onValueChange={(value: "all" | "interested" | "not_interested" | "decision_pending") => {
@@ -3527,8 +3901,8 @@ export default function CallingDataPage() {
                       setConnectedPage(1)
                     }}
                   >
-                    <SelectTrigger className="h-8">
-                      <SelectValue placeholder="Filter connected outcome" />
+                    <SelectTrigger className="h-8 w-full sm:w-44">
+                      <SelectValue placeholder="Filter outcome" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
@@ -3538,22 +3912,13 @@ export default function CallingDataPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Input
-                  value={connectedSearchTerm}
-                  onChange={(e) => {
-                    setConnectedSearchTerm(e.target.value)
-                    setConnectedPage(1)
-                  }}
-                  placeholder="Search by name, mobile, reason..."
-                  className="w-full sm:w-72"
-                />
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               {filteredFlowConnectedActions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No connected data found.</p>
+                <p className="text-sm text-muted-foreground py-4">No connected data found.</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {pagedConnected.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const transferReasonText = extractTransferReason(parsed.remark)
@@ -3563,40 +3928,55 @@ export default function CallingDataPage() {
                     const isReschedule = recentRescheduleChecks[rowKey] ?? false
                     const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
+                    const socialLead = isSocialMediaCallingLead(item)
                     return (
-                      <div key={`connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
-                        <p className="font-medium">{item.name} • {item.mobile}</p>
-                        <p className="text-xs text-muted-foreground">Status: {parsed.status || "N/A"} • At: {formatDateTime(item.actionAt)}</p>
-                        {transferReasonText ? (
-                          <p className="text-xs text-emerald-700">
-                            <span className="font-medium">Transfer Reason:</span> {transferReasonText}
-                          </p>
-                        ) : null}
-                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
-                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
-                        <Textarea
-                          rows={2}
-                          placeholder="Edit remark"
-                          value={remark}
-                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                        />
-                        <Select
-                          value={connectedOutcome}
-                          onValueChange={(value: "interested" | "not_interested" | "decision_pending") =>
-                            setConnectedCardOutcomes((prev) => ({ ...prev, [rowKey]: value }))
-                          }
-                        >
-                          <SelectTrigger className="h-8">
-                            <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="interested">Interested</SelectItem>
-                            <SelectItem value="not_interested">Not Interested</SelectItem>
-                            <SelectItem value="decision_pending">Decision Pending</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          <div className="flex items-center gap-2">
+                      <div key={`connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5", historyCardClass(item, "connected"))}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
+                          {socialLead ? (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Social
+                            </Badge>
+                          ) : null}
+                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+                            {parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {[
+                            item.kNumber ? `K ${item.kNumber}` : null,
+                            item.address || null,
+                            item.platform,
+                            item.campaignName,
+                            transferReasonText ? `Transfer: ${transferReasonText}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "K No / Address —"}
+                        </p>
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_11rem_auto_12rem_auto] gap-1.5 items-center">
+                          <Input
+                            className="h-8"
+                            placeholder="Remark"
+                            value={remark}
+                            onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
+                          <Select
+                            value={connectedOutcome}
+                            onValueChange={(value: "interested" | "not_interested" | "decision_pending") =>
+                              setConnectedCardOutcomes((prev) => ({ ...prev, [rowKey]: value }))
+                            }
+                          >
+                            <SelectTrigger className="h-8">
+                              <SelectValue placeholder="Outcome" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="interested">Interested</SelectItem>
+                              <SelectItem value="not_interested">Not Interested</SelectItem>
+                              <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <label htmlFor={`connected-reschedule-${rowKey}`} className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap cursor-pointer">
                             <Checkbox
                               id={`connected-reschedule-${rowKey}`}
                               checked={isReschedule}
@@ -3604,54 +3984,53 @@ export default function CallingDataPage() {
                                 setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
                               }
                             />
-                            <label htmlFor={`connected-reschedule-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
-                              Reschedule
-                            </label>
-                          </div>
+                            Reschedule
+                          </label>
                           <Input
                             type="datetime-local"
+                            className="h-8"
                             value={editedTime}
                             onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
                             disabled={!isReschedule}
                           />
+                          <Button
+                            size="sm"
+                            className="h-8 bg-violet-600 hover:bg-violet-700 text-white"
+                            disabled={!item.leadId || isLeadSubmitting(item.leadId)}
+                            onClick={() => {
+                              let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                              let finalStatus = "Interested"
+                              let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                              let nextFollowUpAt: string | undefined
+                              if (connectedOutcome === "not_interested") {
+                                groupKey = "part_4_rejection"
+                                finalStatus = "Not Interested Currently"
+                                nextAction = "not_interested"
+                              } else if (connectedOutcome === "decision_pending") {
+                                groupKey = "part_3_followup_sales"
+                                finalStatus = "Follow-up Pending"
+                                nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
+                                nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
+                              }
+                              if (isReschedule && !editedTime) return
+                              submitAction(item.leadId, {
+                                action: nextAction,
+                                callRemark: buildTaggedRemark(groupKey, finalStatus, remark),
+                                nextFollowUpAt,
+                                actionAt: new Date().toISOString(),
+                              })
+                            }}
+                          >
+                            {isLeadSubmitting(item.leadId) ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Updating...
+                              </span>
+                            ) : (
+                              "Update"
+                            )}
+                          </Button>
                         </div>
-                        <Button
-                          size="sm"
-                          className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
-                          onClick={() => {
-                            let groupKey: StatusGroupKey = "part_2_interest_qualification"
-                            let finalStatus = "Interested"
-                            let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
-                            let nextFollowUpAt: string | undefined
-                            if (connectedOutcome === "not_interested") {
-                              groupKey = "part_4_rejection"
-                              finalStatus = "Not Interested Currently"
-                              nextAction = "not_interested"
-                            } else if (connectedOutcome === "decision_pending") {
-                              groupKey = "part_3_followup_sales"
-                              finalStatus = "Follow-up Pending"
-                              nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
-                              nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
-                            }
-                            if (isReschedule && !editedTime) return
-                            submitAction(item.leadId, {
-                              action: nextAction,
-                              callRemark: buildTaggedRemark(groupKey, finalStatus, remark),
-                              nextFollowUpAt,
-                              actionAt: new Date().toISOString(),
-                            })
-                          }}
-                        >
-                          {isLeadSubmitting(item.leadId) ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Updating...
-                            </span>
-                          ) : (
-                            "Update"
-                          )}
-                        </Button>
                       </div>
                     )
                   })}
@@ -3668,19 +4047,24 @@ export default function CallingDataPage() {
             </TabsContent>
 
             <TabsContent value="not_connected" className="mt-3 focus-visible:outline-none">
-          <Card>
-            <CardHeader>
-              <div className="flex flex-col gap-2">
-                <CardTitle className="text-base">Not Connected Data</CardTitle>
-                <div className="flex flex-col sm:flex-row gap-2">
+          <Card className="border-rose-200/70 bg-gradient-to-b from-white to-rose-50/25 shadow-sm">
+            <CardHeader className="py-3">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center gap-2 shrink-0">
+                  <div className="w-7 h-7 rounded-full bg-rose-100 border border-rose-200 flex items-center justify-center">
+                    <PhoneOff className="w-3.5 h-3.5 text-rose-700" />
+                  </div>
+                  <CardTitle className="text-sm sm:text-base">Not Connected Data</CardTitle>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
                   <Input
                     value={notConnectedSearchTerm}
                     onChange={(e) => {
                       setNotConnectedSearchTerm(e.target.value)
                       setNotConnectedPage(1)
                     }}
-                    placeholder="Search by name, mobile, K number..."
-                    className="w-full sm:w-80"
+                    placeholder="Search name, mobile, K number..."
+                    className="h-8 w-full sm:flex-1"
                   />
                   <Select
                     value={notConnectedReasonFilter}
@@ -3689,8 +4073,8 @@ export default function CallingDataPage() {
                       setNotConnectedPage(1)
                     }}
                   >
-                    <SelectTrigger className="w-full sm:w-56">
-                      <SelectValue placeholder="Filter not connected reason" />
+                    <SelectTrigger className="h-8 w-full sm:w-44">
+                      <SelectValue placeholder="All Reasons" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Reasons</SelectItem>
@@ -3704,11 +4088,11 @@ export default function CallingDataPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0">
               {filteredFlowNotConnectedActions.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No not-connected data found.</p>
+                <p className="text-sm text-muted-foreground py-4">No not-connected data found.</p>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {pagedNotConnected.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const transferReasonText = extractTransferReason(parsed.remark)
@@ -3722,30 +4106,42 @@ export default function CallingDataPage() {
                     const transferOutcome = notConnectedTransferOutcomes[rowKey] ?? "interested"
                     const isReschedule = recentRescheduleChecks[rowKey] ?? transferOutcome === "decision_pending"
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
+                    const socialLead = isSocialMediaCallingLead(item)
                     return (
-                      <div key={`not-connected-${item.id}`} className="rounded-md border p-3 text-sm space-y-2">
-                        <p className="font-medium">{item.name} • {item.mobile}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Reason: {selectedReason || "N/A"} • At: {formatDateTime(item.actionAt)}
+                      <div key={`not-connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5", historyCardClass(item, "not_connected"))}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
+                          {socialLead ? (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Social
+                            </Badge>
+                          ) : null}
+                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+                            {selectedReason || "N/A"} · {formatDateTime(item.actionAt)}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {[
+                            item.kNumber ? `K ${item.kNumber}` : null,
+                            item.address || null,
+                            item.platform,
+                            item.campaignName,
+                            transferReasonText ? `Transfer: ${transferReasonText}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "K No / Address —"}
                         </p>
-                        {transferReasonText ? (
-                          <p className="text-xs text-emerald-700">
-                            <span className="font-medium">Transfer Reason:</span> {transferReasonText}
-                          </p>
-                        ) : null}
-                        <p className="text-xs text-muted-foreground">K No: {item.kNumber || "N/A"}</p>
-                        <p className="text-xs text-muted-foreground">Address: {item.address || "N/A"}</p>
-                        <Textarea
-                          rows={2}
-                          placeholder="Edit remark"
-                          value={remark}
-                          onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                        />
-                        <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Reason of not connected</p>
+                        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.3fr)_12rem_auto_auto] gap-1.5 items-center">
+                          <Input
+                            className="h-8"
+                            placeholder="Remark"
+                            value={remark}
+                            onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                          />
                           <Select value={selectedReason} onValueChange={(value) => setRecentStatuses((prev) => ({ ...prev, [rowKey]: value }))}>
                             <SelectTrigger className="h-8">
-                              <SelectValue placeholder="Select reason" />
+                              <SelectValue placeholder="Reason" />
                             </SelectTrigger>
                             <SelectContent>
                               {NOT_CONNECTED_REASONS.map((option) => (
@@ -3755,9 +4151,10 @@ export default function CallingDataPage() {
                               ))}
                             </SelectContent>
                           </Select>
-                        </div>
-                        <div className="space-y-2 rounded-md border border-dashed p-2">
-                          <div className="flex items-center gap-2">
+                          <label
+                            htmlFor={`transfer-connected-${rowKey}`}
+                            className="flex items-center gap-1.5 text-[11px] font-medium whitespace-nowrap cursor-pointer"
+                          >
                             <Checkbox
                               id={`transfer-connected-${rowKey}`}
                               checked={transferToConnected}
@@ -3765,132 +4162,147 @@ export default function CallingDataPage() {
                                 setNotConnectedTransferChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
                               }
                             />
-                            <label htmlFor={`transfer-connected-${rowKey}`} className="text-xs text-muted-foreground cursor-pointer">
-                              Move this lead to Connected flow
-                            </label>
-                          </div>
-                          {transferToConnected ? (
-                            <div className="space-y-2">
-                              <Input
-                                className="h-8"
-                                placeholder="Reason of transfer (required)"
-                                value={transferReason}
-                                onChange={(e) =>
-                                  setNotConnectedTransferReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))
+                            Move to Connected
+                          </label>
+                          <Button
+                            size="sm"
+                            className={cn(
+                              "h-8",
+                              transferToConnected
+                                ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                                : "bg-violet-600 hover:bg-violet-700 text-white",
+                            )}
+                            disabled={!item.leadId || isLeadSubmitting(item.leadId)}
+                            onClick={() => {
+                              if (transferToConnected) {
+                                if (!transferReason.trim()) {
+                                  toast({
+                                    title: "Transfer reason required",
+                                    description: "Please enter reason of transfer before moving to Connected.",
+                                    variant: "destructive",
+                                  })
+                                  return
                                 }
-                              />
-                              <Select
-                                value={transferOutcome}
-                                onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
-                                  setNotConnectedTransferOutcomes((prev) => ({ ...prev, [rowKey]: value }))
-                                  if (value === "decision_pending") {
-                                    setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: true }))
-                                    setRecentEditTimes((prev) => ({
-                                      ...prev,
-                                      [rowKey]:
-                                        prev[rowKey] || formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
-                                    }))
-                                  } else {
-                                    setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: false }))
-                                  }
-                                }}
-                              >
-                                <SelectTrigger className="h-8">
-                                  <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="interested">Interested</SelectItem>
-                                  <SelectItem value="not_interested">Not Interested</SelectItem>
-                                  <SelectItem value="decision_pending">Decision Pending</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                                <div className="flex items-center gap-2">
-                                  <Checkbox
-                                    id={`not-connected-reschedule-${rowKey}`}
-                                    checked={isReschedule}
-                                    onCheckedChange={(checked) =>
-                                      setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
-                                    }
-                                  />
-                                  <label
-                                    htmlFor={`not-connected-reschedule-${rowKey}`}
-                                    className="text-xs text-muted-foreground cursor-pointer"
-                                  >
-                                    Reschedule
-                                  </label>
-                                </div>
-                                <Input
-                                  type="datetime-local"
-                                  value={editedTime}
-                                  onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
-                                  disabled={!isReschedule}
-                                />
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                        <Button
-                          size="sm"
-                          className="bg-violet-600 hover:bg-violet-700 text-white"
-                          disabled={!item.leadId || isLeadSubmitting(item.leadId)}
-                          onClick={() => {
-                            if (transferToConnected) {
-                              if (!transferReason.trim()) {
-                                toast({
-                                  title: "Transfer reason required",
-                                  description: "Please enter reason of transfer before moving to Connected.",
-                                  variant: "destructive",
-                                })
+                                let groupKey: StatusGroupKey = "part_2_interest_qualification"
+                                let finalConnectedStatus = "Interested"
+                                let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
+                                let nextFollowUpAt: string | undefined
+                                if (transferOutcome === "not_interested") {
+                                  groupKey = "part_4_rejection"
+                                  finalConnectedStatus = "Not Interested Currently"
+                                  nextAction = "not_interested"
+                                } else if (transferOutcome === "decision_pending") {
+                                  if (isReschedule && !editedTime) return
+                                  groupKey = "part_3_followup_sales"
+                                  finalConnectedStatus = "Follow-up Pending"
+                                  nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
+                                  nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
+                                }
+                                if (isReschedule && !editedTime) return
+                                const combinedRemark = [remark, `Transfer Reason: ${transferReason.trim()}`]
+                                  .map((part) => part.trim())
+                                  .filter(Boolean)
+                                  .join(" | ")
+                                submitAction(
+                                  item.leadId,
+                                  {
+                                    action: nextAction,
+                                    callRemark: buildTaggedRemark(groupKey, finalConnectedStatus, combinedRemark),
+                                    nextFollowUpAt,
+                                    actionAt: new Date().toISOString(),
+                                  },
+                                  {
+                                    skipRescheduleFallback: transferOutcome !== "decision_pending",
+                                    afterSuccess: () => {
+                                      setNotConnectedTransferChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                      setFlowTab("connected")
+                                      setConnectedPage(1)
+                                      toast({
+                                        title: "Moved to Connected",
+                                        description: `${item.name} is now in Connected Data.`,
+                                      })
+                                    },
+                                  },
+                                )
                                 return
                               }
-                              let groupKey: StatusGroupKey = "part_2_interest_qualification"
-                              let finalConnectedStatus = "Interested"
-                              let nextAction: "called" | "follow_up" | "not_interested" | "rescheduled" = "called"
-                              let nextFollowUpAt: string | undefined
-                              if (transferOutcome === "not_interested") {
-                                groupKey = "part_4_rejection"
-                                finalConnectedStatus = "Not Interested Currently"
-                                nextAction = "not_interested"
-                              } else if (transferOutcome === "decision_pending") {
-                                if (isReschedule && !editedTime) return
-                                groupKey = "part_3_followup_sales"
-                                finalConnectedStatus = "Follow-up Pending"
-                                nextAction = isReschedule ? getRescheduleSubmitAction() : "follow_up"
-                                nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
-                              }
-                              if (isReschedule && !editedTime) return
-                              const combinedRemark = [remark, `Transfer Reason: ${transferReason.trim()}`]
-                                .map((part) => part.trim())
-                                .filter(Boolean)
-                                .join(" | ")
+                              if (!selectedReason) return
                               submitAction(item.leadId, {
-                                action: nextAction,
-                                callRemark: buildTaggedRemark(groupKey, finalConnectedStatus, combinedRemark),
-                                nextFollowUpAt,
+                                action: "not_interested",
+                                callRemark: buildTaggedRemark("part_1_call_and_lead", selectedReason, remark),
                                 actionAt: new Date().toISOString(),
                               })
-                              return
-                            }
-                            if (!selectedReason) return
-                            submitAction(item.leadId, {
-                              action: "not_interested",
-                              callRemark: buildTaggedRemark("part_1_call_and_lead", selectedReason, remark),
-                              actionAt: new Date().toISOString(),
-                            })
-                          }}
-                        >
-                          {isLeadSubmitting(item.leadId) ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Updating...
-                            </span>
-                          ) : transferToConnected ? (
-                            "Move to Connected"
-                          ) : (
-                            "Update"
-                          )}
-                        </Button>
+                            }}
+                          >
+                            {isLeadSubmitting(item.leadId) ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Updating...
+                              </span>
+                            ) : transferToConnected ? (
+                              "Move"
+                            ) : (
+                              "Update"
+                            )}
+                          </Button>
+                        </div>
+                        {transferToConnected ? (
+                          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_11rem_auto_12rem] gap-1.5 items-center rounded-md border border-emerald-200 bg-emerald-50/60 px-2 py-1.5">
+                            <Input
+                              className="h-8 bg-white"
+                              placeholder="Reason of transfer (required)"
+                              value={transferReason}
+                              onChange={(e) =>
+                                setNotConnectedTransferReasons((prev) => ({ ...prev, [rowKey]: e.target.value }))
+                              }
+                            />
+                            <Select
+                              value={transferOutcome}
+                              onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
+                                setNotConnectedTransferOutcomes((prev) => ({ ...prev, [rowKey]: value }))
+                                if (value === "decision_pending") {
+                                  setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: true }))
+                                  setRecentEditTimes((prev) => ({
+                                    ...prev,
+                                    [rowKey]:
+                                      prev[rowKey] || formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+                                  }))
+                                } else {
+                                  setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                }
+                              }}
+                            >
+                              <SelectTrigger className="h-8 bg-white">
+                                <SelectValue placeholder="Outcome" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="interested">Interested</SelectItem>
+                                <SelectItem value="not_interested">Not Interested</SelectItem>
+                                <SelectItem value="decision_pending">Decision Pending</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <label
+                              htmlFor={`not-connected-reschedule-${rowKey}`}
+                              className="flex items-center gap-1.5 text-[11px] text-muted-foreground whitespace-nowrap cursor-pointer"
+                            >
+                              <Checkbox
+                                id={`not-connected-reschedule-${rowKey}`}
+                                checked={isReschedule}
+                                onCheckedChange={(checked) =>
+                                  setRecentRescheduleChecks((prev) => ({ ...prev, [rowKey]: checked === true }))
+                                }
+                              />
+                              Reschedule
+                            </label>
+                            <Input
+                              type="datetime-local"
+                              className="h-8 bg-white"
+                              value={editedTime}
+                              onChange={(e) => setRecentEditTimes((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                              disabled={!isReschedule}
+                            />
+                          </div>
+                        ) : null}
                       </div>
                     )
                   })}
@@ -3908,9 +4320,12 @@ export default function CallingDataPage() {
 
             <TabsContent value="current_lead" className="mt-3 focus-visible:outline-none">
         {!currentLead ? (
-          <Card>
-            <CardContent className="py-10 text-center text-muted-foreground space-y-2">
-              <p>No calling data pending for you.</p>
+          <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/25 shadow-sm">
+            <CardContent className="py-12 text-center text-muted-foreground space-y-2">
+              <div className="mx-auto w-11 h-11 rounded-full bg-orange-100 border border-orange-200 flex items-center justify-center">
+                <Inbox className="w-5 h-5 text-orange-700" />
+              </div>
+              <p className="font-medium text-foreground">No calling data pending for you.</p>
               <p className="text-sm max-w-lg mx-auto">
                 If HR Uploaded Data still shows Unassigned / Assigned above 0 for your batches, the backend is not
                 returning your next lead. It must fix{" "}
@@ -3928,56 +4343,84 @@ export default function CallingDataPage() {
           </Card>
         ) : (
           <Card className={socialLeadCardClass}>
-            <CardHeader>
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <CardTitle className="text-base">
-                    {isSocialMediaCurrentLead ? "Social Media Lead" : "Current Lead"}
-                  </CardTitle>
-                  {socialLeadStatusDisplay ? (
-                    <Badge variant="outline" className={socialLeadStatusDisplay.badgeClassName}>
-                      {socialLeadStatusDisplay.label}
-                    </Badge>
-                  ) : null}
-                </div>
-                {isEditingLead ? (
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="outline" onClick={() => setIsEditingLead(false)} className="gap-1">
-                      <Check className="w-3.5 h-3.5" />
-                      Save
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        if (!currentLead) return
-                        setEditableLeadDetails({
-                          name: currentLead.name || "",
-                          mobile: currentLead.mobile || "",
-                          kNumber: currentLead.kNumber || "",
-                          city: currentLead.city || "",
-                          state: currentLead.state || "",
-                          address: currentLead.address || "",
-                          customerNote: currentLead.customerNote || "",
-                        })
-                        setIsEditingLead(false)
-                      }}
-                      className="gap-1"
-                    >
-                      <X className="w-3.5 h-3.5" />
-                      Cancel
-                    </Button>
+            <CardHeader className="py-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center border shrink-0 ${
+                    isSocialMediaCurrentLead
+                      ? "bg-sky-100 border-sky-200"
+                      : "bg-orange-100 border-orange-200"
+                  }`}>
+                    {isSocialMediaCurrentLead ? (
+                      <Sparkles className="w-4 h-4 text-sky-700" />
+                    ) : (
+                      <User className="w-4 h-4 text-orange-700" />
+                    )}
                   </div>
-                ) : (
-                  <Button size="icon" variant="ghost" onClick={() => setIsEditingLead(true)} aria-label="Edit lead details">
-                    <Pencil className="w-4 h-4" />
-                  </Button>
-                )}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <CardTitle className="text-sm sm:text-base">
+                        {isSocialMediaCurrentLead ? "Social Media Lead" : "Current Lead"}
+                      </CardTitle>
+                      {socialLeadStatusDisplay ? (
+                        <Badge variant="outline" className={socialLeadStatusDisplay.badgeClassName}>
+                          {socialLeadStatusDisplay.label}
+                        </Badge>
+                      ) : currentLead.status === "in_progress" ? (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-amber-200 bg-amber-50 text-amber-800">
+                          In call
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px] border-orange-200 bg-orange-50 text-orange-800">
+                          Ready
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      One lead at a time — start the call, then submit the outcome.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {isEditingLead ? (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => setIsEditingLead(false)} className="h-8 gap-1">
+                        <Check className="w-3.5 h-3.5" />
+                        Save
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          if (!currentLead) return
+                          setEditableLeadDetails({
+                            name: currentLead.name || "",
+                            mobile: currentLead.mobile || "",
+                            kNumber: currentLead.kNumber || "",
+                            city: currentLead.city || "",
+                            state: currentLead.state || "",
+                            address: currentLead.address || "",
+                            customerNote: currentLead.customerNote || "",
+                          })
+                          setIsEditingLead(false)
+                        }}
+                        className="h-8 gap-1"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setIsEditingLead(true)} aria-label="Edit lead details">
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3 pt-0">
               {isSocialMediaCurrentLead ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs rounded-md border border-border/50 bg-background/60 p-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs rounded-lg border border-sky-200/70 bg-sky-50/40 px-3 py-2">
                   {currentLead.platform ? (
                     <p><span className="text-muted-foreground">Platform:</span> {currentLead.platform}</p>
                   ) : null}
@@ -3998,11 +4441,15 @@ export default function CallingDataPage() {
                   ) : null}
                 </div>
               ) : null}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
-                <div>
-                  <p className="text-xs text-muted-foreground">Name</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                <CurrentLeadField
+                  label="Name"
+                  icon={<User className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
                     <Input
+                      className="h-8 mt-1"
                       value={leadForView.name}
                       onChange={(e) =>
                         setEditableLeadDetails((prev) => ({
@@ -4013,13 +4460,17 @@ export default function CallingDataPage() {
                       placeholder="Enter name"
                     />
                   ) : (
-                    <p className="font-semibold">{leadForView.name || "N/A"}</p>
+                    leadForView.name || "N/A"
                   )}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Mobile</p>
+                </CurrentLeadField>
+                <CurrentLeadField
+                  label="Mobile"
+                  icon={<Phone className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
                     <Input
+                      className="h-8 mt-1"
                       value={leadForView.mobile}
                       onChange={(e) =>
                         setEditableLeadDetails((prev) => ({
@@ -4030,13 +4481,24 @@ export default function CallingDataPage() {
                       placeholder="Enter mobile"
                     />
                   ) : (
-                    <p className="font-semibold">{leadForView.mobile || "N/A"}</p>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 hover:text-orange-700"
+                      onClick={() => void copyLeadPhone(leadForView.mobile)}
+                    >
+                      {leadForView.mobile || "N/A"}
+                      {leadForView.mobile ? <Copy className="w-3 h-3 text-muted-foreground" /> : null}
+                    </button>
                   )}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">K Number</p>
+                </CurrentLeadField>
+                <CurrentLeadField
+                  label="K Number"
+                  icon={<Hash className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
                     <Input
+                      className="h-8 mt-1"
                       value={leadForView.kNumber}
                       onChange={(e) =>
                         setEditableLeadDetails((prev) => ({
@@ -4047,14 +4509,18 @@ export default function CallingDataPage() {
                       placeholder="Enter K number"
                     />
                   ) : (
-                    <p className="font-medium">{leadForView.kNumber || "N/A"}</p>
+                    leadForView.kNumber || "N/A"
                   )}
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Location</p>
+                </CurrentLeadField>
+                <CurrentLeadField
+                  label="Location"
+                  icon={<MapPin className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
-                    <div className="grid grid-cols-2 gap-2">
+                    <div className="grid grid-cols-2 gap-1.5 mt-1">
                       <Input
+                        className="h-8"
                         value={leadForView.city}
                         onChange={(e) =>
                           setEditableLeadDetails((prev) => ({
@@ -4065,6 +4531,7 @@ export default function CallingDataPage() {
                         placeholder="City"
                       />
                       <Input
+                        className="h-8"
                         value={leadForView.state}
                         onChange={(e) =>
                           setEditableLeadDetails((prev) => ({
@@ -4076,13 +4543,19 @@ export default function CallingDataPage() {
                       />
                     </div>
                   ) : (
-                    <p className="font-medium">{[leadForView.city, leadForView.state].filter(Boolean).join(", ") || "N/A"}</p>
+                    [leadForView.city, leadForView.state].filter(Boolean).join(", ") || "N/A"
                   )}
-                </div>
-                <div className="md:col-span-2">
-                  <p className="text-xs text-muted-foreground">Address</p>
+                </CurrentLeadField>
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2">
+                <CurrentLeadField
+                  label="Address"
+                  icon={<MapPin className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
                     <Textarea
+                      className="mt-1"
                       value={leadForView.address}
                       onChange={(e) =>
                         setEditableLeadDetails((prev) => ({
@@ -4094,13 +4567,17 @@ export default function CallingDataPage() {
                       placeholder="Enter address"
                     />
                   ) : (
-                    <p className="font-medium">{leadForView.address || "N/A"}</p>
+                    <p className="font-medium text-sm leading-snug">{leadForView.address || "N/A"}</p>
                   )}
-                </div>
-                <div className="md:col-span-2">
-                  <p className="text-xs text-muted-foreground">Customer Note</p>
+                </CurrentLeadField>
+                <CurrentLeadField
+                  label="Customer Note"
+                  icon={<StickyNote className="w-3 h-3" />}
+                  className={currentLeadFieldSurface}
+                >
                   {isEditingLead ? (
                     <Textarea
+                      className="mt-1"
                       value={leadForView.customerNote}
                       onChange={(e) =>
                         setEditableLeadDetails((prev) => ({
@@ -4112,93 +4589,114 @@ export default function CallingDataPage() {
                       placeholder="Enter customer note"
                     />
                   ) : (
-                    <p className="font-medium">{leadForView.customerNote || "N/A"}</p>
+                    <p className="font-medium text-sm leading-snug">{leadForView.customerNote || "N/A"}</p>
                   )}
-                </div>
-                <div className="md:col-span-2 flex justify-end">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      openNewQuotationWithPrefill(
-                        { ...currentLead, ...leadForView },
-                        { callRemark, customerNote: leadForView.customerNote },
-                      )
-                    }
-                  >
-                    Create Quotation (Prefill)
-                  </Button>
-                </div>
+                </CurrentLeadField>
               </div>
-
-              <div
-                className={`space-y-3 pt-2 border-t ${
-                  isSocialMediaCurrentLead ? "border-border/60" : "border-orange-200/70"
-                }`}
-              >
+              <div className="flex flex-wrap items-center gap-2">
                 {currentLead.status === "assigned" || currentLead.status === "queued" ? (
                   <Button
-                    variant="outline"
                     onClick={() => handleStartCall(currentLead)}
-                    className="gap-2"
+                    className="h-8 gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"
                     disabled={isLeadSubmitting(currentLead.id)}
                   >
                     {isLeadSubmitting(currentLead.id) ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      <ArrowRightCircle className="w-4 h-4" />
+                      <PhoneCall className="w-3.5 h-3.5" />
                     )}
                     {isLeadSubmitting(currentLead.id) ? "Starting..." : "Start Call"}
                   </Button>
-                ) : (
-                  <>
+                ) : null}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  onClick={() =>
+                    openNewQuotationWithPrefill(
+                      { ...currentLead, ...leadForView },
+                      { callRemark, customerNote: leadForView.customerNote },
+                    )
+                  }
+                >
+                  Create Quotation
+                </Button>
+              </div>
+
+              {currentLead.status === "assigned" || currentLead.status === "queued" ? null : (
+                  <div className="rounded-xl border border-amber-200/80 bg-gradient-to-b from-amber-50/70 to-white p-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-amber-950">Log this call</p>
+                      <p className="text-[11px] text-muted-foreground">
+                        Dialled → {callConnection ? (callConnection === "connected" ? "Connected" : "Not Connected") : "choose connection"}
+                      </p>
+                    </div>
                     <Textarea
                       placeholder="Remarks — previous review is prefilled; edit before Submit"
                       value={callRemark}
                       onChange={(e) => setCallRemark(e.target.value)}
-                      rows={3}
+                      rows={2}
+                      className="bg-white"
                     />
-                    <div className="rounded-md border border-amber-200/80 bg-amber-50/40 p-3 space-y-3">
-                      <div className="text-xs text-muted-foreground flex flex-wrap gap-3">
-                        <span>Current Lead</span>
-                        <span>&rarr; Dialled</span>
-                        <span>&rarr; {callConnection ? (callConnection === "connected" ? "Connected" : "Not Connected") : "Choose Connection"}</span>
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-medium text-muted-foreground">Connection</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCallConnection("connected")
+                            setConnectedOutcome("")
+                            setDecisionOverride("pending")
+                            setDealClosed(false)
+                          }}
+                          className={cn(
+                            "h-10 rounded-lg border text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-colors",
+                            callConnection === "connected"
+                              ? "border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm"
+                              : "border-border/80 bg-white text-muted-foreground hover:bg-muted/40",
+                          )}
+                        >
+                          <PhoneIncoming className="w-4 h-4" />
+                          Connected
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCallConnection("not_connected")
+                            setConnectedOutcome("")
+                            setDecisionOverride("pending")
+                            setDealClosed(false)
+                            setIsRescheduleChecked(false)
+                            setRescheduleAt("")
+                          }}
+                          className={cn(
+                            "h-10 rounded-lg border text-sm font-medium inline-flex items-center justify-center gap-1.5 transition-colors",
+                            callConnection === "not_connected"
+                              ? "border-rose-400 bg-rose-50 text-rose-800 shadow-sm"
+                              : "border-border/80 bg-white text-muted-foreground hover:bg-muted/40",
+                          )}
+                        >
+                          <PhoneOff className="w-4 h-4" />
+                          Not Connected
+                        </button>
                       </div>
+                    </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Connection</p>
-                          <Select
-                            value={callConnection}
-                            onValueChange={(value: "connected" | "not_connected") => {
-                              setCallConnection(value)
-                              setConnectedOutcome("")
-                              setDecisionOverride("pending")
-                              setDealClosed(false)
-                              if (value === "not_connected") {
-                                setIsRescheduleChecked(false)
-                                setRescheduleAt("")
-                              }
-                            }}
-                          >
-                            <SelectTrigger>
-                              <SelectValue placeholder="Connected / Not Connected" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="connected">Connected</SelectItem>
-                              <SelectItem value="not_connected">Not Connected</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {callConnection === "connected" ? (
-                          <div className="space-y-1.5">
-                            <p className="text-xs text-muted-foreground">Connected Outcome</p>
-                            <Select
-                              value={connectedOutcome}
-                              onValueChange={(value: "interested" | "not_interested" | "decision_pending") => {
-                                setConnectedOutcome(value)
-                                if (value === "decision_pending") {
+                    {callConnection === "connected" ? (
+                      <div className="space-y-1.5">
+                        <p className="text-[11px] font-medium text-muted-foreground">Outcome</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                          {([
+                            { value: "interested", label: "Interested", active: "border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm" },
+                            { value: "not_interested", label: "Not Interested", active: "border-rose-400 bg-rose-50 text-rose-800 shadow-sm" },
+                            { value: "decision_pending", label: "Decision Pending", active: "border-blue-400 bg-blue-50 text-blue-800 shadow-sm" },
+                          ] as const).map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => {
+                                setConnectedOutcome(option.value)
+                                if (option.value === "decision_pending") {
                                   setIsRescheduleChecked(true)
                                   setRescheduleAt((prev) => prev || formatForDatetimeLocal(new Date(Date.now() + 60 * 60 * 1000).toISOString()))
                                 } else {
@@ -4206,25 +4704,25 @@ export default function CallingDataPage() {
                                   setRescheduleAt("")
                                 }
                               }}
+                              className={cn(
+                                "h-9 rounded-lg border text-sm font-medium transition-colors",
+                                connectedOutcome === option.value
+                                  ? option.active
+                                  : "border-border/80 bg-white text-muted-foreground hover:bg-muted/40",
+                              )}
                             >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Interested / Not Interested / Decision Pending" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="interested">Interested</SelectItem>
-                                <SelectItem value="not_interested">Not Interested</SelectItem>
-                                <SelectItem value="decision_pending">Decision Pending</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ) : null}
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
                       </div>
+                    ) : null}
 
                       {callConnection === "not_connected" ? (
                         <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Reason of not connected</p>
+                          <p className="text-[11px] font-medium text-muted-foreground">Reason of not connected</p>
                           <Select value={notConnectedReason} onValueChange={setNotConnectedReason}>
-                            <SelectTrigger>
+                            <SelectTrigger className="h-8 bg-white">
                               <SelectValue placeholder="Select reason" />
                             </SelectTrigger>
                             <SelectContent>
@@ -4240,9 +4738,9 @@ export default function CallingDataPage() {
 
                       {callConnection === "connected" && connectedOutcome === "not_interested" ? (
                         <div className="space-y-1.5">
-                          <p className="text-xs text-muted-foreground">Lost Reason</p>
+                          <p className="text-[11px] font-medium text-muted-foreground">Lost Reason</p>
                           <Select value={lostReason} onValueChange={setLostReason}>
-                            <SelectTrigger>
+                            <SelectTrigger className="h-8 bg-white">
                               <SelectValue placeholder="Select lost reason" />
                             </SelectTrigger>
                             <SelectContent>
@@ -4257,7 +4755,7 @@ export default function CallingDataPage() {
                       ) : null}
 
                       {callConnection === "connected" && connectedOutcome === "interested" ? (
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 rounded-lg border border-emerald-200/80 bg-emerald-50/40 px-3 py-2">
                           <Checkbox
                             id="deal-closed-checkbox"
                             checked={dealClosed}
@@ -4270,11 +4768,11 @@ export default function CallingDataPage() {
                       ) : null}
 
                       {callConnection === "connected" && connectedOutcome === "decision_pending" ? (
-                        <div className="space-y-3">
-                          <div className="space-y-1.5">
-                            <p className="text-xs text-muted-foreground">Hold Reason</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <p className="text-[11px] font-medium text-muted-foreground">Hold Reason</p>
                             <Select value={decisionReason} onValueChange={setDecisionReason}>
-                              <SelectTrigger>
+                              <SelectTrigger className="h-8 bg-white">
                                 <SelectValue placeholder="Select hold reason" />
                               </SelectTrigger>
                               <SelectContent>
@@ -4286,14 +4784,14 @@ export default function CallingDataPage() {
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="w-full md:w-72 space-y-1">
-                            <p className="text-xs text-muted-foreground">Reschedule date and time</p>
-                            <Input type="datetime-local" value={rescheduleAt} onChange={(e) => setRescheduleAt(e.target.value)} />
+                          <div className="space-y-1">
+                            <p className="text-[11px] font-medium text-muted-foreground">Follow-up time</p>
+                            <Input className="h-8 bg-white" type="datetime-local" value={rescheduleAt} onChange={(e) => setRescheduleAt(e.target.value)} />
                           </div>
-                          <div className="space-y-1.5">
-                            <p className="text-xs text-muted-foreground">Update final decision now (optional)</p>
+                          <div className="space-y-1">
+                            <p className="text-[11px] font-medium text-muted-foreground">Final decision (optional)</p>
                             <Select value={decisionOverride} onValueChange={(value: "pending" | "interested" | "not_interested") => setDecisionOverride(value)}>
-                              <SelectTrigger>
+                              <SelectTrigger className="h-8 bg-white">
                                 <SelectValue placeholder="Keep pending / Interested / Not Interested" />
                               </SelectTrigger>
                               <SelectContent>
@@ -4309,7 +4807,7 @@ export default function CallingDataPage() {
                       <div className="flex flex-wrap gap-2">
                         <Button
                           size="sm"
-                          className="bg-orange-500 hover:bg-orange-600 text-white"
+                          className="h-8 bg-orange-500 hover:bg-orange-600 text-white"
                           onClick={() => {
                             if (!callConnection) {
                               toast({
@@ -4399,9 +4897,7 @@ export default function CallingDataPage() {
                         </Button>
                       </div>
                     </div>
-                  </>
                 )}
-              </div>
             </CardContent>
           </Card>
         )}

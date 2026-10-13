@@ -30,12 +30,15 @@
  *     and echo them on GET
  *   - Allow extra phase keys (do not 400 Joi “unknown field”)
  *   - Persist leaser payment `id` exactly as sent, including `lp-self-…` (TEXT, not UUID-only)
+ *   - Persist leaser `date` as DATEONLY YYYY-MM-DD **as sent** (Accounts installment Due Date)
+ *   - Echo installment `dueDate` as YYYY-MM-DD on GET
  *   - Default missing collectDestination to chairbord (do not 400)
  *
  * DO NOT:
  *   - Create leaser rows inside the installment save handler (SPA already PUTs leaser)
  *   - Reject installment save because `collectDestination` is present
  *   - Replace `lp-self-…` ids with generated UUIDs (causes duplicate leaser rows on next save)
+ *   - Rewrite leaser `date` to NOW() / created_at / installment paymentDate
  *
  * No new HTTP routes. Builds on §AB (installment replace) + §BG (dealer leaser).
  *
@@ -117,7 +120,9 @@
  * Auto rows:
  *   id            = "lp-self-" + quotationId + "-" + phaseNumber
  *   vendorId      = office_inside subvendor id (same dealer as the quotation)
- *   date          = phase paymentDate or dueDate (YYYY-MM-DD)
+ *   date          = Accounts installment **Due Date** (phase.dueDate YYYY-MM-DD).
+ *                   Fallback paymentDate only when dueDate is empty.
+ *                   Persist DATEONLY as sent. Do **not** set to NOW() / created_at.
  *   amount        = self share only
  *                   collectedBy chairbord → skip (no row)
  *                   self + complete → paidAmount
@@ -145,6 +150,27 @@
  *   id: { type: DataTypes.STRING(80), primaryKey: true }
  *
  * Empty / missing id → generate UUID (manual Manage rows).
+ *
+ * -----------------------------------------------------------------------------
+ * C) Leaser date = Accounts Due Date (**§BP**)
+ * -----------------------------------------------------------------------------
+ *
+ * SPA sends payments[].date = phase.dueDate (Office Inside Due Date input).
+ * Example: installment dueDate "2026-09-18" → leaser date "2026-09-18"
+ * (not the day the installment was saved).
+ *
+ * PUT /admin/subvendors/:id/leaser:
+ *   - Store date / payment_date as DATE (DATEONLY), calendar day as sent
+ *   - Accept `date` or `payment_date`
+ *   - Empty date → today YYYY-MM-DD; a **sent** date must not be overwritten
+ *
+ * GET leaser:
+ *   - Echo `date` and `payment_date` as "YYYY-MM-DD" (not ISO datetime)
+ *   - Do not convert DATEONLY through UTC midnight in a way that shifts IST
+ *
+ * GET installments (approved list + quotation detail + installment save):
+ *   - Echo each phase `dueDate` / `due_date` as "YYYY-MM-DD"
+ *   - SPA overlays existing lp-self-* rows from this field after refresh
  *
  * -----------------------------------------------------------------------------
  * Normalize helper (installment)
@@ -180,6 +206,16 @@ function pickCollectDestination(phase) {
   )
 }
 
+/** Persist / echo leaser + installment calendar days as YYYY-MM-DD (DATEONLY). */
+function calendarDateYmd(raw, fallback) {
+  const text = String(raw || fallback || "").trim()
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (match) return match[1]
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+  return new Date().toISOString().slice(0, 10)
+}
+
 /**
  * Add to normalizePhasesInput in BACKEND_INSTALLMENT_REPLACE.ts:
  *
@@ -196,6 +232,8 @@ function pickCollectDestination(phase) {
  * 2. Switch to To Chairbord → save → collectDestination "chairbord", lp-self-* gone.
  * 3. Office Outside / Loan phase: no collectDestination required; extra key must not 400.
  * 4. Refresh dialog: Collect self radio still selected.
+ * 5. Due Date 2026-09-18, save Collect self today → GET leaser date is "2026-09-18"
+ *    (not today). Refresh Manage still shows 18/09/2026.
  */
 
 export {
@@ -203,4 +241,5 @@ export {
   COLLECT_CHAIRBORD,
   normalizeCollectDestination,
   pickCollectDestination,
+  calendarDateYmd,
 }

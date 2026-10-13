@@ -65,7 +65,8 @@
  * so the SPA can rebuild both pairs after refresh.
  *
  * Each payment row:
- *   date (YYYY-MM-DD), amount (INR int), paymentType (Cash|Bank|UPI|Cheque|Other),
+ *   date (YYYY-MM-DD calendar day as sent — Collect self uses Accounts Due Date, **§BP**),
+ *   amount (INR int), paymentType (Cash|Bank|UPI|Cheque|Other),
  *   remark (string), customerIds (quotation ids, multi-select), sortOrder (Payment 1, 2, …)
  *
  * Newest payment is shown on top; sortOrder 1 stays Payment 1 (older, lower in the list).
@@ -173,7 +174,11 @@
  * payment_date as alias of date.
  *
  * paymentType allowed: Cash, Bank, UPI, Cheque, Other. Unknown → "Cash".
- * amount: INR integer ≥ 0. date: YYYY-MM-DD (empty → today UTC).
+ * amount: INR integer ≥ 0.
+ * date: YYYY-MM-DD DATEONLY as sent (`date` or `payment_date`). Empty → today.
+ *   Do **not** rewrite a sent date to NOW() / created_at / paymentDate.
+ *   Collect-self (`lp-self-*`) sends the installment Due Date (same as Accounts).
+ *   GET must echo `date` + `payment_date` as `"YYYY-MM-DD"` (not ISO datetime).
  * customerIds: array of strings (quotation ids). Invalid / missing → [].
  * sortOrder: integer ≥ 1. If omitted, use 1..n in body order.
  *
@@ -249,16 +254,27 @@ function asCustomerIds(raw) {
   return raw.map((value) => asText(value)).filter(Boolean)
 }
 
+function leaserDateYmd(raw) {
+  const text = asText(raw)
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/)
+  if (match) return match[1]
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+  return new Date().toISOString().slice(0, 10)
+}
+
 function publicLeaserPayment(row) {
   const customerIds = asCustomerIds(row.customerIds ?? row.customer_ids)
   const paymentType = LEASER_TYPES.includes(row.paymentType || row.payment_type)
     ? row.paymentType || row.payment_type
     : "Cash"
+  const date = leaserDateYmd(row.date || row.payment_date)
   return {
     id: row.id,
     vendorId: row.vendorId || row.vendor_id,
     vendor_id: row.vendorId || row.vendor_id,
-    date: asText(row.date || row.payment_date),
+    date,
+    payment_date: date,
     amount: roundInr(row.amount),
     paymentType,
     payment_type: paymentType,
