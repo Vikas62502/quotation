@@ -1,6 +1,6 @@
 "use client"
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, startTransition } from "react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, startTransition, type ReactNode } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
@@ -45,6 +45,7 @@ import {
   LogOut,
   Upload,
   MoreHorizontal,
+  Sparkles,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -154,6 +155,14 @@ import {
   getCallingConnectionBadgeClass,
   resolveCallingActionFields,
 } from "@/lib/calling-action-summary"
+import {
+  extractUploadBatchesList,
+  extractUploadRowsFromBatchResponse,
+  isSocialMediaCallingLead,
+  mapHrUploadRowToSocialLead,
+  normalizeSheetSourcesResponse,
+  normalizeSocialLeadsResponse,
+} from "@/lib/google-sheets-social-leads"
 import { filterActiveDealers } from "@/lib/active-dealers"
 import { AdminVisitDetailsDialog } from "@/components/admin-visit-details-dialog"
 import { loadAdminVisitorReportRows } from "@/lib/load-admin-visitor-reports"
@@ -529,6 +538,35 @@ function formatOverviewRevenueInr(amount: number): string {
   return `₹${Math.round(amount).toLocaleString("en-IN")}`
 }
 
+function OverviewStatCard({
+  label,
+  value,
+  hint,
+  icon: Icon,
+  cardClassName,
+  iconClassName,
+}: {
+  label: string
+  value: ReactNode
+  hint: string
+  icon: typeof FileText
+  cardClassName: string
+  iconClassName: string
+}) {
+  return (
+    <div className={cn("rounded-xl border px-4 py-3 min-h-[6.5rem] shadow-sm", cardClassName)}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[11px] font-medium text-muted-foreground leading-tight">{label}</p>
+        <div className={cn("w-8 h-8 rounded-full border flex items-center justify-center shrink-0", iconClassName)}>
+          <Icon className="w-4 h-4" />
+        </div>
+      </div>
+      <p className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight leading-none">{value}</p>
+      <p className="mt-1.5 text-[11px] text-muted-foreground leading-tight">{hint}</p>
+    </div>
+  )
+}
+
 function uniqueQuotationsByCustomer<
   T extends {
     id: string
@@ -825,6 +863,80 @@ type CallingActionRecord = {
   statusText?: string
   actionAt: string
   nextFollowUpAt?: string
+  sourceType?: string
+  source_type?: string
+  sheetSourceId?: string
+  uploadFileName?: string
+  platform?: string
+  campaignName?: string
+  sheetLeadStatus?: string
+  leadStatus?: string
+  lead_status?: string
+  externalId?: string
+  customerNote?: string
+}
+
+type CallingReportSourceFilter = "all" | "social" | "normal"
+
+function callingReportSourceLabel(item: CallingActionRecord) {
+  return isSocialMediaCallingLead(item) ? "Social Media" : "Calling data"
+}
+
+function callingReportSourceHint(socialCount: number, normalCount: number) {
+  return `Social ${socialCount} · Normal ${normalCount}`
+}
+
+type CallingReportSocialLookup = {
+  id?: string
+  mobile?: string
+  sourceType?: string
+  platform?: string
+  campaignName?: string
+  sheetSourceId?: string
+  uploadFileName?: string
+  externalId?: string
+}
+
+function socialLookupFromUnknown(row: Record<string, unknown> | null | undefined): CallingReportSocialLookup | null {
+  if (!row) return null
+  const id = String(row.id || row.leadId || row.lead_id || "").trim()
+  const mobile = String(row.mobile || row.phone || row.customerMobile || row.phone_number || "")
+    .replace(/\D/g, "")
+    .slice(-10)
+  if (!id && mobile.length < 8) return null
+  return {
+    id: id || undefined,
+    mobile: mobile.length >= 8 ? mobile : undefined,
+    sourceType: String(row.sourceType || row.source_type || "google_sheet"),
+    platform: String(row.platform || ""),
+    campaignName: String(row.campaignName || row.campaign_name || ""),
+    sheetSourceId: String(row.sheetSourceId || row.sheet_source_id || ""),
+    uploadFileName: String(row.uploadFileName || row.upload_file_name || row.fileName || row.file_name || ""),
+    externalId: String(row.externalId || row.external_id || ""),
+  }
+}
+
+function applyCallingReportSocialLookup(
+  item: CallingActionRecord,
+  byLeadId: Map<string, CallingReportSocialLookup>,
+  byMobile: Map<string, CallingReportSocialLookup>,
+): CallingActionRecord {
+  if (isSocialMediaCallingLead(item)) return item
+  const mobile = String(item.customerMobile || "").replace(/\D/g, "").slice(-10)
+  const src =
+    (item.leadId ? byLeadId.get(String(item.leadId).trim()) : undefined) ||
+    (mobile.length >= 8 ? byMobile.get(mobile) : undefined)
+  if (!src) return item
+  return {
+    ...item,
+    sourceType: item.sourceType || src.sourceType || "social_media",
+    source_type: item.source_type || src.sourceType || "social_media",
+    platform: item.platform || src.platform,
+    campaignName: item.campaignName || src.campaignName,
+    sheetSourceId: item.sheetSourceId || src.sheetSourceId,
+    uploadFileName: item.uploadFileName || src.uploadFileName,
+    externalId: item.externalId || src.externalId,
+  }
 }
 
 type ApprovalPaymentType = "loan" | "cash" | "mix"
@@ -1648,6 +1760,8 @@ export default function AdminPanelPage() {
   const [callingCustomToDate, setCallingCustomToDate] = useState("")
   const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
   const [callingConnectionFilter, setCallingConnectionFilter] = useState<"all" | "connected" | "not_connected">("all")
+  const [callingSourceFilter, setCallingSourceFilter] = useState<CallingReportSourceFilter>("all")
+  const [callingReportSocialLeads, setCallingReportSocialLeads] = useState<CallingReportSocialLookup[]>([])
   const [isCallingActionsLoading, setIsCallingActionsLoading] = useState(false)
   const [topDealersDateFilter, setTopDealersDateFilter] = useState<JourneyDateRangeFilter>("this_month")
   const [topDealersDealerFilter, setTopDealersDealerFilter] = useState("all")
@@ -2102,6 +2216,7 @@ export default function AdminPanelPage() {
       dealerNameFromObject || (fallbackDealer ? `${fallbackDealer.firstName} ${fallbackDealer.lastName}` : "Unknown Employee")
     const actionAt = item?.actionAt || item?.action_at || item?.updatedAt || ""
     const leadId = item?.leadId || item?.lead?.id || item?.id || ""
+    const lead = item?.lead || item
     return {
       id: item?.id || `${leadId || "lead"}-${actionAt || "na"}-${index}`,
       leadId,
@@ -2119,6 +2234,45 @@ export default function AdminPanelPage() {
       statusText: item?.statusText || item?.status_text || "",
       actionAt,
       nextFollowUpAt: item?.nextFollowUpAt,
+      sourceType: String(
+        item?.sourceType ||
+          item?.source_type ||
+          lead?.sourceType ||
+          lead?.source_type ||
+          lead?.upload?.sourceType ||
+          lead?.upload?.source_type ||
+          "",
+      ).trim() || undefined,
+      source_type: String(item?.source_type || lead?.source_type || "").trim() || undefined,
+      sheetSourceId: String(item?.sheetSourceId || item?.sheet_source_id || lead?.sheetSourceId || lead?.sheet_source_id || "").trim() || undefined,
+      uploadFileName: String(
+        item?.uploadFileName ||
+          item?.upload_file_name ||
+          item?.fileName ||
+          item?.file_name ||
+          lead?.uploadFileName ||
+          lead?.fileName ||
+          lead?.file_name ||
+          item?.upload?.fileName ||
+          item?.batch?.fileName ||
+          lead?.upload?.fileName ||
+          "",
+      ).trim() || undefined,
+      platform: String(item?.platform || lead?.platform || "").trim() || undefined,
+      campaignName: String(
+        item?.campaignName ||
+          item?.campaign_name ||
+          lead?.campaignName ||
+          lead?.campaign_name ||
+          item?.adName ||
+          lead?.adName ||
+          "",
+      ).trim() || undefined,
+      sheetLeadStatus: String(item?.sheetLeadStatus || lead?.sheetLeadStatus || lead?.lead_status || "").trim() || undefined,
+      leadStatus: String(item?.leadStatus || lead?.leadStatus || "").trim() || undefined,
+      lead_status: String(item?.lead_status || lead?.lead_status || "").trim() || undefined,
+      externalId: String(item?.externalId || item?.external_id || lead?.externalId || lead?.external_id || "").trim() || undefined,
+      customerNote: String(item?.customerNote || lead?.customerNote || "").trim() || undefined,
     }
   }
 
@@ -2234,6 +2388,89 @@ export default function AdminPanelPage() {
     callingActionDealerFilter,
     dealers,
   ])
+
+  const loadCallingReportSocialLeads = useCallback(async () => {
+    if (!useApi || !isAuthenticated || !getAuthToken()) return
+    const collected: CallingReportSocialLookup[] = []
+    const seen = new Set<string>()
+    const addLookup = (row: CallingReportSocialLookup | null) => {
+      if (!row) return
+      const key = `${row.id || ""}|${row.mobile || ""}`
+      if (!key || key === "|" || seen.has(key)) return
+      seen.add(key)
+      collected.push(row)
+    }
+
+    try {
+      const sourcesResp = await api.hr.sheetSources.getAll()
+      const sources = normalizeSheetSourcesResponse(sourcesResp).filter((source) => source.id && !source.id.startsWith("local-"))
+      await Promise.all(
+        sources.slice(0, 16).map(async (source) => {
+          try {
+            const leadsResp = await api.hr.sheetSources.getLeads(source.id, { limit: 500 })
+            for (const lead of normalizeSocialLeadsResponse(leadsResp)) {
+              addLookup({
+                id: lead.id,
+                mobile: String(lead.mobile || "").replace(/\D/g, "").slice(-10),
+                sourceType: "google_sheet",
+                platform: lead.platform,
+                campaignName: lead.campaignName,
+                sheetSourceId: source.id,
+                uploadFileName: source.displayName || source.sheetTabName,
+                externalId: lead.externalId,
+              })
+            }
+          } catch {
+            // ignore per-source failures
+          }
+        }),
+      )
+    } catch {
+      // sheet-sources may be HR-only; fall through to upload batches
+    }
+
+    try {
+      const uploadsResp = await api.hr.uploadedLeads.getAll({ limit: 200 })
+      const batches = extractUploadBatchesList(uploadsResp).filter((batch) => {
+        const sourceType = String(batch.sourceType || batch.source_type || "").toLowerCase()
+        const fileName = String(batch.fileName || batch.file_name || batch.originalFileName || "").toLowerCase()
+        return (
+          sourceType === "google_sheet" ||
+          sourceType.includes("social") ||
+          sourceType.includes("meta") ||
+          fileName.includes("google sheet") ||
+          fileName.includes("social") ||
+          fileName.includes("meta")
+        )
+      })
+      await Promise.all(
+        batches.slice(0, 16).map(async (batch) => {
+          const batchId = String(batch.id || batch.batchId || batch.uploadId || "")
+          if (!batchId) return
+          try {
+            const detail = await api.hr.uploadedLeads.getById(batchId, { limit: 500 })
+            for (const row of extractUploadRowsFromBatchResponse(detail)) {
+              const mapped = mapHrUploadRowToSocialLead(row)
+              addLookup(
+                socialLookupFromUnknown({
+                  ...row,
+                  ...mapped,
+                  sourceType: "google_sheet",
+                  uploadFileName: String(batch.fileName || batch.file_name || mapped.sourceTab || ""),
+                }),
+              )
+            }
+          } catch {
+            // ignore per-batch failures
+          }
+        }),
+      )
+    } catch {
+      // ignore
+    }
+
+    if (collected.length > 0) setCallingReportSocialLeads(collected)
+  }, [useApi, isAuthenticated])
 
   const journeyCallingActionsRequestRef = useRef(0)
   const journeySearchFetchRef = useRef(0)
@@ -2434,11 +2671,13 @@ export default function AdminPanelPage() {
     if (!isAuthenticated || !useApi) return
     if (activeTab !== "calling-reports") return
     void loadCallingActionsForReports()
+    void loadCallingReportSocialLeads()
   }, [
     isAuthenticated,
     useApi,
     activeTab,
     loadCallingActionsForReports,
+    loadCallingReportSocialLeads,
   ])
 
   useEffect(() => {
@@ -5246,8 +5485,18 @@ export default function AdminPanelPage() {
     return isCallingActionInBounds(actionAt, getPresetBounds(callingRange))
   }
 
+  const callingActionsWithSocialSource = useMemo(() => {
+    const byLeadId = new Map<string, CallingReportSocialLookup>()
+    const byMobile = new Map<string, CallingReportSocialLookup>()
+    for (const row of callingReportSocialLeads) {
+      if (row.id) byLeadId.set(row.id, row)
+      if (row.mobile && row.mobile.length >= 8) byMobile.set(row.mobile.slice(-10), row)
+    }
+    return callingActions.map((item) => applyCallingReportSocialLookup(item, byLeadId, byMobile))
+  }, [callingActions, callingReportSocialLeads])
+
   const filteredCallingActions = latestCallingActionPerContact(
-    callingActions.filter((item) => {
+    callingActionsWithSocialSource.filter((item) => {
       if (String(item.action || "").toLowerCase().trim() === "start") return false
       if (
         !isEntityIdAllowedByModuleScope(
@@ -5272,11 +5521,83 @@ export default function AdminPanelPage() {
   const connectedOutcomeSummary = buildCallingActionSummary(
     filteredCallingActions.filter((item) => classifyCallingConnection(item) === "connected"),
   )
+  const callingReportSourceSplit = (() => {
+    const socialItems = filteredCallingActions.filter((item) => isSocialMediaCallingLead(item))
+    const normalItems = filteredCallingActions.filter((item) => !isSocialMediaCallingLead(item))
+    const socialConnected = socialItems.filter((item) => classifyCallingConnection(item) === "connected")
+    const normalConnected = normalItems.filter((item) => classifyCallingConnection(item) === "connected")
+    return {
+      socialTotal: socialItems.length,
+      normalTotal: normalItems.length,
+      socialConnection: buildCallingConnectionSummary(socialItems),
+      normalConnection: buildCallingConnectionSummary(normalItems),
+      socialOutcome: buildCallingActionSummary(socialConnected),
+      normalOutcome: buildCallingActionSummary(normalConnected),
+    }
+  })()
   const isCallingReportsInitialLoading = isCallingActionsLoading && callingActions.length === 0
-  const displayCallingActions =
-    callingConnectionFilter === "all"
-      ? filteredCallingActions
-      : filteredCallingActions.filter((item) => classifyCallingConnection(item) === callingConnectionFilter)
+  const displayCallingActions = filteredCallingActions.filter((item) => {
+    if (callingConnectionFilter !== "all" && classifyCallingConnection(item) !== callingConnectionFilter) {
+      return false
+    }
+    if (callingSourceFilter === "all") return true
+    const social = isSocialMediaCallingLead(item)
+    return callingSourceFilter === "social" ? social : !social
+  })
+
+  const downloadCallingReportsCsv = () => {
+    if (displayCallingActions.length === 0) {
+      toast({
+        title: "No data to download",
+        description: "No calling actions match the selected filters.",
+      })
+      return
+    }
+    const stamp = formatYmdLocal(new Date())
+    const rangeLabel = callingRange === "custom"
+      ? `${callingCustomFromDate || "from"}_to_${callingCustomToDate || "to"}`
+      : callingRange
+    downloadCsvFile({
+      filename: `calling-reports-${rangeLabel}-${stamp}.csv`,
+      headers: [
+        "Source",
+        "Employee",
+        "Customer",
+        "Phone",
+        "Lead",
+        "Connection",
+        "Outcome",
+        "Status",
+        "Remark",
+        "Call at",
+        "Platform",
+        "Campaign",
+      ],
+      rows: displayCallingActions.map((item) => {
+        const parsed = resolveCallingActionFields(item)
+        const connectionKind = classifyCallingConnection(item)
+        const summaryBucket = classifyCallingActionSummaryBucket(item)
+        return [
+          callingReportSourceLabel(item),
+          item.dealerName || "",
+          item.customerName || "",
+          item.customerMobile || "",
+          item.leadId || "",
+          CALLING_CONNECTION_LABELS[connectionKind],
+          connectionKind === "connected" ? CALLING_SUMMARY_BUCKET_LABELS[summaryBucket] : "",
+          parsed.status || item.action || "",
+          parsed.remark || "",
+          parseCallingActionAt(item.actionAt)?.toLocaleString("en-IN") || item.actionAt || "",
+          item.platform || "",
+          item.campaignName || "",
+        ]
+      }),
+    })
+    toast({
+      title: "Report downloaded",
+      description: `Exported ${displayCallingActions.length} calling report row${displayCallingActions.length === 1 ? "" : "s"}.`,
+    })
+  }
 
   const visitorReportDateBounds = useMemo(() => {
     if (visitorReportRange === "all") return null
@@ -8364,16 +8685,17 @@ export default function AdminPanelPage() {
           ) : null}
 
           {/* Overview Tab */}
-          <TabsContent value="overview" className="space-y-6">
+          <TabsContent value="overview" className="space-y-4">
             {adminLoadError ? (
-              <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="rounded-xl border border-rose-200 bg-gradient-to-r from-rose-50 to-white p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm">
                 <div>
-                  <p className="font-medium text-destructive">Could not load data from API</p>
+                  <p className="font-medium text-rose-700">Could not load data from API</p>
                   <p className="text-sm text-muted-foreground mt-1">{adminLoadError}</p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
+                  className="border-rose-200 text-rose-700 hover:bg-rose-50"
                   onClick={() => void loadData(++adminLoadRequestRef.current)}
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
@@ -8384,110 +8706,94 @@ export default function AdminPanelPage() {
             {isOverviewInitialLoading ? (
               <p className="text-sm text-muted-foreground">Loading unique customer totals…</p>
             ) : null}
-            {/* Statistics Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Quotations</CardTitle>
-                  <FileText className="w-5 h-5 text-primary" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">
-                    {isOverviewInitialLoading ? "—" : totalQuotations.toLocaleString()}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Unique customers · all time</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Revenue</CardTitle>
-                  <IndianRupee className="w-5 h-5 text-green-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(totalRevenue)}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Unique customers · approved · all time</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">This Month</CardTitle>
-                  <TrendingUp className="w-5 h-5 text-blue-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(thisMonthRevenue)}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {isOverviewInitialLoading
-                      ? "Loading approved/capacity…"
-                      : `${thisMonthApprovedCountDisplay} approved · ${formatOverviewKw(thisMonthTotalKw)} capacity`}
-                  </p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">This Month Quotation</CardTitle>
-                  <Calendar className="w-5 h-5 text-amber-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">
-                    {isOverviewInitialLoading ? "—" : thisMonthQuotationCount.toLocaleString()}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Unique customers created this month</p>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Approved Customers (Month)</CardTitle>
-                  <UserCheck className="w-5 h-5 text-purple-500" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{isOverviewInitialLoading ? "—" : thisMonthApprovedCustomers}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Unique customers approved this month</p>
-                </CardContent>
-              </Card>
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+              <OverviewStatCard
+                label="Total Quotations"
+                value={isOverviewInitialLoading ? "—" : totalQuotations.toLocaleString()}
+                hint="Unique customers · all time"
+                icon={FileText}
+                cardClassName="border-orange-200/80 bg-gradient-to-b from-white to-orange-50/80"
+                iconClassName="bg-orange-100 border-orange-200 text-orange-700"
+              />
+              <OverviewStatCard
+                label="Total Revenue"
+                value={isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(totalRevenue)}
+                hint="Unique customers · approved · all time"
+                icon={IndianRupee}
+                cardClassName="border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/70"
+                iconClassName="bg-emerald-100 border-emerald-200 text-emerald-700"
+              />
+              <OverviewStatCard
+                label="This Month"
+                value={isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(thisMonthRevenue)}
+                hint={
+                  isOverviewInitialLoading
+                    ? "Loading approved/capacity…"
+                    : `${thisMonthApprovedCountDisplay} approved · ${formatOverviewKw(thisMonthTotalKw)} capacity`
+                }
+                icon={TrendingUp}
+                cardClassName="border-sky-200/80 bg-gradient-to-b from-white to-sky-50/70"
+                iconClassName="bg-sky-100 border-sky-200 text-sky-700"
+              />
+              <OverviewStatCard
+                label="This Month Quotation"
+                value={isOverviewInitialLoading ? "—" : thisMonthQuotationCount.toLocaleString()}
+                hint="Unique customers created this month"
+                icon={Calendar}
+                cardClassName="border-amber-200/80 bg-gradient-to-b from-white to-amber-50/70"
+                iconClassName="bg-amber-100 border-amber-200 text-amber-700"
+              />
+              <OverviewStatCard
+                label="Approved Customers (Month)"
+                value={isOverviewInitialLoading ? "—" : thisMonthApprovedCustomers}
+                hint="Unique customers approved this month"
+                icon={UserCheck}
+                cardClassName="border-violet-200/80 bg-gradient-to-b from-white to-violet-50/70"
+                iconClassName="bg-violet-100 border-violet-200 text-violet-700"
+              />
             </div>
 
-            {/* Top Dealers  */}
-            <Card>
-              <CardHeader className="space-y-4">
-                <div className="space-y-1">
-                  <CardTitle>Dealers by Revenue</CardTitle>
-                  <CardDescription>
-                    Ranked by revenue from unique customers with quotations approved in the selected period
-                    (approval date only — not creation date). Defaults to this month.
-                  </CardDescription>
-                  <p className="text-sm font-semibold text-foreground pt-1">
-                    Total revenue (filtered):{" "}
-                    <span className="text-primary">
-                      {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(filteredOverviewTotalRevenue)}
-                    </span>
-                    <span className="text-muted-foreground font-normal mx-2">·</span>
-                    Total capacity (filtered):{" "}
-                    <span className="text-primary">
-                      {isOverviewInitialLoading ? "—" : formatOverviewKw(filteredOverviewTotalKw)}
-                    </span>
-                    <span className="text-muted-foreground font-normal text-xs ml-1">
-                      {isOverviewInitialLoading
-                        ? "(loading unique customers)"
-                        : `(${overviewPeriodApprovedQuotations.length} unique customer${
-                            overviewPeriodApprovedQuotations.length === 1 ? "" : "s"
-                          })`}
-                    </span>
-                  </p>
+            <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm overflow-hidden">
+              <CardHeader className="space-y-3 pb-3">
+                <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                  <div className="min-w-0 flex items-start gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-orange-100 border border-orange-200 flex items-center justify-center shrink-0 mt-0.5">
+                      <TrendingUp className="w-4 h-4 text-orange-700" />
+                    </div>
+                    <div className="min-w-0">
+                      <CardTitle className="text-base">Dealers by Revenue</CardTitle>
+                      <CardDescription className="mt-0.5">
+                        Ranked by unique customers approved in the selected period (approval date, not created date).
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2 shrink-0">
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-1.5">
+                      <p className="text-[10px] text-emerald-800/80 leading-tight">Filtered revenue</p>
+                      <p className="text-sm font-semibold text-emerald-900 tabular-nums">
+                        {isOverviewInitialLoading ? "—" : formatOverviewRevenueInr(filteredOverviewTotalRevenue)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-1.5">
+                      <p className="text-[10px] text-amber-800/80 leading-tight">Filtered capacity</p>
+                      <p className="text-sm font-semibold text-amber-900 tabular-nums">
+                        {isOverviewInitialLoading ? "—" : formatOverviewKw(filteredOverviewTotalKw)}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-1.5">
+                      <p className="text-[10px] text-sky-800/80 leading-tight">Unique customers</p>
+                      <p className="text-sm font-semibold text-sky-900 tabular-nums">
+                        {isOverviewInitialLoading ? "—" : overviewPeriodApprovedQuotations.length}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <Select
                     value={topDealersDateFilter}
                     onValueChange={(value) => setTopDealersDateFilter(value as JourneyDateRangeFilter)}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue placeholder="Date range" />
                     </SelectTrigger>
                     <SelectContent>
@@ -8502,7 +8808,7 @@ export default function AdminPanelPage() {
                     </SelectContent>
                   </Select>
                   <Select value={topDealersDealerFilter} onValueChange={setTopDealersDealerFilter}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue placeholder="Filter by dealer" />
                     </SelectTrigger>
                     <SelectContent>
@@ -8516,11 +8822,12 @@ export default function AdminPanelPage() {
                   </Select>
                 </div>
                 {topDealersDateFilter === "custom" ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <Label className="text-xs text-muted-foreground">From</Label>
                       <Input
                         type="date"
+                        className="h-9"
                         value={topDealersCustomFromDate}
                         onChange={(e) => setTopDealersCustomFromDate(e.target.value)}
                       />
@@ -8529,6 +8836,7 @@ export default function AdminPanelPage() {
                       <Label className="text-xs text-muted-foreground">To</Label>
                       <Input
                         type="date"
+                        className="h-9"
                         value={topDealersCustomToDate}
                         onChange={(e) => setTopDealersCustomToDate(e.target.value)}
                       />
@@ -8536,14 +8844,16 @@ export default function AdminPanelPage() {
                   </div>
                 ) : null}
               </CardHeader>
-              <CardContent className="space-y-6">
+              <CardContent className="space-y-5">
                 {isOverviewInitialLoading ? (
                   <p className="text-sm text-muted-foreground text-center py-6">
                     Loading unique customer totals…
                   </p>
                 ) : (
                   <>
-                    <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
+                    <div className="rounded-xl border border-orange-100 bg-white/70 p-3">
+                      <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
+                    </div>
                     {dealerStats.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-6">
                         No active dealers match the selected filter.
@@ -8554,32 +8864,59 @@ export default function AdminPanelPage() {
                       </p>
                     ) : (
                       <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-3">Dealer breakdown</p>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">Dealer breakdown</p>
                     <div
-                      className="native-scroll-list space-y-4 overflow-y-auto overscroll-y-contain pr-1"
+                      className="native-scroll-list space-y-2 overflow-y-auto overscroll-y-contain pr-1"
                       style={{
-                        maxHeight: `calc(${DEALERS_BY_REVENUE_VISIBLE_ROWS} * (5.5rem + 1rem) - 1rem)`,
+                        maxHeight: `calc(${DEALERS_BY_REVENUE_VISIBLE_ROWS} * (5.25rem + 0.5rem) - 0.5rem)`,
                       }}
                     >
                       {[...dealersWithPeriodActivity]
                         .sort((a, b) => b.revenue - a.revenue || b.quotationCount - a.quotationCount)
-                        .map((stat) => (
+                        .map((stat, index) => (
                           <div
                             key={stat.dealer.id}
-                            className="flex items-center justify-between p-4 border rounded-lg shrink-0"
+                            className={cn(
+                              "flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg shrink-0 border shadow-sm",
+                              index === 0
+                                ? "border-amber-300 bg-gradient-to-r from-amber-50 to-white border-l-4 border-l-amber-500"
+                                : index === 1
+                                  ? "border-slate-200 bg-gradient-to-r from-slate-50 to-white border-l-4 border-l-slate-400"
+                                  : index === 2
+                                    ? "border-orange-200 bg-gradient-to-r from-orange-50 to-white border-l-4 border-l-orange-400"
+                                    : "border-border/70 bg-white border-l-4 border-l-orange-200",
+                            )}
                           >
-                            <div>
-                              <p className="font-semibold">
-                                {stat.dealer.firstName} {stat.dealer.lastName}
-                              </p>
-                              <p className="text-sm text-muted-foreground">{stat.dealer.email}</p>
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={cn(
+                                  "w-7 h-7 rounded-full border flex items-center justify-center text-[11px] font-semibold tabular-nums shrink-0",
+                                  index === 0
+                                    ? "bg-amber-100 border-amber-300 text-amber-800"
+                                    : index === 1
+                                      ? "bg-slate-100 border-slate-300 text-slate-700"
+                                      : index === 2
+                                        ? "bg-orange-100 border-orange-300 text-orange-800"
+                                        : "bg-muted border-border text-muted-foreground",
+                                )}
+                              >
+                                {index + 1}
+                              </div>
+                              <div className="min-w-0">
+                                <p className="font-semibold truncate">
+                                  {stat.dealer.firstName} {stat.dealer.lastName}
+                                </p>
+                                <p className="text-[11px] text-muted-foreground truncate">{stat.dealer.email}</p>
+                              </div>
                             </div>
-                            <div className="text-right">
-                              <p className="font-semibold">{formatOverviewRevenueInr(stat.revenue)}</p>
-                              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                            <div className="text-right shrink-0">
+                              <p className="font-semibold tabular-nums text-emerald-800">
+                                {formatOverviewRevenueInr(stat.revenue)}
+                              </p>
+                              <p className="text-[11px] font-medium text-amber-700">
                                 {formatOverviewKw(stat.totalKw)}
                               </p>
-                              <p className="text-sm text-muted-foreground">
+                              <p className="text-[11px] text-muted-foreground">
                                 {stat.quotationCount} unique customer
                                 {stat.quotationCount === 1 ? "" : "s"}
                               </p>
@@ -8642,23 +8979,22 @@ export default function AdminPanelPage() {
           </TabsContent>
 
           <TabsContent value="calling-reports" className="space-y-4">
-            <Card>
-              <CardHeader>
+            <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/15 shadow-sm">
+              <CardHeader className="pb-3">
                 <CardTitle>Employee Calling Actions</CardTitle>
                 <CardDescription>
-                  Track actions by employee (dealer) and date: daily, weekly, monthly, last month, custom range, or all
-                  time. Custom range uses each action&apos;s timestamp.
+                  Social Media and calling data together. Filter by employee, date, source, and connection.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">
                   <Select
                     value={callingRange}
                     onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
                       setCallingRange(value)
                     }
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue placeholder="Select report range" />
                     </SelectTrigger>
                     <SelectContent>
@@ -8672,7 +9008,7 @@ export default function AdminPanelPage() {
                   </Select>
 
                   <Select value={callingActionDealerFilter} onValueChange={setCallingActionDealerFilter}>
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue placeholder="Filter by employee" />
                     </SelectTrigger>
                     <SelectContent>
@@ -8686,86 +9022,26 @@ export default function AdminPanelPage() {
                       ))}
                     </SelectContent>
                   </Select>
-                </div>
-                {callingRange === "custom" ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">From</Label>
-                      <Input
-                        type="date"
-                        value={callingCustomFromDate}
-                        onChange={(e) => setCallingCustomFromDate(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">To</Label>
-                      <Input
-                        type="date"
-                        value={callingCustomToDate}
-                        onChange={(e) => setCallingCustomToDate(e.target.value)}
-                      />
-                    </div>
-                  </div>
-                ) : null}
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Card className="border-border/60">
-                    <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Total Calls</p>
-                      <p className="text-xl font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : filteredCallingActions.length}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-slate-300 bg-slate-50/80">
-                    <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Not Connected</p>
-                      <p className="text-xl font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : connectionSummary.notConnected}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-emerald-200 bg-emerald-50/40">
-                    <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Connected</p>
-                      <p className="text-xl font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : connectionSummary.connected}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Card className="border-rose-100 bg-rose-50/20">
-                    <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
-                      <p className="text-lg font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.notInterested}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-emerald-100 bg-emerald-50/20">
-                    <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Interested</p>
-                      <p className="text-lg font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.interested}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card className="border-blue-100 bg-blue-50/20">
-                    <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
-                      <p className="text-lg font-semibold">
-                        {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.followUp}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <Select
+                    value={callingSourceFilter}
+                    onValueChange={(value: CallingReportSourceFilter) => setCallingSourceFilter(value)}
+                  >
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder="Source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All sources</SelectItem>
+                      <SelectItem value="social">Social Media</SelectItem>
+                      <SelectItem value="normal">Calling data</SelectItem>
+                    </SelectContent>
+                  </Select>
+
                   <Select
                     value={callingConnectionFilter}
                     onValueChange={(value: "all" | "connected" | "not_connected") => setCallingConnectionFilter(value)}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger className="h-9">
                       <SelectValue placeholder="Connection" />
                     </SelectTrigger>
                     <SelectContent>
@@ -8774,6 +9050,122 @@ export default function AdminPanelPage() {
                       <SelectItem value="not_connected">Not Connected only</SelectItem>
                     </SelectContent>
                   </Select>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-9 gap-1.5"
+                    onClick={downloadCallingReportsCsv}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download report
+                  </Button>
+                </div>
+                {callingRange === "custom" ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">From</Label>
+                      <Input
+                        type="date"
+                        className="h-9"
+                        value={callingCustomFromDate}
+                        onChange={(e) => setCallingCustomFromDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs text-muted-foreground">To</Label>
+                      <Input
+                        type="date"
+                        className="h-9"
+                        value={callingCustomToDate}
+                        onChange={(e) => setCallingCustomToDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+                  <div className="rounded-lg border border-orange-200/80 bg-white px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Total Calls</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : filteredCallingActions.length}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(callingReportSourceSplit.socialTotal, callingReportSourceSplit.normalTotal)}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Not Connected</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : connectionSummary.notConnected}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(
+                          callingReportSourceSplit.socialConnection.notConnected,
+                          callingReportSourceSplit.normalConnection.notConnected,
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Connected</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : connectionSummary.connected}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(
+                          callingReportSourceSplit.socialConnection.connected,
+                          callingReportSourceSplit.normalConnection.connected,
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-rose-200 bg-rose-50/40 px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Not Interested</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.notInterested}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(
+                          callingReportSourceSplit.socialOutcome.notInterested,
+                          callingReportSourceSplit.normalOutcome.notInterested,
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/30 px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Interested</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.interested}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(
+                          callingReportSourceSplit.socialOutcome.interested,
+                          callingReportSourceSplit.normalOutcome.interested,
+                        )}
+                      </p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-blue-200 bg-blue-50/40 px-3 py-2 min-h-[4.25rem]">
+                    <p className="text-[11px] text-muted-foreground leading-tight">Follow Up</p>
+                    <p className="mt-0.5 text-xl font-semibold tabular-nums">
+                      {isCallingReportsInitialLoading ? "—" : connectedOutcomeSummary.followUp}
+                    </p>
+                    {isCallingReportsInitialLoading ? null : (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">
+                        {callingReportSourceHint(
+                          callingReportSourceSplit.socialOutcome.followUp,
+                          callingReportSourceSplit.normalOutcome.followUp,
+                        )}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 {isCallingReportsInitialLoading ? (
@@ -8785,47 +9177,66 @@ export default function AdminPanelPage() {
                 ) : displayCallingActions.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {displayCallingActions.slice(0, 300).map((item) => {
                       const parsed = resolveCallingActionFields(item)
                       const connectionKind = classifyCallingConnection(item)
                       const summaryBucket = classifyCallingActionSummaryBucket(item)
+                      const socialLead = isSocialMediaCallingLead(item)
                       return (
-                      <div key={item.id} className="rounded-md border border-border/70 p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-medium text-sm break-words">{item.dealerName || "Unknown Employee"}</p>
-                            <p className="text-xs text-muted-foreground break-all">Lead: {item.leadId || "N/A"}</p>
-                            <p className="text-xs text-muted-foreground break-words">Customer: {item.customerName || "N/A"}</p>
-                            <p className="text-xs text-muted-foreground break-all">Phone: {item.customerMobile || "N/A"}</p>
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap justify-end">
-                            <Badge variant="outline" className={getCallingConnectionBadgeClass(connectionKind)}>
-                              {CALLING_CONNECTION_LABELS[connectionKind]}
+                      <div
+                        key={item.id}
+                        className={cn(
+                          "rounded-lg px-3 py-2 text-sm space-y-1",
+                          socialLead
+                            ? "border border-sky-300 bg-gradient-to-b from-sky-50 to-indigo-50/70 shadow-sm border-l-4 border-l-sky-500"
+                            : connectionKind === "connected"
+                              ? "border border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/40 shadow-sm border-l-4 border-l-emerald-500"
+                              : "border border-rose-200/80 bg-gradient-to-b from-white to-rose-50/40 shadow-sm border-l-4 border-l-rose-400",
+                        )}
+                      >
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <p className="font-semibold truncate">{item.customerName || "N/A"}</p>
+                          {socialLead ? (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                              <Sparkles className="w-2.5 h-2.5" />
+                              Social
                             </Badge>
-                            {connectionKind === "connected" ? (
-                              <Badge variant="outline" className={getCallingActionSummaryBadgeClass(summaryBucket)}>
-                                {CALLING_SUMMARY_BUCKET_LABELS[summaryBucket]}
-                              </Badge>
-                            ) : null}
-                            <span className="text-xs text-muted-foreground whitespace-nowrap">
-                              {item.actionAt
-                                ? parseCallingActionAt(item.actionAt)?.toLocaleString("en-IN") || item.actionAt
-                                : "N/A"}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="mt-2 space-y-1 text-sm">
-                          <p className="break-words">
-                            <span className="font-medium">Status:</span>{" "}
-                            {parsed.status || item.action || "N/A"}
-                          </p>
-                          {parsed.remark ? (
-                            <p className="break-words">
-                              <span className="font-medium">Remark:</span> {parsed.remark}
-                            </p>
+                          ) : (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-orange-200 bg-orange-50 text-orange-800">
+                              Calling data
+                            </Badge>
+                          )}
+                          <Badge variant="outline" className={cn("shrink-0 h-5 px-1.5 text-[10px]", getCallingConnectionBadgeClass(connectionKind))}>
+                            {CALLING_CONNECTION_LABELS[connectionKind]}
+                          </Badge>
+                          {connectionKind === "connected" ? (
+                            <Badge variant="outline" className={cn("shrink-0 h-5 px-1.5 text-[10px]", getCallingActionSummaryBadgeClass(summaryBucket))}>
+                              {CALLING_SUMMARY_BUCKET_LABELS[summaryBucket]}
+                            </Badge>
                           ) : null}
+                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
+                            {item.actionAt
+                              ? parseCallingActionAt(item.actionAt)?.toLocaleString("en-IN") || item.actionAt
+                              : "N/A"}
+                          </span>
                         </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {[
+                            item.customerMobile || null,
+                            item.platform || null,
+                            item.campaignName || null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "Phone —"}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          Dealer: {item.dealerName || "Unknown Employee"}
+                        </p>
+                        <p className="text-sm break-words">
+                          <span className="font-medium">Status:</span> {parsed.status || item.action || "N/A"}
+                          {parsed.remark ? ` · ${parsed.remark}` : ""}
+                        </p>
                       </div>
                     )})}
                   </div>

@@ -92,7 +92,7 @@ export default function SubvendorsPage() {
             <div className="min-w-0">
               <h1 className="text-xl font-semibold text-foreground">Subvendors</h1>
               <p className="text-sm text-muted-foreground">
-                Welcome {displayName} — office inside ledger and outside vendor registration.
+                Welcome {displayName} — Vendor Office ledger and Vendor Outside registration.
               </p>
             </div>
           </div>

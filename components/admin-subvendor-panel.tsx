@@ -805,20 +805,20 @@ export function AdminSubvendorPanel({
       <VendorToolbar
         search={search}
         onSearch={setSearch}
-        searchPlaceholder="Search office outside vendors..."
+        searchPlaceholder="Search Vendor Outside..."
         addLabel="Register vendor"
         onAdd={openCreate}
         hideSearch={hideSearch}
       />
       <VendorGrid
         rows={filtered}
-        emptyLabel={outsideRows.length === 0 ? "No office outside vendors yet" : "No matching vendors"}
+        emptyLabel={outsideRows.length === 0 ? "No Vendor Outside records yet" : "No matching vendors"}
         emptyHint={
           outsideRows.length === 0
             ? "Register an external vendor with basic details."
             : undefined
         }
-        kindLabel="Office outside"
+        kindLabel="Vendor Outside"
         onEdit={openEdit}
         onRemove={remove}
         onAdd={openCreate}
@@ -834,7 +834,7 @@ export function AdminSubvendorPanel({
       <VendorToolbar
         search={search}
         onSearch={setSearch}
-        searchPlaceholder="Search office vendors..."
+        searchPlaceholder="Search Vendor Office..."
         addLabel="Select dealer"
         onAdd={openCreate}
         addDisabled={availableDealers.length === 0 && !editingId}
@@ -842,15 +842,15 @@ export function AdminSubvendorPanel({
       />
       <VendorGrid
         rows={filtered}
-        emptyLabel={insideRows.length === 0 ? "No office vendors yet" : "No matching vendors"}
+        emptyLabel={insideRows.length === 0 ? "No Vendor Office records yet" : "No matching vendors"}
         emptyHint={
           insideRows.length === 0
             ? dealers.length === 0
               ? "Add dealers in Users first, then select them here."
-              : "Select a dealer to add them as an office vendor."
+              : "Select a dealer to add them to Vendor Office."
             : undefined
         }
-        kindLabel="Office vendor"
+        kindLabel="Vendor Office"
         onEdit={openEdit}
         onRemove={remove}
         onAdd={openCreate}
@@ -887,8 +887,8 @@ export function AdminSubvendorPanel({
         <div>
           <CardTitle>Subvendors</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Office inside vendors are selected from dealers, then maintained in the customer ledger.
-              Office outside vendors use basic registration.
+              Vendor Office records are selected from dealers, then maintained in the customer ledger.
+              Vendor Outside records use basic registration.
             </p>
         </div>
       </CardHeader>
@@ -911,7 +911,7 @@ export function AdminSubvendorPanel({
               <Building2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-foreground">
-                  Office inside vendors ({insideRows.length})
+                  Vendor Office ({insideRows.length})
                 </span>
                 <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
                   Select dealers, then maintain the customer ledger
@@ -925,7 +925,7 @@ export function AdminSubvendorPanel({
               <UserPlus className="mt-0.5 h-4 w-4 shrink-0" />
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-foreground">
-                  Office outside vendors ({outsideRows.length})
+                  Vendor Outside ({outsideRows.length})
                 </span>
                 <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
                   Basic registration for external vendors
@@ -938,22 +938,22 @@ export function AdminSubvendorPanel({
             <VendorToolbar
               search={search}
               onSearch={setSearch}
-              searchPlaceholder="Search office inside vendors..."
+              searchPlaceholder="Search Vendor Office..."
               addLabel="Select dealer"
               onAdd={openCreate}
               addDisabled={availableDealers.length === 0 && !editingId}
             />
             <VendorGrid
               rows={filtered}
-              emptyLabel={insideRows.length === 0 ? "No office inside vendors yet" : "No matching vendors"}
+              emptyLabel={insideRows.length === 0 ? "No Vendor Office records yet" : "No matching vendors"}
               emptyHint={
                 insideRows.length === 0
                   ? dealers.length === 0
                     ? "Add dealers in Users first, then select them here."
-                    : "Select a dealer to add them as an office inside vendor."
+                    : "Select a dealer to add them to Vendor Office."
                   : undefined
               }
-              kindLabel="Office inside"
+              kindLabel="Vendor Office"
               onEdit={openEdit}
               onRemove={remove}
               onAdd={openCreate}
@@ -990,10 +990,10 @@ export function AdminSubvendorPanel({
             <DialogTitle>
               {kind === "office_inside"
                 ? editingId
-                  ? "Edit office inside vendor"
+                  ? "Edit Vendor Office"
                   : "Select dealer"
                 : editingId
-                  ? "Edit office outside vendor"
+                  ? "Edit Vendor Outside"
                   : "Register vendor"}
             </DialogTitle>
             <DialogDescription>
@@ -1978,7 +1978,7 @@ function InsideVendorLedger({
     <div className="rounded-xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-border/70 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-semibold">Office inside ledger</p>
+          <p className="text-sm font-semibold">Vendor Office ledger</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Same card layout as Accounts. Edit amounts from Manage.
           </p>
@@ -2011,7 +2011,7 @@ function InsideVendorLedger({
 
       {rows.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
-          <p>No approved customer files for these office inside vendors yet</p>
+          <p>No approved customer files for these Vendor Office records yet</p>
         </div>
       ) : (
         <div className="p-3 space-y-2">
@@ -2191,7 +2191,7 @@ function InsideVendorLedger({
           <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
             <div>
               <DialogTitle>Ledger management</DialogTitle>
-              <DialogDescription>Update amounts for this office inside customer file.</DialogDescription>
+              <DialogDescription>Update amounts for this Vendor Office customer file.</DialogDescription>
             </div>
             <Button type="button" size="sm" className="shrink-0" onClick={() => void saveManage()} disabled={saving}>
               {saving ? "Saving..." : "Save"}

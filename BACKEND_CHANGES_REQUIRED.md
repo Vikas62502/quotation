@@ -7254,4 +7254,52 @@ Dialled first dropdown is **Connected** | **Not Connected**. Second field depend
 
 ---
 
+## §BR — Calling actions must echo Social Media vs Calling data source — Oct 2026
+
+Dealer → **Calling Data** analytics and Admin → **Calling Reports** split counts **Social · Normal**. Classification is `isSocialMediaCallingLead` in `lib/google-sheets-social-leads.ts`. Today GET calling-actions omit lead source, so reports show **Social 0** even when assigned Google Sheet / Meta leads were called.
+
+**No new routes.** JOIN `hr_leads` (and upload batch) on existing GETs. Snapshot source onto the action at PATCH if possible.
+
+### Fields on every action / queue lead
+
+`sourceType` / `source_type`, `platform`, `campaignName` / `campaign_name`, `sheetSourceId` / `sheet_source_id`, `uploadFileName` / `fileName`, `externalId` / `external_id`, `customerNote`.
+
+Social when any of: `source_type ∈ google_sheet|social_media|social|meta`, `platform ∈ ig|fb|facebook|instagram|meta`, `sheet_source_id` set, filename contains google sheet / social / meta, `external_id` starts `l:` / `ag:`, non-empty `campaign_name`. Else **Calling data** (`csv`).
+
+### Endpoints
+
+| Method | Path | Change |
+|--------|------|--------|
+| `GET` | `/api/dealers/me/calling-queue/next` `/current` | Echo source on `currentLead` + tab arrays |
+| `GET` | `/api/dealers/me/calling-actions` | Echo source on each row (dealer analytics) |
+| `GET` | `/api/admin/calling-actions` `/api/hr/calling-actions` | Same for Calling Reports |
+| `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` | Copy lead source onto the new action; echo in response |
+
+Optional: `?source=all\|social\|normal`. Optional summary keys `social` / `normal` on `GET .../calling-actions/summary` (§AI).
+
+### Must
+
+1. JOIN lead + upload; do not serialize actions without `source_type` / `platform`.
+2. Persist snapshot columns on `calling_actions` at PATCH (`source_type`, `platform`, `campaign_name`, `sheet_source_id`, `upload_file_name`).
+3. GET prefers action snapshot, else current lead values.
+4. CSV calling leads stay `source_type=csv` — never tag Social from call status.
+
+### Do not
+
+- Force the SPA to load every sheet-source lead list to classify reports
+- Drop source on queue tab arrays (`notConnectedActions`, `connectedActions`, `dialledActions`, `scheduledLeads`)
+- Treat `lead_status=CREATED` on a non-sheet lead as Social unless other social fields exist
+
+### QA
+
+1. Call a Google Sheet / IG lead → Dealer analytics Daily Social ≥ 1.
+2. Admin Calling Reports: Social badge + source filter + CSV Source column.
+3. Raw CSV lead remains Normal / Calling data after submit.
+4. Second device / refresh matches without local cache.
+
+**Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · HANDOFF **§64**
+
+---
+
+
 

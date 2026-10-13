@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react"
+import { useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { Button } from "@/components/ui/button"
@@ -25,9 +25,9 @@ import {
   Filter,
   Upload,
   X,
-  Building2,
   UserPlus,
   Truck,
+  Landmark,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { SolarLogo } from "@/components/solar-logo"
@@ -571,7 +571,43 @@ function officeInsideSelfLeaserId(quotationId: string, phaseNumber: number) {
   return `lp-self-${quotationId}-${phaseNumber}`
 }
 
-/** Same YYYY-MM-DD as the Office Inside Due Date input. */
+/** Same YYYY-MM-DD as the Accounts Due Date input. */
+
+function accountsPaymentGridClass(showProfit: boolean) {
+  return cn(
+    "grid w-full items-start gap-x-2 gap-y-2",
+    "grid-cols-2 sm:grid-cols-3",
+    showProfit
+      ? "xl:grid-cols-[minmax(10.5rem,1.15fr)_minmax(6rem,0.65fr)_minmax(5.25rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.75rem,0.6fr)_minmax(10rem,0.95fr)_minmax(6.25rem,0.7fr)_minmax(4.75rem,0.45fr)_minmax(4.75rem,0.45fr)_7.25rem]"
+      : "xl:grid-cols-[minmax(11rem,1.3fr)_minmax(6.25rem,0.7fr)_minmax(5.5rem,0.6fr)_minmax(5.5rem,0.6fr)_minmax(5.75rem,0.6fr)_minmax(6rem,0.65fr)_minmax(10.25rem,1fr)_minmax(6.75rem,0.8fr)_7.25rem]",
+  )
+}
+
+const ACCOUNTS_STICKY_CUSTOMER =
+  "xl:sticky xl:left-0 xl:z-[15] xl:bg-white xl:shadow-[6px_0_10px_-8px_rgba(15,23,42,0.25)]"
+const ACCOUNTS_STICKY_ACTIONS =
+  "xl:sticky xl:right-0 xl:z-20 xl:bg-white xl:shadow-[-8px_0_12px_-8px_rgba(15,23,42,0.28)]"
+
+function AccountsCol({
+  label,
+  className,
+  children,
+}: {
+  label?: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      {label ? (
+        <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground leading-none xl:hidden">
+          {label}
+        </p>
+      ) : null}
+      {children}
+    </div>
+  )
+}
 function accountsDueDateInputValue(raw?: string | null): string | null {
   if (!raw) return null
   const text = String(raw).trim()
@@ -3897,7 +3933,7 @@ export default function AccountManagementPage() {
       await api.admin.subvendors.ledger.update(quotationId, ledgerPatchToApiBody(patch))
     } catch (error) {
       toast({
-        title: "Office inside amounts saved on this device",
+        title: "Accounts amounts saved on this device",
         description:
           error instanceof ApiError
             ? error.message
@@ -4212,7 +4248,7 @@ export default function AccountManagementPage() {
       toast({
         title: "Payment details saved",
         description: isOfficeInsideDealer(activePayment.dealerId)
-          ? "Installments, office inside amounts, cost of site, and profit updated."
+          ? "Installments, Accounts amounts, cost of site, and profit updated."
           : "Installments, PI, others, cost of site, and profit updated successfully.",
       })
       setInstallmentDialogOpen(false)
@@ -4560,18 +4596,18 @@ export default function AccountManagementPage() {
       <main className="w-full max-w-[1600px] mx-auto px-3 sm:px-4 py-3 sm:py-4">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full gap-1">
           <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-            <TabsList className="h-auto w-full sm:w-auto justify-start bg-muted/40 p-1 gap-1 flex-wrap rounded-lg">
-              <TabsTrigger value="payments" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
-                <Building2 className="w-4 h-4" />
-                Office Inside
+            <TabsList className="h-auto w-full sm:w-auto justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-orange-200/70 bg-gradient-to-r from-amber-50/80 to-orange-50/70 p-1 gap-1 [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
+              <TabsTrigger value="payments" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
+                <Landmark className="w-4 h-4" />
+                Accounts
               </TabsTrigger>
-              <TabsTrigger value="approved" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
+              <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
                 <UserPlus className="w-4 h-4" />
-                Office Outside
+                Vendor Outside
               </TabsTrigger>
-              <TabsTrigger value="subvendors" className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm">
+              <TabsTrigger value="subvendors" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
                 <Truck className="w-4 h-4" />
-                Subvendor office
+                Vendor Office
               </TabsTrigger>
             </TabsList>
             {activeTab === "subvendors" ? null : (
@@ -4616,17 +4652,17 @@ export default function AccountManagementPage() {
 
           <TabsContent value="payments" className="mt-0 space-y-0">
             <Card className="border-border/50 shadow-sm py-0">
-              <CardContent className="px-2 sm:px-6 py-1.5 space-y-1.5">
+              <CardContent className="px-2 sm:px-3 py-1.5 space-y-1.5 overflow-hidden">
                 <div className="flex flex-col gap-1 lg:flex-row lg:items-center lg:justify-between">
                 <Tabs
                   value={paymentSectionTab}
                   onValueChange={(value) => setPaymentSectionTab(value as PaymentSectionTab)}
                   className="min-w-0 flex-1"
                 >
-                  <TabsList className="h-auto w-full justify-start bg-muted/40 p-1 gap-1 flex-wrap">
+                  <TabsList className="h-auto w-full justify-start rounded-xl border border-orange-200/60 bg-gradient-to-r from-amber-50/60 to-white p-1 gap-1 flex-wrap [&_[data-slot=tabs-trigger][data-state=active]]:bg-white [&_[data-slot=tabs-trigger][data-state=active]]:text-orange-700 [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
                     <TabsTrigger
                       value="active"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                      className="gap-1.5 text-xs px-3 py-1.5"
                     >
                       Pending & Partial
                       <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
@@ -4635,7 +4671,7 @@ export default function AccountManagementPage() {
                     </TabsTrigger>
                     <TabsTrigger
                       value="overdue"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                      className="gap-1.5 text-xs px-3 py-1.5"
                     >
                       Outstanding 30+ days
                       <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
@@ -4644,7 +4680,7 @@ export default function AccountManagementPage() {
                     </TabsTrigger>
                     <TabsTrigger
                       value="completed"
-                      className="gap-1.5 text-xs px-3 py-1.5 data-[state=active]:shadow-sm"
+                      className="gap-1.5 text-xs px-3 py-1.5"
                     >
                       Completed
                       <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
@@ -4697,12 +4733,12 @@ export default function AccountManagementPage() {
                 {!isLoading && permissionScopedCustomerPayments.length > 0 && (
                   <div
                     className={cn(
-                      "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3",
+                      "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 overflow-hidden rounded-xl border border-orange-200/70 bg-gradient-to-b from-white to-orange-50/25 shadow-sm",
                       showAccountsSiteProfit ? "xl:grid-cols-5" : "xl:grid-cols-4",
                     )}
                   >
-                    <Card className="border-border/60 bg-card shadow-sm py-0">
-                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                    <Card className="border-0 shadow-none bg-transparent py-0 rounded-none">
+                      <CardContent className="px-3 py-2.5 flex items-center gap-2">
                         <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
                           <IndianRupee className="w-3.5 h-3.5 text-primary" />
                         </div>
@@ -4715,8 +4751,8 @@ export default function AccountManagementPage() {
                         </div>
                       </CardContent>
                     </Card>
-                    <Card className="border-border/60 bg-card shadow-sm py-0">
-                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                    <Card className="border-0 shadow-none bg-transparent py-0 rounded-none sm:border-l sm:border-orange-100">
+                      <CardContent className="px-3 py-2.5 flex items-center gap-2">
                         <div className="w-7 h-7 rounded-md bg-amber-100 flex items-center justify-center shrink-0">
                           <Clock className="w-3.5 h-3.5 text-amber-700" />
                         </div>
@@ -4731,8 +4767,8 @@ export default function AccountManagementPage() {
                     </Card>
                     <Card
                       className={cn(
-                        "border-border/60 bg-card shadow-sm py-0 cursor-pointer transition-colors hover:border-emerald-400/80",
-                        fileStatusFilter === "installation:completed" && "border-emerald-500 ring-1 ring-emerald-500/30",
+                        "border-0 shadow-none bg-transparent py-0 rounded-none sm:border-l sm:border-orange-100 cursor-pointer transition-colors hover:bg-emerald-50/40",
+                        fileStatusFilter === "installation:completed" && "bg-emerald-50/70 ring-1 ring-inset ring-emerald-500/30",
                       )}
                       role="button"
                       tabIndex={0}
@@ -4754,7 +4790,7 @@ export default function AccountManagementPage() {
                         }
                       }}
                     >
-                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                      <CardContent className="px-3 py-2.5 flex items-center gap-2">
                         <div className="w-7 h-7 rounded-md bg-emerald-100 flex items-center justify-center shrink-0">
                           <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
                         </div>
@@ -4772,8 +4808,8 @@ export default function AccountManagementPage() {
                       </CardContent>
                     </Card>
                     {showAccountsSiteProfit ? (
-                    <Card className="border-border/60 bg-card shadow-sm py-0">
-                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                    <Card className="border-0 shadow-none bg-transparent py-0 rounded-none sm:border-l sm:border-orange-100">
+                      <CardContent className="px-3 py-2.5 flex items-center gap-2">
                         <div className="w-7 h-7 rounded-md bg-emerald-100 flex items-center justify-center shrink-0">
                           <IndianRupee className="w-3.5 h-3.5 text-emerald-700" />
                         </div>
@@ -4795,8 +4831,8 @@ export default function AccountManagementPage() {
                       </CardContent>
                     </Card>
                     ) : null}
-                    <Card className="border-border/60 bg-card shadow-sm py-0">
-                      <CardContent className="px-3 py-1.5 flex items-center gap-2">
+                    <Card className="border-0 shadow-none bg-transparent py-0 rounded-none sm:border-l sm:border-orange-100">
+                      <CardContent className="px-3 py-2.5 flex items-center gap-2">
                         <div className="w-7 h-7 rounded-md bg-sky-100 flex items-center justify-center shrink-0">
                           <Users className="w-3.5 h-3.5 text-sky-700" />
                         </div>
@@ -4829,9 +4865,9 @@ export default function AccountManagementPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="native-scroll-list max-h-[min(70vh,820px)] space-y-1.5 overflow-y-auto overscroll-y-contain pr-1">
+                  <div className="native-scroll-list max-h-[calc(100dvh-13.5rem)] overflow-auto overscroll-contain rounded-lg border border-orange-100/80">
                     {displayedCustomerPayments.length === 0 ? (
-                      <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-md">
+                      <div className="text-center py-8 text-muted-foreground text-sm border border-dashed rounded-xl">
                         {paymentSectionTab === "completed"
                           ? "No completed payments match current filters."
                           : paymentSectionTab === "overdue"
@@ -4839,7 +4875,44 @@ export default function AccountManagementPage() {
                             : "No pending or partial payments match current filters."}
                       </div>
                     ) : (
-                      visibleCustomerPayments.map((payment) => {
+                      <div className={cn("space-y-2 p-1", showAccountsSiteProfit ? "min-w-[78rem]" : "min-w-[68rem]")}>
+                      <div
+                        className={cn(
+                          "hidden xl:grid sticky top-0 z-30 rounded-lg border border-orange-200/70 bg-amber-50 px-3 py-2",
+                          accountsPaymentGridClass(showAccountsSiteProfit),
+                        )}
+                      >
+                        {(
+                          [
+                            "Customer",
+                            "Subtotal",
+                            "Paid",
+                            "Remaining",
+                            "Approve date",
+                            "Payment",
+                            "File status",
+                            "Bank · IFSC",
+                            ...(showAccountsSiteProfit ? ["Cost of site", "Profit"] : []),
+                            "",
+                          ] as const
+                        ).map((label, index) => {
+                          const isFirst = index === 0
+                          const isActions = !label
+                          return (
+                          <p
+                            key={`${label || "actions"}-${index}`}
+                            className={cn(
+                              "text-[10px] font-semibold uppercase tracking-wide text-muted-foreground bg-amber-50",
+                              isFirst && cn(ACCOUNTS_STICKY_CUSTOMER, "xl:bg-amber-50"),
+                              isActions && cn(ACCOUNTS_STICKY_ACTIONS, "xl:bg-amber-50", "text-right pr-1"),
+                            )}
+                          >
+                            {label || "Actions"}
+                          </p>
+                          )
+                        })}
+                      </div>
+                      {visibleCustomerPayments.map((payment) => {
                         const paidAmount = getTotalPaidPhases(payment.phases)
                         const remainingAmount = getDisplayRemaining(payment)
                         const effectiveStatus = getEffectivePaymentStatus(payment)
@@ -4866,25 +4939,18 @@ export default function AccountManagementPage() {
                           <Card
                             key={payment.quotationId}
                             className={cn(
-                              "shadow-none px-2.5 py-1.5 border border-border/70 border-l-4 overflow-hidden",
+                              "shadow-none px-3 py-2.5 rounded-xl border border-border/70 border-l-4 overflow-visible hover:shadow-sm transition-shadow",
                               isCompletedPayment
-                                ? "border-l-emerald-500 bg-card"
+                                ? "border-l-emerald-500 bg-gradient-to-b from-white to-emerald-50/20"
                                 : isPartialPayment
-                                  ? "border-l-amber-500 bg-card"
+                                  ? "border-l-amber-500 bg-gradient-to-b from-white to-amber-50/25"
                                   : isZeroPaid
-                                    ? "border-l-rose-500 bg-card"
-                                    : "border-l-border bg-card",
+                                    ? "border-l-rose-500 bg-gradient-to-b from-white to-rose-50/20"
+                                    : "border-l-orange-300 bg-card",
                             )}
                           >
-                            <div
-                              className={cn(
-                                "grid grid-cols-2 sm:grid-cols-3 gap-x-1.5 gap-y-1 items-start w-full",
-                                showAccountsSiteProfit
-                                  ? "xl:grid-cols-[minmax(9.5rem,1.1fr)_minmax(8.25rem,0.95fr)_minmax(4.25rem,0.5fr)_minmax(4.75rem,0.55fr)_minmax(5rem,0.55fr)_minmax(5.5rem,0.6fr)_minmax(11rem,1.05fr)_minmax(5.75rem,0.7fr)_minmax(4.25rem,0.45fr)_minmax(4.25rem,0.45fr)_minmax(6.75rem,7.25rem)]"
-                                  : "xl:grid-cols-[minmax(9.5rem,1.2fr)_minmax(8.5rem,1fr)_minmax(4.5rem,0.55fr)_minmax(5rem,0.6fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.65fr)_minmax(11rem,1.1fr)_minmax(6.25rem,0.8fr)_minmax(6.75rem,7.25rem)]",
-                              )}
-                            >
-                              <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0">
+                            <div className={accountsPaymentGridClass(showAccountsSiteProfit)}>
+                              <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1", ACCOUNTS_STICKY_CUSTOMER)}>
                                 <p className="text-[13px] font-semibold leading-tight break-words">
                                   {payment.customerName}
                                   <span className="font-normal text-muted-foreground">
@@ -4896,10 +4962,9 @@ export default function AccountManagementPage() {
                                   Dealer: {payment.dealerName || "Unassigned"} •{" "}
                                   {payment.dealerMobile || "No contact"}
                                 </p>
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
+                              <AccountsCol label="Subtotal">
                                 {isFinalSettlementApplied(payment) ||
                                 getPaymentDiscountAmount(payment) > 0 ? (
                                   <>
@@ -4947,10 +5012,9 @@ export default function AccountManagementPage() {
                                     </div>
                                   )
                                 })()}
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid</p>
+                              <AccountsCol label="Paid">
                                 {payment.phases.length > 0 ? (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
@@ -5011,10 +5075,9 @@ export default function AccountManagementPage() {
                                     C ₹{getTotalPaidForSide(payment.phases, "cash").toLocaleString("en-IN")}
                                   </p>
                                 ) : null}
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Remaining</p>
+                              <AccountsCol label="Remaining">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <p
@@ -5056,17 +5119,15 @@ export default function AccountManagementPage() {
                                     C ₹{getRemainingForSide(payment, "cash").toLocaleString("en-IN")}
                                   </p>
                                 ) : null}
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Approve date</p>
+                              <AccountsCol label="Approve date">
                                 <p className="text-xs font-medium leading-snug">
                                   {formatAdminDateOnly(payment.statusApprovedAt)}
                                 </p>
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Payment</p>
+                              <AccountsCol label="Payment">
                                 <p className="text-sm font-semibold leading-tight">
                                   {getPaymentTypeLabel(payment.paymentType || payment.paymentMode)}
                                 </p>
@@ -5097,10 +5158,9 @@ export default function AccountManagementPage() {
                                 >
                                   {statusLabel}
                                 </p>
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-[11rem]">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File status</p>
+                              <AccountsCol label="File status" className="min-w-0 xl:min-w-[11rem]">
                                 <div className="mt-0.5 space-y-px">
                                   {getJourneyFileStatusStages(payment.quotation).map((item) => {
                                     const stageLabel =
@@ -5133,21 +5193,17 @@ export default function AccountManagementPage() {
                                     )
                                   })}
                                 </div>
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bank · IFSC</p>
+                              <AccountsCol label="Bank · IFSC">
                                 <p className="text-[10px] font-medium leading-snug break-words text-muted-foreground">
                                   {getFinancingBankDisplay(payment)}
                                 </p>
-                              </div>
+                              </AccountsCol>
 
                               {showAccountsSiteProfit ? (
                               <>
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                  Cost of site
-                                </p>
+                              <AccountsCol label="Cost of site">
                                 {(() => {
                                   const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
                                   const rowSiteCost = getAccountsTableSiteCost(
@@ -5161,10 +5217,9 @@ export default function AccountManagementPage() {
                                 </p>
                                   )
                                 })()}
-                              </div>
+                              </AccountsCol>
 
-                              <div className="min-w-0">
-                                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit</p>
+                              <AccountsCol label="Profit">
                                 {(() => {
                                   const ledger = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
                                   const rowProfit = getAccountsTableProfit(
@@ -5185,11 +5240,11 @@ export default function AccountManagementPage() {
                                 </p>
                                   )
                                 })()}
-                              </div>
+                              </AccountsCol>
                               </>
                               ) : null}
 
-                              <div className="col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end">
+                              <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end", ACCOUNTS_STICKY_ACTIONS)}>
                                 <div className="flex flex-col items-stretch gap-1 w-full max-w-[7.25rem] min-w-0">
                                   {sentToInstaller ? (
                                     <>
@@ -5261,11 +5316,12 @@ export default function AccountManagementPage() {
                                     Manage
                                   </Button>
                                 </div>
-                              </div>
+                              </AccountsCol>
                             </div>
                           </Card>
                         )
-                      })
+                      })}
+                      </div>
                     )}
                     {displayedCustomerPayments.length > 0 ? (
                       <IncrementalListSentinel
@@ -5404,14 +5460,14 @@ export default function AccountManagementPage() {
               </Select>
             </div>
             <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Office inside vendor</Label>
+              <Label className="text-xs text-muted-foreground">Accounts vendor</Label>
               <Select value={officeInsideVendorFilter} onValueChange={setOfficeInsideVendorFilter}>
                 <SelectTrigger className="h-9 w-full text-sm">
-                  <SelectValue placeholder="Office inside vendor" />
+                  <SelectValue placeholder="Accounts vendor" />
                 </SelectTrigger>
                 <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
                   <SelectItem value="all">All files</SelectItem>
-                  <SelectItem value="inside">Office inside (all vendors)</SelectItem>
+                  <SelectItem value="inside">Accounts (all vendors)</SelectItem>
                   {officeInsideVendors
                     .filter((vendor) => vendor.dealerId)
                     .map((vendor) => (
@@ -5422,7 +5478,7 @@ export default function AccountManagementPage() {
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
-                Filter office inside subvendor files, then enter the same ledger amounts in Manage.
+                Filter Accounts / Vendor Office files, then enter the same ledger amounts in Manage.
               </p>
             </div>
             <div className="space-y-1">
@@ -6445,7 +6501,7 @@ export default function AccountManagementPage() {
               ) : null}
               {isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
-                  <p className="text-sm font-medium">Office inside amounts</p>
+                  <p className="text-sm font-medium">Accounts amounts</p>
                   <div className="flex items-end gap-2 min-w-0">
                     <div className="space-y-0.5 min-w-0 flex-1">
                       <Label htmlFor="accounts-ledger-pi" className="text-[11px] text-muted-foreground">

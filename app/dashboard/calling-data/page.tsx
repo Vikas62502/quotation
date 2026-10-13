@@ -49,7 +49,7 @@ import {
   parseTaggedCallRemark,
 } from "@/lib/calling-remark-payload"
 import { copyPhoneForDial, formatPhoneForDisplay, normalizePhoneDigits } from "@/lib/phone-dialer"
-import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds } from "@/lib/calling-report-date-range"
+import { formatYmdLocal, getCustomBoundsFromYmd, getPresetBounds, parseCallingActionAt } from "@/lib/calling-report-date-range"
 import {
   buildCallingActionSummary,
   buildCallingConnectionSummary,
@@ -57,6 +57,7 @@ import {
   getConnectedOutcomeForStatus,
 } from "@/lib/calling-action-summary"
 import { downloadPricingPdf, PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } from "@/lib/download-dcr-pricing-pdf"
+import { downloadCsvFile } from "@/lib/excel-column-export"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { usePricingTables } from "@/lib/use-pricing-tables"
 import { PhoneCall, Pencil, Check, X, Loader2, Download, ChevronDown, Eye, Sheet, Sparkles, PhoneOff, PhoneIncoming, CalendarDays, User, Phone, MapPin, Hash, StickyNote, Copy, Inbox } from "lucide-react"
@@ -418,18 +419,235 @@ function CurrentLeadField({
 function AnalyticsStat({
   label,
   value,
+  hint,
   className,
 }: {
   label: string
   value: number
+  hint?: string
   className?: string
 }) {
   return (
     <div className={cn("rounded-lg border px-3 py-2 min-h-[4.25rem]", className)}>
       <p className="text-[11px] text-muted-foreground leading-tight">{label}</p>
       <p className="mt-0.5 text-xl font-semibold tabular-nums tracking-tight">{value}</p>
+      {hint ? <p className="mt-0.5 text-[10px] text-muted-foreground leading-tight">{hint}</p> : null}
     </div>
   )
+}
+
+type HistorySourceFilter = "all" | "social" | "normal"
+
+function matchesHistorySourceFilter(
+  item: Parameters<typeof isSocialMediaCallingLead>[0],
+  filter: HistorySourceFilter,
+) {
+  if (filter === "all") return true
+  const social = isSocialMediaCallingLead(item)
+  return filter === "social" ? social : !social
+}
+
+function HistorySourceFilterSelect({
+  value,
+  onChange,
+}: {
+  value: HistorySourceFilter
+  onChange: (value: HistorySourceFilter) => void
+}) {
+  return (
+    <Select value={value} onValueChange={(next) => onChange(next as HistorySourceFilter)}>
+      <SelectTrigger className="h-8 w-full sm:w-40">
+        <SelectValue placeholder="Source" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="all">All sources</SelectItem>
+        <SelectItem value="social">Social Media</SelectItem>
+        <SelectItem value="normal">Calling data</SelectItem>
+      </SelectContent>
+    </Select>
+  )
+}
+
+function sourceSplitHint(socialCount: number, normalCount: number) {
+  return `Social ${socialCount} · Normal ${normalCount}`
+}
+
+function callingSourceLabel(item: Parameters<typeof isSocialMediaCallingLead>[0]) {
+  return isSocialMediaCallingLead(item) ? "Social Media" : "Calling data"
+}
+
+function formatReportDateTime(value?: string) {
+  const at = parseCallingActionAt(value)
+  if (!at) return ""
+  return at.toLocaleString("en-IN")
+}
+
+function connectedOutcomeReportLabel(status: string) {
+  const bucket = getConnectedOutcomeForStatus(status)
+  if (bucket === "not_interested") return "Not Interested"
+  if (bucket === "decision_pending") return "Decision Pending"
+  return "Interested"
+}
+
+const CALLING_DATA_REPORT_HEADERS = [
+  "Source",
+  "Name",
+  "Mobile",
+  "K Number",
+  "Address",
+  "City",
+  "State",
+  "Connection",
+  "Outcome",
+  "Status",
+  "Remark",
+  "Action",
+  "Call at",
+  "Follow-up at",
+  "Platform",
+  "Campaign",
+] as const
+
+function actionLogReportRow(item: ActionLogItem): Array<string | number> {
+  const parsed = parseTaggedCallRemark(item.callRemark)
+  const connection = classifyCallingConnection(item) === "not_connected" ? "Not Connected" : "Connected"
+  const status = (parsed.status || item.statusText || "").trim()
+  return [
+    callingSourceLabel(item),
+    item.name || "",
+    item.mobile || "",
+    item.kNumber || "",
+    item.address || "",
+    item.city || "",
+    item.state || "",
+    connection,
+    connection === "Connected" && status ? connectedOutcomeReportLabel(status) : "",
+    status,
+    parsed.remark || "",
+    item.action || "",
+    formatReportDateTime(item.actionAt),
+    formatReportDateTime(item.nextFollowUpAt),
+    item.platform || "",
+    item.campaignName || "",
+  ]
+}
+
+function scheduledLeadReportRow(lead: CallingLead): Array<string | number> {
+  const parsed = parseTaggedCallRemark(lead.callRemark || "")
+  const status = (parsed.status || "").trim()
+  return [
+    callingSourceLabel(lead),
+    lead.name || "",
+    lead.mobile || "",
+    lead.kNumber || "",
+    lead.address || "",
+    lead.city || "",
+    lead.state || "",
+    "Scheduled",
+    status ? connectedOutcomeReportLabel(status) : "Decision Pending",
+    status,
+    parsed.remark || "",
+    lead.action || "follow_up",
+    formatReportDateTime(lead.actionAt),
+    formatReportDateTime(lead.nextFollowUpAt),
+    lead.platform || "",
+    lead.campaignName || "",
+  ]
+}
+
+type SocialSourceFields = Pick<
+  ActionLogItem,
+  | "sourceType"
+  | "source_type"
+  | "sheetSourceId"
+  | "uploadFileName"
+  | "fileName"
+  | "platform"
+  | "campaignName"
+  | "sheetLeadStatus"
+  | "leadStatus"
+  | "lead_status"
+  | "externalId"
+  | "customerNote"
+>
+
+function socialSourceFieldsFrom(
+  row: Parameters<typeof isSocialMediaCallingLead>[0] & {
+    id?: string
+    leadId?: string
+    mobile?: string
+    sheet_source_id?: string
+    upload_file_name?: string
+    file_name?: string
+    campaign_name?: string
+  },
+): SocialSourceFields {
+  return {
+    sourceType: row.sourceType || row.source_type,
+    source_type: row.source_type || row.sourceType,
+    sheetSourceId: row.sheetSourceId || row.sheet_source_id,
+    uploadFileName: row.uploadFileName || row.upload_file_name,
+    fileName: row.fileName || row.file_name,
+    platform: row.platform,
+    campaignName: row.campaignName || row.campaign_name,
+    sheetLeadStatus: row.sheetLeadStatus,
+    leadStatus: row.leadStatus,
+    lead_status: row.lead_status,
+    externalId: row.externalId || row.external_id,
+    customerNote: row.customerNote,
+  }
+}
+
+function applyKnownSocialSource(
+  item: ActionLogItem,
+  byLeadId: Map<string, SocialSourceFields>,
+  byMobile: Map<string, SocialSourceFields>,
+): ActionLogItem {
+  if (isSocialMediaCallingLead(item)) return item
+  const mobileKey = normalizePhoneDigits(item.mobile || "").slice(-10)
+  const src =
+    (item.leadId ? byLeadId.get(String(item.leadId).trim()) : undefined) ||
+    (mobileKey.length >= 8 ? byMobile.get(mobileKey) : undefined)
+  if (!src) return item
+  return {
+    ...item,
+    sourceType: item.sourceType || src.sourceType || src.source_type || "social_media",
+    source_type: item.source_type || src.source_type || src.sourceType || "social_media",
+    sheetSourceId: item.sheetSourceId || src.sheetSourceId,
+    uploadFileName: item.uploadFileName || src.uploadFileName,
+    fileName: item.fileName || src.fileName,
+    platform: item.platform || src.platform,
+    campaignName: item.campaignName || src.campaignName,
+    sheetLeadStatus: item.sheetLeadStatus || src.sheetLeadStatus,
+    leadStatus: item.leadStatus || src.leadStatus,
+    lead_status: item.lead_status || src.lead_status,
+    externalId: item.externalId || src.externalId,
+    customerNote: item.customerNote || src.customerNote,
+  }
+}
+
+function applyKnownSocialSourceToLead(
+  lead: CallingLead,
+  byLeadId: Map<string, SocialSourceFields>,
+  byMobile: Map<string, SocialSourceFields>,
+): CallingLead {
+  if (isSocialMediaCallingLead(lead)) return lead
+  const mobileKey = normalizePhoneDigits(lead.mobile || "").slice(-10)
+  const src =
+    (lead.id ? byLeadId.get(String(lead.id).trim()) : undefined) ||
+    (mobileKey.length >= 8 ? byMobile.get(mobileKey) : undefined)
+  if (!src) return lead
+  return {
+    ...lead,
+    sourceType: lead.sourceType || src.sourceType || src.source_type || "social_media",
+    sheetSourceId: lead.sheetSourceId || src.sheetSourceId,
+    uploadFileName: lead.uploadFileName || src.uploadFileName,
+    platform: lead.platform || src.platform,
+    campaignName: lead.campaignName || src.campaignName,
+    sheetLeadStatus: lead.sheetLeadStatus || src.sheetLeadStatus,
+    externalId: lead.externalId || src.externalId,
+    customerNote: lead.customerNote || src.customerNote,
+  }
 }
 
 /** Explicit assignee match, else pool / HR batch-unassigned (name may be batch label, not empty). */
@@ -522,6 +740,13 @@ function mergeScheduledLeadRows(existing: CallingLead, incoming: CallingLead): C
       ? incoming.nextFollowUpAt || existing.nextFollowUpAt
       : existing.nextFollowUpAt || incoming.nextFollowUpAt,
     customerNote: incoming.customerNote || existing.customerNote,
+    sourceType: incoming.sourceType || existing.sourceType,
+    sheetSourceId: incoming.sheetSourceId || existing.sheetSourceId,
+    uploadFileName: incoming.uploadFileName || existing.uploadFileName,
+    platform: incoming.platform || existing.platform,
+    campaignName: incoming.campaignName || existing.campaignName,
+    sheetLeadStatus: incoming.sheetLeadStatus || existing.sheetLeadStatus,
+    externalId: incoming.externalId || existing.externalId,
     status:
       existing.status === "rescheduled" || incoming.status === "rescheduled"
         ? "rescheduled"
@@ -813,6 +1038,7 @@ export default function CallingDataPage() {
   const [connectedSearchTerm, setConnectedSearchTerm] = useState("")
   const [notConnectedSearchTerm, setNotConnectedSearchTerm] = useState("")
   const [notConnectedReasonFilter, setNotConnectedReasonFilter] = useState<string>("all")
+  const [historySourceFilter, setHistorySourceFilter] = useState<HistorySourceFilter>("all")
   const [scheduledPage, setScheduledPage] = useState(1)
   const [dialledPage, setDialledPage] = useState(1)
   const [connectedPage, setConnectedPage] = useState(1)
@@ -1385,7 +1611,7 @@ export default function CallingDataPage() {
 
   const historyCardClass = (item: ActionLogItem, kind: "connected" | "not_connected") => {
     if (isSocialMediaCallingLead(item)) {
-      return "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+      return "border-sky-300 bg-gradient-to-b from-sky-50 to-indigo-50/70 shadow-sm border-l-4 border-l-sky-500"
     }
     return kind === "connected"
       ? "border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/40 shadow-sm border-l-4 border-l-emerald-500"
@@ -1441,16 +1667,66 @@ export default function CallingDataPage() {
     return getPresetBounds(analyticsRange)
   }, [analyticsRange, analyticsFromDate, analyticsToDate])
 
+  const socialSourceIndex = useMemo(() => {
+    const byLeadId = new Map<string, SocialSourceFields>()
+    const byMobile = new Map<string, SocialSourceFields>()
+    const indexSocialRow = (
+      row: Parameters<typeof applyKnownSocialSource>[0] | CallingLead | null | undefined,
+    ) => {
+      if (!row || !isSocialMediaCallingLead(row)) return
+      const fields = socialSourceFieldsFrom(row)
+      const id = String((row as ActionLogItem).leadId || (row as CallingLead).id || "").trim()
+      const mobile = normalizePhoneDigits(row.mobile || "").slice(-10)
+      if (id) byLeadId.set(id, { ...byLeadId.get(id), ...fields })
+      if (mobile.length >= 8) byMobile.set(mobile, { ...byMobile.get(mobile), ...fields })
+    }
+    leads.forEach(indexSocialRow)
+    scheduledLeads.forEach(indexSocialRow)
+    recentActions.forEach(indexSocialRow)
+    dialledActions.forEach(indexSocialRow)
+    connectedActionItems.forEach(indexSocialRow)
+    notConnectedActionItems.forEach(indexSocialRow)
+    analyticsActions.forEach(indexSocialRow)
+    return { byLeadId, byMobile }
+  }, [
+    leads,
+    scheduledLeads,
+    recentActions,
+    dialledActions,
+    connectedActionItems,
+    notConnectedActionItems,
+    analyticsActions,
+  ])
+
+  const analyticsActionsForCards = useMemo(() => {
+    const merged = mergeActionLogEntries([
+      ...analyticsActions,
+      ...recentActions,
+      ...dialledActions,
+      ...connectedActionItems,
+      ...notConnectedActionItems,
+    ])
+    return merged.map((item) =>
+      applyKnownSocialSource(item, socialSourceIndex.byLeadId, socialSourceIndex.byMobile),
+    )
+  }, [
+    analyticsActions,
+    recentActions,
+    dialledActions,
+    connectedActionItems,
+    notConnectedActionItems,
+    socialSourceIndex,
+  ])
+
   const rangeFilteredActionsForAnalytics = useMemo(() => {
-    if (analyticsRange === "all") return analyticsActions
+    if (analyticsRange === "all") return analyticsActionsForCards
     if (!analyticsRangeBounds) return []
-    return analyticsActions.filter((item) => {
-      if (!item.actionAt) return false
-      const at = new Date(item.actionAt)
-      if (Number.isNaN(at.getTime())) return false
+    return analyticsActionsForCards.filter((item) => {
+      const at = parseCallingActionAt(item.actionAt)
+      if (!at) return false
       return at >= analyticsRangeBounds.start && at <= analyticsRangeBounds.end
     })
-  }, [analyticsActions, analyticsRange, analyticsRangeBounds])
+  }, [analyticsActionsForCards, analyticsRange, analyticsRangeBounds])
 
   const analyticsConnectionSummary = useMemo(
     () => buildCallingConnectionSummary(rangeFilteredActionsForAnalytics),
@@ -1463,6 +1739,21 @@ export default function CallingDataPage() {
       ),
     [rangeFilteredActionsForAnalytics],
   )
+
+  const analyticsSourceSplit = useMemo(() => {
+    const socialItems = rangeFilteredActionsForAnalytics.filter((item) => isSocialMediaCallingLead(item))
+    const normalItems = rangeFilteredActionsForAnalytics.filter((item) => !isSocialMediaCallingLead(item))
+    const socialConnected = socialItems.filter((item) => classifyCallingConnection(item) === "connected")
+    const normalConnected = normalItems.filter((item) => classifyCallingConnection(item) === "connected")
+    return {
+      socialTotal: socialItems.length,
+      normalTotal: normalItems.length,
+      socialConnection: buildCallingConnectionSummary(socialItems),
+      normalConnection: buildCallingConnectionSummary(normalItems),
+      socialOutcome: buildCallingActionSummary(socialConnected),
+      normalOutcome: buildCallingActionSummary(normalConnected),
+    }
+  }, [rangeFilteredActionsForAnalytics])
 
   // Each "Recent Actions" card must have its own local editing state.
   // Using `leadId` can cause state collisions when multiple recent history rows exist for the same lead/customer.
@@ -1667,6 +1958,9 @@ export default function CallingDataPage() {
     setConnectedActionItems(connectedOnly)
     setNotConnectedActionItems(notConnectedOnly)
     setRecentActions(allActions)
+    setAnalyticsActions((prev) =>
+      mergeActionLogEntries([...prev, ...allActions, ...notConnectedOnly, ...connectedOnly, ...dialledOnly]),
+    )
     setBackendCounts({
       pending: response?.pendingCount ?? response?.counts?.pending,
       queued: response?.queuedCount ?? response?.counts?.queued,
@@ -1722,6 +2016,11 @@ export default function CallingDataPage() {
     if (connectedOnly.length > 0) setConnectedActionItems(connectedOnly)
     if (notConnectedOnly.length > 0) setNotConnectedActionItems(notConnectedOnly)
     if (allActions.length > 0) setRecentActions(allActions)
+    if (allActions.length > 0 || notConnectedOnly.length > 0 || connectedOnly.length > 0 || dialledOnly.length > 0) {
+      setAnalyticsActions((prev) =>
+        mergeActionLogEntries([...prev, ...allActions, ...notConnectedOnly, ...connectedOnly, ...dialledOnly]),
+      )
+    }
 
     if (
       response?.pendingCount != null ||
@@ -2247,6 +2546,7 @@ export default function CallingDataPage() {
         ...dialledActions,
       ]),
     )
+      .map((item) => applyKnownSocialSource(item, socialSourceIndex.byLeadId, socialSourceIndex.byMobile))
       .map(scheduledLeadFromActionLog)
       .filter((lead): lead is CallingLead => Boolean(lead))
     const fromQueue = scheduledLeads.filter((lead) =>
@@ -2262,10 +2562,10 @@ export default function CallingDataPage() {
         statusText: parseTaggedCallRemark(lead.callRemark || "").status,
       }),
     )
-    return dedupeScheduledLeads([...fromQueue, ...fromLogs]).sort(
-      (a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime(),
-    )
-  }, [scheduledLeads, analyticsActions, connectedActionItems, recentActions, dialledActions])
+    return dedupeScheduledLeads([...fromQueue, ...fromLogs])
+      .map((lead) => applyKnownSocialSourceToLead(lead, socialSourceIndex.byLeadId, socialSourceIndex.byMobile))
+      .sort((a, b) => new Date(a.nextFollowUpAt || 0).getTime() - new Date(b.nextFollowUpAt || 0).getTime())
+  }, [scheduledLeads, analyticsActions, connectedActionItems, recentActions, dialledActions, socialSourceIndex])
 
   const scheduledCount = useMemo(() => derivedScheduledLeads.length, [derivedScheduledLeads])
 
@@ -2299,6 +2599,7 @@ export default function CallingDataPage() {
             : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
       if (!matchesTime) return false
       if (!matchesCityFilter(lead, filterCities)) return false
+      if (!matchesHistorySourceFilter(lead, historySourceFilter)) return false
       if (!term) return true
       const remarkText = getScheduledLeadFreeRemark(lead)
       const haystack = [lead.name, lead.mobile, lead.kNumber, lead.address, lead.city, lead.state, lead.callRemark, remarkText]
@@ -2307,7 +2608,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [derivedScheduledLeads, scheduledSearchTerm, scheduledTimeFilter, filterCities])
+  }, [derivedScheduledLeads, scheduledSearchTerm, scheduledTimeFilter, filterCities, historySourceFilter])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
@@ -2403,13 +2704,15 @@ export default function CallingDataPage() {
       ...analyticsActions,
       ...derivedScheduledLeads.map(actionLogFromScheduledLead),
     ])
-    return merged.filter((item) => {
-      const action = String(item.action || "").toLowerCase()
-      if (["start", "queued", "assigned", "pending"].includes(action)) return false
-      if (isDialledHistoryAction(item) || isConnectedFollowUpAction(item)) return true
-      const parsed = parseTaggedCallRemark(item.callRemark)
-      return Boolean(parsed.status)
-    })
+    return merged
+      .filter((item) => {
+        const action = String(item.action || "").toLowerCase()
+        if (["start", "queued", "assigned", "pending"].includes(action)) return false
+        if (isDialledHistoryAction(item) || isConnectedFollowUpAction(item)) return true
+        const parsed = parseTaggedCallRemark(item.callRemark)
+        return Boolean(parsed.status)
+      })
+      .map((item) => applyKnownSocialSource(item, socialSourceIndex.byLeadId, socialSourceIndex.byMobile))
   }, [
     dialledActions,
     connectedActionItems,
@@ -2417,6 +2720,7 @@ export default function CallingDataPage() {
     recentActions,
     analyticsActions,
     derivedScheduledLeads,
+    socialSourceIndex,
   ])
 
   const filteredFlowDialledActions = useMemo(() => {
@@ -2424,9 +2728,10 @@ export default function CallingDataPage() {
     return flowDialledActions.filter((item) => {
       const action = String(item.action || "").toLowerCase()
       if (dialledActionFilter !== "all" && action !== dialledActionFilter) return false
+      if (!matchesHistorySourceFilter(item, historySourceFilter)) return false
       return matchesActionLogSearch(item, term)
     })
-  }, [flowDialledActions, dialledSearchTerm, dialledActionFilter])
+  }, [flowDialledActions, dialledSearchTerm, dialledActionFilter, historySourceFilter])
 
   const flowConnectedActions = useMemo(() => {
     const merged = latestActionPerLead(
@@ -2438,14 +2743,16 @@ export default function CallingDataPage() {
         ...derivedScheduledLeads.map(actionLogFromScheduledLead),
       ]),
     )
-    return merged.filter((item) => {
-      if (classifyCallingConnection(item) === "not_connected") return false
-      const parsed = parseTaggedRemark(item.callRemark)
-      if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) return false
-      if (isConnectedFollowUpAction(item)) return true
-      return !!parsed.status || ["called", "follow_up", "rescheduled", "not_interested"].includes(String(item.action || "").toLowerCase())
-    })
-  }, [connectedActionItems, recentActions, analyticsActions, notConnectedActionItems, derivedScheduledLeads])
+    return merged
+      .filter((item) => {
+        if (classifyCallingConnection(item) === "not_connected") return false
+        const parsed = parseTaggedRemark(item.callRemark)
+        if (parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)) return false
+        if (isConnectedFollowUpAction(item)) return true
+        return !!parsed.status || ["called", "follow_up", "rescheduled", "not_interested"].includes(String(item.action || "").toLowerCase())
+      })
+      .map((item) => applyKnownSocialSource(item, socialSourceIndex.byLeadId, socialSourceIndex.byMobile))
+  }, [connectedActionItems, recentActions, analyticsActions, notConnectedActionItems, derivedScheduledLeads, socialSourceIndex])
 
   function getConnectedOutcomeForStatus(status: string): "interested" | "not_interested" | "decision_pending" {
     if (LOST_REASONS.includes(status) || status === "Not Interested" || status === "Not Interested Currently") {
@@ -2473,10 +2780,11 @@ export default function CallingDataPage() {
             return false
           })
     return afterOutcomeFilter.filter((item) => {
+      if (!matchesHistorySourceFilter(item, historySourceFilter)) return false
       const parsed = parseTaggedRemark(item.callRemark)
       return matchesActionLogSearch(item, term, [parsed.status, parsed.remark])
     })
-  }, [flowConnectedActions, connectedOutcomeFilter, connectedSearchTerm])
+  }, [flowConnectedActions, connectedOutcomeFilter, connectedSearchTerm, historySourceFilter])
 
   const flowNotConnectedActions = useMemo(() => {
     const merged = latestActionPerLead(
@@ -2487,21 +2795,24 @@ export default function CallingDataPage() {
         ...connectedActionItems,
       ]),
     )
-    return merged.filter((item) => {
-      if (hasUpcomingFollowUp(item)) return false
-      const parsed = parseTaggedRemark(item.callRemark)
-      return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
-    })
-  }, [notConnectedActionItems, recentActions, analyticsActions, connectedActionItems])
+    return merged
+      .filter((item) => {
+        if (hasUpcomingFollowUp(item)) return false
+        const parsed = parseTaggedRemark(item.callRemark)
+        return !!parsed.status && NOT_CONNECTED_REASONS.includes(parsed.status)
+      })
+      .map((item) => applyKnownSocialSource(item, socialSourceIndex.byLeadId, socialSourceIndex.byMobile))
+  }, [notConnectedActionItems, recentActions, analyticsActions, connectedActionItems, socialSourceIndex])
   const filteredFlowNotConnectedActions = useMemo(() => {
     const term = notConnectedSearchTerm.trim()
     return flowNotConnectedActions.filter((item) => {
+      if (!matchesHistorySourceFilter(item, historySourceFilter)) return false
       const parsed = parseTaggedRemark(item.callRemark)
       const reason = (parsed.status || "").trim()
       if (notConnectedReasonFilter !== "all" && reason !== notConnectedReasonFilter) return false
       return matchesActionLogSearch(item, term, [reason, parsed.remark])
     })
-  }, [flowNotConnectedActions, notConnectedSearchTerm, notConnectedReasonFilter])
+  }, [flowNotConnectedActions, notConnectedSearchTerm, notConnectedReasonFilter, historySourceFilter])
 
   const paginateItems = <T,>(items: T[], page: number, pageSize: number) => {
     const totalPages = Math.max(1, Math.ceil(items.length / pageSize))
@@ -2874,8 +3185,11 @@ export default function CallingDataPage() {
       city: lead?.city || fromHistory?.city,
       state: lead?.state || fromHistory?.state,
       customerNote: lead?.customerNote || fromHistory?.customerNote,
-      sourceType: lead?.sourceType || fromHistory?.sourceType,
-      source_type: fromHistory?.source_type,
+      sourceType:
+        lead?.sourceType ||
+        fromHistory?.sourceType ||
+        (lead && isSocialMediaCallingLead(lead) ? "social_media" : undefined),
+      source_type: fromHistory?.source_type || lead?.sourceType,
       sheetSourceId: lead?.sheetSourceId || fromHistory?.sheetSourceId,
       uploadFileName: lead?.uploadFileName || fromHistory?.uploadFileName,
       platform: lead?.platform || fromHistory?.platform,
@@ -3161,6 +3475,170 @@ export default function CallingDataPage() {
     }
   }
 
+  const handleHistorySourceFilterChange = (value: HistorySourceFilter) => {
+    setHistorySourceFilter(value)
+    setScheduledPage(1)
+    setDialledPage(1)
+    setConnectedPage(1)
+    setNotConnectedPage(1)
+  }
+
+  const analyticsRangeFileLabel =
+    analyticsRange === "custom"
+      ? `${analyticsFromDate || "from"}_to_${analyticsToDate || "to"}`
+      : analyticsRange
+
+  const downloadCallingReport = (
+    kind: "summary" | "analytics_log" | "scheduled" | "dialled" | "connected" | "not_connected",
+  ) => {
+    const stamp = formatYmdLocal(new Date())
+    const dealerSlug = String(callingUser?.username || dealer?.username || "dealer")
+      .trim()
+      .toLowerCase()
+      .replace(/[^\w.-]+/g, "-") || "dealer"
+
+    if (kind === "summary") {
+      const scheduledSocial = filteredScheduledLeads.filter((lead) => isSocialMediaCallingLead(lead)).length
+      const dialledSocial = filteredFlowDialledActions.filter((item) => isSocialMediaCallingLead(item)).length
+      const connectedSocial = filteredFlowConnectedActions.filter((item) => isSocialMediaCallingLead(item)).length
+      const notConnectedSocial = filteredFlowNotConnectedActions.filter((item) => isSocialMediaCallingLead(item)).length
+      downloadCsvFile({
+        filename: `calling-report-summary-${dealerSlug}-${analyticsRangeFileLabel}-${stamp}.csv`,
+        headers: ["Section", "Metric", "Total", "Social Media", "Calling data"],
+        rows: [
+          [
+            "Analytics",
+            "Total Calls",
+            rangeFilteredActionsForAnalytics.length,
+            analyticsSourceSplit.socialTotal,
+            analyticsSourceSplit.normalTotal,
+          ],
+          [
+            "Analytics",
+            "Not Connected",
+            analyticsConnectionSummary.notConnected,
+            analyticsSourceSplit.socialConnection.notConnected,
+            analyticsSourceSplit.normalConnection.notConnected,
+          ],
+          [
+            "Analytics",
+            "Connected",
+            analyticsConnectionSummary.connected,
+            analyticsSourceSplit.socialConnection.connected,
+            analyticsSourceSplit.normalConnection.connected,
+          ],
+          [
+            "Analytics",
+            "Not Interested",
+            analyticsOutcomeSummary.notInterested,
+            analyticsSourceSplit.socialOutcome.notInterested,
+            analyticsSourceSplit.normalOutcome.notInterested,
+          ],
+          [
+            "Analytics",
+            "Interested",
+            analyticsOutcomeSummary.interested,
+            analyticsSourceSplit.socialOutcome.interested,
+            analyticsSourceSplit.normalOutcome.interested,
+          ],
+          [
+            "Analytics",
+            "Follow Up",
+            analyticsOutcomeSummary.followUp,
+            analyticsSourceSplit.socialOutcome.followUp,
+            analyticsSourceSplit.normalOutcome.followUp,
+          ],
+          [
+            "Scheduled",
+            "Follow ups",
+            filteredScheduledLeads.length,
+            scheduledSocial,
+            filteredScheduledLeads.length - scheduledSocial,
+          ],
+          [
+            "Dialled",
+            "Rows",
+            filteredFlowDialledActions.length,
+            dialledSocial,
+            filteredFlowDialledActions.length - dialledSocial,
+          ],
+          [
+            "Connected",
+            "Rows",
+            filteredFlowConnectedActions.length,
+            connectedSocial,
+            filteredFlowConnectedActions.length - connectedSocial,
+          ],
+          [
+            "Not Connected",
+            "Rows",
+            filteredFlowNotConnectedActions.length,
+            notConnectedSocial,
+            filteredFlowNotConnectedActions.length - notConnectedSocial,
+          ],
+        ],
+      })
+      toast({
+        title: "Report downloaded",
+        description: `Summary for ${analyticsRangeFileLabel.replace(/_/g, " ")} saved as CSV.`,
+      })
+      return
+    }
+
+    const packs: Record<
+      "analytics_log" | "scheduled" | "dialled" | "connected" | "not_connected",
+      { filename: string; rows: Array<Array<string | number>>; empty: string; label: string }
+    > = {
+      analytics_log: {
+        filename: `calling-report-log-${dealerSlug}-${analyticsRangeFileLabel}-${stamp}.csv`,
+        rows: rangeFilteredActionsForAnalytics.map(actionLogReportRow),
+        empty: "No calls in this analytics range.",
+        label: "call log",
+      },
+      scheduled: {
+        filename: `calling-report-scheduled-${dealerSlug}-${stamp}.csv`,
+        rows: filteredScheduledLeads.map(scheduledLeadReportRow),
+        empty: "No scheduled follow-ups to download.",
+        label: "scheduled",
+      },
+      dialled: {
+        filename: `calling-report-dialled-${dealerSlug}-${stamp}.csv`,
+        rows: filteredFlowDialledActions.map(actionLogReportRow),
+        empty: "No dialled rows to download.",
+        label: "dialled",
+      },
+      connected: {
+        filename: `calling-report-connected-${dealerSlug}-${stamp}.csv`,
+        rows: filteredFlowConnectedActions.map(actionLogReportRow),
+        empty: "No connected rows to download.",
+        label: "connected",
+      },
+      not_connected: {
+        filename: `calling-report-not-connected-${dealerSlug}-${stamp}.csv`,
+        rows: filteredFlowNotConnectedActions.map(actionLogReportRow),
+        empty: "No not-connected rows to download.",
+        label: "not connected",
+      },
+    }
+    const pack = packs[kind]
+    if (pack.rows.length === 0) {
+      toast({
+        title: "No data to download",
+        description: pack.empty,
+      })
+      return
+    }
+    downloadCsvFile({
+      filename: pack.filename,
+      headers: [...CALLING_DATA_REPORT_HEADERS],
+      rows: pack.rows,
+    })
+    toast({
+      title: "Report downloaded",
+      description: `Exported ${pack.rows.length} ${pack.label} row${pack.rows.length === 1 ? "" : "s"}.`,
+    })
+  }
+
   if (!authReady || !isAuthenticated) return null
 
   return (
@@ -3169,26 +3647,12 @@ export default function CallingDataPage() {
       <main className="container mx-auto px-4 py-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div className="flex items-center gap-2">
-            <div
-              className={`w-8 h-8 rounded-full flex items-center justify-center border ${
-                isSocialMediaCurrentLead
-                  ? "bg-gradient-to-br from-sky-100 to-indigo-100 border-sky-200"
-                  : "bg-gradient-to-br from-orange-100 to-amber-100 border-orange-200"
-              }`}
-            >
-              {isSocialMediaCurrentLead ? (
-                <Sheet className="w-4 h-4 text-sky-700" />
-              ) : (
-                <PhoneCall className="w-4 h-4 text-primary" />
-              )}
+            <div className="w-8 h-8 rounded-full flex items-center justify-center border bg-gradient-to-br from-orange-100 to-amber-100 border-orange-200">
+              <PhoneCall className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-semibold">
-                {isSocialMediaCurrentLead ? "Social Media" : "Calling Data"}
-              </h1>
-              {isSocialMediaCurrentLead ? (
-                <p className="text-xs text-muted-foreground">Meta / Google Sheet lead</p>
-              ) : null}
+              <h1 className="text-xl font-semibold">Calling Data</h1>
+              <p className="text-xs text-muted-foreground">Social Media and calling data together</p>
             </div>
           </div>
           <CityMultiSelectFilter
@@ -3202,23 +3666,17 @@ export default function CallingDataPage() {
           also refreshes every 5 minutes.
         </p>
 
-        <Card className={isSocialMediaCurrentLead ? "border-sky-200/70 bg-gradient-to-b from-white to-sky-50/20 shadow-sm" : "border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm"}>
+        <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm">
           <CardHeader className="pb-2">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center border shrink-0 ${
-                  isSocialMediaCurrentLead
-                    ? "bg-sky-100 border-sky-200"
-                    : "bg-orange-100 border-orange-200"
-                }`}>
-                  <PhoneCall className={`w-3.5 h-3.5 ${isSocialMediaCurrentLead ? "text-sky-700" : "text-orange-700"}`} />
+                <div className="w-7 h-7 rounded-full flex items-center justify-center border shrink-0 bg-orange-100 border-orange-200">
+                  <PhoneCall className="w-3.5 h-3.5 text-orange-700" />
                 </div>
                 <div className="min-w-0">
-                  <CardTitle className="text-sm sm:text-base">
-                    {isSocialMediaCurrentLead ? "Social Media Call Analytics" : "Dealer Call Analytics"}
-                  </CardTitle>
+                  <CardTitle className="text-sm sm:text-base">Dealer Call Analytics</CardTitle>
                   <p className="text-[11px] text-muted-foreground">
-                    Same counts as Admin → Calling Reports for your login.
+                    Social Media and calling data together. Same counts as Admin → Calling Reports.
                   </p>
                 </div>
               </div>
@@ -3241,6 +3699,40 @@ export default function CallingDataPage() {
                     <SelectItem value="all">All time</SelectItem>
                   </SelectContent>
                 </Select>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 w-full sm:w-auto"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download report
+                      <ChevronDown className="w-3.5 h-3.5 opacity-70" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("summary")}>
+                      Analytics summary
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("analytics_log")}>
+                      Call log (this range)
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("scheduled")}>
+                      Scheduled
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("dialled")}>
+                      Dialled
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("connected")}>
+                      Connected
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => downloadCallingReport("not_connected")}>
+                      Not Connected
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -3330,31 +3822,52 @@ export default function CallingDataPage() {
               <AnalyticsStat
                 label="Total Calls"
                 value={rangeFilteredActionsForAnalytics.length}
+                hint={sourceSplitHint(analyticsSourceSplit.socialTotal, analyticsSourceSplit.normalTotal)}
                 className="border-orange-200/80 bg-white"
               />
               <AnalyticsStat
                 label="Not Connected"
                 value={analyticsConnectionSummary.notConnected}
+                hint={sourceSplitHint(
+                  analyticsSourceSplit.socialConnection.notConnected,
+                  analyticsSourceSplit.normalConnection.notConnected,
+                )}
                 className="border-slate-200 bg-slate-50/80"
               />
               <AnalyticsStat
                 label="Connected"
                 value={analyticsConnectionSummary.connected}
+                hint={sourceSplitHint(
+                  analyticsSourceSplit.socialConnection.connected,
+                  analyticsSourceSplit.normalConnection.connected,
+                )}
                 className="border-emerald-200 bg-emerald-50/50"
               />
               <AnalyticsStat
                 label="Not Interested"
                 value={analyticsOutcomeSummary.notInterested}
+                hint={sourceSplitHint(
+                  analyticsSourceSplit.socialOutcome.notInterested,
+                  analyticsSourceSplit.normalOutcome.notInterested,
+                )}
                 className="border-rose-200 bg-rose-50/40"
               />
               <AnalyticsStat
                 label="Interested"
                 value={analyticsOutcomeSummary.interested}
+                hint={sourceSplitHint(
+                  analyticsSourceSplit.socialOutcome.interested,
+                  analyticsSourceSplit.normalOutcome.interested,
+                )}
                 className="border-emerald-200 bg-emerald-50/30"
               />
               <AnalyticsStat
                 label="Follow Up"
                 value={analyticsOutcomeSummary.followUp}
+                hint={sourceSplitHint(
+                  analyticsSourceSplit.socialOutcome.followUp,
+                  analyticsSourceSplit.normalOutcome.followUp,
+                )}
                 className="border-blue-200 bg-blue-50/40"
               />
             </div>
@@ -3399,16 +3912,33 @@ export default function CallingDataPage() {
                   </div>
                   <div>
                     <CardTitle className="text-sm sm:text-base">Scheduled Follow Ups</CardTitle>
-                    <p className="text-[11px] text-muted-foreground">Change to Interested, Not Interested, or Decision Pending.</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Change to Interested, Not Interested, or Decision Pending.{" "}
+                      {sourceSplitHint(
+                        filteredScheduledLeads.filter((lead) => isSocialMediaCallingLead(lead)).length,
+                        filteredScheduledLeads.filter((lead) => !isSocialMediaCallingLead(lead)).length,
+                      )}
+                    </p>
                   </div>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-3xl">
                   <Input
                     value={scheduledSearchTerm}
                     onChange={(e) => setScheduledSearchTerm(e.target.value)}
                     placeholder="Search name, mobile, K number..."
                     className="h-8 w-full sm:flex-1"
                   />
+                  <HistorySourceFilterSelect value={historySourceFilter} onChange={handleHistorySourceFilterChange} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 shrink-0"
+                    onClick={() => downloadCallingReport("scheduled")}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </Button>
                   <Select value={scheduledTimeFilter} onValueChange={(value) => setScheduledTimeFilter(value as typeof scheduledTimeFilter)}>
                     <SelectTrigger className="h-8 w-full sm:w-40">
                       <SelectValue placeholder="Filter time" />
@@ -3443,7 +3973,7 @@ export default function CallingDataPage() {
                         className={cn(
                           "rounded-lg px-3 py-2 text-sm space-y-1.5",
                           socialLead
-                            ? "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+                            ? "border-sky-300 bg-gradient-to-b from-sky-50 to-indigo-50/70 shadow-sm border-l-4 border-l-sky-500"
                             : "border-blue-200/80 bg-gradient-to-b from-white to-blue-50/40 shadow-sm border-l-4 border-l-blue-500",
                         )}
                       >
@@ -3457,11 +3987,25 @@ export default function CallingDataPage() {
                               <Sparkles className="w-2.5 h-2.5" />
                               Social
                             </Badge>
-                          ) : null}
+                          ) : (
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-orange-200 bg-orange-50 text-orange-800">
+                              Calling data
+                            </Badge>
+                          )}
                           <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
                             {formatDateTime(lead.nextFollowUpAt)}
                           </span>
                         </div>
+                        <p className="text-[11px] text-muted-foreground truncate">
+                          {[
+                            lead.kNumber ? `K ${lead.kNumber}` : null,
+                            lead.address || null,
+                            lead.platform,
+                            lead.campaignName,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "K No / Address —"}
+                        </p>
                         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_11rem_auto_12rem_auto_auto_auto] gap-1.5 items-center">
                           <Input
                             className="h-8"
@@ -3603,7 +4147,7 @@ export default function CallingDataPage() {
                   </div>
                   <CardTitle className="text-sm sm:text-base">Dialled Data</CardTitle>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-3xl">
                   <Input
                     value={dialledSearchTerm}
                     onChange={(e) => {
@@ -3613,6 +4157,17 @@ export default function CallingDataPage() {
                     placeholder="Search name, mobile, K number..."
                     className="h-8 w-full sm:flex-1"
                   />
+                  <HistorySourceFilterSelect value={historySourceFilter} onChange={handleHistorySourceFilterChange} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 shrink-0"
+                    onClick={() => downloadCallingReport("dialled")}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </Button>
                   <Select
                     value={dialledActionFilter}
                     onValueChange={(value: "all" | "called" | "follow_up" | "not_interested" | "rescheduled") => {
@@ -3664,7 +4219,7 @@ export default function CallingDataPage() {
                         className={cn(
                           "rounded-lg px-3 py-2 text-sm space-y-1.5 min-w-0",
                           socialLead
-                            ? "border-sky-200/80 bg-gradient-to-b from-white to-sky-50/55 shadow-sm border-l-4 border-l-sky-500"
+                            ? "border-sky-300 bg-gradient-to-b from-sky-50 to-indigo-50/70 shadow-sm border-l-4 border-l-sky-500"
                             : notConnected
                               ? "border-rose-200/80 bg-gradient-to-b from-white to-rose-50/35 shadow-sm border-l-4 border-l-rose-400"
                               : "border-amber-200/80 bg-gradient-to-b from-white to-amber-50/35 shadow-sm border-l-4 border-l-amber-400",
@@ -3884,7 +4439,7 @@ export default function CallingDataPage() {
                   </div>
                   <CardTitle className="text-sm sm:text-base">Connected Data</CardTitle>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-3xl">
                   <Input
                     value={connectedSearchTerm}
                     onChange={(e) => {
@@ -3894,6 +4449,17 @@ export default function CallingDataPage() {
                     placeholder="Search name, mobile, reason..."
                     className="h-8 w-full sm:flex-1"
                   />
+                  <HistorySourceFilterSelect value={historySourceFilter} onChange={handleHistorySourceFilterChange} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 shrink-0"
+                    onClick={() => downloadCallingReport("connected")}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </Button>
                   <Select
                     value={connectedOutcomeFilter}
                     onValueChange={(value: "all" | "interested" | "not_interested" | "decision_pending") => {
@@ -4056,7 +4622,7 @@ export default function CallingDataPage() {
                   </div>
                   <CardTitle className="text-sm sm:text-base">Not Connected Data</CardTitle>
                 </div>
-                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-xl">
+                <div className="flex flex-col sm:flex-row gap-2 w-full lg:w-auto lg:max-w-3xl">
                   <Input
                     value={notConnectedSearchTerm}
                     onChange={(e) => {
@@ -4066,6 +4632,17 @@ export default function CallingDataPage() {
                     placeholder="Search name, mobile, K number..."
                     className="h-8 w-full sm:flex-1"
                   />
+                  <HistorySourceFilterSelect value={historySourceFilter} onChange={handleHistorySourceFilterChange} />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5 shrink-0"
+                    onClick={() => downloadCallingReport("not_connected")}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    Download
+                  </Button>
                   <Select
                     value={notConnectedReasonFilter}
                     onValueChange={(value) => {
