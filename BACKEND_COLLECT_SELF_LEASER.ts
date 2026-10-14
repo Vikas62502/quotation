@@ -5,15 +5,15 @@
  * =============================================================================
  *
  * Frontend (Oct 2026):
- *   - Account Management → Office Inside → Manage installments
- *   - Cash / UPI only: **Collected by** dropdown **Chairbord** (default) | **Self**
- *   - Chairbord: no Collect dropdown; installment save only; no auto leaser row
- *   - Self: **Collect** dropdown **Complete** | **Partial**
- *   - Self + Complete: leaser amount = full paidAmount
- *   - Self + Partial: Chairbord amount + Self amount (sum = paidAmount); leaser = self only
+ *   - Account Management → Payment management (all files)
+ *   - Cash / UPI only: **Office** dropdown **Chairbord** (default) | **Other**
+ *   - Chairbord: installment save only; no auto leaser row
+ *   - Other: office-inside subvendor dropdown + Amount (≤ paidAmount)
+ *   - Amount posts to that subvendor’s leaser (`lp-collect-{quotationId}-{phaseNumber}`)
+ *   - Legacy `self` still means the file’s own office-inside vendor
  *   - `app/dashboard/account-management/page.tsx`
  *   - `lib/api.ts` → `api.quotations.updatePaymentDetails` (phase.collectDestination)
- *   - After save, SPA PUT `/admin/subvendors/:id/leaser` with id `lp-self-{quotationId}-{phaseNumber}`
+ *   - After save, SPA PUT `/admin/subvendors/:id/leaser` with id `lp-collect-{quotationId}-{phaseNumber}`
  *
  * Auth: same as installment replace — `account-management` or `admin`.
  *
@@ -48,17 +48,19 @@
  *
  * Per phase in PUT/PATCH installment body:
  *
- *   collectDestination: "self" | "chairbord"
+ *   collectDestination: "self" | "chairbord" | "other"
  *   collectKind: "complete" | "partial"
- *   collectSelfAmount: number   // INR; leaser amount when > 0
+ *   collectSelfAmount: number   // INR; leaser amount when Other/self > 0
  *   collectChairbordAmount: number
+ *   collectVendorId: string     // office-inside subvendor id when Other
  *
  * Aliases (read any, write both):
  *   collect_destination, collectedBy, collected_by,
- *   collect_kind, collect_self_amount, collect_chairbord_amount
+ *   collect_kind, collect_self_amount, collect_chairbord_amount,
+ *   collect_vendor_id / collectVendorId
  *
  * Rules:
- *   - Allowed values: "self", "chairbord" (case-insensitive; also collect_self / to_chairbord / company → chairbord)
+ *   - Allowed values: "self", "chairbord", "other" (also collect_other / vendor / office → other; collect_self → self; to_chairbord / company → chairbord)
  *   - Only meaningful when that phase paymentMode is cash or upi
  *   - Loan / bank_transfer / cheque / card / missing → store NULL
  *   - Missing on old clients → NULL (treat as Chairbord; do not 400)
@@ -92,7 +94,8 @@
  *     ADD COLUMN IF NOT EXISTS collect_destination VARCHAR(16) NULL,
  *     ADD COLUMN IF NOT EXISTS collect_kind VARCHAR(16) NULL,
  *     ADD COLUMN IF NOT EXISTS collect_self_amount NUMERIC(14, 2) NULL,
- *     ADD COLUMN IF NOT EXISTS collect_chairbord_amount NUMERIC(14, 2) NULL;
+ *     ADD COLUMN IF NOT EXISTS collect_chairbord_amount NUMERIC(14, 2) NULL,
+ *     ADD COLUMN IF NOT EXISTS collect_vendor_id VARCHAR(80) NULL;
  *
  * JSON column path: keep the keys inside payment_phases / installments JSON as sent.
  *
@@ -103,6 +106,7 @@
  *   collectKind / collect_kind
  *   collectSelfAmount / collect_self_amount
  *   collectChairbordAmount / collect_chairbord_amount
+ *   collectVendorId / collect_vendor_id
  *
  * If collectDestination is omitted, the dialog always reopens as Chairbord after refresh.
  *
@@ -118,8 +122,9 @@
  *   2. PUT  /admin/subvendors/:id/leaser
  *
  * Auto rows:
- *   id            = "lp-self-" + quotationId + "-" + phaseNumber
- *   vendorId      = office_inside subvendor id (same dealer as the quotation)
+ *   id            = "lp-collect-" + quotationId + "-" + phaseNumber
+ *                   (legacy cleanup still removes "lp-self-" + quotationId + "-" + phaseNumber)
+ *   vendorId      = selected office_inside subvendor id (collectVendorId)
  *   date          = Accounts installment **Due Date** (phase.dueDate YYYY-MM-DD).
  *                   Fallback paymentDate only when dueDate is empty.
  *                   Persist DATEONLY as sent. Do **not** set to NOW() / created_at.
@@ -192,6 +197,7 @@ function normalizeCollectDestination(raw, paymentMode) {
     .toLowerCase()
     .replace(/[\s-]+/g, "_")
   if (s === "self" || s === "collect_self") return COLLECT_SELF
+  if (s === "other" || s === "collect_other" || s === "vendor" || s === "office") return "other"
   if (s === "chairbord" || s === "to_chairbord" || s === "company") return COLLECT_CHAIRBORD
   return null
 }

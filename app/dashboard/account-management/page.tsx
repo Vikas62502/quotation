@@ -137,12 +137,14 @@ interface PaymentPhase {
   paidAmount: number
   paymentDate?: string
   paymentMode?: string
-  /** Office inside + cash/UPI: vendor keeps the money (self) or sends it to Chairbord. */
-  collectDestination?: "self" | "chairbord"
+  /** Cash/UPI: Chairbord (default), collect by other office subvendor, or legacy self. */
+  collectDestination?: "self" | "chairbord" | "other"
   /** Complete = full paid amount to self or Chairbord. Partial = split amounts. */
   collectKind?: "complete" | "partial"
   collectSelfAmount?: number
   collectChairbordAmount?: number
+  /** Office-inside subvendor that received the Other collect amount (leaser). */
+  collectVendorId?: string
   transactionId?: string
   note?: string
 }
@@ -485,14 +487,19 @@ function isCashOrUpiPaymentMode(raw?: string | null): boolean {
   return mode === "cash" || mode === "upi"
 }
 
-function normalizeCollectDestination(raw?: string | null): "self" | "chairbord" | undefined {
+function normalizeCollectDestination(raw?: string | null): "self" | "chairbord" | "other" | undefined {
   const s = String(raw || "")
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_")
   if (s === "self" || s === "collect_self") return "self"
+  if (s === "other" || s === "collect_other" || s === "vendor" || s === "office") return "other"
   if (s === "chairbord" || s === "to_chairbord" || s === "company") return "chairbord"
   return undefined
+}
+
+function isCollectOtherLike(dest?: string | null): dest is "self" | "other" {
+  return dest === "self" || dest === "other"
 }
 
 function normalizeCollectKind(raw?: string | null): "complete" | "partial" | undefined {
@@ -510,40 +517,32 @@ function roundCollectInr(raw: unknown): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
-function officeInsideSelfLeaserAmount(phase: PaymentPhase): number {
+function collectKindForAmount(amount: number, paid: number): "complete" | "partial" {
+  return amount > 0 && amount < paid ? "partial" : "complete"
+}
+
+function collectLeaserAmount(phase: PaymentPhase): number {
   if (!isCashOrUpiPaymentMode(phase.paymentMode)) return 0
-  if (phase.collectDestination !== "self") return 0
+  if (!isCollectOtherLike(phase.collectDestination)) return 0
   const paid = roundCollectInr(phase.paidAmount)
   if (paid <= 0) return 0
+  const explicit = roundCollectInr(phase.collectSelfAmount)
+  if (phase.collectDestination === "other") {
+    return explicit > 0 ? Math.min(explicit, paid) : paid
+  }
   if (normalizeCollectKind(phase.collectKind) === "partial") {
-    return Math.min(paid, roundCollectInr(phase.collectSelfAmount))
+    return Math.min(paid, explicit)
   }
   return paid
 }
 
-function withPartialCollectSplit(
-  phase: PaymentPhase,
-  next: { self?: number; chairbord?: number },
-): PaymentPhase {
-  const paid = roundCollectInr(phase.paidAmount)
-  let self = roundCollectInr(next.self ?? phase.collectSelfAmount)
-  let chairbord = roundCollectInr(next.chairbord ?? phase.collectChairbordAmount)
-  if (next.self != null) {
-    self = Math.min(self, paid)
-    chairbord = Math.max(0, paid - self)
-  } else if (next.chairbord != null) {
-    chairbord = Math.min(chairbord, paid)
-    self = Math.max(0, paid - chairbord)
-  } else {
-    self = Math.min(self, paid)
-    chairbord = Math.max(0, paid - self)
-  }
-  return {
-    ...phase,
-    collectKind: "partial",
-    collectSelfAmount: self,
-    collectChairbordAmount: chairbord,
-  }
+function collectLeaserRowId(quotationId: string, phaseNumber: number) {
+  return `lp-collect-${quotationId}-${phaseNumber}`
+}
+
+function pickCollectVendorIdFromPhase(phase: any): string | undefined {
+  const id = String(phase?.collectVendorId || phase?.collect_vendor_id || phase?.vendorId || phase?.vendor_id || "").trim()
+  return id || undefined
 }
 
 function pickCollectKindFromPhase(phase: any): "complete" | "partial" | undefined {
@@ -566,12 +565,6 @@ function pickCollectChairbordAmountFromPhase(phase: any): number | undefined {
   )
   return n == null ? undefined : roundCollectInr(n)
 }
-
-function officeInsideSelfLeaserId(quotationId: string, phaseNumber: number) {
-  return `lp-self-${quotationId}-${phaseNumber}`
-}
-
-/** Same YYYY-MM-DD as the Accounts Due Date input. */
 
 function accountsPaymentGridClass(showProfit: boolean) {
   return cn(
@@ -1683,6 +1676,7 @@ function extractPhasesFromPaymentUpdateResponse(response: unknown): PaymentPhase
       collectKind: pickCollectKindFromPhase(phase),
       collectSelfAmount: pickCollectSelfAmountFromPhase(phase),
       collectChairbordAmount: pickCollectChairbordAmountFromPhase(phase),
+      collectVendorId: pickCollectVendorIdFromPhase(phase),
       transactionId: phase.transactionId,
       note: phase.note || phase.remarks || "",
     })),
@@ -1710,17 +1704,27 @@ function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
     const collectKind = cashOrUpi
       ? normalizeCollectKind(phase.collectKind) ?? phase.collectKind
       : undefined
+    const collectVendorId = cashOrUpi && isCollectOtherLike(collectDestination)
+      ? pickCollectVendorIdFromPhase(phase) ?? phase.collectVendorId
+      : undefined
     const collectSelfAmount =
-      cashOrUpi && collectKind === "partial" ? roundCollectInr(phase.collectSelfAmount) : undefined
+      cashOrUpi && (collectKind === "partial" || collectDestination === "other")
+        ? roundCollectInr(phase.collectSelfAmount)
+        : collectDestination === "other"
+          ? roundCollectInr(phase.collectSelfAmount)
+          : undefined
     const collectChairbordAmount =
-      cashOrUpi && collectKind === "partial" ? roundCollectInr(phase.collectChairbordAmount) : undefined
+      cashOrUpi && (collectKind === "partial" || collectDestination === "other")
+        ? roundCollectInr(phase.collectChairbordAmount)
+        : undefined
     return {
       ...phase,
       paymentMode,
       collectDestination,
       collectKind,
-      collectSelfAmount,
-      collectChairbordAmount,
+      collectVendorId,
+      collectSelfAmount: collectSelfAmount || undefined,
+      collectChairbordAmount: collectChairbordAmount || undefined,
     }
   })
 }
@@ -1732,48 +1736,59 @@ function calendarDateLocalYmd(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
-function upsertOfficeInsideSelfLeaserPayments(opts: {
-  vendor: AdminSubvendorRecord
+function upsertCollectLeaserPayments(opts: {
   quotationId: string
   customerName: string
   phases: PaymentPhase[]
+  resolveVendorId: (phase: PaymentPhase) => string | undefined
   existingAll?: SubvendorLeaserPayment[]
 }): SubvendorLeaserPayment[] {
-  const prefix = `lp-self-${opts.quotationId}-`
+  const collectPrefix = `lp-collect-${opts.quotationId}-`
+  const selfPrefix = `lp-self-${opts.quotationId}-`
   const all = opts.existingAll ?? readLeaserPayments()
-  const kept = all.filter((row) => !(row.vendorId === opts.vendor.id && row.id.startsWith(prefix)))
-  const vendorKept = kept.filter((row) => row.vendorId === opts.vendor.id)
-  let sortOrder = vendorKept.reduce((max, row) => Math.max(max, row.sortOrder || 0), 0)
+  const kept = all.filter((row) => !row.id.startsWith(collectPrefix) && !row.id.startsWith(selfPrefix))
+  const sortByVendor = new Map<string, number>()
+  for (const row of kept) {
+    sortByVendor.set(row.vendorId, Math.max(sortByVendor.get(row.vendorId) || 0, row.sortOrder || 0))
+  }
   const created: SubvendorLeaserPayment[] = []
+  const touchedVendorIds = new Set<string>()
+  for (const row of all) {
+    if (row.id.startsWith(collectPrefix) || row.id.startsWith(selfPrefix)) {
+      touchedVendorIds.add(row.vendorId)
+    }
+  }
   for (const phase of opts.phases) {
-    const amount = officeInsideSelfLeaserAmount(phase)
-    if (amount <= 0) continue
-    sortOrder += 1
+    const amount = collectLeaserAmount(phase)
+    const vendorId = opts.resolveVendorId(phase)
+    if (amount <= 0 || !vendorId) continue
+    const nextOrder = (sortByVendor.get(vendorId) || 0) + 1
+    sortByVendor.set(vendorId, nextOrder)
+    touchedVendorIds.add(vendorId)
     const paid = roundCollectInr(phase.paidAmount)
     const chairbord = Math.max(0, paid - amount)
-    const isPartial = normalizeCollectKind(phase.collectKind) === "partial"
     created.push({
-      id: officeInsideSelfLeaserId(opts.quotationId, phase.phaseNumber),
-      vendorId: opts.vendor.id,
+      id: collectLeaserRowId(opts.quotationId, phase.phaseNumber),
+      vendorId,
       date: phaseDateYmd(phase),
       amount,
       paymentType: normalizePaymentMode(phase.paymentMode) === "upi" ? "UPI" : "Cash",
       remark:
         phase.note?.trim() ||
-        (isPartial
-          ? `Installment ${phase.phaseNumber} — ${opts.customerName} (self ₹${amount.toLocaleString("en-IN")} / chairbord ₹${chairbord.toLocaleString("en-IN")})`
-          : `Installment ${phase.phaseNumber} — ${opts.customerName} (collect self)`),
+        (chairbord > 0
+          ? `Installment ${phase.phaseNumber} — ${opts.customerName} (other ₹${amount.toLocaleString("en-IN")} / chairbord ₹${chairbord.toLocaleString("en-IN")})`
+          : `Installment ${phase.phaseNumber} — ${opts.customerName} (collect other)`),
       customerIds: [opts.quotationId],
-      sortOrder,
+      sortOrder: nextOrder,
     })
   }
   const next = [...kept, ...created]
   writeLeaserPayments(next)
-  const paid = next
-    .filter((row) => row.vendorId === opts.vendor.id)
-    .reduce((sum, row) => sum + row.amount, 0)
-  updateAdminSubvendor(opts.vendor.id, { leaserPaid: paid })
-  return next.filter((row) => row.vendorId === opts.vendor.id)
+  for (const vendorId of touchedVendorIds) {
+    const paid = next.filter((row) => row.vendorId === vendorId).reduce((sum, row) => sum + row.amount, 0)
+    updateAdminSubvendor(vendorId, { leaserPaid: paid })
+  }
+  return next
 }
 
 function paymentDateRangeToFilterStrings(range?: DateRange) {
@@ -2471,6 +2486,7 @@ export default function AccountManagementPage() {
                 collectKind: pickCollectKindFromPhase(phase),
                 collectSelfAmount: pickCollectSelfAmountFromPhase(phase),
                 collectChairbordAmount: pickCollectChairbordAmountFromPhase(phase),
+                collectVendorId: pickCollectVendorIdFromPhase(phase),
                 transactionId: phase.transactionId,
                 note: phase.note || phase.remarks || "",
               })),
@@ -4025,26 +4041,32 @@ export default function AccountManagementPage() {
       })
       return
     }
-    if (isOfficeInsideDealer(activePayment.dealerId)) {
-      const splitError = activePayment.phases.find((phase) => {
-        if (!isCashOrUpiPaymentMode(phase.paymentMode)) return false
-        if (phase.collectDestination !== "self") return false
-        if (normalizeCollectKind(phase.collectKind) !== "partial") return false
-        const paid = roundCollectInr(phase.paidAmount)
-        if (paid <= 0) return false
-        const self = roundCollectInr(phase.collectSelfAmount)
-        const chairbord = roundCollectInr(phase.collectChairbordAmount)
-        return Math.abs(self + chairbord - paid) > 0.5
-      })
-      if (splitError) {
-        const paid = roundCollectInr(splitError.paidAmount)
-        toast({
-          title: "Cannot save",
-          description: `Installment ${splitError.phaseNumber}: To Chairbord + Self must equal collected ₹${paid.toLocaleString("en-IN")}.`,
-          variant: "destructive",
-        })
-        return
+    const fileOfficeVendorId = officeInsideVendors.find(
+      (row) => row.dealerId === activePayment.dealerId,
+    )?.id
+    const resolvePhaseCollectVendorId = (phase: PaymentPhase) => {
+      if (phase.collectVendorId && officeInsideVendors.some((row) => row.id === phase.collectVendorId)) {
+        return phase.collectVendorId
       }
+      if (phase.collectDestination === "self") return fileOfficeVendorId
+      return undefined
+    }
+    const collectError = activePayment.phases.find((phase) => {
+      if (!isCashOrUpiPaymentMode(phase.paymentMode)) return false
+      if (!isCollectOtherLike(phase.collectDestination)) return false
+      const paid = roundCollectInr(phase.paidAmount)
+      if (paid <= 0) return false
+      if (!resolvePhaseCollectVendorId(phase)) return true
+      const amount = collectLeaserAmount(phase)
+      return amount <= 0 || amount > paid
+    })
+    if (collectError) {
+      toast({
+        title: "Cannot save",
+        description: `Installment ${collectError.phaseNumber}: choose an office subvendor and an amount up to the paid cash/UPI.`,
+        variant: "destructive",
+      })
+      return
     }
     if (!confirmSave("Save installment / payment details?")) return
     if (subvendorLedgerDrafts && isOfficeInsideDealer(activePayment.dealerId)) {
@@ -4081,39 +4103,24 @@ export default function AccountManagementPage() {
           (Number(phase.paidAmount) || 0) > 0 ||
           phase.status === "partial" ||
           phase.status === "completed"
-        const officeCollect =
-          isOfficeInsideDealer(activePayment.dealerId) &&
-          isCashOrUpiPaymentMode(modeNorm || phase.paymentMode)
-        const collectKind: "complete" | "partial" | undefined = officeCollect
-          ? phase.collectDestination === "self" &&
-            normalizeCollectKind(phase.collectKind) === "partial"
+        const cashCollect = isCashOrUpiPaymentMode(modeNorm || phase.paymentMode)
+        const paid = roundCollectInr(phase.paidAmount)
+        const collectVendorId = cashCollect ? resolvePhaseCollectVendorId(phase) : undefined
+        const otherAmount = cashCollect ? collectLeaserAmount({ ...phase, collectVendorId }) : 0
+        const isOther = cashCollect && isCollectOtherLike(phase.collectDestination) && otherAmount > 0
+        const collectKind: "complete" | "partial" | undefined = cashCollect
+          ? isOther && otherAmount < paid
             ? "partial"
             : "complete"
           : undefined
-        const paid = roundCollectInr(phase.paidAmount)
-        const collectSelfAmount = officeCollect
-          ? collectKind === "partial"
-            ? roundCollectInr(phase.collectSelfAmount)
-            : phase.collectDestination === "self"
-              ? paid
-              : 0
-          : undefined
-        const collectChairbordAmount = officeCollect
-          ? collectKind === "partial"
-            ? roundCollectInr(phase.collectChairbordAmount)
-            : phase.collectDestination === "self"
-              ? 0
-              : paid
-          : undefined
-        const collectDestination: "self" | "chairbord" | undefined = officeCollect
-          ? collectKind === "partial"
-            ? roundCollectInr(collectSelfAmount) > 0 &&
-              roundCollectInr(collectSelfAmount) >= roundCollectInr(collectChairbordAmount)
+        const collectSelfAmount = cashCollect ? (isOther ? otherAmount : 0) : undefined
+        const collectChairbordAmount = cashCollect ? (isOther ? Math.max(0, paid - otherAmount) : paid) : undefined
+        const collectDestination: PaymentPhase["collectDestination"] = cashCollect
+          ? isOther
+            ? collectVendorId && collectVendorId === fileOfficeVendorId
               ? "self"
-              : "chairbord"
-            : phase.collectDestination === "self"
-              ? "self"
-              : "chairbord"
+              : "other"
+            : "chairbord"
           : undefined
         return {
           phaseNumber: phase.phaseNumber,
@@ -4132,6 +4139,8 @@ export default function AccountManagementPage() {
           collect_self_amount: collectSelfAmount,
           collectChairbordAmount,
           collect_chairbord_amount: collectChairbordAmount,
+          collectVendorId,
+          collect_vendor_id: collectVendorId,
           transactionId: phase.transactionId || undefined,
           note: phase.note?.trim() || undefined,
         }
@@ -4157,6 +4166,7 @@ export default function AccountManagementPage() {
             collectKind: sent?.collectKind ?? phase.collectKind,
             collectSelfAmount: sent?.collectSelfAmount ?? phase.collectSelfAmount,
             collectChairbordAmount: sent?.collectChairbordAmount ?? phase.collectChairbordAmount,
+            collectVendorId: sent?.collectVendorId ?? phase.collectVendorId,
           }
         })
         if (resolvedSiteCost > 0) {
@@ -4200,48 +4210,74 @@ export default function AccountManagementPage() {
 
       persistSubsidyChequesForQuotation(activePayment.quotationId, activePayment.subsidyCheques || [])
 
-      if (isOfficeInsideDealer(activePayment.dealerId) && activePayment.dealerId) {
-        const vendor = officeInsideVendors.find((row) => row.dealerId === activePayment.dealerId)
-        if (vendor) {
-          let existingAll = readLeaserPayments()
-          if (useApi) {
-            try {
-              const leaserRes = await api.admin.subvendors.leaser.getAll({ vendorId: vendor.id })
-              const remote = pickLeaserPaymentList(leaserRes)
-              if (remote.length) {
-                existingAll = [
-                  ...existingAll.filter((row) => row.vendorId !== vendor.id),
-                  ...remote,
-                ]
+      {
+        const collectPrefix = `lp-collect-${activePayment.quotationId}-`
+        const selfPrefix = `lp-self-${activePayment.quotationId}-`
+        let existingAll = readLeaserPayments()
+        const vendorIdsToLoad = new Set(officeInsideVendors.map((row) => row.id))
+        for (const row of existingAll) {
+          if (row.id.startsWith(collectPrefix) || row.id.startsWith(selfPrefix)) {
+            vendorIdsToLoad.add(row.vendorId)
+          }
+        }
+        if (useApi) {
+          const remotes = await Promise.all(
+            [...vendorIdsToLoad].map(async (vendorId) => {
+              try {
+                const leaserRes = await api.admin.subvendors.leaser.getAll({ vendorId })
+                return { vendorId, remote: pickLeaserPaymentList(leaserRes) }
+              } catch {
+                return { vendorId, remote: [] as SubvendorLeaserPayment[] }
               }
-            } catch {
-              // Keep local leaser rows if the route is not live yet.
-            }
-          }
-          const vendorRows = upsertOfficeInsideSelfLeaserPayments({
-            vendor,
-            quotationId: activePayment.quotationId,
-            customerName: activePayment.customerName,
-            phases: phasesToApply,
-            existingAll,
-          })
-          const paid = vendorRows.reduce((sum, row) => sum + row.amount, 0)
-          setOfficeInsideVendors((prev) =>
-            prev.map((row) => (row.id === vendor.id ? { ...row, leaserPaid: paid } : row)),
+            }),
           )
-          if (useApi) {
-            try {
-              await api.admin.subvendors.leaser.replace(
-                vendor.id,
-                leaserPaymentsToApiBody(vendor.id, vendorRows, {
-                  leaserPaid: paid,
-                  leaserRemaining: vendor.leaserRemaining,
-                }),
-              )
-            } catch {
-              // Installment save already succeeded; leaser stays on this device.
-            }
+          for (const { vendorId, remote } of remotes) {
+            if (!remote.length) continue
+            existingAll = [...existingAll.filter((row) => row.vendorId !== vendorId), ...remote]
           }
+        }
+        const previousVendorIds = existingAll
+          .filter((row) => row.id.startsWith(collectPrefix) || row.id.startsWith(selfPrefix))
+          .map((row) => row.vendorId)
+        const nextAll = upsertCollectLeaserPayments({
+          quotationId: activePayment.quotationId,
+          customerName: activePayment.customerName,
+          phases: phasesToApply,
+          resolveVendorId: resolvePhaseCollectVendorId,
+          existingAll,
+        })
+        const touchedVendorIds = new Set([
+          ...previousVendorIds,
+          ...nextAll.filter((row) => row.id.startsWith(collectPrefix)).map((row) => row.vendorId),
+        ])
+        setOfficeInsideVendors((prev) =>
+          prev.map((row) => {
+            if (!touchedVendorIds.has(row.id)) return row
+            const paid = nextAll
+              .filter((item) => item.vendorId === row.id)
+              .reduce((sum, item) => sum + item.amount, 0)
+            return { ...row, leaserPaid: paid }
+          }),
+        )
+        if (useApi) {
+          await Promise.all(
+            [...touchedVendorIds].map(async (vendorId) => {
+              const vendor = officeInsideVendors.find((row) => row.id === vendorId)
+              const vendorRows = nextAll.filter((row) => row.vendorId === vendorId)
+              const paid = vendorRows.reduce((sum, row) => sum + row.amount, 0)
+              try {
+                await api.admin.subvendors.leaser.replace(
+                  vendorId,
+                  leaserPaymentsToApiBody(vendorId, vendorRows, {
+                    leaserPaid: paid,
+                    leaserRemaining: vendor?.leaserRemaining ?? 0,
+                  }),
+                )
+              } catch {
+                // Installment save already succeeded; leaser stays on this device.
+              }
+            }),
+          )
         }
       }
 
@@ -5817,12 +5853,23 @@ export default function AccountManagementPage() {
                         const isMix = getPaymentTypeValue(activePayment) === "mix"
                         const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
                         const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
-                        const showCollect =
-                          isOfficeInsideDealer(activePayment.dealerId) &&
-                          isCashOrUpiPaymentMode(
-                            normalizePaymentMode(phase.paymentMode) ||
-                              defaultInstallmentPaymentMode(activePayment),
-                          )
+                        const showCollect = isCashOrUpiPaymentMode(
+                          normalizePaymentMode(phase.paymentMode) ||
+                            defaultInstallmentPaymentMode(activePayment),
+                        )
+                        const fileOfficeVendorId = officeInsideVendors.find(
+                          (vendor) => vendor.dealerId === activePayment.dealerId,
+                        )?.id
+                        const selectedCollectVendorId =
+                          phase.collectVendorId ||
+                          (phase.collectDestination === "self" ? fileOfficeVendorId : undefined)
+                        const collectOtherAmount = showCollect
+                          ? collectLeaserAmount({
+                              ...phase,
+                              collectDestination:
+                                phase.collectDestination === "self" ? "self" : phase.collectDestination,
+                            }) || (isCollectOtherLike(phase.collectDestination) ? roundCollectInr(phase.paidAmount) : 0)
+                          : 0
 
                         return (
                           <div
@@ -5911,11 +5958,23 @@ export default function AccountManagementPage() {
                                                         paymentDate:
                                                           paid > 0 ? new Date().toISOString() : undefined,
                                                       }
-                                                      return normalizeCollectKind(ph.collectKind) === "partial"
-                                                        ? withPartialCollectSplit(nextPhase, {
-                                                            self: ph.collectSelfAmount,
-                                                          })
-                                                        : nextPhase
+                                                      if (isCollectOtherLike(ph.collectDestination)) {
+                                                        const paidAmt = roundCollectInr(paid)
+                                                        const other = Math.min(
+                                                          paidAmt,
+                                                          roundCollectInr(ph.collectSelfAmount) || paidAmt,
+                                                        )
+                                                        return {
+                                                          ...nextPhase,
+                                                          collectDestination:
+                                                            ph.collectDestination === "self" ? "self" : "other",
+                                                          collectKind: collectKindForAmount(other, paidAmt),
+                                                          collectSelfAmount: other,
+                                                          collectChairbordAmount: Math.max(0, paidAmt - other),
+                                                          collectVendorId: ph.collectVendorId,
+                                                        }
+                                                      }
+                                                      return nextPhase
                                                     })()
                                                   : ph,
                                               ),
@@ -5964,22 +6023,22 @@ export default function AccountManagementPage() {
                                     defaultInstallmentPaymentMode(activePayment)
                                   }
                                   onValueChange={(value) => {
-                                    const keepCollect =
-                                      isOfficeInsideDealer(activePayment.dealerId) &&
-                                      isCashOrUpiPaymentMode(value)
+                                    const keepCollect = isCashOrUpiPaymentMode(value)
                                     const updated = customerPayments.map((p) =>
                                       p.quotationId === activePayment.quotationId
                                         ? {
                                             ...p,
                                             phases: p.phases.map((ph) => {
                                               if (ph.phaseNumber !== phase.phaseNumber) return ph
-                                              const collectDestination: PaymentPhase["collectDestination"] =
-                                                keepCollect
-                                                  ? ph.collectDestination === "self"
-                                                    ? "self"
-                                                    : "chairbord"
+                                              const keepOther = keepCollect && isCollectOtherLike(ph.collectDestination)
+                                              const collectDestination: PaymentPhase["collectDestination"] = keepOther
+                                                ? ph.collectDestination === "self"
+                                                  ? "self"
+                                                  : "other"
+                                                : keepCollect
+                                                  ? "chairbord"
                                                   : undefined
-                                              const collectKind: PaymentPhase["collectKind"] = keepCollect
+                                              const collectKind: PaymentPhase["collectKind"] = keepOther
                                                 ? normalizeCollectKind(ph.collectKind) === "partial"
                                                   ? "partial"
                                                   : "complete"
@@ -5989,10 +6048,11 @@ export default function AccountManagementPage() {
                                                 paymentMode: value,
                                                 collectDestination,
                                                 collectKind,
-                                                collectSelfAmount: keepCollect ? ph.collectSelfAmount : undefined,
-                                                collectChairbordAmount: keepCollect
+                                                collectSelfAmount: keepOther ? ph.collectSelfAmount : undefined,
+                                                collectChairbordAmount: keepOther
                                                   ? ph.collectChairbordAmount
                                                   : undefined,
+                                                collectVendorId: keepOther ? ph.collectVendorId : undefined,
                                               }
                                             }),
                                           }
@@ -6041,37 +6101,40 @@ export default function AccountManagementPage() {
                             <div className="flex flex-wrap xl:flex-nowrap items-end gap-2">
                               {showCollect ? (
                                 <>
-                                  <div className="w-[8.5rem] shrink-0">
-                                    <Label className="text-[11px] text-muted-foreground">Collected by</Label>
+                                  <div className="w-[9.25rem] shrink-0">
+                                    <Label className="text-[11px] text-muted-foreground">Office</Label>
                                     <Select
-                                      value={phase.collectDestination === "self" ? "self" : "chairbord"}
+                                      value={isCollectOtherLike(phase.collectDestination) ? "other" : "chairbord"}
                                       onValueChange={(value) => {
                                         const dest: PaymentPhase["collectDestination"] =
-                                          value === "self" ? "self" : "chairbord"
+                                          value === "other" ? "other" : "chairbord"
                                         const updated = customerPayments.map((p) =>
                                           p.quotationId === activePayment.quotationId
                                             ? {
                                                 ...p,
-                                                phases: p.phases.map((ph) =>
-                                                  ph.phaseNumber === phase.phaseNumber
-                                                    ? dest === "chairbord"
-                                                      ? {
-                                                          ...ph,
-                                                          collectDestination: dest,
-                                                          collectKind: undefined,
-                                                          collectSelfAmount: undefined,
-                                                          collectChairbordAmount: undefined,
-                                                        }
-                                                      : {
-                                                          ...ph,
-                                                          collectDestination: dest,
-                                                          collectKind:
-                                                            normalizeCollectKind(ph.collectKind) === "partial"
-                                                              ? "partial"
-                                                              : "complete",
-                                                        }
-                                                    : ph,
-                                                ),
+                                                phases: p.phases.map((ph) => {
+                                                  if (ph.phaseNumber !== phase.phaseNumber) return ph
+                                                  if (dest === "chairbord") {
+                                                    return {
+                                                      ...ph,
+                                                      collectDestination: dest,
+                                                      collectKind: undefined,
+                                                      collectSelfAmount: undefined,
+                                                      collectChairbordAmount: undefined,
+                                                      collectVendorId: undefined,
+                                                    }
+                                                  }
+                                                  const paid = roundCollectInr(ph.paidAmount)
+                                                  const otherAmount = roundCollectInr(ph.collectSelfAmount) || paid
+                                                  return {
+                                                    ...ph,
+                                                    collectDestination: dest,
+                                                    collectKind: collectKindForAmount(otherAmount, paid),
+                                                    collectSelfAmount: otherAmount,
+                                                    collectChairbordAmount: Math.max(0, paid - otherAmount),
+                                                    collectVendorId: ph.collectVendorId || fileOfficeVendorId,
+                                                  }
+                                                }),
                                               }
                                             : p,
                                         )
@@ -6079,84 +6142,32 @@ export default function AccountManagementPage() {
                                       }}
                                     >
                                       <SelectTrigger className="mt-0.5 h-8">
-                                        <SelectValue placeholder="Collected by" />
+                                        <SelectValue placeholder="Office" />
                                       </SelectTrigger>
                                       <SelectContent>
                                         <SelectItem value="chairbord">Chairbord</SelectItem>
-                                        <SelectItem value="self">Self</SelectItem>
+                                        <SelectItem value="other">Other</SelectItem>
                                       </SelectContent>
                                     </Select>
                                   </div>
-                                  {phase.collectDestination === "self" ? (
-                                    <div className="w-[8.5rem] shrink-0">
-                                      <Label className="text-[11px] text-muted-foreground">Collect</Label>
-                                      <Select
-                                        value={
-                                          normalizeCollectKind(phase.collectKind) === "partial"
-                                            ? "partial"
-                                            : "complete"
-                                        }
-                                        onValueChange={(value) => {
-                                          const updated = customerPayments.map((p) =>
-                                            p.quotationId === activePayment.quotationId
-                                              ? {
-                                                  ...p,
-                                                  phases: p.phases.map((ph) => {
-                                                    if (ph.phaseNumber !== phase.phaseNumber) return ph
-                                                    const paid = roundCollectInr(ph.paidAmount)
-                                                    if (value === "partial") {
-                                                      return withPartialCollectSplit(
-                                                        { ...ph, collectDestination: "self" },
-                                                        { self: paid },
-                                                      )
-                                                    }
-                                                    return {
-                                                      ...ph,
-                                                      collectKind: "complete" as const,
-                                                      collectDestination: "self" as const,
-                                                      collectSelfAmount: undefined,
-                                                      collectChairbordAmount: undefined,
-                                                    }
-                                                  }),
-                                                }
-                                              : p,
-                                          )
-                                          setCustomerPayments(updated)
-                                        }}
-                                      >
-                                        <SelectTrigger className="mt-0.5 h-8">
-                                          <SelectValue placeholder="Collect" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          <SelectItem value="complete">Complete</SelectItem>
-                                          <SelectItem value="partial">Partial</SelectItem>
-                                        </SelectContent>
-                                      </Select>
-                                    </div>
-                                  ) : null}
-                                  {phase.collectDestination === "self" &&
-                                  normalizeCollectKind(phase.collectKind) === "partial" ? (
+                                  {isCollectOtherLike(phase.collectDestination) ? (
                                     <>
-                                      <div className="w-[7.75rem] shrink-0">
-                                        <Label className="text-[11px] text-muted-foreground">
-                                          Chairbord
-                                        </Label>
-                                        <Input
-                                          type="number"
-                                          min={0}
-                                          value={phase.collectChairbordAmount ?? 0}
-                                          onChange={(e) => {
-                                            const chairbord = Number.parseFloat(e.target.value) || 0
+                                      <div className="w-[12.5rem] shrink-0">
+                                        <Label className="text-[11px] text-muted-foreground">Office subvendor</Label>
+                                        <Select
+                                          value={selectedCollectVendorId}
+                                          onValueChange={(vendorId) => {
                                             const updated = customerPayments.map((p) =>
                                               p.quotationId === activePayment.quotationId
                                                 ? {
                                                     ...p,
                                                     phases: p.phases.map((ph) =>
                                                       ph.phaseNumber === phase.phaseNumber
-                                                        ? withPartialCollectSplit(
-                                                            { ...ph, collectDestination: "self" },
-                                                            { chairbord },
-                                                          )
+                                                        ? {
+                                                            ...ph,
+                                                            collectDestination: "other" as const,
+                                                            collectVendorId: vendorId,
+                                                          }
                                                         : ph,
                                                     ),
                                                   }
@@ -6164,35 +6175,57 @@ export default function AccountManagementPage() {
                                             )
                                             setCustomerPayments(updated)
                                           }}
-                                          className="mt-0.5 h-8 tabular-nums"
-                                        />
+                                        >
+                                          <SelectTrigger className="mt-0.5 h-8">
+                                            <SelectValue placeholder="Select office" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {officeInsideVendors.length === 0 ? (
+                                              <SelectItem value="__none" disabled>
+                                                No office subvendors
+                                              </SelectItem>
+                                            ) : (
+                                              officeInsideVendors.map((vendor) => (
+                                                <SelectItem key={vendor.id} value={vendor.id}>
+                                                  {vendor.name || vendor.contactName || vendor.dealerId}
+                                                </SelectItem>
+                                              ))
+                                            )}
+                                          </SelectContent>
+                                        </Select>
                                       </div>
                                       <div className="w-[7.75rem] shrink-0">
-                                        <Label className="text-[11px] text-muted-foreground">Self</Label>
+                                        <Label className="text-[11px] text-muted-foreground">Amount</Label>
                                         <Input
                                           type="number"
                                           min={0}
-                                          value={phase.collectSelfAmount ?? 0}
+                                          value={collectOtherAmount}
                                           onChange={(e) => {
-                                            const self = Number.parseFloat(e.target.value) || 0
+                                            const other = Number.parseFloat(e.target.value) || 0
                                             const updated = customerPayments.map((p) =>
                                               p.quotationId === activePayment.quotationId
                                                 ? {
                                                     ...p,
-                                                    phases: p.phases.map((ph) =>
-                                                      ph.phaseNumber === phase.phaseNumber
-                                                        ? withPartialCollectSplit(
-                                                            { ...ph, collectDestination: "self" },
-                                                            { self },
-                                                          )
-                                                        : ph,
-                                                    ),
+                                                    phases: p.phases.map((ph) => {
+                                                      if (ph.phaseNumber !== phase.phaseNumber) return ph
+                                                      const paid = roundCollectInr(ph.paidAmount)
+                                                      const amount = Math.min(Math.max(0, Math.round(other)), paid)
+                                                      return {
+                                                        ...ph,
+                                                        collectDestination: "other" as const,
+                                                        collectKind: collectKindForAmount(amount, paid),
+                                                        collectSelfAmount: amount,
+                                                        collectChairbordAmount: Math.max(0, paid - amount),
+                                                        collectVendorId: ph.collectVendorId || fileOfficeVendorId,
+                                                      }
+                                                    }),
                                                   }
                                                 : p,
                                             )
                                             setCustomerPayments(updated)
                                           }}
                                           className="mt-0.5 h-8 tabular-nums"
+                                          placeholder="0"
                                         />
                                       </div>
                                     </>

@@ -1433,15 +1433,17 @@ export const api = {
           dueDate?: string
           paymentDate?: string
           paymentMode?: string
-          /** Office Inside Cash/UPI: vendor keeps money (self) or sends to Chairbord. */
-          collectDestination?: "self" | "chairbord"
-          collect_destination?: "self" | "chairbord"
+          /** Cash/UPI: Chairbord (default), other office subvendor, or legacy self. */
+          collectDestination?: "self" | "chairbord" | "other"
+          collect_destination?: "self" | "chairbord" | "other"
           collectKind?: "complete" | "partial"
           collect_kind?: "complete" | "partial"
           collectSelfAmount?: number
           collect_self_amount?: number
           collectChairbordAmount?: number
           collect_chairbord_amount?: number
+          collectVendorId?: string
+          collect_vendor_id?: string
           transactionId?: string
           note?: string
         }>

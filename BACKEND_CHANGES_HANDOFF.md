@@ -4313,13 +4313,13 @@ If the dedicated route 404s, frontend calls `updateOperationalStatus(id, "instal
 
 ---
 
-## 57. Office Inside installment — Collect self / To Chairbord (**§BK**) — Oct 2026
+## 57. Payment management Office — Chairbord / Other (**§BK**) — Oct 2026
 
-**Frontend (shipped):** Office Inside + Cash/UPI **Collected by** Chairbord (default) | Self. Self shows **Collect** Complete | Partial. Partial splits Chairbord + Self; leaser amount is **self only**. Chairbord = existing installment flow, no auto leaser row.
+**Frontend (shipped):** Cash/UPI **Office** Chairbord (default) | Other. Other shows office-inside subvendor + Amount. Amount posts to that vendor’s leaser (`lp-collect-{quotationId}-{phaseNumber}`). Chairbord = existing installment flow, no auto leaser row. Legacy `self` still accepted.
 
 **Backend (P0):**
-1. Persist `collectDestination`, `collectKind`, `collectSelfAmount`, `collectChairbordAmount`; echo on GET. Do not 400 extra phase keys.
-2. Leaser payment `id` is TEXT — keep `lp-self-…` as sent (**§BG** PUT). Amount on that row is the self share.
+1. Persist `collectDestination` (`chairbord` | `other` | `self`), `collectKind`, `collectSelfAmount`, `collectChairbordAmount`, **`collectVendorId`**; echo on GET. Do not 400 extra phase keys or value `other`.
+2. Leaser payment `id` is TEXT — keep `lp-collect-…` and `lp-self-…` as sent (**§BG** PUT). Amount on that row is the Other/self share.
 3. Do not auto-create leaser rows on installment save (SPA PUTs `/admin/subvendors/:id/leaser`).
 4. Leaser `date` = installment Due Date (**§BP**). Persist DATEONLY as sent.
 

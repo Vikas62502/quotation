@@ -4951,7 +4951,8 @@ the server must:
 | `dueDate` | optional | `YYYY-MM-DD` |
 | `paymentDate` | optional | ISO |
 | `paymentMode` | optional | `cash`, `upi`, `loan`, `cheque`, … |
-| `collectDestination` | optional | Office Inside Cash/UPI: `self` \| `chairbord`. Echo on GET. See **§BK**. |
+| `collectDestination` | optional | Cash/UPI: `chairbord` \| `other` \| `self`. Echo on GET. See **§BK**. |
+| `collectVendorId` | optional | Office-inside subvendor id when Other. Alias `collect_vendor_id`. |
 | `transactionId` | optional | |
 | `note` | optional | |
 
@@ -6952,24 +6953,24 @@ Do **not** drop those fields from GET — the payment cards still use them.
 
 ---
 
-## §BK — Office Inside installment Collect self / To Chairbord — Oct 2026
+## §BK — Payment management Office: Chairbord / Other — Oct 2026
 
-Account Management → **Office Inside** → installment **Cash** or **UPI** shows **Complete** / **Partial** collect.
+Account Management → **Payment management** → installment **Cash** or **UPI** shows **Office** **Chairbord** (default) | **Other**.
 
-- **Complete + To Chairbord** — existing installment save only.
-- **Complete + Collect self** — leaser row for the full paid amount.
-- **Partial** — split paid amount into `collectChairbordAmount` + `collectSelfAmount` (must sum to paid). Leaser row amount = **self only** (e.g. collected ₹30,000, Chairbord ₹25,000, self ₹5,000 → leaser ₹5,000). Auto id `lp-self-{quotationId}-{phaseNumber}`.
+- **Chairbord** — existing installment save only; no auto leaser row.
+- **Other** — office-inside subvendor dropdown + Amount (`collectSelfAmount` ≤ `paidAmount`). Remainder is Chairbord. Auto leaser id `lp-collect-{quotationId}-{phaseNumber}` on that subvendor.
+- Legacy **self** still means the file’s own office-inside vendor (`lp-self-…` cleanup still applies).
 
 ### Must (no new routes)
 
-1. Persist per-phase `collectDestination` (`self` | `chairbord`), `collectKind` (`complete` | `partial`), `collectSelfAmount`, `collectChairbordAmount` on installment replace (**§AB**) and echo on GET. Aliases: `collect_destination`, `collect_kind`, `collect_self_amount`, `collect_chairbord_amount`. Cash/UPI only; otherwise `null`. **Do not 400** unknown phase keys.
-2. **§BG** leaser `PUT /admin/subvendors/:id/leaser`: store client `id` as **TEXT as sent**. Do not replace `lp-self-…` with a generated UUID (duplicates on next save).
-3. Do **not** insert leaser rows from the installment handler — SPA already PUTs leaser after save. Leaser `amount` is the self share, not full `paidAmount`.
+1. Persist per-phase `collectDestination` (`chairbord` | `other` | `self`), `collectKind` (`complete` | `partial`), `collectSelfAmount`, `collectChairbordAmount`, **`collectVendorId`** on installment replace (**§AB**) and echo on GET. Aliases: `collect_destination`, `collect_kind`, `collect_self_amount`, `collect_chairbord_amount`, `collect_vendor_id`. Cash/UPI only; otherwise `null`. **Do not 400** unknown phase keys or value `other`.
+2. **§BG** leaser `PUT /admin/subvendors/:id/leaser`: store client `id` as **TEXT as sent**. Do not replace `lp-collect-…` or `lp-self-…` with a generated UUID (duplicates on next save).
+3. Do **not** insert leaser rows from the installment handler — SPA already PUTs leaser after save onto `collectVendorId`. Leaser `amount` is the Other/self share, not full `paidAmount`.
 4. Leaser `date` = installment **Due Date** (same as Accounts). Persist DATEONLY as sent (**§BP**). Do not rewrite to NOW() / `paymentDate`.
 
 **Copy-paste:** `BACKEND_COLLECT_SELF_LEASER.ts`
 
-UI: **Collected by** Chairbord (default) | Self. **Collect** Complete | Partial appears only when Self. Chairbord → no auto leaser row.
+UI: **Office** Chairbord (default) | Other. Other → office subvendor + Amount. Loan / bank modes omit these keys.
 
 ---
 
