@@ -5304,6 +5304,8 @@ curl -sS -o /dev/null -w "%{http_code}\n" "$API/admin-inventory" -H "Authorizati
 | **High** | **Current lead stays `in_progress` until Submit** — no `nextLead` on start; `GET /current` returns open call | **§E.1**, HANDOFF **§4.5.1** | `app/dashboard/calling-data/page.tsx` |
 | **High** | **Reschedule Submit** — `rescheduled` / `follow_up` + `nextFollowUpAt` → `status: rescheduled`, no 500 | **§E.2**, HANDOFF **§4.5.2** | `lib/calling-remark-payload.ts` |
 | **High** | **Calling Data tabs** — Scheduled = Connected DP; Dialled includes scheduled; 3-outcome PATCH | **§BQ**, HANDOFF **§63** | `BACKEND_CALLING_DATA_TABS.ts` |
+| **High** | **Calling-actions echo Social vs Calling data source** — JOIN `hr_leads.source_type` / `platform` | **§BR**, HANDOFF **§64** | `BACKEND_CALLING_SOCIAL_SOURCE.ts` |
+| **High** | **Calling Reports Filter** — list query `source` / `connection` / `search`; cards stay date+dealer | **§BS**, HANDOFF **§65** | `BACKEND_CALLING_SOCIAL_SOURCE.ts` |
 | High | `LEAD_004` — claim lead on `start` | HANDOFF §3, §4.5 | `lib/calling-lead-assignee.ts` |
 | High | HR/Admin **GET calling-actions** — `dealerId`, `startDate`, `endDate`, `range` including `custom` | REQUIRED §J, HANDOFF §4.8 | `lib/api.ts`, `lib/calling-report-date-range.ts` |
 | High | HR Dealer Actions summary — persist/return `statusCategory` + `statusText` on calling-actions | §J.1, HANDOFF §7 | `lib/calling-action-summary.ts`, `lib/calling-remark-payload.ts` |
@@ -5361,6 +5363,8 @@ For questions or clarifications about these requirements, please refer to:
 - Dealer calling current lead until Submit: `app/dashboard/calling-data/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §E.1**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.1**
 - Dealer calling reschedule (Decision Pending): `lib/calling-remark-payload.ts`, **`BACKEND_CHANGES_REQUIRED.md` §E.2**, **`BACKEND_CHANGES_HANDOFF.md` §4.5.2**
 - Calling Data tabs (Scheduled ⊂ Connected, Dialled includes scheduled, 3 outcomes): **`BACKEND_CHANGES_REQUIRED.md` §BQ**, **`BACKEND_CHANGES_HANDOFF.md` §63**, **`BACKEND_CALLING_DATA_TABS.ts`**
+- Calling-actions Social vs Calling data source: **`BACKEND_CHANGES_REQUIRED.md` §BR**, **`BACKEND_CHANGES_HANDOFF.md` §64**, **`BACKEND_CALLING_SOCIAL_SOURCE.ts`**
+- Admin Calling Reports Filter (`source` / `connection` / `search`): **`BACKEND_CHANGES_REQUIRED.md` §BS**, **`BACKEND_CHANGES_HANDOFF.md` §65**, **`BACKEND_CALLING_SOCIAL_SOURCE.ts`**
 - HR Dealer Actions summary buckets: `lib/calling-action-summary.ts`, **`BACKEND_CHANGES_REQUIRED.md` §J.1**, **`BACKEND_CHANGES_HANDOFF.md` §7**
 - Admin Visitor Reports: `lib/visit-report.ts`, `app/dashboard/admin/page.tsx`, **`BACKEND_CHANGES_REQUIRED.md` §Z**, **`BACKEND_CHANGES_HANDOFF.md` §8**
 - Admin Product Needed: `lib/admin-product-needed.ts`, `lib/load-admin-product-needed.ts`, **`BACKEND_CHANGES_REQUIRED.md` §AA**, **`BACKEND_ADMIN_PRODUCT_NEEDED.ts`**
@@ -7275,7 +7279,7 @@ Social when any of: `source_type ∈ google_sheet|social_media|social|meta`, `pl
 | `GET` | `/api/admin/calling-actions` `/api/hr/calling-actions` | Same for Calling Reports |
 | `PATCH` | `/api/dealers/me/calling-queue/{leadId}/action` | Copy lead source onto the new action; echo in response |
 
-Optional: `?source=all\|social\|normal`. Optional summary keys `social` / `normal` on `GET .../calling-actions/summary` (§AI).
+Optional list query (Admin Filter dialog — **§BS**): `?source=all|social|normal`. Optional summary keys `social` / `normal` on `GET .../calling-actions/summary` (§AI) — **date + dealer only**, do not fold source into the six cards.
 
 ### Must
 
@@ -7298,6 +7302,72 @@ Optional: `?source=all\|social\|normal`. Optional summary keys `social` / `norma
 4. Second device / refresh matches without local cache.
 
 **Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · HANDOFF **§64**
+
+---
+
+## §BS — Admin Calling Reports Filter: source, connection, search — Oct 2026
+
+Admin → **Calling Reports** collapsed Daily / Employee / Source / Connection into **one Filter** (plus a search box). SPA still filters the list client-side. Server-side filters are required so counts stay correct when the date range exceeds the page cap (`limit=250`, max ~40 pages).
+
+**Depends on §BR** — `source=social` is useless until action rows echo lead source.
+
+### Query on `GET /api/admin/calling-actions` and `/api/hr/calling-actions`
+
+| Param | Values | Maps to Filter field |
+|-------|--------|----------------------|
+| `range` | `daily` \| `weekly` \| `monthly` \| `last_month` \| `custom` \| `all` | Date range |
+| `startDate` / `endDate` | ISO-8601 `action_at` | Date range |
+| `fromDate` / `toDate` | `YYYY-MM-DD` aliases | Date range |
+| `dealerId` | UUID | Employee |
+| `source` | `all` \| `social` \| `normal` (default `all`) | Source |
+| `connection` | `all` \| `connected` \| `not_connected` (default `all`) | Connection |
+| `search` | string | Toolbar search: customer name, mobile (last-10 digits), dealer name, status |
+| `page` / `limit` | SPA `limit=250` | pagination |
+
+Same `source` / `search` on `GET /api/dealers/me/calling-actions` (dealer Call Analytics source filter).
+
+**Connection** matches `classifyCallingConnection` (`lib/calling-action-summary.ts`):
+
+- `not_connected` — `status_text` in Call Unanswered / Switched Off / Not Reachable / Busy / Line Busy / Call Disconnected / Wrong Number / Invalid Number / Number Does Not Exist / Duplicate Lead / Invalid Lead / Out of Service Area / Incoming Not Available, **or** `status_category = call_connectivity`, **or** `action = start`
+- `connected` — submitted outcome with any other status (`Interested`, `No Requirement`, follow-up, etc.)
+
+**Social vs Normal** — `isSocialMediaCallingLead` / `BACKEND_CALLING_SOCIAL_SOURCE.ts` `isSocialMediaLeadRow`. CSV calling data = `normal`.
+
+### List vs cards
+
+| Surface | Honour |
+|---------|--------|
+| **List** (and CSV, which is client-side) | date + employee + source + connection + search |
+| **Six cards** / `GET .../calling-actions/summary` | date + employee **only**. Echo `social` / `normal` split on that set. Do **not** shrink cards when the list Filter is Social / Not Connected / search |
+
+`pagination.total` = COUNT of the **list** filter (including source / connection / search).
+
+### Auth
+
+Still **§AX**: `calling_reports` access (or admin/hr) may GET these routes. Do not require `role === "admin"` only.
+
+### Must
+
+1. Echo source fields on every row even when `source=all` (CSV Source column + Social badge).
+2. Ignore unknown extra params (do not 400).
+3. `search` with 4+ digits matches `right(regexp_replace(mobile, '\D', '', 'g'), 10)`.
+4. Exclude `action=start` from list and cards.
+
+### Do not
+
+- Apply source / connection / search to the six-card summary
+- 500 if `source` / `connection` / `search` are omitted (defaults = all / empty)
+- Force the SPA to page every Google Sheet upload to classify Social
+
+### QA
+
+1. Filter → Social Media: list is social-only; cards still show Social N · Normal M for the date/employee.
+2. Filter → Not Connected only: list is unanswered / switched off / etc.; Connected rows gone.
+3. Search a customer mobile last-10: that row remains; unrelated rows drop.
+4. `calling_reports` JWT (not full admin) → 200, not AUTH_004.
+5. Download CSV Source column = `Social Media` or `Calling data` from echoed fields.
+
+**Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · `BACKEND_CALLING_REPORTS_COUNTS.ts` · HANDOFF **§65**
 
 ---
 

@@ -34,14 +34,21 @@
  * Same contract for HR: /api/hr/calling-actions
  *
  * Query (frontend sends all of these for presets):
- *   range     = daily | weekly | monthly | last_month | custom | all
- *   startDate = ISO-8601 inclusive (action_at)
- *   endDate   = ISO-8601 inclusive (action_at)
- *   fromDate  = YYYY-MM-DD local calendar start (optional alias)
- *   toDate    = YYYY-MM-DD local calendar end
- *   dealerId  = UUID (optional)
- *   page      = 1-based
- *   limit     = page size (frontend uses 250)
+ *   range       = daily | weekly | monthly | last_month | custom | all
+ *   startDate   = ISO-8601 inclusive (action_at)
+ *   endDate     = ISO-8601 inclusive (action_at)
+ *   fromDate    = YYYY-MM-DD local calendar start (optional alias)
+ *   toDate      = YYYY-MM-DD local calendar end
+ *   dealerId    = UUID (optional)
+ *   source      = all | social | normal          (list only — §BR / §BS)
+ *   connection  = all | connected | not_connected (list only — §BS)
+ *   search      = name / mobile / dealer / status (list only — §BS)
+ *   page        = 1-based
+ *   limit       = page size (frontend uses 250)
+ *
+ * LIST honours source + connection + search.
+ * SUMMARY cards honour date + dealerId only (SPA splits Social · Normal
+ * on that set). Echo source fields on every list row even when source=all.
  *
  * Filter SQL (required):
  *   WHERE action_at >= :startDate AND action_at <= :endDate

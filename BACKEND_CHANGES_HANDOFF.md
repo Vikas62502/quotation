@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4532,6 +4532,43 @@ Optional query: `?source=all\|social\|normal` on calling-actions. Optional summa
 4. Refresh / second device: same Social vs Normal split (not SPA-only).
 
 **Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · REQUIRED **§BR**
+
+---
+
+## 65. Admin Calling Reports Filter — `source` / `connection` / `search` (**§BS**) — Oct 2026
+
+**Frontend (shipped):** Admin → Calling Reports toolbar is **Search · Filter · Download**. Filter dialog holds date range, employee, source, connection (custom From/To inside Filter). SPA still applies source / connection / search client-side.
+
+**Problem:** Date ranges larger than `limit=250` × pages under-count once the client cannot load every row. Server must filter the **list**.
+
+**Depends on §64 / §BR** (echo `source_type` / `platform` on each action).
+
+### Query — same routes as §4.8 / §AI
+
+`GET /api/admin/calling-actions` · `GET /api/hr/calling-actions` · `GET /api/dealers/me/calling-actions`
+
+| Param | Values | Use |
+|-------|--------|-----|
+| `source` | `all` \| `social` \| `normal` | Filter → Source |
+| `connection` | `all` \| `connected` \| `not_connected` | Filter → Connection |
+| `search` | string | Toolbar search (name, last-10 mobile, dealer, status) |
+
+Existing: `range`, `startDate`, `endDate`, `fromDate`, `toDate`, `dealerId`, `page`, `limit`.
+
+**List** honours all params. **Six cards / `/summary`** honour date + `dealerId` only (keep Social · Normal split on that set). Do not 400 if the new params are omitted.
+
+**Connection** = `classifyCallingConnection` (unanswered / switched off / … → not connected; any other submitted status → connected). **Social** = `isSocialMediaLeadRow` in `BACKEND_CALLING_SOCIAL_SOURCE.ts`.
+
+**Auth:** `calling_reports` JWT may GET these routes (**§AX**).
+
+### QA
+
+1. Filter Social Media → list social-only; cards still Social N · Normal M for the date/employee.
+2. Filter Not Connected → unanswered / switched off only.
+3. Search last-10 mobile → that customer remains.
+4. CSV Source column from echoed fields, not SPA sheet-lead cache.
+
+**Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · `BACKEND_CALLING_REPORTS_COUNTS.ts` · REQUIRED **§BS**
 
 ---
 

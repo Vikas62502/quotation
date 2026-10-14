@@ -4,8 +4,8 @@
  * BACKEND — Calling actions must echo Social Media vs Calling data source
  * =============================================================================
  *
- * Handoff: BACKEND_CHANGES_HANDOFF.md §64
- * Spec:    BACKEND_CHANGES_REQUIRED.md §BR
+ * Handoff: BACKEND_CHANGES_HANDOFF.md §64 (source echo) · §65 (Filter query)
+ * Spec:    BACKEND_CHANGES_REQUIRED.md §BR · §BS
  *
  * Frontend (shipped Oct 2026):
  *   app/dashboard/calling-data/page.tsx     (Dealer Call Analytics + tabs)
@@ -153,15 +153,93 @@ export function mapCallingActionWithSource(actionRow, leadRow, uploadRow) {
  */
 
 /**
- * Optional list filter (Admin Calling Reports + dealer analytics):
+ * =============================================================================
+ * Admin → Calling Reports Filter (one Filter control) — REQUIRED §BS
+ * =============================================================================
  *
- *   GET .../calling-actions?source=all|social|normal
+ * SPA toolbar: Search · Filter · Download. Filter dialog fields:
+ *   Date range  → range / startDate / endDate / fromDate / toDate  (§AI / §J)
+ *   Employee    → dealerId
+ *   Source      → source=all|social|normal
+ *   Connection  → connection=all|connected|not_connected
+ *   Search box  → search=  (name, mobile digits, dealer name, status)
  *
- *   social  = isSocialMediaLeadRow(lead)
- *   normal  = not social (CSV calling data)
- *   all     = default
+ * LIST GET must honour all of the above (after source fields exist — §BR).
+ * SUMMARY / six cards honour date + dealerId ONLY. Do not apply source /
+ * connection / search to /summary — SPA shows Social · Normal split on
+ * the unfiltered-by-source set, then filters the list separately.
  *
+ * Auth (still P0 — §AX): allow JWT if role ∈ admin|super-admin|hr OR
+ * access includes admin | calling_reports | hr.
+ *
+ * GET /api/admin/calling-actions
+ * GET /api/hr/calling-actions
+ * GET /api/dealers/me/calling-actions   (dealer analytics source filter)
+ *
+ * Query (frontend already sends date/dealer; will send the rest):
+ *   range        daily | weekly | monthly | last_month | custom | all
+ *   startDate    ISO-8601 inclusive (action_at)
+ *   endDate      ISO-8601 inclusive (action_at)
+ *   fromDate     YYYY-MM-DD local (alias)
+ *   toDate       YYYY-MM-DD local (alias)
+ *   dealerId     UUID (optional)
+ *   source       all | social | normal          default all
+ *   connection   all | connected | not_connected  default all
+ *   search       substring; match customer name, dealer name, status_text,
+ *                or last-10 mobile digits (ignore spaces / dashes)
+ *   page / limit  SPA uses limit=250
+ *
+ * CSV download is client-side. Rows MUST include source fields so the
+ * Source column is "Social Media" vs "Calling data".
+ */
+
+const NOT_CONNECTED_STATUSES = new Set([
+  "Call Unanswered",
+  "Switched Off",
+  "Not Reachable",
+  "Busy / Line Busy",
+  "Call Disconnected",
+  "Wrong Number",
+  "Invalid Number",
+  "Number Does Not Exist",
+  "Duplicate Lead",
+  "Invalid Lead",
+  "Out of Service Area",
+  "Incoming Not Available",
+])
+
+/** Match SPA `classifyCallingConnection` (lib/calling-action-summary.ts). */
+export function classifyActionConnection(row) {
+  const status = String(row.statusText || row.status_text || "").trim()
+  const category = String(row.statusCategory || row.status_category || "")
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+  const action = String(row.action || "").toLowerCase().trim()
+  if (status && NOT_CONNECTED_STATUSES.has(status)) return "not_connected"
+  if (category === "call_connectivity" && status) return "not_connected"
+  if (action === "start") return "not_connected"
+  if (status) return "connected"
+  if (["called", "follow_up", "not_interested", "rescheduled"].includes(action)) {
+    return "connected"
+  }
+  return "not_connected"
+}
+
+export function callingActionsListWhere(params) {
+  return {
+    from: params.startDate || params.fromDate,
+    to: params.endDate || params.toDate,
+    dealerId: params.dealerId || null,
+    source: params.source || "all", // all | social | normal
+    connection: params.connection || "all", // all | connected | not_connected
+    search: String(params.search || "").trim(),
+    excludeStart: true,
+  }
+}
+
+/**
  * Optional summary split on GET .../calling-actions/summary (extends §AI):
+ * date + dealerId only — do not fold source/connection/search into these cards.
  *
  * {
  *   "totalCalls": 871,
@@ -203,4 +281,11 @@ LEFT JOIN hr_lead_uploads u ON u.id = l.upload_id
 WHERE LOWER(COALESCE(a.action, '')) <> 'start'
   AND a.action_at >= :startDate
   AND a.action_at <= :endDate
+  AND (:dealerId IS NULL OR a.dealer_id = :dealerId)
+  -- source=social
+  -- AND is_social_lead(COALESCE(a.source_type, l.source_type, u.source_type), l.platform, l.sheet_source_id, u.file_name, l.external_id, l.campaign_name)
+  -- source=normal = NOT the above
+  -- connection=not_connected: status_text IN NOT_CONNECTED_STATUSES OR status_category = call_connectivity OR action = start
+  -- connection=connected: submitted outcome with a connected status
+  -- search: ILIKE name / dealer_name / status_text OR right(digits(mobile), 10) LIKE '%' || digits(:search)
 `

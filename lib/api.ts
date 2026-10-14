@@ -1157,6 +1157,8 @@ export const api = {
         limit?: number
         dealerId?: string
         search?: string
+        source?: "all" | "social" | "normal"
+        connection?: "all" | "connected" | "not_connected"
         startDate?: string
         endDate?: string
         range?: "daily" | "weekly" | "monthly" | "last_month" | "all" | "custom"
@@ -3476,6 +3478,8 @@ export const api = {
         limit?: number
         dealerId?: string
         search?: string
+        source?: "all" | "social" | "normal"
+        connection?: "all" | "connected" | "not_connected"
         startDate?: string
         endDate?: string
         range?: "daily" | "weekly" | "monthly" | "last_month" | "all" | "custom"
@@ -3924,6 +3928,8 @@ export const api = {
         limit?: number
         dealerId?: string
         search?: string
+        source?: "all" | "social" | "normal"
+        connection?: "all" | "connected" | "not_connected"
         startDate?: string
         endDate?: string
         fromDate?: string

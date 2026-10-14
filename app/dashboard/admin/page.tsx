@@ -1761,6 +1761,8 @@ export default function AdminPanelPage() {
   const [callingActionDealerFilter, setCallingActionDealerFilter] = useState("all")
   const [callingConnectionFilter, setCallingConnectionFilter] = useState<"all" | "connected" | "not_connected">("all")
   const [callingSourceFilter, setCallingSourceFilter] = useState<CallingReportSourceFilter>("all")
+  const [callingReportSearch, setCallingReportSearch] = useState("")
+  const [callingReportFiltersOpen, setCallingReportFiltersOpen] = useState(false)
   const [callingReportSocialLeads, setCallingReportSocialLeads] = useState<CallingReportSocialLookup[]>([])
   const [isCallingActionsLoading, setIsCallingActionsLoading] = useState(false)
   const [topDealersDateFilter, setTopDealersDateFilter] = useState<JourneyDateRangeFilter>("this_month")
@@ -5536,13 +5538,48 @@ export default function AdminPanelPage() {
     }
   })()
   const isCallingReportsInitialLoading = isCallingActionsLoading && callingActions.length === 0
+  const callingReportActiveFilterCount = [
+    callingRange !== "daily",
+    callingActionDealerFilter !== "all",
+    callingSourceFilter !== "all",
+    callingConnectionFilter !== "all",
+  ].filter(Boolean).length
+  const resetCallingReportFilters = () => {
+    setCallingRange("daily")
+    setCallingCustomFromDate("")
+    setCallingCustomToDate("")
+    setCallingActionDealerFilter("all")
+    setCallingSourceFilter("all")
+    setCallingConnectionFilter("all")
+  }
   const displayCallingActions = filteredCallingActions.filter((item) => {
     if (callingConnectionFilter !== "all" && classifyCallingConnection(item) !== callingConnectionFilter) {
       return false
     }
-    if (callingSourceFilter === "all") return true
-    const social = isSocialMediaCallingLead(item)
-    return callingSourceFilter === "social" ? social : !social
+    if (callingSourceFilter !== "all") {
+      const social = isSocialMediaCallingLead(item)
+      if (callingSourceFilter === "social" ? !social : social) return false
+    }
+    const term = callingReportSearch.trim().toLowerCase()
+    if (!term) return true
+    const digits = term.replace(/\D/g, "")
+    const mobileDigits = String(item.customerMobile || "").replace(/\D/g, "")
+    if (digits.length >= 4 && mobileDigits.includes(digits)) return true
+    const haystack = [
+      item.customerName,
+      item.customerMobile,
+      item.dealerName,
+      item.leadId,
+      item.callRemark,
+      item.statusText,
+      item.action,
+      item.platform,
+      item.campaignName,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase()
+    return haystack.includes(term)
   })
 
   const downloadCallingReportsCsv = () => {
@@ -8981,108 +9018,159 @@ export default function AdminPanelPage() {
           <TabsContent value="calling-reports" className="space-y-4">
             <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/15 shadow-sm">
               <CardHeader className="pb-3">
-                <CardTitle>Employee Calling Actions</CardTitle>
-                <CardDescription>
-                  Social Media and calling data together. Filter by employee, date, source, and connection.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">
-                  <Select
-                    value={callingRange}
-                    onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
-                      setCallingRange(value)
-                    }
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Select report range" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                      <SelectItem value="last_month">Last Month</SelectItem>
-                      <SelectItem value="custom">Custom date range</SelectItem>
-                      <SelectItem value="all">All Time</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <Select value={callingActionDealerFilter} onValueChange={setCallingActionDealerFilter}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Filter by employee" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">
-                        {isFullAdmin ? "All Employees" : "All assigned employees"}
-                      </SelectItem>
-                      {callingReportsDealers.map((d) => (
-                        <SelectItem key={d.id} value={d.id}>
-                          {d.firstName} {d.lastName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-
-                  <Select
-                    value={callingSourceFilter}
-                    onValueChange={(value: CallingReportSourceFilter) => setCallingSourceFilter(value)}
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Source" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All sources</SelectItem>
-                      <SelectItem value="social">Social Media</SelectItem>
-                      <SelectItem value="normal">Calling data</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <Select
-                    value={callingConnectionFilter}
-                    onValueChange={(value: "all" | "connected" | "not_connected") => setCallingConnectionFilter(value)}
-                  >
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder="Connection" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All (Connected + Not Connected)</SelectItem>
-                      <SelectItem value="connected">Connected only</SelectItem>
-                      <SelectItem value="not_connected">Not Connected only</SelectItem>
-                    </SelectContent>
-                  </Select>
-
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="h-9 gap-1.5"
-                    onClick={downloadCallingReportsCsv}
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    Download report
-                  </Button>
-                </div>
-                {callingRange === "custom" ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">From</Label>
-                      <Input
-                        type="date"
-                        className="h-9"
-                        value={callingCustomFromDate}
-                        onChange={(e) => setCallingCustomFromDate(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-xs text-muted-foreground">To</Label>
-                      <Input
-                        type="date"
-                        className="h-9"
-                        value={callingCustomToDate}
-                        onChange={(e) => setCallingCustomToDate(e.target.value)}
-                      />
-                    </div>
+                <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
+                  <div className="min-w-0">
+                    <CardTitle>Employee Calling Actions</CardTitle>
+                    <CardDescription className="mt-0.5">
+                      Social Media and calling data together. Search a customer or dealer; open Filter for date, employee, source, and connection.
+                    </CardDescription>
                   </div>
-                ) : null}
+                  <div className="flex flex-col sm:flex-row gap-2 w-full xl:w-auto xl:justify-end shrink-0">
+                    <div className="relative w-full sm:w-72">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                      <Input
+                        value={callingReportSearch}
+                        onChange={(e) => setCallingReportSearch(e.target.value)}
+                        placeholder="Search name, mobile, dealer..."
+                        className="h-9 pl-8 bg-white"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 gap-1.5 shrink-0 bg-white"
+                      onClick={() => setCallingReportFiltersOpen(true)}
+                    >
+                      <SlidersHorizontal className="w-3.5 h-3.5" />
+                      Filter
+                      {callingReportActiveFilterCount > 0 ? ` (${callingReportActiveFilterCount})` : ""}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 gap-1.5 shrink-0 bg-white"
+                      onClick={downloadCallingReportsCsv}
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download report
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <Dialog open={callingReportFiltersOpen} onOpenChange={setCallingReportFiltersOpen}>
+                <DialogContent className="sm:max-w-xl">
+                  <DialogHeader>
+                    <DialogTitle>Calling report filters</DialogTitle>
+                    <DialogDescription>
+                      Filter by date range, employee, source, and connection. Search stays on the list.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Date range</Label>
+                      <Select
+                        value={callingRange}
+                        onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
+                          setCallingRange(value)
+                        }
+                      >
+                        <SelectTrigger className="h-9 bg-white">
+                          <SelectValue placeholder="Select report range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="daily">Daily</SelectItem>
+                          <SelectItem value="weekly">Weekly</SelectItem>
+                          <SelectItem value="monthly">Monthly</SelectItem>
+                          <SelectItem value="last_month">Last Month</SelectItem>
+                          <SelectItem value="custom">Custom date range</SelectItem>
+                          <SelectItem value="all">All Time</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Employee</Label>
+                      <Select value={callingActionDealerFilter} onValueChange={setCallingActionDealerFilter}>
+                        <SelectTrigger className="h-9 bg-white">
+                          <SelectValue placeholder="Filter by employee" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">
+                            {isFullAdmin ? "All Employees" : "All assigned employees"}
+                          </SelectItem>
+                          {callingReportsDealers.map((d) => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.firstName} {d.lastName}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Source</Label>
+                      <Select
+                        value={callingSourceFilter}
+                        onValueChange={(value: CallingReportSourceFilter) => setCallingSourceFilter(value)}
+                      >
+                        <SelectTrigger className="h-9 bg-white">
+                          <SelectValue placeholder="Source" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All sources</SelectItem>
+                          <SelectItem value="social">Social Media</SelectItem>
+                          <SelectItem value="normal">Calling data</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs text-muted-foreground">Connection</Label>
+                      <Select
+                        value={callingConnectionFilter}
+                        onValueChange={(value: "all" | "connected" | "not_connected") => setCallingConnectionFilter(value)}
+                      >
+                        <SelectTrigger className="h-9 bg-white">
+                          <SelectValue placeholder="Connection" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All (Connected + Not Connected)</SelectItem>
+                          <SelectItem value="connected">Connected only</SelectItem>
+                          <SelectItem value="not_connected">Not Connected only</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {callingRange === "custom" ? (
+                      <>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs text-muted-foreground">From</Label>
+                          <Input
+                            type="date"
+                            className="h-9 bg-white"
+                            value={callingCustomFromDate}
+                            onChange={(e) => setCallingCustomFromDate(e.target.value)}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs text-muted-foreground">To</Label>
+                          <Input
+                            type="date"
+                            className="h-9 bg-white"
+                            value={callingCustomToDate}
+                            onChange={(e) => setCallingCustomToDate(e.target.value)}
+                          />
+                        </div>
+                      </>
+                    ) : null}
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button type="button" variant="outline" onClick={resetCallingReportFilters}>
+                      Reset
+                    </Button>
+                    <Button type="button" onClick={() => setCallingReportFiltersOpen(false)}>
+                      Apply
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+              <CardContent className="space-y-3">
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
                   <div className="rounded-lg border border-orange-200/80 bg-white px-3 py-2 min-h-[4.25rem]">
@@ -9175,7 +9263,9 @@ export default function AdminPanelPage() {
                     Calling actions endpoint is not available on backend yet. Once enabled, all employee actions will appear here.
                   </p>
                 ) : displayCallingActions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No calling actions found for selected filters.</p>
+                  <p className="text-sm text-muted-foreground">
+                    No calling actions found for the selected search and filters.
+                  </p>
                 ) : (
                   <div className="space-y-1.5">
                     {displayCallingActions.slice(0, 300).map((item) => {
