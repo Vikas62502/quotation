@@ -79,7 +79,7 @@ export function AccessSwitchBar({ current, title }: Props) {
     "Workspace"
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 shadow-sm">
+    <header className="sticky top-0 z-50 border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/90 to-sky-50/95 backdrop-blur shadow-sm">
       <div className="container mx-auto px-4">
         <div className="flex h-14 items-center gap-3 justify-between">
           <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -126,7 +126,7 @@ export function AccessSwitchBar({ current, title }: Props) {
             </DropdownMenu>
 
             {/* Desktop: pill switcher */}
-            <nav className="hidden md:flex items-center gap-0.5 rounded-lg border border-border/70 bg-muted/30 p-0.5 overflow-x-auto min-w-0">
+            <nav className="hidden md:flex items-center gap-0.5 rounded-xl border border-orange-100 bg-white/70 p-0.5 overflow-x-auto min-w-0">
               {options.map((item) => {
                 const active = isSectionActive(item.key, pathname, current)
                 return (
@@ -134,8 +134,12 @@ export function AccessSwitchBar({ current, title }: Props) {
                     key={item.key}
                     asChild
                     size="sm"
-                    variant={active ? "default" : "ghost"}
-                    className={cn("h-8 text-xs px-2.5 shrink-0", active && "shadow-sm")}
+                    variant="ghost"
+                    className={cn(
+                      "h-8 text-xs px-2.5 shrink-0 text-slate-600 hover:bg-orange-50 hover:text-orange-800",
+                      active &&
+                        "bg-gradient-to-r from-orange-100 to-amber-50 text-orange-800 border border-orange-200 shadow-sm"
+                    )}
                   >
                     <Link href={item.href}>{item.label}</Link>
                   </Button>

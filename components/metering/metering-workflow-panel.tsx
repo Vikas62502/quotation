@@ -1254,7 +1254,7 @@ export function MeteringWorkflowPanel({
           </p>
         </td>
         <td className="px-3 py-2.5 align-middle whitespace-nowrap">
-          <span className="inline-flex rounded-md bg-muted/60 px-2 py-0.5 text-xs font-medium">
+          <span className="inline-flex rounded-md border border-cyan-100 bg-cyan-50 px-2 py-0.5 text-xs font-medium text-cyan-800">
             {getPhaseLabel(q)}
           </span>
         </td>
@@ -1290,7 +1290,7 @@ export function MeteringWorkflowPanel({
             <Button
               variant="outline"
               size="sm"
-              className="h-8 shrink-0"
+              className="h-8 shrink-0 border-slate-200 bg-white/90 text-slate-700 hover:bg-cyan-50 hover:text-cyan-900"
               onClick={() => openDetailsModal(q.id)}
               title={effectiveReadOnly ? "View details (read-only)" : "Metering details"}
             >
@@ -1299,7 +1299,7 @@ export function MeteringWorkflowPanel({
             {tab === "processing" && (
               <Button
                 size="sm"
-                className="h-8 shrink-0"
+                className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                 disabled={effectiveReadOnly}
                 title={effectiveReadOnly ? actionsLockedTitle : undefined}
                 onClick={() => void setStage(q.id, "approved")}
@@ -1313,7 +1313,7 @@ export function MeteringWorkflowPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 shrink-0"
+                  className="h-8 shrink-0 border-slate-200 bg-white/90 text-slate-700 hover:bg-cyan-50 hover:text-cyan-900"
                   disabled={effectiveReadOnly}
                   title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => void setStage(q.id, "processing")}
@@ -1322,7 +1322,7 @@ export function MeteringWorkflowPanel({
                 </Button>
                 <Button
                   size="sm"
-                  className="h-8 shrink-0"
+                  className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                   disabled={effectiveReadOnly}
                   title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => void moveToWccPending(q.id)}
@@ -1334,7 +1334,7 @@ export function MeteringWorkflowPanel({
             {tab === "wcc" && (
               <Button
                 size="sm"
-                className="h-8 shrink-0"
+                className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                 disabled={effectiveReadOnly}
                 title={effectiveReadOnly ? actionsLockedTitle : undefined}
                 onClick={() => void setStage(q.id, "meter_install")}
@@ -1346,7 +1346,7 @@ export function MeteringWorkflowPanel({
             {tab === "meter_install" && (
               <Button
                 size="sm"
-                className="h-8 shrink-0"
+                className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                 disabled={effectiveReadOnly}
                 title={effectiveReadOnly ? actionsLockedTitle : undefined}
                 onClick={() => void setStage(q.id, "mco")}
@@ -1358,7 +1358,7 @@ export function MeteringWorkflowPanel({
             {tab === "bank_process" && (
               <Button
                 size="sm"
-                className="h-8 shrink-0"
+                className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                 disabled={effectiveReadOnly}
                 title={effectiveReadOnly ? actionsLockedTitle : undefined}
                 onClick={() => markBankProcessDone(q.id)}
@@ -1372,7 +1372,7 @@ export function MeteringWorkflowPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 shrink-0"
+                  className="h-8 shrink-0 border-slate-200 bg-white/90 text-slate-700 hover:bg-cyan-50 hover:text-cyan-900"
                   disabled={effectiveReadOnly}
                   title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => openMcoDocsModal(q.id)}
@@ -1381,7 +1381,7 @@ export function MeteringWorkflowPanel({
                 </Button>
                 <Button
                   size="sm"
-                  className="h-8 shrink-0"
+                  className="h-8 shrink-0 border border-cyan-200 bg-gradient-to-r from-cyan-100 to-sky-50 text-cyan-900 shadow-sm hover:from-cyan-200 hover:to-sky-100"
                   onClick={() => void moveToBaldevConfirmation(q.id)}
                   disabled={
                     effectiveReadOnly ||
@@ -1395,7 +1395,7 @@ export function MeteringWorkflowPanel({
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8 shrink-0"
+                  className="h-8 shrink-0 border-slate-200 bg-white/90 text-slate-700 hover:bg-cyan-50 hover:text-cyan-900"
                   disabled={effectiveReadOnly}
                   title={effectiveReadOnly ? actionsLockedTitle : undefined}
                   onClick={() => void setStage(q.id, "meter_install")}
@@ -1416,10 +1416,10 @@ export function MeteringWorkflowPanel({
   }
 
   const renderMeteringTable = (list: MeteringQuotation[], tab: MeteringStage) => (
-    <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
+    <div className="overflow-x-auto rounded-2xl border border-cyan-200/80 bg-white/90 shadow-sm">
       <table className="w-full min-w-[96rem] border-collapse text-left">
-        <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
-          <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <thead className="sticky top-0 z-10 bg-gradient-to-r from-cyan-50 via-sky-50 to-violet-50">
+          <tr className="border-b border-cyan-100 text-[10px] font-semibold uppercase tracking-wider text-cyan-900/80">
             <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
             <th className="px-3 py-2.5 whitespace-nowrap">Dealer</th>
             <th className="px-3 py-2.5 whitespace-nowrap">Date</th>
@@ -1429,7 +1429,7 @@ export function MeteringWorkflowPanel({
             <th className="px-3 py-2.5 whitespace-nowrap">Remarks</th>
             <th className="px-3 py-2.5 whitespace-nowrap">Auth. Rep.</th>
             <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-            <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-muted/90 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+            <th className="px-3 py-2.5 whitespace-nowrap text-right sticky right-0 bg-violet-50 z-10 shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
               Actions
             </th>
           </tr>
@@ -1442,15 +1442,15 @@ export function MeteringWorkflowPanel({
   const renderTabBody = (list: MeteringQuotation[], tab: MeteringStage, emptyLabel: string) => {
     if (isLoading) {
       return (
-        <Card>
-          <CardContent className="py-8 text-sm text-muted-foreground">Loading metering queue…</CardContent>
+        <Card className="rounded-2xl border-cyan-200/80 bg-gradient-to-b from-white to-cyan-50/50">
+          <CardContent className="py-8 text-sm text-cyan-900/70">Loading metering queue…</CardContent>
         </Card>
       )
     }
     if (list.length === 0) {
       return (
-        <Card>
-          <CardContent className="py-8 text-sm text-muted-foreground">{emptyLabel}</CardContent>
+        <Card className="rounded-2xl border-cyan-200/80 bg-gradient-to-b from-white to-cyan-50/50">
+          <CardContent className="py-8 text-sm text-cyan-900/70">{emptyLabel}</CardContent>
         </Card>
       )
     }
@@ -1473,18 +1473,39 @@ export function MeteringWorkflowPanel({
       )}
 
       <div className="flex flex-col gap-3">
-        <div className="w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+        <div className="w-full rounded-xl border border-cyan-100 bg-gradient-to-r from-cyan-50/80 via-white to-sky-50/80 p-1 flex flex-wrap gap-1 shadow-sm">
           {(
             [
-              { key: "processing" as const, label: `Meter Pending (${processingList.length})`, icon: ClipboardList },
-              { key: "approved" as const, label: `Meter in Discom (${approvedList.length})`, icon: CheckCircle2 },
-              { key: "wcc" as const, label: `WCC Pending (${wccList.length})`, icon: ClipboardList },
+              {
+                key: "processing" as const,
+                label: `Meter Pending (${processingList.length})`,
+                icon: ClipboardList,
+                activeClass: "border-amber-200 bg-gradient-to-r from-amber-100 to-orange-50 text-amber-900",
+              },
+              {
+                key: "approved" as const,
+                label: `Meter in Discom (${approvedList.length})`,
+                icon: CheckCircle2,
+                activeClass: "border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900",
+              },
+              {
+                key: "wcc" as const,
+                label: `WCC Pending (${wccList.length})`,
+                icon: ClipboardList,
+                activeClass: "border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900",
+              },
               {
                 key: "meter_install" as const,
                 label: `Meter Installation Pending (${meterInstallList.length})`,
                 icon: Wrench,
+                activeClass: "border-indigo-200 bg-gradient-to-r from-indigo-100 to-sky-50 text-indigo-900",
               },
-              { key: "mco" as const, label: `Final Step (${mcoList.length})`, icon: FileCheck },
+              {
+                key: "mco" as const,
+                label: `Final Step (${mcoList.length})`,
+                icon: FileCheck,
+                activeClass: "border-emerald-200 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-900",
+              },
             ] as const
           ).map((item) => {
             const Icon = item.icon
@@ -1493,9 +1514,11 @@ export function MeteringWorkflowPanel({
                 key={item.key}
                 type="button"
                 size="sm"
-                variant={activeTab === item.key ? "default" : "ghost"}
+                variant="ghost"
                 className={
-                  activeTab === item.key ? "h-8 text-xs gap-1.5 shadow-sm" : "h-8 text-xs gap-1.5"
+                  activeTab === item.key
+                    ? `h-8 text-xs gap-1.5 border shadow-sm hover:opacity-95 ${item.activeClass}`
+                    : "h-8 text-xs gap-1.5 text-slate-600 hover:bg-white/80"
                 }
                 onClick={() => setActiveTab(item.key)}
               >
@@ -1516,17 +1539,17 @@ export function MeteringWorkflowPanel({
                 {
                   key: "lt5" as const,
                   label: "Less than 5",
-                  activeClass: "bg-emerald-600 text-white hover:bg-emerald-600 border-emerald-600",
+                  activeClass: "bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-300",
                 },
                 {
                   key: "gte5" as const,
                   label: "5 equal and more",
-                  activeClass: "bg-amber-500 text-white hover:bg-amber-500 border-amber-500",
+                  activeClass: "bg-amber-100 text-amber-900 hover:bg-amber-100 border-amber-300",
                 },
                 {
                   key: "gte10" as const,
                   label: "10 equal and more",
-                  activeClass: "bg-red-600 text-white hover:bg-red-600 border-red-600",
+                  activeClass: "bg-rose-100 text-rose-800 hover:bg-rose-100 border-rose-300",
                 },
               ] as const
             ).map((chip) => (
@@ -1536,7 +1559,9 @@ export function MeteringWorkflowPanel({
                 size="sm"
                 variant="outline"
                 className={
-                  filterMeterOverdue === chip.key ? `h-7 text-xs ${chip.activeClass}` : "h-7 text-xs"
+                  filterMeterOverdue === chip.key
+                    ? `h-7 text-xs rounded-full ${chip.activeClass}`
+                    : "h-7 text-xs rounded-full border-slate-200 bg-white/80"
                 }
                 onClick={() => setFilterMeterOverdue((prev) => (prev === chip.key ? "all" : chip.key))}
               >
@@ -1564,7 +1589,7 @@ export function MeteringWorkflowPanel({
             }))
           }
           placeholder="Search by customer, mobile, quotation id"
-          className="h-9 pl-8 text-sm"
+          className="h-9 pl-8 text-sm border-cyan-200 bg-gradient-to-r from-white to-cyan-50/60 focus-visible:ring-cyan-200"
         />
       </div>
 

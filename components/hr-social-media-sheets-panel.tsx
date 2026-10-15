@@ -598,7 +598,7 @@ export function HrSocialMediaSheetsPanel({
 
   if (sources.length === 0) {
     return (
-      <Card className="border-border/60">
+      <Card className="rounded-2xl border-sky-200/80 bg-gradient-to-b from-white to-sky-50/50 shadow-sm">
         <CardContent className="py-8 text-center space-y-3">
           <p className="text-sm text-muted-foreground">No sheet tabs configured.</p>
           <Button onClick={() => void handleDiscover()} disabled={isDiscovering} className="gap-2">
@@ -614,10 +614,12 @@ export function HrSocialMediaSheetsPanel({
 
   return (
     <div className="space-y-4">
-      <Card className="border-border/60">
+      <Card className="rounded-2xl border-sky-200/80 bg-gradient-to-b from-white to-sky-50/50 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Sheet className="w-4 h-4 text-primary" />
+          <CardTitle className="text-base flex items-center gap-2 text-sky-950">
+            <span className="w-7 h-7 rounded-lg bg-sky-100 border border-sky-200 flex items-center justify-center">
+              <Sheet className="w-4 h-4 text-sky-700" />
+            </span>
             Meta / Social Media Leads (Google Sheet)
           </CardTitle>
           <CardDescription>
@@ -667,9 +669,13 @@ export function HrSocialMediaSheetsPanel({
       </Card>
 
       <Tabs value={currentTab} onValueChange={setActiveSheetTab} className="space-y-4">
-        <TabsList className="flex w-full justify-start overflow-x-auto whitespace-nowrap">
+        <TabsList className="flex w-full justify-start overflow-x-auto whitespace-nowrap rounded-xl border border-sky-100 bg-gradient-to-r from-sky-50/80 via-white to-violet-50/70 p-1">
           {orderedSources.map((source) => (
-            <TabsTrigger key={source.id} value={source.sheetTabName} className="shrink-0 text-xs sm:text-sm gap-1">
+            <TabsTrigger
+              key={source.id}
+              value={source.sheetTabName}
+              className="shrink-0 text-xs sm:text-sm gap-1 text-sky-800/80 data-[state=active]:!bg-sky-100 data-[state=active]:!text-sky-800"
+            >
               {source.displayName}
               {source.enabled ? (
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
@@ -684,7 +690,7 @@ export function HrSocialMediaSheetsPanel({
 
           return (
             <TabsContent key={source.id} value={source.sheetTabName} className="space-y-4">
-              <Card className="border-border/60">
+              <Card className="rounded-2xl border-violet-200/80 bg-gradient-to-b from-white to-violet-50/45 shadow-sm">
                 <CardHeader className="pb-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div>
@@ -744,7 +750,7 @@ export function HrSocialMediaSheetsPanel({
                   </div>
 
                   {source.enabled ? (
-                    <div className="space-y-3 rounded-md border border-border/60 p-3">
+                    <div className="space-y-3 rounded-xl border border-violet-100 bg-white/70 p-3">
                       <p className="text-sm font-medium">Dealer pool (round-robin, 1 active lead each)</p>
                       {dealers.length === 0 ? (
                         <p className="text-sm text-muted-foreground">No dealers with Quotation access.</p>
@@ -753,7 +759,11 @@ export function HrSocialMediaSheetsPanel({
                           {dealers.map((dealer) => (
                             <label
                               key={dealer.id}
-                              className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40"
+                              className={`flex items-center gap-2 rounded-xl border px-3 py-2 cursor-pointer shadow-sm transition-colors ${
+                                dealerIds.includes(dealer.id)
+                                  ? "border-violet-300 bg-gradient-to-r from-violet-50 to-sky-50/60"
+                                  : "border-violet-100 bg-white/85 hover:bg-violet-50/60"
+                              }`}
                             >
                               <Checkbox
                                 checked={dealerIds.includes(dealer.id)}
@@ -790,7 +800,7 @@ export function HrSocialMediaSheetsPanel({
                 </CardContent>
               </Card>
 
-              <Card className="border-border/60">
+              <Card className="rounded-2xl border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/45 shadow-sm">
                 <CardHeader>
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div>

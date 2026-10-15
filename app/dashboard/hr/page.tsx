@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Upload, LogOut, Users, FileSpreadsheet, Eye, Loader2, Search, UserRoundPlus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { AccessSwitchBar } from "@/components/access-switch-bar"
+import { cn } from "@/lib/utils"
 import {
   canOpenSection,
   getAccessOptions,
@@ -1526,10 +1527,10 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
   const multiAccess = getAccessOptions(access).length > 1
 
   return (
-    <div className={embedded ? "space-y-4" : "min-h-screen bg-background"}>
+    <div className={embedded ? "space-y-4" : "admin-portal-canvas"}>
       {!embedded ? <AccessSwitchBar current="hr" title="HR" /> : null}
       {!embedded && !multiAccess ? (
-        <header className="border-b border-border bg-card">
+        <header className="border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/90 to-sky-50/95">
           <div className="container mx-auto px-4 py-4 flex items-center justify-between">
             <button onClick={() => router.push("/")} className="flex items-center">
               <SolarLogo size="md" />
@@ -1551,44 +1552,67 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
       ) : null}
 
       <main className={embedded ? "space-y-4" : "container mx-auto px-4 py-6 space-y-4"}>
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Users className="w-4 h-4 text-primary" />
+        <div className="rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50 via-sky-50/80 to-emerald-50/70 p-4 sm:p-5 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-violet-100 border border-violet-200 flex items-center justify-center shrink-0">
+              <Users className="w-5 h-5 text-violet-700" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-violet-950">HR Calling Assignment</h1>
+              <p className="text-sm text-violet-900/70 mt-1">
+                Upload CSV leads and choose dealer pool. Leads stay in a shared FIFO work queue —
+                next free dealer in the pool gets the next unassigned lead (first-come-first-serve).
+                Goal: Unassigned → 0 and Assigned → 0 as dealers finish calls (Completed grows to row count).
+              </p>
+            </div>
           </div>
-          <h1 className="text-xl font-semibold">HR Calling Assignment</h1>
         </div>
-        <p className="text-sm text-muted-foreground">
-          Upload CSV leads and choose dealer pool. Leads stay in a shared FIFO work queue —
-          next free dealer in the pool gets the next unassigned lead (first-come-first-serve).
-          Goal: Unassigned → 0 and Assigned → 0 as dealers finish calls (Completed grows to row count).
-        </p>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto gap-1 p-1">
-            <TabsTrigger value="assignment" className="text-xs sm:text-sm">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto gap-1 rounded-xl border border-violet-100 bg-gradient-to-r from-orange-50/70 via-white to-sky-50/70 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:font-semibold [&_[data-slot=tabs-trigger]]:border [&_[data-slot=tabs-trigger]]:border-transparent">
+            <TabsTrigger
+              value="assignment"
+              className="text-xs sm:text-sm text-orange-800/80 data-[state=active]:!bg-orange-100 data-[state=active]:!text-orange-800 data-[state=active]:!border-orange-200"
+            >
               Assignment
             </TabsTrigger>
-            <TabsTrigger value="social-media" className="text-xs sm:text-sm">
+            <TabsTrigger
+              value="social-media"
+              className="text-xs sm:text-sm text-sky-800/80 data-[state=active]:!bg-sky-100 data-[state=active]:!text-sky-800 data-[state=active]:!border-sky-200"
+            >
               Social Media
             </TabsTrigger>
-            <TabsTrigger value="uploaded-data" className="text-xs sm:text-sm">
+            <TabsTrigger
+              value="uploaded-data"
+              className="text-xs sm:text-sm text-violet-800/80 data-[state=active]:!bg-violet-100 data-[state=active]:!text-violet-800 data-[state=active]:!border-violet-200"
+            >
               Uploaded Data
             </TabsTrigger>
-            <TabsTrigger value="dealer-actions" className="text-xs sm:text-sm">
+            <TabsTrigger
+              value="dealer-actions"
+              className="text-xs sm:text-sm text-emerald-800/80 data-[state=active]:!bg-emerald-100 data-[state=active]:!text-emerald-800 data-[state=active]:!border-emerald-200"
+            >
               Dealer Actions
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="assignment" className="space-y-4">
-            <Card className="border-border/60">
+            <Card className="rounded-2xl border-orange-200/80 bg-gradient-to-b from-white to-orange-50/50 shadow-sm">
               <CardHeader>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileSpreadsheet className="w-4 h-4 text-primary" />
+                <CardTitle className="text-base flex items-center gap-2 text-orange-950">
+                  <span className="w-7 h-7 rounded-lg bg-orange-100 border border-orange-200 flex items-center justify-center">
+                    <FileSpreadsheet className="w-4 h-4 text-orange-700" />
+                  </span>
                   CSV Upload
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Input type="file" accept=".csv,text/csv" onChange={handleCsvUpload} />
+                <Input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={handleCsvUpload}
+                  className="border-dashed border-orange-200 bg-white/80 file:mr-3 file:rounded-md file:bg-orange-100 file:px-3 file:text-orange-800"
+                />
                 <div className="text-xs text-muted-foreground">
                   {csvFileName
                     ? `File: ${csvFileName} (${csvRows.length} valid rows)`
@@ -1597,9 +1621,19 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
               </CardContent>
             </Card>
 
-            <Card className="border-border/60">
+            <Card className="rounded-2xl border-sky-200/80 bg-gradient-to-b from-white to-sky-50/50 shadow-sm">
               <CardHeader>
-                <CardTitle className="text-base">Select Dealers</CardTitle>
+                <CardTitle className="text-base flex items-center gap-2 text-sky-950">
+                  <span className="w-7 h-7 rounded-lg bg-sky-100 border border-sky-200 flex items-center justify-center">
+                    <Users className="w-4 h-4 text-sky-700" />
+                  </span>
+                  Select Dealers
+                  {selectedDealerIds.length > 0 ? (
+                    <Badge variant="outline" className="ml-1 border-sky-200 bg-sky-100 text-sky-800">
+                      {selectedDealerIds.length} selected
+                    </Badge>
+                  ) : null}
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoadingDealers ? (
@@ -1611,7 +1645,15 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {quotationDealers.map((dealer) => (
-                      <label key={dealer.id} className="flex items-center gap-2 rounded-md border border-border/60 px-3 py-2 cursor-pointer hover:bg-muted/40">
+                      <label
+                        key={dealer.id}
+                        className={cn(
+                          "flex items-center gap-2 rounded-xl border px-3 py-2 cursor-pointer transition-colors shadow-sm",
+                          selectedDealerIds.includes(dealer.id)
+                            ? "border-sky-300 bg-gradient-to-r from-sky-50 to-violet-50/60"
+                            : "border-sky-100 bg-white/85 hover:bg-sky-50/60",
+                        )}
+                      >
                         <Checkbox checked={selectedDealerIds.includes(dealer.id)} onCheckedChange={() => toggleDealer(dealer.id)} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate">{dealer.firstName} {dealer.lastName}</p>
@@ -1629,7 +1671,7 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                         const dealer = dealers.find((d) => d.id === id)
                         if (!dealer) return null
                         return (
-                          <Badge key={id} variant="outline">
+                          <Badge key={id} variant="outline" className="border-sky-200 bg-sky-50 text-sky-800">
                             {dealer.firstName} {dealer.lastName}
                           </Badge>
                         )
@@ -1664,11 +1706,11 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
           </TabsContent>
 
           <TabsContent value="uploaded-data">
-            <Card className="border-border/60">
+            <Card className="rounded-2xl border-violet-200/80 bg-gradient-to-b from-white to-violet-50/50 shadow-sm">
               <CardHeader>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="space-y-1.5">
-                    <CardTitle className="text-base">Uploaded Lead Data</CardTitle>
+                    <CardTitle className="text-base text-violet-950">Uploaded Lead Data</CardTitle>
                     <CardDescription>
                       Use <span className="font-medium text-foreground">Add dealers</span> on a file to choose who is
                       in that batch&apos;s pool. Each dealer gets <span className="font-medium text-foreground">1 active
@@ -1679,7 +1721,7 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center rounded-md border border-border/60 bg-muted/20 p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center rounded-xl border border-violet-100 bg-gradient-to-r from-violet-50/80 to-sky-50/70 p-3">
                   <div className="flex-1 space-y-1">
                     <p className="text-sm font-medium">Global search by mobile</p>
                     <p className="text-xs text-muted-foreground">
@@ -1728,7 +1770,7 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                 </div>
 
                 {globalMobileSearched ? (
-                  <div className="rounded-md border border-border/70 overflow-hidden">
+                  <div className="rounded-xl border border-violet-100 bg-white overflow-hidden">
                     {isSearchingGlobalMobile ? (
                       <div className="py-8 flex items-center justify-center gap-2 text-sm text-muted-foreground">
                         <Loader2 className="w-4 h-4 animate-spin" />
@@ -1741,8 +1783,8 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                     ) : (
                       <div className="overflow-auto max-h-[360px]">
                         <table className="w-full table-fixed text-sm">
-                          <thead className="sticky top-0 bg-background z-10">
-                            <tr className="text-left text-muted-foreground border-b">
+                          <thead className="sticky top-0 z-10 bg-gradient-to-r from-violet-100/95 to-sky-100/90">
+                            <tr className="text-left text-violet-900/80 border-b border-violet-100">
                               <th className="py-2 px-3 w-[14%]">Upload</th>
                               <th className="py-2 px-3 w-[14%]">Name</th>
                               <th className="py-2 px-3 w-[11%]">Mobile</th>
@@ -1799,7 +1841,10 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                 ) : (
                   <div className="space-y-4">
                     {uploadedLeadBatches.map((batch) => (
-                      <div key={batch.id} className="rounded-md border border-border/70 p-3 space-y-2">
+                      <div
+                        key={batch.id}
+                        className="rounded-xl border border-violet-100 border-l-4 border-l-violet-300 bg-gradient-to-r from-white to-violet-50/50 p-3 space-y-2 shadow-sm"
+                      >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
                             <p className="font-medium text-sm">{batch.fileName}</p>
@@ -1830,21 +1875,30 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                           <div className="ml-auto flex items-center gap-2">
                             <div className="flex flex-wrap gap-1 justify-end items-center">
                               {batch.dealers.map((name) => (
-                                <Badge key={`${batch.id}-${name}`} variant="outline">
+                                <Badge
+                                  key={`${batch.id}-${name}`}
+                                  variant="outline"
+                                  className="border-violet-200 bg-violet-50 text-violet-800"
+                                >
                                   {name}
                                 </Badge>
                               ))}
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="h-7 gap-1 shrink-0"
+                                className="h-7 gap-1 shrink-0 border-sky-200 text-sky-800 hover:bg-sky-50"
                                 onClick={() => openManageDealersDialog(batch)}
                               >
                                 <UserRoundPlus className="w-3.5 h-3.5" />
                                 Add dealers
                               </Button>
                             </div>
-                            <Button size="sm" variant="outline" className="gap-1 shrink-0" onClick={() => openBatchPreview(batch)}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="gap-1 shrink-0 border-violet-200 text-violet-800 hover:bg-violet-50"
+                              onClick={() => openBatchPreview(batch)}
+                            >
                               <Eye className="w-4 h-4" />
                               View
                             </Button>
@@ -1859,15 +1913,15 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
           </TabsContent>
 
           <TabsContent value="dealer-actions" className="space-y-4">
-            <Card className="border-border/60">
+            <Card className="rounded-2xl border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/50 shadow-sm">
               <CardHeader>
-                <CardTitle className="text-base">Dealer Calling Actions</CardTitle>
+                <CardTitle className="text-base text-emerald-950">Dealer Calling Actions</CardTitle>
                 <CardDescription>
                   Use the dealer dropdown to see one salesperson&apos;s actions. Date filters apply to action time.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50/80 to-sky-50/70 p-3">
                   <Select
                     value={callingRange}
                     onValueChange={(value: "daily" | "weekly" | "monthly" | "last_month" | "custom" | "all") =>
@@ -1901,7 +1955,7 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                   </Select>
                 </div>
                 {callingRange === "custom" ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-lg border border-border/60 bg-muted/20 p-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50/80 to-sky-50/70 p-3">
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-muted-foreground">From</p>
                       <Input
@@ -1924,42 +1978,42 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                 ) : null}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Card className="border-border/60 bg-muted/20">
+                  <Card className="border-violet-200/80 bg-gradient-to-b from-white to-violet-50/70 shadow-sm">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="text-xl font-semibold">{filteredCallingActions.length}</p>
+                      <p className="text-xs text-violet-800/80">Total</p>
+                      <p className="text-xl font-semibold text-violet-950">{filteredCallingActions.length}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-slate-300 bg-slate-50/80">
+                  <Card className="border-slate-200 bg-gradient-to-b from-white to-slate-50 shadow-sm">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Not Connected</p>
-                      <p className="text-xl font-semibold">{connectionSummary.notConnected}</p>
+                      <p className="text-xs text-slate-600">Not Connected</p>
+                      <p className="text-xl font-semibold text-slate-900">{connectionSummary.notConnected}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-emerald-200 bg-emerald-50/40">
+                  <Card className="border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/70 shadow-sm">
                     <CardContent className="pt-4">
-                      <p className="text-xs text-muted-foreground">Connected</p>
-                      <p className="text-xl font-semibold">{connectionSummary.connected}</p>
+                      <p className="text-xs text-emerald-800/80">Connected</p>
+                      <p className="text-xl font-semibold text-emerald-950">{connectionSummary.connected}</p>
                     </CardContent>
                   </Card>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <Card className="border-rose-100 bg-rose-50/20">
+                  <Card className="border-rose-200/80 bg-gradient-to-b from-white to-rose-50/70 shadow-sm">
                     <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Not Interested</p>
-                      <p className="text-lg font-semibold">{connectedOutcomeSummary.notInterested}</p>
+                      <p className="text-xs text-rose-800/80">Connected — Not Interested</p>
+                      <p className="text-lg font-semibold text-rose-950">{connectedOutcomeSummary.notInterested}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-emerald-100 bg-emerald-50/20">
+                  <Card className="border-teal-200/80 bg-gradient-to-b from-white to-teal-50/70 shadow-sm">
                     <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Interested</p>
-                      <p className="text-lg font-semibold">{connectedOutcomeSummary.interested}</p>
+                      <p className="text-xs text-teal-800/80">Connected — Interested</p>
+                      <p className="text-lg font-semibold text-teal-950">{connectedOutcomeSummary.interested}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-blue-100 bg-blue-50/20">
+                  <Card className="border-sky-200/80 bg-gradient-to-b from-white to-sky-50/70 shadow-sm">
                     <CardContent className="pt-3 pb-3">
-                      <p className="text-xs text-muted-foreground">Connected — Follow Up</p>
-                      <p className="text-lg font-semibold">{connectedOutcomeSummary.followUp}</p>
+                      <p className="text-xs text-sky-800/80">Connected — Follow Up</p>
+                      <p className="text-lg font-semibold text-sky-950">{connectedOutcomeSummary.followUp}</p>
                     </CardContent>
                   </Card>
                 </div>
@@ -1974,7 +2028,17 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
                       const parsedRemark = parseCallRemarkParts(item.callRemark || "")
                       const statusLabel = ACTION_LABEL_MAP[item.action] || item.action || "N/A"
                       return (
-                        <div key={item.id} className="rounded-lg border border-border/70 bg-card p-3 shadow-sm">
+                        <div
+                          key={item.id}
+                          className={cn(
+                            "rounded-xl border border-l-4 p-3 shadow-sm",
+                            item.action === "not_interested"
+                              ? "border-rose-100 border-l-rose-300 bg-gradient-to-r from-white to-rose-50/50"
+                              : item.action === "follow_up"
+                                ? "border-sky-100 border-l-sky-300 bg-gradient-to-r from-white to-sky-50/50"
+                                : "border-emerald-100 border-l-emerald-300 bg-gradient-to-r from-white to-emerald-50/50",
+                          )}
+                        >
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-sm break-words">{item.dealerName || "Unknown Employee"}</p>
@@ -2082,8 +2146,8 @@ export function HrWorkspace({ embedded = false }: { embedded?: boolean }) {
               <p className="py-10 text-center text-sm text-muted-foreground">No rows found for this batch.</p>
             ) : (
               <table className="w-full table-fixed text-sm">
-                <thead className="sticky top-0 bg-background z-10">
-                  <tr className="text-left text-muted-foreground border-b">
+                <thead className="sticky top-0 z-10 bg-gradient-to-r from-violet-100/95 to-sky-100/90">
+                  <tr className="text-left text-violet-900/80 border-b border-violet-100">
                     <th className="py-2 px-3 w-[16%]">Name</th>
                     <th className="py-2 px-3 w-[12%]">Mobile</th>
                     <th className="py-2 px-3 w-[14%]">K Number</th>

@@ -346,23 +346,42 @@ export function FinalConfirmationWorkflowPanel({
         </p>
       )}
 
-      <Card className="border-border/60 bg-card/90 shadow-sm">
+      <Card className="rounded-2xl border-emerald-200/80 bg-gradient-to-br from-emerald-50/80 via-white to-sky-50/60 shadow-sm">
         <CardContent className="pt-5 space-y-3">
-          <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+          <div className="mb-3 w-full rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50/80 via-white to-teal-50/70 p-1 flex flex-wrap gap-1">
             {(
               [
-                { key: "all" as const, label: "All" },
-                { key: "dcr" as const, label: `DCR Generation (${dcrQuotations.length})` },
-                { key: "pending" as const, label: `Final process (${finalProcessQuotations.length})` },
-                { key: "done" as const, label: `Done (${finalClosedQuotations.length})` },
+                {
+                  key: "all" as const,
+                  label: "All",
+                  activeClass: "border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900",
+                },
+                {
+                  key: "dcr" as const,
+                  label: `DCR Generation (${dcrQuotations.length})`,
+                  activeClass: "border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900",
+                },
+                {
+                  key: "pending" as const,
+                  label: `Final process (${finalProcessQuotations.length})`,
+                  activeClass: "border-amber-200 bg-gradient-to-r from-amber-100 to-orange-50 text-amber-900",
+                },
+                {
+                  key: "done" as const,
+                  label: `Done (${finalClosedQuotations.length})`,
+                  activeClass: "border-emerald-200 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-900",
+                },
               ] as const
             ).map((item) => (
               <Button
                 key={item.key}
                 type="button"
                 size="sm"
-                variant={activeTab === item.key ? "default" : "ghost"}
-                className={cn("h-8 text-xs", activeTab === item.key && "shadow-sm")}
+                variant="ghost"
+                className={cn(
+                  "h-8 text-xs text-slate-600 hover:bg-white/80",
+                  activeTab === item.key && `border shadow-sm hover:opacity-95 ${item.activeClass}`
+                )}
                 onClick={() => setActiveTab(item.key)}
               >
                 {item.key === "dcr" ? <FileCheck2 className="w-3.5 h-3.5 mr-1" /> : null}
@@ -378,21 +397,21 @@ export function FinalConfirmationWorkflowPanel({
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Search by name, mobile, email, or ID..."
-              className="pl-9"
+              className="pl-9 border-emerald-200 bg-white/90 focus-visible:ring-emerald-200"
             />
           </div>
         </CardContent>
       </Card>
 
       {isLoading ? (
-        <Card>
-          <CardContent className="py-12 text-sm text-muted-foreground text-center">
+        <Card className="rounded-2xl border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/50">
+          <CardContent className="py-12 text-sm text-emerald-900/70 text-center">
             Loading confirmation records...
           </CardContent>
         </Card>
       ) : activeList.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
+        <div className="text-center py-12 text-emerald-900/60 rounded-2xl border border-dashed border-emerald-200 bg-gradient-to-b from-white to-emerald-50/40">
+          <FileText className="w-12 h-12 mx-auto mb-4 text-emerald-300" />
           <p>No records in this stage.</p>
         </div>
       ) : (
@@ -413,8 +432,10 @@ export function FinalConfirmationWorkflowPanel({
                 key={q.id}
                 className={
                   isDone
-                    ? "border-green-200/70 bg-gradient-to-r from-green-50/40 to-card shadow-sm"
-                    : "border-border/60 bg-gradient-to-r from-card to-muted/20 shadow-sm"
+                    ? "rounded-2xl border-emerald-200/80 border-l-4 border-l-emerald-400 bg-gradient-to-r from-emerald-50/80 via-white to-teal-50/50 shadow-sm"
+                    : needsDcr
+                      ? "rounded-2xl border-violet-200/80 border-l-4 border-l-violet-400 bg-gradient-to-r from-violet-50/70 via-white to-sky-50/50 shadow-sm"
+                      : "rounded-2xl border-amber-200/80 border-l-4 border-l-amber-400 bg-gradient-to-r from-amber-50/70 via-white to-orange-50/40 shadow-sm"
                 }
               >
                 <CardContent className="p-4">
@@ -446,27 +467,38 @@ export function FinalConfirmationWorkflowPanel({
                     ) : null}
                     <div className="min-w-[120px]">
                       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                      <p className="text-sm font-semibold">₹{getAmount(q).toLocaleString()}</p>
+                      <p className="text-sm font-semibold text-emerald-700">₹{getAmount(q).toLocaleString()}</p>
                     </div>
                     <div className="min-w-[130px]">
                       {isDone ? (
-                        <Badge className="bg-green-600 text-white text-xs">Final Closure</Badge>
+                        <Badge variant="outline" className="border-emerald-300 bg-emerald-100 text-emerald-800 text-xs">
+                          Final Closure
+                        </Badge>
                       ) : needsDcr ? (
-                        <Badge variant="outline" className="text-xs">DCR pending</Badge>
+                        <Badge variant="outline" className="border-violet-300 bg-violet-50 text-violet-800 text-xs">
+                          DCR pending
+                        </Badge>
                       ) : (
-                        <Badge variant="outline" className="text-xs">Pending Baldev</Badge>
+                        <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-900 text-xs">
+                          Pending Baldev
+                        </Badge>
                       )}
                     </div>
                     <div className="flex flex-wrap items-center justify-start gap-2 lg:justify-end">
                       {needsDcr && canWrite ? (
-                        <Button size="sm" onClick={() => markDcrGenerated(q.id)} disabled={readOnly}>
+                        <Button
+                          size="sm"
+                          className="border border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900 shadow-sm hover:from-violet-200 hover:to-fuchsia-100"
+                          onClick={() => markDcrGenerated(q.id)}
+                          disabled={readOnly}
+                        >
                           Generate DCR
                         </Button>
                       ) : null}
                       {!isDone ? (
                         <>
                           {docs.uploaded > 0 ? (
-                            <Badge className="bg-emerald-600 text-white text-[10px]">
+                            <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800 text-[10px] hover:bg-emerald-100">
                               <CheckCircle2 className="w-3 h-3 mr-1" />
                               {docs.uploaded}/{docs.total} uploaded
                             </Badge>
@@ -476,7 +508,12 @@ export function FinalConfirmationWorkflowPanel({
                             Update Final Details
                           </Button>
                           {!needsDcr && canWrite ? (
-                            <Button size="sm" onClick={() => void markFinalApproved(q.id)} disabled={savingId === q.id || readOnly}>
+                            <Button
+                              size="sm"
+                              className="border border-emerald-200 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-900 shadow-sm hover:from-emerald-200 hover:to-teal-100"
+                              onClick={() => void markFinalApproved(q.id)}
+                              disabled={savingId === q.id || readOnly}
+                            >
                               {savingId === q.id ? "Saving..." : "Mark Final Approved"}
                             </Button>
                           ) : null}
@@ -488,7 +525,7 @@ export function FinalConfirmationWorkflowPanel({
                               Docs pending
                             </Badge>
                           ) : (
-                            <Badge className="bg-emerald-600 text-white text-[10px]">
+                            <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800 text-[10px] hover:bg-emerald-100">
                               <CheckCircle2 className="w-3 h-3 mr-1" />
                               {docs.uploaded}/{docs.total} uploaded
                             </Badge>
@@ -508,7 +545,7 @@ export function FinalConfirmationWorkflowPanel({
                         const saved = readFinalConfirmationDoc(qRecord, field.key)
                         const shortLabel = field.label.replace(" (PDF/JPG)", "")
                         return (
-                          <div key={field.key} className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5">
+                          <div key={field.key} className="rounded-lg border border-emerald-100 bg-white/80 px-2 py-1.5">
                             <p className="text-[10px] text-muted-foreground truncate">{shortLabel}</p>
                             {saved.url || saved.name ? (
                               <p className="text-[11px] font-medium text-emerald-700 flex items-center gap-1">
@@ -525,7 +562,7 @@ export function FinalConfirmationWorkflowPanel({
                   ) : null}
 
                   {expandedId === q.id ? (
-                    <div className="mt-4 rounded-md border border-border/70 p-3">
+                    <div className="mt-4 rounded-xl border border-emerald-100 bg-white/80 p-3">
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {FINAL_CONFIRMATION_DOC_FIELDS.map((field) => {
                           const saved = readFinalConfirmationDoc(qRecord, field.key)
@@ -536,7 +573,7 @@ export function FinalConfirmationWorkflowPanel({
                               <div className="flex items-center justify-between gap-2">
                                 <Label className="text-xs">{field.label}</Label>
                                 {isUploaded ? (
-                                  <Badge className="bg-emerald-600 text-white text-[10px]">
+                                  <Badge className="border border-emerald-300 bg-emerald-100 text-emerald-800 text-[10px] hover:bg-emerald-100">
                                     <CheckCircle2 className="w-3 h-3 mr-1" />
                                     Uploaded
                                   </Badge>

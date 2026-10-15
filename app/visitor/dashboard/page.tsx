@@ -1185,34 +1185,34 @@ export default function VisitorDashboardPage() {
   const getStatusColor = (status?: VisitStatus) => {
     switch (status) {
       case "approved":
-        return "bg-green-50 border-green-200"
+        return "bg-gradient-to-r from-emerald-50/80 via-white to-teal-50/40 border-emerald-200 border-l-emerald-400"
       case "completed":
-        return "bg-blue-50 border-blue-200"
+        return "bg-gradient-to-r from-sky-50/80 via-white to-cyan-50/40 border-sky-200 border-l-sky-400"
       case "incomplete":
-        return "bg-orange-50 border-orange-200"
+        return "bg-gradient-to-r from-orange-50/80 via-white to-amber-50/40 border-orange-200 border-l-orange-400"
       case "rescheduled":
-        return "bg-purple-50 border-purple-200"
+        return "bg-gradient-to-r from-violet-50/80 via-white to-fuchsia-50/40 border-violet-200 border-l-violet-400"
       case "rejected":
-        return "bg-red-50 border-red-200"
+        return "bg-gradient-to-r from-rose-50/80 via-white to-pink-50/40 border-rose-200 border-l-rose-400"
       default:
-        return "bg-yellow-50 border-yellow-200"
+        return "bg-gradient-to-r from-amber-50/80 via-white to-yellow-50/40 border-amber-200 border-l-amber-400"
     }
   }
 
   const getStatusBadge = (status?: VisitStatus) => {
     switch (status) {
       case "approved":
-        return <Badge className="bg-green-600 text-white">Approved</Badge>
+        return <Badge variant="outline" className="border-emerald-300 bg-emerald-100 text-emerald-800">Approved</Badge>
       case "completed":
-        return <Badge className="bg-blue-600 text-white">Completed</Badge>
+        return <Badge variant="outline" className="border-sky-300 bg-sky-100 text-sky-800">Completed</Badge>
       case "incomplete":
-        return <Badge className="bg-orange-600 text-white">Incomplete</Badge>
+        return <Badge variant="outline" className="border-orange-300 bg-orange-100 text-orange-800">Incomplete</Badge>
       case "rescheduled":
-        return <Badge className="bg-purple-600 text-white">Rescheduled</Badge>
+        return <Badge variant="outline" className="border-violet-300 bg-violet-100 text-violet-800">Rescheduled</Badge>
       case "rejected":
-        return <Badge className="bg-red-600 text-white">Rejected</Badge>
+        return <Badge variant="outline" className="border-rose-300 bg-rose-100 text-rose-800">Rejected</Badge>
       default:
-        return <Badge className="bg-yellow-600 text-white">Pending</Badge>
+        return <Badge variant="outline" className="border-amber-300 bg-amber-100 text-amber-900">Pending</Badge>
     }
   }
 
@@ -1221,10 +1221,10 @@ export default function VisitorDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="admin-portal-canvas">
       <AccessSwitchBar current="visitor" title="Visitor" />
       {getAccessOptions(access).length <= 1 ? (
-        <header className="border-b border-border bg-card">
+        <header className="border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/90 to-sky-50/95">
           <div className="container mx-auto px-4 py-3 sm:py-4">
             <div className="flex items-center justify-between gap-2">
               <div className="min-w-0 flex-1">
@@ -1241,7 +1241,7 @@ export default function VisitorDashboardPage() {
           </div>
         </header>
       ) : (
-        <div className="border-b border-border/60 bg-muted/20">
+        <div className="border-b border-violet-100 bg-gradient-to-r from-violet-50/80 via-white to-sky-50/70">
           <div className="container mx-auto px-4 py-2">
             <p className="text-sm text-muted-foreground">
               Welcome, {visitor.firstName} {visitor.lastName} — Visitor
@@ -1251,14 +1251,14 @@ export default function VisitorDashboardPage() {
       )}
 
       <main className="container mx-auto px-4 py-4 sm:py-8">
-        <div className="mb-4 sm:mb-6">
-          <h2 className="text-xl sm:text-2xl font-bold mb-1 sm:mb-2">My Assigned Visits</h2>
-          <p className="text-sm sm:text-base text-muted-foreground">View all visits assigned to you</p>
+        <div className="mb-4 sm:mb-6 rounded-2xl border border-violet-200/80 bg-gradient-to-r from-violet-50 via-white to-sky-50 px-4 py-3 sm:py-4 shadow-sm">
+          <h2 className="text-xl sm:text-2xl font-bold mb-1 sm:mb-2 text-violet-950">My Assigned Visits</h2>
+          <p className="text-sm sm:text-base text-violet-900/70">View all visits assigned to you</p>
         </div>
 
         {/* Search and Filter */}
         {assignedVisits.length > 0 && (
-          <Card className="mb-6">
+          <Card className="mb-6 rounded-2xl border-sky-200/80 bg-gradient-to-b from-white to-sky-50/50 shadow-sm">
             <CardHeader>
               <div className="flex flex-col gap-4">
                 <div className="flex items-center justify-between gap-3 sm:hidden">
@@ -1282,9 +1282,13 @@ export default function VisitorDashboardPage() {
                   onValueChange={(value) => setActiveStatusTab(value as VisitStatusTab)}
                   className="hidden sm:block"
                 >
-                  <TabsList className="w-full overflow-x-auto justify-start">
+                  <TabsList className="w-full overflow-x-auto justify-start rounded-xl border border-violet-100 bg-gradient-to-r from-violet-50/80 via-white to-sky-50/80 p-1">
                     {VISIT_STATUS_TAB_OPTIONS.map((option) => (
-                      <TabsTrigger key={option.value} value={option.value}>
+                      <TabsTrigger
+                        key={option.value}
+                        value={option.value}
+                        className="text-slate-600 data-[state=active]:!bg-violet-100 data-[state=active]:!text-violet-800"
+                      >
                         {option.label}
                       </TabsTrigger>
                     ))}
@@ -1297,7 +1301,7 @@ export default function VisitorDashboardPage() {
                       placeholder="Search by customer name, quotation ID, location, agent..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-9"
+                      className="pl-9 border-violet-200 bg-gradient-to-r from-white to-violet-50/60 focus-visible:ring-violet-200"
                     />
                   </div>
                   {(searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== DEFAULT_VISITOR_DATE_FILTER || activeStatusTab !== "pending") && (
@@ -1373,24 +1377,24 @@ export default function VisitorDashboardPage() {
         {isLoadingVisits ? (
           <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, index) => (
-              <Card key={index}>
+              <Card key={index} className="rounded-2xl border-violet-100 bg-gradient-to-r from-white to-violet-50/40">
                 <CardContent className="py-4">
                   <div className="animate-pulse grid grid-cols-1 lg:grid-cols-[1.6fr_1fr_1fr_auto] gap-3 items-center">
                     <div className="space-y-2">
-                      <div className="h-4 w-40 rounded bg-muted" />
-                      <div className="h-3 w-28 rounded bg-muted" />
+                      <div className="h-4 w-40 rounded bg-violet-100/70" />
+                      <div className="h-3 w-28 rounded bg-violet-100/70" />
                     </div>
                     <div className="space-y-2">
-                      <div className="h-3 w-24 rounded bg-muted" />
-                      <div className="h-3 w-32 rounded bg-muted" />
+                      <div className="h-3 w-24 rounded bg-violet-100/70" />
+                      <div className="h-3 w-32 rounded bg-violet-100/70" />
                     </div>
                     <div className="space-y-2">
-                      <div className="h-3 w-24 rounded bg-muted" />
-                      <div className="h-3 w-36 rounded bg-muted" />
+                      <div className="h-3 w-24 rounded bg-violet-100/70" />
+                      <div className="h-3 w-36 rounded bg-violet-100/70" />
                     </div>
                     <div className="flex gap-2">
-                      <div className="h-8 w-24 rounded bg-muted" />
-                      <div className="h-8 w-24 rounded bg-muted" />
+                      <div className="h-8 w-24 rounded bg-violet-100/70" />
+                      <div className="h-8 w-24 rounded bg-violet-100/70" />
                     </div>
                   </div>
                 </CardContent>
@@ -1482,9 +1486,9 @@ export default function VisitorDashboardPage() {
 
           if (sortedFilteredVisits.length === 0) {
             return (
-              <Card>
-                <CardContent className="py-12 text-center text-muted-foreground">
-                  <Calendar className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <Card className="rounded-2xl border-dashed border-violet-200 bg-gradient-to-b from-white to-violet-50/40">
+                <CardContent className="py-12 text-center text-violet-900/60">
+                  <Calendar className="w-12 h-12 mx-auto mb-4 text-violet-300" />
                   <p>
                     {searchTerm.trim() || agentFilter !== "all" || statusFilter !== "all" || dateFilter !== DEFAULT_VISITOR_DATE_FILTER || activeStatusTab !== "pending"
                       ? "No visits found matching your search/filters"
@@ -1525,8 +1529,8 @@ export default function VisitorDashboardPage() {
                 return (
                   <Card
                     key={visit.id}
-                    className={`border-l-4 ${
-                      visit.status ? getStatusColor(visit.status) : isPast ? "border-muted-foreground/50 bg-muted/30" : "border-primary"
+                    className={`rounded-2xl border-l-4 shadow-sm ${
+                      visit.status ? getStatusColor(visit.status) : isPast ? "border-slate-200 bg-gradient-to-r from-slate-50 to-white" : "border-violet-200 border-l-violet-400 bg-gradient-to-r from-violet-50/70 to-white"
                     }`}
                   >
                     <CardContent className="py-4">
@@ -1540,7 +1544,7 @@ export default function VisitorDashboardPage() {
                             {isPast ? <Badge variant="outline" className="text-xs">Past Visit</Badge> : null}
                           </div>
                           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                            <Badge variant="outline" className="text-[11px]">{visit.quotation.id}</Badge>
+                            <Badge variant="outline" className="text-[11px] border-sky-200 bg-sky-50 text-sky-800">{visit.quotation.id}</Badge>
                             <span className="truncate max-w-full">Agent: {getDealerName(visit.quotation.dealerId, visit)}</span>
                             {visit.quotation.customer.mobile ? (
                               <a href={`tel:${visit.quotation.customer.mobile}`} className="text-primary hover:underline">
@@ -1583,7 +1587,7 @@ export default function VisitorDashboardPage() {
                             variant="outline"
                             size="sm"
                             onClick={() => void openVisitDetails(visit)}
-                            className="w-full"
+                            className="w-full border-violet-200 bg-white/90 text-violet-800 hover:bg-violet-50"
                           >
                             <User className="w-4 h-4 mr-2" />
                             View Details
@@ -1600,13 +1604,14 @@ export default function VisitorDashboardPage() {
                                   <Button
                                     size="sm"
                                     onClick={() => handleStatusAction(visit, "approve")}
-                                    className="bg-green-600 hover:bg-green-700"
+                                    className="border border-emerald-200 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-900 hover:from-emerald-200 hover:to-teal-100"
                                   >
                                     Approve
                                   </Button>
                                   <Button
                                     size="sm"
-                                    variant="destructive"
+                                    variant="outline"
+                                    className="border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
                                     onClick={() => handleStatusAction(visit, "reject")}
                                   >
                                     Reject
@@ -1615,17 +1620,17 @@ export default function VisitorDashboardPage() {
                               ) : (
                                 <>
                                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="bg-blue-600 hover:bg-blue-700">
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="border border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900 hover:from-sky-200 hover:to-cyan-100">
                                       Complete
                                     </Button>
-                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="bg-orange-600 hover:bg-orange-700">
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="border border-orange-200 bg-gradient-to-r from-orange-100 to-amber-50 text-orange-900 hover:from-orange-200 hover:to-amber-100">
                                       Incomplete
                                     </Button>
-                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="bg-purple-600 hover:bg-purple-700">
+                                    <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="border border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900 hover:from-violet-200 hover:to-fuchsia-100">
                                       Reschedule
                                     </Button>
                                   </div>
-                                  <Button size="sm" variant="destructive" onClick={() => handleStatusAction(visit, "reject")} className="w-full">
+                                  <Button size="sm" variant="outline" onClick={() => handleStatusAction(visit, "reject")} className="w-full border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100">
                                     Reject
                                   </Button>
                                 </>
@@ -1636,17 +1641,17 @@ export default function VisitorDashboardPage() {
                           {(visitStatus === "approved" || visitStatus === "rescheduled") && (
                             <div className="space-y-2">
                               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                                <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="bg-blue-600 hover:bg-blue-700">
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("completed", visit)} className="border border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900 hover:from-sky-200 hover:to-cyan-100">
                                   Complete
                                 </Button>
-                                <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="bg-orange-600 hover:bg-orange-700">
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("incomplete", visit)} className="border border-orange-200 bg-gradient-to-r from-orange-100 to-amber-50 text-orange-900 hover:from-orange-200 hover:to-amber-100">
                                   Incomplete
                                 </Button>
-                                <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="bg-purple-600 hover:bg-purple-700">
+                                <Button size="sm" onClick={() => handleApproveOutcomeClick("rescheduled", visit)} className="border border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900 hover:from-violet-200 hover:to-fuchsia-100">
                                   Reschedule
                                 </Button>
                               </div>
-                              <Button size="sm" variant="destructive" onClick={() => handleStatusAction(visit, "reject")} className="w-full">
+                              <Button size="sm" variant="outline" onClick={() => handleStatusAction(visit, "reject")} className="w-full border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100">
                                 Reject
                               </Button>
                             </div>
@@ -1657,7 +1662,7 @@ export default function VisitorDashboardPage() {
                   </Card>
                 )
               })}
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-card px-3 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-violet-100 bg-gradient-to-r from-violet-50/60 via-white to-sky-50/60 px-3 py-2">
                 <p className="text-xs text-muted-foreground">
                   Showing {Math.min(startIndex + 1, sortedFilteredVisits.length)}-
                   {Math.min(startIndex + VISITS_PER_PAGE, sortedFilteredVisits.length)} of {sortedFilteredVisits.length}
@@ -1989,7 +1994,7 @@ export default function VisitorDashboardPage() {
               <Button
                 onClick={handleRejectVisit}
                 disabled={!rejectionReason.trim()}
-                className="bg-red-600 hover:bg-red-700"
+                className="border border-rose-200 bg-gradient-to-r from-rose-100 to-pink-50 text-rose-800 hover:from-rose-200 hover:to-pink-100"
               >
                 <XCircle className="w-4 h-4 mr-2" />
                 Reject Visit
@@ -2081,7 +2086,7 @@ export default function VisitorDashboardPage() {
 
             <div>
               <Label>Site Images *</Label>
-              <div className="mt-2 border-2 border-dashed border-border rounded-lg p-6 text-center hover:border-primary/50 transition-colors">
+              <div className="mt-2 border-2 border-dashed border-violet-200 bg-gradient-to-b from-white to-violet-50/40 rounded-xl p-6 text-center hover:border-violet-300 transition-colors">
                 <Upload className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                 <p className="text-sm font-medium text-foreground mb-1">Click to upload or drag and drop</p>
                 <p className="text-xs text-muted-foreground mb-3">PNG, JPG up to 10MB each</p>
@@ -2133,7 +2138,7 @@ export default function VisitorDashboardPage() {
 
             <div>
               <Label htmlFor="row-diagram-upload">Row diagram image (optional)</Label>
-              <div className="mt-2 border-2 border-dashed border-border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="mt-2 border-2 border-dashed border-sky-200 bg-gradient-to-b from-white to-sky-50/40 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <p className="text-sm text-muted-foreground">Upload a row layout sketch or diagram (PNG, JPG up to 10MB).</p>
                 <div className="flex items-center gap-2 shrink-0">
                   <Input
@@ -2174,7 +2179,7 @@ export default function VisitorDashboardPage() {
 
             <div>
               <Label htmlFor="meter-image-upload">Meter image *</Label>
-              <div className="mt-2 border-2 border-dashed border-border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="mt-2 border-2 border-dashed border-sky-200 bg-gradient-to-b from-white to-sky-50/40 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                 <p className="text-sm text-muted-foreground">Upload clear meter photo (PNG, JPG up to 10MB).</p>
                 <div className="flex items-center gap-2 shrink-0">
                   <Input
@@ -2244,7 +2249,7 @@ export default function VisitorDashboardPage() {
                   imagePreviews.length === 0 ||
                   !meterImagePreview
                 }
-                className="bg-blue-600 hover:bg-blue-700"
+                className="border border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900 hover:from-sky-200 hover:to-cyan-100"
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
                 {isCompletingVisit ? "Submitting..." : isUploadingCompleteAsset ? "Uploading..." : "Complete Visit"}
@@ -2356,8 +2361,8 @@ export default function VisitorDashboardPage() {
                 disabled={!reason.trim()}
                 className={
                   approveOutcome === "incomplete"
-                    ? "bg-orange-600 hover:bg-orange-700"
-                    : "bg-purple-600 hover:bg-purple-700"
+                    ? "border border-orange-200 bg-gradient-to-r from-orange-100 to-amber-50 text-orange-900 hover:from-orange-200 hover:to-amber-100"
+                    : "border border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900 hover:from-violet-200 hover:to-fuchsia-100"
                 }
               >
                 {approveOutcome === "incomplete" ? (

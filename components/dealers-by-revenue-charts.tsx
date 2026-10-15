@@ -25,11 +25,23 @@ export type DealerRevenueStat = {
   totalKw: number
 }
 
+export type ChartMetric = "capacity" | "revenue" | "quotations"
+
 type DealersByRevenueChartsProps = {
   stats: DealerRevenueStat[]
+  metric?: ChartMetric
+  onMetricChange?: (metric: ChartMetric) => void
 }
 
-type ChartMetric = "capacity" | "revenue" | "quotations"
+export function compareDealerStatsByMetric(
+  a: DealerRevenueStat,
+  b: DealerRevenueStat,
+  metric: ChartMetric,
+): number {
+  if (metric === "capacity") return b.totalKw - a.totalKw || b.revenue - a.revenue
+  if (metric === "quotations") return b.quotationCount - a.quotationCount || b.revenue - a.revenue
+  return b.revenue - a.revenue || b.quotationCount - a.quotationCount
+}
 type ChartShape = "bar" | "pie"
 
 type ChartRow = {
@@ -516,16 +528,21 @@ function ShapeSwitch({
   )
 }
 
-export function DealersByRevenueCharts({ stats }: DealersByRevenueChartsProps) {
-  const [metric, setMetric] = useState<ChartMetric>("capacity")
+export function DealersByRevenueCharts({
+  stats,
+  metric: controlledMetric,
+  onMetricChange,
+}: DealersByRevenueChartsProps) {
+  const [localMetric, setLocalMetric] = useState<ChartMetric>("capacity")
+  const metric = controlledMetric ?? localMetric
+  const setMetric = (next: ChartMetric) => {
+    setLocalMetric(next)
+    onMetricChange?.(next)
+  }
   const [shape, setShape] = useState<ChartShape>("bar")
 
   const chartData = useMemo(() => {
-    const sortedDesc = [...stats].sort((a, b) => {
-      if (metric === "capacity") return b.totalKw - a.totalKw || b.revenue - a.revenue
-      if (metric === "quotations") return b.quotationCount - a.quotationCount || b.revenue - a.revenue
-      return b.revenue - a.revenue || b.quotationCount - a.quotationCount
-    })
+    const sortedDesc = [...stats].sort((a, b) => compareDealerStatsByMetric(a, b, metric))
     const top = sortedDesc.slice(0, MAX_CHART_DEALERS)
     const ascending = [...top].reverse()
 

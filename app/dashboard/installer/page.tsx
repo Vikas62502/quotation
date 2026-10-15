@@ -1397,10 +1397,10 @@ export default function InstallerDashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="admin-portal-canvas">
       <AccessSwitchBar current="installation" title="Installation" />
       {getAccessOptions(access).length <= 1 ? (
-        <header className="border-b border-border bg-card">
+        <header className="border-b border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/90 to-sky-50/95">
           <div className="container mx-auto px-4 py-4 flex items-center justify-between">
             <button onClick={() => router.push("/")} className="flex items-center">
               <SolarLogo size="md" />
@@ -1422,15 +1422,16 @@ export default function InstallerDashboardPage() {
       ) : null}
 
       <main className="container mx-auto px-4 py-6 space-y-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-            <Wrench className="w-4 h-4 text-primary" />
+        <div className="rounded-2xl border border-teal-200/80 bg-gradient-to-r from-teal-50 via-white to-sky-50 px-4 py-3 shadow-sm space-y-1.5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl border border-teal-200 bg-gradient-to-br from-teal-100 to-emerald-50 flex items-center justify-center">
+            <Wrench className="w-5 h-5 text-teal-700" />
           </div>
-          <h1 className="text-xl font-semibold">
+          <h1 className="text-xl font-semibold text-teal-950">
             {role === "installation-team" ? "Installation team" : "Installer Dashboard"}
           </h1>
         </div>
-        <p className="text-sm text-muted-foreground">
+        <p className="text-sm text-teal-900/70">
           {role === "installation-team" ? (
             <>
               Signed in as <span className="font-medium text-foreground">{installationTeamUser?.teamName || installationTeamUser?.username}</span>
@@ -1442,22 +1443,42 @@ export default function InstallerDashboardPage() {
             </>
           )}
         </p>
+        </div>
 
-        <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+        <div className="mb-3 w-full rounded-xl border border-teal-100 bg-gradient-to-r from-teal-50/80 via-white to-sky-50/80 p-1 flex flex-wrap gap-1 shadow-sm">
           {(
             [
-              { key: "all" as const, label: "All" },
-              { key: "pending" as const, label: "Pending Installation" },
-              { key: "partial" as const, label: "Partial Approved" },
-              { key: "done" as const, label: "Approved Installation" },
+              {
+                key: "all" as const,
+                label: "All",
+                activeClass: "border-sky-200 bg-gradient-to-r from-sky-100 to-cyan-50 text-sky-900",
+              },
+              {
+                key: "pending" as const,
+                label: "Pending Installation",
+                activeClass: "border-amber-200 bg-gradient-to-r from-amber-100 to-orange-50 text-amber-900",
+              },
+              {
+                key: "partial" as const,
+                label: "Partial Approved",
+                activeClass: "border-violet-200 bg-gradient-to-r from-violet-100 to-fuchsia-50 text-violet-900",
+              },
+              {
+                key: "done" as const,
+                label: "Approved Installation",
+                activeClass: "border-emerald-200 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-900",
+              },
             ] as const
           ).map((item) => (
             <Button
               key={item.key}
               type="button"
               size="sm"
-              variant={activeTab === item.key ? "default" : "ghost"}
-              className={cn("h-8", activeTab === item.key && "shadow-sm")}
+              variant="ghost"
+              className={cn(
+                "h-8 text-slate-600 hover:bg-white/80",
+                activeTab === item.key && `border shadow-sm hover:opacity-95 ${item.activeClass}`
+              )}
               onClick={() => setActiveTab(item.key)}
             >
               {item.label}
@@ -1471,15 +1492,15 @@ export default function InstallerDashboardPage() {
               placeholder="Search by name, mobile, email, or ID..."
               value={searchTerm}
               onDebouncedChange={setSearchTerm}
-              className="pl-9"
+              className="pl-9 border-teal-200 bg-gradient-to-r from-white to-teal-50/60 focus-visible:ring-teal-200"
               delayMs={200}
             />
           </div>
           {canManageInstallationTeams ? (
             <Button
               type="button"
-              variant="secondary"
-              className="w-full sm:w-auto"
+              variant="outline"
+              className="w-full sm:w-auto border-violet-200 bg-gradient-to-r from-violet-50 to-sky-50 text-violet-800 hover:from-violet-100 hover:to-sky-100"
               onClick={() => setInstallationTeamsDialogOpen(true)}
             >
               <Users className="w-4 h-4 mr-2" />
@@ -1497,17 +1518,17 @@ export default function InstallerDashboardPage() {
                 {
                   key: "lt5" as const,
                   label: "Less than 5",
-                  activeClass: "bg-emerald-600 text-white hover:bg-emerald-600 border-emerald-600",
+                  activeClass: "bg-emerald-100 text-emerald-800 hover:bg-emerald-100 border-emerald-300",
                 },
                 {
                   key: "gte5" as const,
                   label: "5 equal and more",
-                  activeClass: "bg-amber-400 text-amber-950 hover:bg-amber-400 border-amber-400",
+                  activeClass: "bg-amber-100 text-amber-900 hover:bg-amber-100 border-amber-300",
                 },
                 {
                   key: "gte10" as const,
                   label: "10 equal and more",
-                  activeClass: "bg-red-600 text-white hover:bg-red-600 border-red-600",
+                  activeClass: "bg-rose-100 text-rose-800 hover:bg-rose-100 border-rose-300",
                 },
               ] as const
             ).map((chip) => (
@@ -1516,7 +1537,10 @@ export default function InstallerDashboardPage() {
                 type="button"
                 size="sm"
                 variant="outline"
-                className={cn("h-7 text-xs", filterInstallOverdue === chip.key && chip.activeClass)}
+                className={cn(
+                  "h-7 text-xs rounded-full border-slate-200 bg-white/80",
+                  filterInstallOverdue === chip.key && chip.activeClass
+                )}
                 onClick={() => setFilterInstallOverdue((prev) => (prev === chip.key ? "all" : chip.key))}
               >
                 {chip.label}
@@ -1555,30 +1579,30 @@ export default function InstallerDashboardPage() {
         ) : null}
 
         {isLoading ? (
-          <Card>
-            <CardContent className="py-12 text-sm text-muted-foreground text-center">
+          <Card className="rounded-2xl border-teal-200/80 bg-gradient-to-b from-white to-teal-50/50">
+            <CardContent className="py-12 text-sm text-teal-900/70 text-center">
               Loading installer records...
             </CardContent>
           </Card>
         ) : activeInstallationList.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-sm text-muted-foreground text-center">
+          <Card className="rounded-2xl border-teal-200/80 bg-gradient-to-b from-white to-teal-50/50">
+            <CardContent className="py-12 text-sm text-teal-900/70 text-center">
               No installer records found
             </CardContent>
           </Card>
         ) : (
           <div className="native-scroll-list max-h-[min(70vh,820px)] overflow-y-auto overscroll-y-contain">
-            <div className="overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
+            <div className="overflow-x-auto rounded-2xl border border-teal-200/80 bg-white/90 shadow-sm">
               <table className="w-full min-w-[78rem] border-collapse text-left">
-                <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
-                  <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <thead className="sticky top-0 z-10 bg-gradient-to-r from-teal-50 via-sky-50 to-violet-50">
+                  <tr className="border-b border-teal-100 text-[10px] font-semibold uppercase tracking-wider text-teal-900/80">
                     <th className="px-3 py-2.5 whitespace-nowrap">Customer</th>
                     <th className="px-3 py-2.5 whitespace-nowrap">Dealer</th>
                     <th className="px-3 py-2.5 whitespace-nowrap">Sent</th>
                     <th className="px-3 py-2.5 whitespace-nowrap">Install date</th>
                     <th className="px-3 py-2.5 whitespace-nowrap">Team</th>
                     <th className="px-3 py-2.5 whitespace-nowrap">Status</th>
-                    <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                    <th className="px-3 py-2.5 whitespace-nowrap text-right md:sticky md:right-0 md:bg-violet-50 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
                       Actions
                     </th>
                   </tr>
@@ -1722,7 +1746,7 @@ export default function InstallerDashboardPage() {
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-8 w-8 shrink-0 p-0"
+                              className="h-8 w-8 shrink-0 p-0 border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
                               title="Start"
                               disabled={installationReadOnly}
                               onClick={() => startInstallationInProgress(q)}
@@ -1732,7 +1756,7 @@ export default function InstallerDashboardPage() {
                             </Button>
                             <Button
                               size="sm"
-                              className="h-8 w-8 shrink-0 p-0"
+                              className="h-8 w-8 shrink-0 p-0 border border-teal-200 bg-gradient-to-br from-teal-100 to-cyan-50 text-teal-800 hover:from-teal-200 hover:to-cyan-100"
                               title="Upload"
                               disabled={installationReadOnly}
                               onClick={() => openUploadPanel(q)}
@@ -1745,7 +1769,7 @@ export default function InstallerDashboardPage() {
                         {installerStatus === "inprogress" || installerStatus === "partial" ? (
                           <Button
                             size="sm"
-                            className="h-8 w-8 shrink-0 p-0"
+                            className="h-8 w-8 shrink-0 p-0 border border-teal-200 bg-gradient-to-br from-teal-100 to-cyan-50 text-teal-800 hover:from-teal-200 hover:to-cyan-100"
                             title={installerStatus === "partial" ? "Continue" : "Upload"}
                             disabled={installationReadOnly}
                             onClick={() => openUploadPanel(q)}
@@ -1757,7 +1781,7 @@ export default function InstallerDashboardPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-8 w-8 shrink-0 p-0"
+                          className="h-8 w-8 shrink-0 p-0 border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
                           title="Timeline"
                           onClick={() => setStatusHistoryQuotation(q)}
                         >
@@ -1770,7 +1794,7 @@ export default function InstallerDashboardPage() {
                             size="sm"
                             variant="outline"
                             className={cn(
-                              "h-8 w-8 shrink-0 p-0 border-amber-800/40 text-amber-950 dark:text-amber-100",
+                              "h-8 w-8 shrink-0 p-0 border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100",
                               !revertFromInstallation.enabled || retrievingFromInstallationId === q.id
                                 ? "opacity-60"
                                 : "",
@@ -1792,7 +1816,7 @@ export default function InstallerDashboardPage() {
                             type="button"
                             size="sm"
                             variant="outline"
-                            className="h-8 w-8 shrink-0 p-0"
+                            className="h-8 w-8 shrink-0 p-0 border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100"
                             title="View uploaded installation photos"
                             onClick={() => openInstallPhotosViewer(q)}
                           >
@@ -1805,8 +1829,8 @@ export default function InstallerDashboardPage() {
                             <Button
                               type="button"
                               size="sm"
-                              variant="secondary"
-                              className="h-8 w-8 shrink-0 p-0"
+                              variant="outline"
+                              className="h-8 w-8 shrink-0 p-0 border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
                               title="Edit"
                               disabled={installationReadOnly}
                               onClick={() => openUploadPanel(q)}
@@ -1818,7 +1842,7 @@ export default function InstallerDashboardPage() {
                               type="button"
                               size="sm"
                               variant="outline"
-                              className="h-8 w-8 shrink-0 p-0 border-amber-800/40 text-amber-950 dark:text-amber-100"
+                              className="h-8 w-8 shrink-0 p-0 border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
                               title="Revert"
                               disabled={installationReadOnly}
                               onClick={() =>
@@ -1837,7 +1861,7 @@ export default function InstallerDashboardPage() {
                     </td>
                   </tr>
                   {showExpanded ? (
-                    <tr className="border-b border-border/50 bg-muted/15">
+                    <tr className="border-b border-teal-100 bg-gradient-to-r from-teal-50/40 via-white to-sky-50/40">
                       <td colSpan={7} className="px-3 py-4">
                         <InstallationCompletionPanel
                           loadingText={loadingDetailsForId === q.id ? "Loading full customer/quotation details..." : undefined}

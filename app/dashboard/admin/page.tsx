@@ -121,7 +121,11 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { FullCustomerJourneyPanel } from "@/components/full-customer-journey-panel"
-import { DealersByRevenueCharts } from "@/components/dealers-by-revenue-charts"
+import {
+  DealersByRevenueCharts,
+  compareDealerStatsByMetric,
+  type ChartMetric,
+} from "@/components/dealers-by-revenue-charts"
 import { getJourneyDateRangeBounds, getJourneyHoldInfo, getJourneyStageProgress, formatJourneyStageStatusLabel, type JourneyDateRangeFilter } from "@/lib/customer-journey"
 import {
   getQuotationApprovalDate,
@@ -1799,6 +1803,7 @@ export default function AdminPanelPage() {
   const [isCallingActionsLoading, setIsCallingActionsLoading] = useState(false)
   const [topDealersDateFilter, setTopDealersDateFilter] = useState<JourneyDateRangeFilter>("this_month")
   const [topDealersDealerFilter, setTopDealersDealerFilter] = useState("all")
+  const [topDealersMetric, setTopDealersMetric] = useState<ChartMetric>("capacity")
   const [topDealersCustomFromDate, setTopDealersCustomFromDate] = useState("")
   const [topDealersCustomToDate, setTopDealersCustomToDate] = useState("")
   const [callingActionsUnavailable, setCallingActionsUnavailable] = useState(false)
@@ -8927,7 +8932,11 @@ export default function AdminPanelPage() {
                 ) : (
                   <>
                     <div className="rounded-xl border border-orange-100 bg-white/70 p-3">
-                      <DealersByRevenueCharts stats={dealersWithPeriodActivity} />
+                      <DealersByRevenueCharts
+                        stats={dealersWithPeriodActivity}
+                        metric={topDealersMetric}
+                        onMetricChange={setTopDealersMetric}
+                      />
                     </div>
                     {dealerStats.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-6">
@@ -8939,7 +8948,14 @@ export default function AdminPanelPage() {
                       </p>
                     ) : (
                       <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-2">Dealer breakdown</p>
+                    <p className="text-xs font-medium text-muted-foreground mb-2">
+                      Dealer breakdown · sorted by{" "}
+                      {topDealersMetric === "capacity"
+                        ? "kW"
+                        : topDealersMetric === "quotations"
+                          ? "unique customers"
+                          : "amount"}
+                    </p>
                     <div
                       className="native-scroll-list space-y-2 overflow-y-auto overscroll-y-contain pr-1"
                       style={{
@@ -8947,7 +8963,7 @@ export default function AdminPanelPage() {
                       }}
                     >
                       {[...dealersWithPeriodActivity]
-                        .sort((a, b) => b.revenue - a.revenue || b.quotationCount - a.quotationCount)
+                        .sort((a, b) => compareDealerStatsByMetric(a, b, topDealersMetric))
                         .map((stat, index) => (
                           <div
                             key={stat.dealer.id}
