@@ -557,7 +557,7 @@ export function AdminPricingTablesManagement() {
   )
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-2 border-teal-400 bg-gradient-to-br from-teal-100 via-emerald-50 to-cyan-100 shadow-[0_0_18px_rgba(45,212,191,0.45)] overflow-hidden">
       <CardHeader className="space-y-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="space-y-1 min-w-0">

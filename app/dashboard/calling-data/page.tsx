@@ -27,8 +27,6 @@ import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { DealerPageHero } from "@/components/dealer-page-hero"
 import { DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
-import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
-import { matchesCityFilter } from "@/lib/service-cities"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -982,7 +980,6 @@ export default function CallingDataPage() {
   const [callRemark, setCallRemark] = useState("")
   const [rescheduleAt, setRescheduleAt] = useState("")
   const [scheduledSearchTerm, setScheduledSearchTerm] = useState("")
-  const [filterCities, setFilterCities] = useState<string[]>([])
   const [recentSearchTerm, setRecentSearchTerm] = useState("")
   const [interestedSearchTerm, setInterestedSearchTerm] = useState("")
   const [scheduledTimeFilter, setScheduledTimeFilter] = useState<"all" | "today" | "next7" | "next30">("all")
@@ -2600,7 +2597,6 @@ export default function CallingDataPage() {
             ? nextAtMs >= nowMs && nextAtMs <= nowMs + 7 * 24 * 60 * 60 * 1000
             : nextAtMs >= nowMs && nextAtMs <= nowMs + 30 * 24 * 60 * 60 * 1000)
       if (!matchesTime) return false
-      if (!matchesCityFilter(lead, filterCities)) return false
       if (!matchesHistorySourceFilter(lead, historySourceFilter)) return false
       if (!term) return true
       const remarkText = getScheduledLeadFreeRemark(lead)
@@ -2610,7 +2606,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [derivedScheduledLeads, scheduledSearchTerm, scheduledTimeFilter, filterCities, historySourceFilter])
+  }, [derivedScheduledLeads, scheduledSearchTerm, scheduledTimeFilter, historySourceFilter])
 
   const filteredRecentActions = useMemo(() => {
     const term = recentSearchTerm.trim().toLowerCase()
@@ -2619,7 +2615,6 @@ export default function CallingDataPage() {
       const category = getTaggedCategory(item.callRemark)
       if (recentCategoryFilter !== "all" && category !== recentCategoryFilter) return false
       if (!matchesDateRange(item.actionAt, recentDateFilter)) return false
-      if (!matchesCityFilter(item, filterCities)) return false
       if (!term) return true
       const haystack = [item.name, item.mobile, item.action, item.callRemark, item.kNumber, item.address, item.city, item.state]
         .filter(Boolean)
@@ -2627,7 +2622,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [recentActions, recentSearchTerm, recentActionFilter, recentCategoryFilter, recentDateFilter, filterCities])
+  }, [recentActions, recentSearchTerm, recentActionFilter, recentCategoryFilter, recentDateFilter])
 
   const filteredInterestedActions = useMemo(() => {
     const term = interestedSearchTerm.trim().toLowerCase()
@@ -2635,7 +2630,6 @@ export default function CallingDataPage() {
       const category = getTaggedCategory(item.callRemark)
       if (interestedCategoryFilter !== "all" && category !== interestedCategoryFilter) return false
       if (!matchesDateRange(item.actionAt, interestedDateFilter)) return false
-      if (!matchesCityFilter(item, filterCities)) return false
       if (!term) return true
       const haystack = [item.name, item.mobile, item.callRemark, item.kNumber, item.address, item.city, item.state]
         .filter(Boolean)
@@ -2643,7 +2637,7 @@ export default function CallingDataPage() {
         .toLowerCase()
       return haystack.includes(term)
     })
-  }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter, filterCities])
+  }, [interestedActions, interestedSearchTerm, interestedCategoryFilter, interestedDateFilter])
 
   const currentLead = useMemo(() => {
     // Start Call done → keep pinned / in_progress lead until Submit.
@@ -3651,13 +3645,6 @@ export default function CallingDataPage() {
           tone="rose"
           title="Calling Data"
           description="Social Media and calling data together. One lead at a time — submit the outcome before the next lead appears."
-          action={
-            <CityMultiSelectFilter
-              value={filterCities}
-              onChange={setFilterCities}
-              className="w-full sm:w-56 bg-white"
-            />
-          }
         />
 
         <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm">

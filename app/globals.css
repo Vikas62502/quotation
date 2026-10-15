@@ -97,7 +97,8 @@
   }
 }
 
-.dealer-portal-canvas {
+.dealer-portal-canvas,
+.admin-portal-canvas {
   min-height: 100vh;
   background-color: oklch(0.985 0.006 85);
 }

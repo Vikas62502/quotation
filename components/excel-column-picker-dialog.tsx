@@ -22,6 +22,8 @@ type Props = {
   /** When provided, restores previously chosen ids (intersected with current columns). */
   initialSelectedIds?: string[] | null
   confirmLabel?: string
+  /** When set, shows a second action that downloads every column. */
+  completeLabel?: string
   rowCount?: number
   onConfirm: (selectedIds: string[]) => void
 }
@@ -34,6 +36,7 @@ export function ExcelColumnPickerDialog({
   columns,
   initialSelectedIds = null,
   confirmLabel = "Download",
+  completeLabel,
   rowCount,
   onConfirm,
 }: Props) {
@@ -123,22 +126,37 @@ export function ExcelColumnPickerDialog({
           </div>
         </div>
 
-        <DialogFooter className="px-6 py-4 border-t shrink-0 gap-2 sm:gap-2">
+        <DialogFooter className="px-6 py-4 border-t shrink-0 gap-2 sm:gap-2 sm:justify-between">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button
-            type="button"
-            disabled={noneSelected}
-            onClick={() => {
-              const ordered = allIds.filter((id) => selectedSet.has(id))
-              onConfirm(ordered)
-              onOpenChange(false)
-            }}
-          >
-            {confirmLabel}
-            {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
-          </Button>
+          <div className="flex flex-col-reverse sm:flex-row gap-2 sm:ml-auto">
+            {completeLabel ? (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={columns.length === 0}
+                onClick={() => {
+                  onConfirm(allIds)
+                  onOpenChange(false)
+                }}
+              >
+                {completeLabel}
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              disabled={noneSelected}
+              onClick={() => {
+                const ordered = allIds.filter((id) => selectedSet.has(id))
+                onConfirm(ordered)
+                onOpenChange(false)
+              }}
+            >
+              {confirmLabel}
+              {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

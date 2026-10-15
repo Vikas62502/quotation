@@ -110,6 +110,16 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+  ExcelColumnPickerDialog,
+  readRememberedExcelColumns,
+  rememberExcelColumns,
+} from "@/components/excel-column-picker-dialog"
+import {
+  columnOptionsFromHeaders,
+  downloadCsvFile,
+  filterRowsByColumnIds,
+} from "@/lib/excel-column-export"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import {
@@ -788,8 +798,19 @@ function getSettlementWriteOffAmount(payment: CustomerPayment): number {
   return Math.round(Math.max(gap, displayRem, mixSideRem, apiRem))
 }
 
+function normalizePaymentTypeValue(raw?: string | null): string {
+  const t = String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_+-]+/g, "")
+  if (t === "loan") return "loan"
+  if (t === "cash") return "cash"
+  if (t === "mix" || t === "cashloan" || t === "cashandloan") return "mix"
+  return t
+}
+
 function paymentTypeOf(payment: CustomerPayment): string {
-  return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+  return normalizePaymentTypeValue(payment.paymentType || payment.paymentMode)
 }
 
 /** Remaining on the relevant bucket before this installment (mix uses loan vs cash by payment mode). */
@@ -1035,6 +1056,27 @@ const MIX_SIDE_FILTER_OPTIONS: { value: MixSideFilterValue; label: string }[] = 
   { value: "cash", label: "Cash" },
 ]
 
+function paymentTypeMatchesFilter(
+  paymentTypeValue: string,
+  selected: PaymentTypeFilterValue[],
+): boolean {
+  if (selected.length === 0 || selected.length === PAYMENT_TYPE_FILTER_OPTIONS.length) return true
+  return selected.some((option) => {
+    if (option === "unknown") return !paymentTypeValue
+    if (option === "loan") return paymentTypeValue === "loan" || paymentTypeValue === "mix"
+    if (option === "cash") return paymentTypeValue === "cash" || paymentTypeValue === "mix"
+    if (option === "mix") return paymentTypeValue === "mix"
+    return paymentTypeValue === option
+  })
+}
+
+function paymentTypeFilterShowsMix(selected: PaymentTypeFilterValue[]): boolean {
+  if (selected.length === 0) return true
+  return selected.includes("mix") || selected.includes("loan") || selected.includes("cash")
+}
+
+const PAYMENT_EXCEL_STORAGE_KEY = "excel-columns:account-payments"
+
 const PAYMENT_INSTALLMENT_FILTER_OPTIONS: { value: PaymentInstallmentCount; label: string }[] = [
   { value: "1", label: "1 installment" },
   { value: "2", label: "2 installments" },
@@ -1086,10 +1128,43 @@ function countPhasesForMixSide(payment: CustomerPayment, side: MixSideFilterValu
   }).length
 }
 
+function paymentHadMixSide(payment: CustomerPayment, side: MixSideFilterValue): boolean {
+  if (getTotalPaidForSide(payment.phases, side) > 0) return true
+  if (countPhasesForMixSide(payment, side) > 0) return true
+  if (side === "loan") {
+    return getMixLoanCap(payment) > 0 || Math.round(Number(payment.loanAmount) || 0) > 0
+  }
+  return getMixCashCap(payment) > 0 || Math.round(Number(payment.cashAmount) || 0) > 0
+}
+
+/** Remaining on loan vs cash, including leftover that the list assigns onto one side. */
+function getMixSideRemaining(payment: CustomerPayment, side: MixSideFilterValue): number {
+  let loanRem = getRemainingForSide(payment, "loan")
+  let cashRem = getRemainingForSide(payment, "cash")
+  const leftover = getDisplayRemaining(payment) - loanRem - cashRem
+  if (leftover > 0) {
+    if (loanRem <= 0 && cashRem <= 0) {
+      cashRem = leftover
+    } else if (cashRem <= 0) {
+      cashRem = leftover
+    } else if (loanRem <= 0) {
+      loanRem = leftover
+    } else {
+      cashRem += leftover
+    }
+  }
+  return side === "loan" ? loanRem : cashRem
+}
+
 function paymentMatchesMixSideFilter(payment: CustomerPayment, mixSides: MixSideFilterValue[]): boolean {
-  if (mixSides.length === 0) return true
+  if (mixSides.length === 0 || mixSides.length === MIX_SIDE_FILTER_OPTIONS.length) return true
   if (paymentTypeOf(payment) !== "mix") return true
-  return mixSides.some((side) => countPhasesForMixSide(payment, side) > 0)
+  const remaining = getDisplayRemaining(payment)
+  return mixSides.some((side) => {
+    if (getMixSideRemaining(payment, side) > 0) return true
+    // Completed files have ₹0 remaining — keep those that actually used this side.
+    return remaining <= 0 && paymentHadMixSide(payment, side)
+  })
 }
 
 function paymentMatchesInstallmentFilter(
@@ -1102,7 +1177,9 @@ function paymentMatchesInstallmentFilter(
   }
   const expected = new Set(installmentCounts.map((value) => Number(value)))
   const type = paymentTypeOf(payment)
-  if (type === "mix" && mixSides.length > 0) {
+  const mixSideActive =
+    type === "mix" && mixSides.length > 0 && mixSides.length < MIX_SIDE_FILTER_OPTIONS.length
+  if (mixSideActive) {
     return mixSides.some((side) => expected.has(countPhasesForMixSide(payment, side)))
   }
   return expected.has(payment.phases.length)
@@ -1773,17 +1850,21 @@ function upsertCollectLeaserPayments(opts: {
     touchedVendorIds.add(vendorId)
     const paid = roundCollectInr(phase.paidAmount)
     const chairbord = Math.max(0, paid - amount)
+    const txn = String(phase.transactionId || "").trim()
+    const txnPart = txn ? ` · Txn ${txn}` : ""
+    const note = phase.note?.trim()
+    const remark = note
+      ? `${note}${txnPart}`
+      : chairbord > 0
+        ? `Installment ${phase.phaseNumber} — ${opts.customerName} (other ₹${amount.toLocaleString("en-IN")} / chairbord ₹${chairbord.toLocaleString("en-IN")})${txnPart}`
+        : `Installment ${phase.phaseNumber} — ${opts.customerName}${txnPart}`
     created.push({
       id: collectLeaserRowId(opts.quotationId, phase.phaseNumber),
       vendorId,
       date: phaseDateYmd(phase),
       amount,
       paymentType: normalizePaymentMode(phase.paymentMode) === "upi" ? "UPI" : "Cash",
-      remark:
-        phase.note?.trim() ||
-        (chairbord > 0
-          ? `Installment ${phase.phaseNumber} — ${opts.customerName} (other ₹${amount.toLocaleString("en-IN")} / chairbord ₹${chairbord.toLocaleString("en-IN")})`
-          : `Installment ${phase.phaseNumber} — ${opts.customerName} (collect other)`),
+      remark,
       customerIds: [opts.quotationId],
       sortOrder: nextOrder,
     })
@@ -1878,6 +1959,8 @@ export default function AccountManagementPage() {
   /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [paymentFiltersOpen, setPaymentFiltersOpen] = useState(false)
+  const [paymentExcelOpen, setPaymentExcelOpen] = useState(false)
+  const [paymentExcelRememberedIds, setPaymentExcelRememberedIds] = useState<string[] | null>(null)
   const [paymentSectionTab, setPaymentSectionTab] = useState<PaymentSectionTab>("active")
   const [selectedQuotation, setSelectedQuotation] = useState<Quotation | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -2649,7 +2732,7 @@ export default function AccountManagementPage() {
     const names = new Set<string>()
     let hasMissing = false
     for (const payment of customerPayments) {
-      const t = String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+      const t = paymentTypeOf(payment)
       if (t !== "loan" && t !== "mix") continue
       const bank = String(payment.bankName || "").trim()
       if (!bank) {
@@ -2666,7 +2749,7 @@ export default function AccountManagementPage() {
     const codes = new Set<string>()
     let hasMissing = false
     for (const payment of customerPayments) {
-      const t = String(payment.paymentType || payment.paymentMode || "").toLowerCase()
+      const t = paymentTypeOf(payment)
       if (t !== "loan" && t !== "mix") continue
       const ifsc = String(payment.bankIfsc || "").trim().toUpperCase()
       if (!ifsc) {
@@ -2710,9 +2793,7 @@ export default function AccountManagementPage() {
     }
   }, [paymentSectionTab, paymentStatusFilter])
 
-  const getPaymentTypeValue = (payment: CustomerPayment) => {
-    return String(payment.paymentType || payment.paymentMode || "").toLowerCase()
-  }
+  const getPaymentTypeValue = (payment: CustomerPayment) => paymentTypeOf(payment)
 
   /** Final settlement when there is Remaining — Cash, Cash+loan, or Loan. */
   const isFinalSettlementEligible = (payment: CustomerPayment) => {
@@ -2730,7 +2811,7 @@ export default function AccountManagementPage() {
   }
 
   const getPaymentTypeLabel = (paymentType?: string) => {
-    const normalized = String(paymentType || "").toLowerCase()
+    const normalized = normalizePaymentTypeValue(paymentType)
     if (normalized === "loan") return "Loan"
     if (normalized === "cash") return "Cash"
     if (normalized === "mix") return "Cash + loan"
@@ -2788,12 +2869,7 @@ export default function AccountManagementPage() {
         bankName.toLowerCase().includes(search) ||
         bankIfsc.toLowerCase().includes(search)
       const paymentTypeValue = getPaymentTypeValue(payment)
-      const matchesPaymentType =
-        paymentTypeFilter.length === 0 ||
-        paymentTypeFilter.length === PAYMENT_TYPE_FILTER_OPTIONS.length ||
-        paymentTypeFilter.some((selected) =>
-          selected === "unknown" ? !paymentTypeValue : paymentTypeValue === selected,
-        )
+      const matchesPaymentType = paymentTypeMatchesFilter(paymentTypeValue, paymentTypeFilter)
       const paymentStatusValue = getEffectivePaymentStatus(payment)
       const matchesPaymentStatus = paymentStatusFilter === "all" || paymentStatusValue === paymentStatusFilter
       const approveYmd = toLocalCalendarDateString(payment.statusApprovedAt)
@@ -3184,6 +3260,38 @@ export default function AccountManagementPage() {
     enabled: activeTab === "payments",
   })
 
+  const paymentExcelHeaders = useMemo(
+    () => [
+      "Quotation ID",
+      "Customer Name",
+      "Customer Mobile",
+      "Dealer Name",
+      "Dealer Mobile",
+      "Payment Type",
+      "Bank & IFSC",
+      "Approve date",
+      "Subtotal",
+      ...(showAccountsSiteProfit ? (["Cost of Site", "Profit"] as const) : []),
+      "Loan Amount",
+      "Cash Amount",
+      "Discount",
+      "Paid Amount",
+      "Loan Paid",
+      "Cash Paid",
+      "Remaining Amount",
+      "Loan Remaining",
+      "Cash Remaining",
+      "Installation Status",
+      "Metering Status",
+    ],
+    [showAccountsSiteProfit],
+  )
+
+  const paymentExcelColumns = useMemo(
+    () => columnOptionsFromHeaders(paymentExcelHeaders),
+    [paymentExcelHeaders],
+  )
+
   // Show loading state while checking authentication (after all hooks)
   if (isInitialLoad) {
     return (
@@ -3216,7 +3324,20 @@ export default function AccountManagementPage() {
     )
   }
 
-  const downloadFilteredPaymentsExcel = () => {
+  const openPaymentExcelPicker = () => {
+    if (displayedCustomerPayments.length === 0) {
+      toast({
+        title: "No data to export",
+        description: "Adjust filters to include at least one payment row.",
+        variant: "destructive",
+      })
+      return
+    }
+    setPaymentExcelRememberedIds(readRememberedExcelColumns(PAYMENT_EXCEL_STORAGE_KEY))
+    setPaymentExcelOpen(true)
+  }
+
+  const downloadFilteredPaymentsExcel = (selectedColumnIds: string[]) => {
     if (displayedCustomerPayments.length === 0) {
       toast({
         title: "No data to export",
@@ -3226,38 +3347,7 @@ export default function AccountManagementPage() {
       return
     }
 
-    const escapeCsv = (value: string | number) => {
-      const raw = String(value ?? "")
-      if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
-        return `"${raw.replace(/"/g, "\"\"")}"`
-      }
-      return raw
-    }
-
-    const headers = [
-      "Quotation ID",
-      "Customer Name",
-      "Customer Mobile",
-      "Dealer Name",
-      "Dealer Mobile",
-      "Payment Type",
-      "Bank & IFSC",
-      "Approve date",
-      "Subtotal",
-      ...(showAccountsSiteProfit ? (["Cost of Site", "Profit"] as const) : []),
-      "Loan Amount",
-      "Cash Amount",
-      "Discount",
-      "Paid Amount",
-      "Loan Paid",
-      "Cash Paid",
-      "Remaining Amount",
-      "Loan Remaining",
-      "Cash Remaining",
-      "Installation Status",
-      "Metering Status",
-    ]
-
+    const headers = [...paymentExcelHeaders]
     const rows = displayedCustomerPayments.map((payment) => {
       const paidAmount = getTotalPaidPhases(payment.phases)
       const remainingAmount = getDisplayRemaining(payment)
@@ -3266,16 +3356,17 @@ export default function AccountManagementPage() {
       const paymentTypeValue = getPaymentTypeValue(payment)
       const isMix = paymentTypeValue === "mix"
       const isLoan = paymentTypeValue === "loan"
+      const isCash = paymentTypeValue === "cash"
       const loanAmt = isMix || isLoan ? getMixLoanCap(payment) || payment.loanAmount || "" : ""
-      const cashAmt = isMix ? getMixCashCap(payment) || payment.cashAmount || "" : ""
+      const cashAmt = isMix || isCash ? getMixCashCap(payment) || payment.cashAmount || "" : ""
       const loanPaid = isMix || isLoan ? getTotalPaidForSide(payment.phases, "loan") : ""
-      const cashPaid = isMix || paymentTypeValue === "cash" ? getTotalPaidForSide(payment.phases, "cash") : ""
+      const cashPaid = isMix || isCash ? getTotalPaidForSide(payment.phases, "cash") : ""
       let loanRem: number | "" = isLoan
         ? remainingAmount
         : isMix
           ? getRemainingForSide(payment, "loan")
           : ""
-      let cashRem: number | "" = paymentTypeValue === "cash"
+      let cashRem: number | "" = isCash
         ? remainingAmount
         : isMix
           ? getRemainingForSide(payment, "cash")
@@ -3300,7 +3391,7 @@ export default function AccountManagementPage() {
         payment.customerMobile,
         payment.dealerName || "",
         payment.dealerMobile || "",
-        getPaymentTypeLabel(payment.paymentType || payment.paymentMode),
+        getPaymentTypeLabel(paymentTypeValue),
         bankCell === "—" ? "" : bankCell,
         payment.statusApprovedAt ? formatAdminDateOnly(payment.statusApprovedAt) : "",
         getPaymentOriginalSubtotal(payment),
@@ -3340,18 +3431,24 @@ export default function AccountManagementPage() {
       ]
     })
 
-    const csvContent = [headers, ...rows]
-      .map((row) => row.map((cell) => escapeCsv(cell)).join(","))
-      .join("\n")
-
-    const blob = new Blob([`\uFEFF${csvContent}`], { type: "text/csv;charset=utf-8;" })
-    const url = window.URL.createObjectURL(blob)
-    const link = document.createElement("a")
+    const picked = filterRowsByColumnIds(
+      headers,
+      rows,
+      selectedColumnIds.length > 0 ? selectedColumnIds : headers,
+    )
+    rememberExcelColumns(PAYMENT_EXCEL_STORAGE_KEY, picked.headers)
     const stamp = new Date().toISOString().slice(0, 10)
-    link.href = url
-    link.download = `payment-management-${stamp}.csv`
-    link.click()
-    window.URL.revokeObjectURL(url)
+    downloadCsvFile({
+      filename: `payment-management-${stamp}.csv`,
+      headers: picked.headers,
+      rows: picked.rows,
+    })
+    toast({
+      title: "Download started",
+      description: `${displayedCustomerPayments.length} row${
+        displayedCustomerPayments.length === 1 ? "" : "s"
+      } · ${picked.headers.length} column${picked.headers.length === 1 ? "" : "s"}.`,
+    })
   }
 
   const handleAddSubsidyCheque = () => {
@@ -4787,7 +4884,7 @@ export default function AccountManagementPage() {
                       variant="outline"
                       size="sm"
                       className="h-9 gap-1.5 w-full sm:w-auto"
-                      onClick={downloadFilteredPaymentsExcel}
+                      onClick={openPaymentExcelPicker}
                     >
                       <Download className="w-3.5 h-3.5" />
                       Download Excel
@@ -5432,22 +5529,50 @@ export default function AccountManagementPage() {
               options={PAYMENT_TYPE_FILTER_OPTIONS}
               onChange={(next) => {
                 setPaymentTypeFilter(next)
-                if (next.length > 0 && !next.includes("mix")) {
+                if (!paymentTypeFilterShowsMix(next)) {
                   setMixSideFilter([])
+                  return
                 }
+                setMixSideFilter((prev) => {
+                  if (prev.length > 0 || next.includes("mix") || next.length === 0) return prev
+                  if (next.includes("loan") && !next.includes("cash")) return ["loan"]
+                  if (next.includes("cash") && !next.includes("loan")) return ["cash"]
+                  return prev
+                })
               }}
             />
-            {paymentTypeFilter.includes("mix") ? (
-              <div className="rounded-md border border-border/70 bg-muted/30 p-3">
-                <CheckboxFilterPopover
-                  label="Cash + loan"
-                  allLabel="Loan and cash"
-                  selected={mixSideFilter}
-                  options={MIX_SIDE_FILTER_OPTIONS}
-                  collapseAllToEmpty={false}
-                  description="Count loan or cash phases only on Cash + loan files."
-                  onChange={setMixSideFilter}
-                />
+            {paymentTypeFilterShowsMix(paymentTypeFilter) ? (
+              <div className="rounded-md border border-border/70 bg-muted/30 p-3 space-y-2">
+                <div>
+                  <Label className="text-xs text-muted-foreground">Cash + loan</Label>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Loan shows Cash + loan files with loan remaining. Cash shows files with cash remaining.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  {MIX_SIDE_FILTER_OPTIONS.map((option) => {
+                    const checked = mixSideFilter.includes(option.value)
+                    const inputId = `mix-side-${option.value}`
+                    return (
+                      <label
+                        key={option.value}
+                        htmlFor={inputId}
+                        className="flex cursor-pointer items-center gap-2 text-sm"
+                      >
+                        <Checkbox
+                          id={inputId}
+                          checked={checked}
+                          onCheckedChange={(value) => {
+                            setMixSideFilter((prev) =>
+                              toggleCheckboxFilterValue(prev, option.value, value === true),
+                            )
+                          }}
+                        />
+                        <span>{option.label}</span>
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
             ) : null}
             <CheckboxFilterPopover
@@ -5622,6 +5747,19 @@ export default function AccountManagementPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ExcelColumnPickerDialog
+        open={paymentExcelOpen}
+        onOpenChange={setPaymentExcelOpen}
+        title="Select Excel columns"
+        description="Check the fields you want in the report. Complete download includes every column."
+        columns={paymentExcelColumns}
+        initialSelectedIds={paymentExcelRememberedIds}
+        rowCount={displayedCustomerPayments.length}
+        confirmLabel="Download Excel"
+        completeLabel="Complete download"
+        onConfirm={downloadFilteredPaymentsExcel}
+      />
 
       {/* Quotation Details Dialog */}
       <QuotationDetailsDialog
@@ -6227,7 +6365,7 @@ export default function AccountManagementPage() {
                                         </Select>
                                       </div>
                                       <div className="w-[7.75rem] shrink-0">
-                                        <Label className="text-[11px] text-muted-foreground">Amount</Label>
+                                        <Label className="text-[11px] text-muted-foreground">Subvendor</Label>
                                         <Input
                                           type="number"
                                           min={0}
@@ -6260,6 +6398,55 @@ export default function AccountManagementPage() {
                                           placeholder="0"
                                         />
                                       </div>
+                                      <div className="w-[7.75rem] shrink-0">
+                                        <Label className="text-[11px] text-muted-foreground">Chairbord</Label>
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={Math.max(
+                                            0,
+                                            roundCollectInr(phase.collectChairbordAmount) ||
+                                              roundCollectInr(phase.paidAmount) - collectOtherAmount,
+                                          )}
+                                          onChange={(e) => {
+                                            const chairbord = Number.parseFloat(e.target.value) || 0
+                                            const updated = customerPayments.map((p) =>
+                                              p.quotationId === activePayment.quotationId
+                                                ? {
+                                                    ...p,
+                                                    phases: p.phases.map((ph) => {
+                                                      if (ph.phaseNumber !== phase.phaseNumber) return ph
+                                                      const paid = roundCollectInr(ph.paidAmount)
+                                                      const amount = Math.min(Math.max(0, Math.round(chairbord)), paid)
+                                                      const other = Math.max(0, paid - amount)
+                                                      return {
+                                                        ...ph,
+                                                        collectDestination: "other" as const,
+                                                        collectKind: collectKindForAmount(other, paid),
+                                                        collectSelfAmount: other,
+                                                        collectChairbordAmount: amount,
+                                                        collectVendorId: ph.collectVendorId || fileOfficeVendorId,
+                                                      }
+                                                    }),
+                                                  }
+                                                : p,
+                                            )
+                                            setCustomerPayments(updated)
+                                          }}
+                                          className="mt-0.5 h-8 tabular-nums"
+                                          placeholder="0"
+                                        />
+                                      </div>
+                                      {collectOtherAmount > 0 &&
+                                      roundCollectInr(phase.paidAmount) - collectOtherAmount > 0 ? (
+                                        <p className="basis-full text-[10px] text-muted-foreground">
+                                          Partial received in both: subvendor ₹
+                                          {collectOtherAmount.toLocaleString("en-IN")} · Chairbord ₹
+                                          {(roundCollectInr(phase.paidAmount) - collectOtherAmount).toLocaleString(
+                                            "en-IN",
+                                          )}
+                                        </p>
+                                      ) : null}
                                     </>
                                   ) : null}
                                 </>

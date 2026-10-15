@@ -641,6 +641,38 @@ const ADMIN_OPERATIONAL_STAGES = [
 ] as const
 type AdminOperationalStage = (typeof ADMIN_OPERATIONAL_STAGES)[number]
 type AdminOperationalTab = "all" | "installation" | "metering" | "confirmation"
+
+const ADMIN_MAIN_TAB_ACTIVE = {
+  overview:
+    "data-[state=active]:!bg-orange-100 data-[state=active]:!text-orange-800 data-[state=active]:!border-orange-200/80",
+  callingReports:
+    "data-[state=active]:!bg-rose-100 data-[state=active]:!text-rose-800 data-[state=active]:!border-rose-200/80",
+  visitorReports:
+    "data-[state=active]:!bg-violet-100 data-[state=active]:!text-violet-800 data-[state=active]:!border-violet-200/80",
+  banking:
+    "data-[state=active]:!bg-amber-100 data-[state=active]:!text-amber-800 data-[state=active]:!border-amber-200/80",
+  dealers:
+    "data-[state=active]:!bg-fuchsia-100 data-[state=active]:!text-fuchsia-800 data-[state=active]:!border-fuchsia-200/80",
+} as const
+
+const ADMIN_QUOTATION_OP_ACTIVE: Record<AdminOperationalTab, string> = {
+  all: "!bg-sky-100 !text-sky-800 !border-sky-200/80 !shadow-sm",
+  installation: "!bg-teal-100 !text-teal-800 !border-teal-200/80 !shadow-sm",
+  metering: "!bg-cyan-100 !text-cyan-800 !border-cyan-200/80 !shadow-sm",
+  confirmation: "!bg-emerald-100 !text-emerald-800 !border-emerald-200/80 !shadow-sm",
+}
+
+const ADMIN_PASTEL = {
+  orange: "rounded-2xl border-orange-200/80 bg-gradient-to-b from-white to-orange-50/45 shadow-sm overflow-hidden",
+  rose: "rounded-2xl border-rose-200/80 bg-gradient-to-b from-white to-rose-50/45 shadow-sm overflow-hidden",
+  violet: "rounded-2xl border-violet-200/80 bg-gradient-to-b from-white to-violet-50/45 shadow-sm overflow-hidden",
+  sky: "rounded-2xl border-sky-200/80 bg-gradient-to-b from-white to-sky-50/45 shadow-sm overflow-hidden",
+  teal: "rounded-2xl border-teal-200/80 bg-gradient-to-b from-white to-teal-50/45 shadow-sm overflow-hidden",
+  cyan: "rounded-2xl border-cyan-200/80 bg-gradient-to-b from-white to-cyan-50/45 shadow-sm overflow-hidden",
+  emerald: "rounded-2xl border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/45 shadow-sm overflow-hidden",
+  amber: "rounded-2xl border-amber-200/80 bg-gradient-to-b from-white to-amber-50/45 shadow-sm overflow-hidden",
+  fuchsia: "rounded-2xl border-fuchsia-200/80 bg-gradient-to-b from-white to-fuchsia-50/45 shadow-sm overflow-hidden",
+} as const
 type AdminOperationalProgressTab =
   | "all"
   | "pending"
@@ -1496,20 +1528,20 @@ function AdminQuotationRowActions({
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8 shrink-0"
+            className="h-8 w-8 shrink-0 text-amber-700 hover:bg-amber-50 hover:text-amber-900"
             onClick={() => onQuotationHistory(quotation)}
             title={`Quotation history (${olderCount} older)`}
           >
             <History className="w-4 h-4" />
           </Button>
         ) : null}
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onTimeline(quotation)} title="Status timeline">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-violet-700 hover:bg-violet-50 hover:text-violet-900" onClick={() => onTimeline(quotation)} title="Status timeline">
           <Clock3 className="w-4 h-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onDocuments(quotation)} title="Document Submission">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-sky-700 hover:bg-sky-50 hover:text-sky-900" onClick={() => onDocuments(quotation)} title="Document Submission">
           <FileText className="w-4 h-4" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => onView(quotation)} title="View Details">
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-orange-700 hover:bg-orange-50 hover:text-orange-900" onClick={() => onView(quotation)} title="View Details">
           <Eye className="w-4 h-4" />
         </Button>
       {sendToMetering.visible ? (
@@ -1518,7 +1550,7 @@ function AdminQuotationRowActions({
           variant="outline"
           size="sm"
           className={cn(
-            "h-8 text-[10px] px-2 whitespace-nowrap shrink-0",
+            "h-8 text-[10px] px-2 whitespace-nowrap shrink-0 border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100 hover:text-teal-900",
             !sendToMetering.enabled || isSending ? "opacity-60" : "",
           )}
           title={sendToMetering.hint || "Send to Metering team"}
@@ -4483,6 +4515,7 @@ export default function AdminPanelPage() {
       activeTab === "quotations" &&
         operationalTab !== sub &&
         "!bg-transparent !text-muted-foreground !shadow-none !border-transparent hover:!bg-muted/50 hover:!text-foreground",
+      activeTab === "quotations" && operationalTab === sub && ADMIN_QUOTATION_OP_ACTIVE[sub],
     )
 
   const onAdminMobileNavChange = (value: string) => {
@@ -8245,13 +8278,13 @@ export default function AdminPanelPage() {
   const getStatusColor = (status: QuotationStatus | undefined) => {
     switch (status) {
       case "approved":
-        return "bg-green-50 border-green-200 hover:bg-green-100"
+        return "bg-emerald-50/90 border-emerald-200/80 hover:bg-emerald-100/80"
       case "rejected":
-        return "bg-red-50 border-red-200 hover:bg-red-100"
+        return "bg-rose-50/90 border-rose-200/80 hover:bg-rose-100/80"
       case "completed":
-        return "bg-blue-50 border-blue-200 hover:bg-blue-100"
+        return "bg-sky-50/90 border-sky-200/80 hover:bg-sky-100/80"
       default:
-        return "bg-yellow-50 border-yellow-200 hover:bg-yellow-100"
+        return "bg-amber-50/90 border-amber-200/80 hover:bg-amber-100/80"
     }
   }
 
@@ -8259,13 +8292,13 @@ export default function AdminPanelPage() {
   const getStatusBadgeColor = (status: QuotationStatus | undefined) => {
     switch (status) {
       case "approved":
-        return "bg-green-500 text-white"
+        return "bg-emerald-100 text-emerald-800 border-emerald-200"
       case "rejected":
-        return "bg-red-500 text-white"
+        return "bg-rose-100 text-rose-800 border-rose-200"
       case "completed":
-        return "bg-blue-500 text-white"
+        return "bg-sky-100 text-sky-800 border-sky-200"
       default:
-        return "bg-yellow-500 text-white"
+        return "bg-amber-100 text-amber-800 border-amber-200"
     }
   }
 
@@ -8518,7 +8551,7 @@ export default function AdminPanelPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="admin-portal-canvas">
       {reportsOnlyAccess ? (
         <>
           <AccessSwitchBar
@@ -8555,9 +8588,9 @@ export default function AdminPanelPage() {
         <DashboardNav />
       )}
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
+      <main className="container mx-auto px-3 sm:px-4 py-3 sm:py-4">
         {reportsOnlyAccess ? (
-          <div className="mb-6 sm:mb-8 flex items-start gap-3">
+          <div className="mb-4 flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
               <ClipboardList className="w-4 h-4 text-primary" />
             </div>
@@ -8573,14 +8606,9 @@ export default function AdminPanelPage() {
               </p>
             </div>
           </div>
-        ) : (
-          <div className="mb-6 sm:mb-8">
-            <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Admin Panel</h1>
-            <p className="text-sm sm:text-base text-muted-foreground mt-1 sm:mt-2">View and manage all system data</p>
-          </div>
-        )}
+        ) : null}
 
-        <Tabs value={activeTab} onValueChange={onAdminDesktopTabChange} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={onAdminDesktopTabChange} className="space-y-4">
           {!reportsOnlyAccess ? (
           <div className="md:hidden">
             <div className="text-xs font-medium text-muted-foreground mb-2">Select Section</div>
@@ -8614,10 +8642,16 @@ export default function AdminPanelPage() {
 
           {!reportsOnlyAccess ? (
           <div className="hidden md:flex w-full items-stretch gap-1">
-            <TabsList className="grid h-auto min-h-12 min-w-0 flex-1 grid-cols-[repeat(9,minmax(0,1fr))] gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-muted/30 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-auto [&_[data-slot=tabs-trigger]]:min-h-10 [&_[data-slot=tabs-trigger]]:px-1.5 [&_[data-slot=tabs-trigger]]:py-1.5 [&_[data-slot=tabs-trigger]]:text-[13px] [&_[data-slot=tabs-trigger]]:leading-tight [&_[data-slot=tabs-trigger]]:!whitespace-normal [&_[data-slot=tabs-trigger]]:text-center [&_[data-slot=tabs-trigger]]:font-semibold [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger][data-state=active]]:bg-background [&_[data-slot=tabs-trigger][data-state=active]]:text-foreground [&_[data-slot=tabs-trigger][data-state=active]]:border-border/80">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="calling-reports">Calling Reports</TabsTrigger>
-            <TabsTrigger value="visitor-reports">Visitor Reports</TabsTrigger>
+            <TabsList className="grid h-auto min-h-12 min-w-0 flex-1 grid-cols-[repeat(9,minmax(0,1fr))] gap-0.5 overflow-hidden rounded-xl border border-orange-100/80 bg-gradient-to-r from-orange-50/60 via-white to-sky-50/60 p-1 shadow-sm [&_[data-slot=tabs-trigger]]:h-auto [&_[data-slot=tabs-trigger]]:min-h-10 [&_[data-slot=tabs-trigger]]:px-1.5 [&_[data-slot=tabs-trigger]]:py-1.5 [&_[data-slot=tabs-trigger]]:text-[13px] [&_[data-slot=tabs-trigger]]:leading-tight [&_[data-slot=tabs-trigger]]:!whitespace-normal [&_[data-slot=tabs-trigger]]:text-center [&_[data-slot=tabs-trigger]]:font-semibold [&_[data-slot=tabs-trigger]]:text-muted-foreground [&_[data-slot=tabs-trigger]]:border [&_[data-slot=tabs-trigger]]:border-transparent [&_[data-slot=tabs-trigger][data-state=active]]:shadow-sm">
+            <TabsTrigger value="overview" className={ADMIN_MAIN_TAB_ACTIVE.overview}>
+              Overview
+            </TabsTrigger>
+            <TabsTrigger value="calling-reports" className={ADMIN_MAIN_TAB_ACTIVE.callingReports}>
+              Calling Reports
+            </TabsTrigger>
+            <TabsTrigger value="visitor-reports" className={ADMIN_MAIN_TAB_ACTIVE.visitorReports}>
+              Visitor Reports
+            </TabsTrigger>
             <TabsTrigger
               value="quotations"
               className={quotationSubTabTriggerClass("all")}
@@ -8627,7 +8661,9 @@ export default function AdminPanelPage() {
             >
               Quotations
             </TabsTrigger>
-            <TabsTrigger value="banking">Banking</TabsTrigger>
+            <TabsTrigger value="banking" className={ADMIN_MAIN_TAB_ACTIVE.banking}>
+              Banking
+            </TabsTrigger>
             <TabsTrigger
               value="quotations"
               className={quotationSubTabTriggerClass("installation")}
@@ -8655,7 +8691,9 @@ export default function AdminPanelPage() {
             >
               Final confirmation
             </TabsTrigger>
-            <TabsTrigger value="dealers">Users</TabsTrigger>
+            <TabsTrigger value="dealers" className={ADMIN_MAIN_TAB_ACTIVE.dealers}>
+              Users
+            </TabsTrigger>
             </TabsList>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -8666,14 +8704,14 @@ export default function AdminPanelPage() {
                   aria-label="More sections"
                   title="Customer Journey, Accounts, Customers, HR, Catalog, Subvendor"
                   className={cn(
-                    "h-auto min-h-12 w-11 shrink-0 rounded-xl border border-border/70 bg-muted/30 shadow-sm text-muted-foreground hover:text-foreground",
+                    "h-auto min-h-12 w-11 shrink-0 rounded-xl border border-orange-100/80 bg-gradient-to-b from-white to-orange-50/70 shadow-sm text-orange-700 hover:text-orange-900 hover:bg-orange-50",
                     (activeTab === "customer-journey" ||
                       activeTab === "payments" ||
                       activeTab === "customers" ||
                       activeTab === "hr" ||
                       activeTab === "catalog" ||
                       activeTab === "subvendor") &&
-                      "bg-background text-foreground border-border/80",
+                      "bg-orange-100 text-orange-800 border-orange-200/80",
                   )}
                 >
                   <MoreHorizontal className="w-4 h-4" />
@@ -8991,6 +9029,7 @@ export default function AdminPanelPage() {
 
           <TabsContent value="customer-journey" className="space-y-4">
             <FullCustomerJourneyPanel
+              className={ADMIN_PASTEL.teal}
               quotations={quotations}
               callingActions={journeyCallingActions}
               title="Customer Journey"
@@ -9016,7 +9055,7 @@ export default function AdminPanelPage() {
           </TabsContent>
 
           <TabsContent value="calling-reports" className="space-y-4">
-            <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/15 shadow-sm">
+            <Card className={ADMIN_PASTEL.rose}>
               <CardHeader className="pb-3">
                 <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
                   <div className="min-w-0">
@@ -9038,7 +9077,7 @@ export default function AdminPanelPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-9 gap-1.5 shrink-0 bg-white"
+                      className="h-9 gap-1.5 shrink-0 bg-white border-violet-200 text-violet-800 hover:bg-violet-50"
                       onClick={() => setCallingReportFiltersOpen(true)}
                     >
                       <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -9048,7 +9087,7 @@ export default function AdminPanelPage() {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-9 gap-1.5 shrink-0 bg-white"
+                      className="h-9 gap-1.5 shrink-0 bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50"
                       onClick={downloadCallingReportsCsv}
                     >
                       <Download className="w-3.5 h-3.5" />
@@ -9173,7 +9212,7 @@ export default function AdminPanelPage() {
               <CardContent className="space-y-3">
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-                  <div className="rounded-lg border border-orange-200/80 bg-white px-3 py-2 min-h-[4.25rem]">
+                  <div className="rounded-lg border border-rose-200/80 bg-gradient-to-b from-white to-rose-50/70 px-3 py-2 min-h-[4.25rem] shadow-sm">
                     <p className="text-[11px] text-muted-foreground leading-tight">Total Calls</p>
                     <p className="mt-0.5 text-xl font-semibold tabular-nums">
                       {isCallingReportsInitialLoading ? "—" : filteredCallingActions.length}
@@ -9336,7 +9375,7 @@ export default function AdminPanelPage() {
           </TabsContent>
 
           <TabsContent value="visitor-reports" className="space-y-4">
-            <Card>
+            <Card className={ADMIN_PASTEL.violet}>
               <CardHeader>
                 <CardTitle>Visitor Reports</CardTitle>
                 <CardDescription>
@@ -9430,46 +9469,46 @@ export default function AdminPanelPage() {
                 ) : null}
 
                 <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
-                  <Card className="border-border/60">
+                  <Card className="border-violet-200/80 bg-gradient-to-b from-white to-violet-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Total</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.total}</p>
+                      <p className="text-xs text-violet-800/80">Total</p>
+                      <p className="text-xl font-semibold text-violet-950">{visitorReportSummary.total}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-yellow-200 bg-yellow-50/30">
+                  <Card className="border-amber-200/80 bg-gradient-to-b from-white to-amber-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Pending</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.pending}</p>
+                      <p className="text-xs text-amber-800/80">Pending</p>
+                      <p className="text-xl font-semibold text-amber-950">{visitorReportSummary.pending}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-green-200 bg-green-50/30">
+                  <Card className="border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Approved</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.approved}</p>
+                      <p className="text-xs text-emerald-800/80">Approved</p>
+                      <p className="text-xl font-semibold text-emerald-950">{visitorReportSummary.approved}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-blue-200 bg-blue-50/30">
+                  <Card className="border-sky-200/80 bg-gradient-to-b from-white to-sky-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Completed</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.completed}</p>
+                      <p className="text-xs text-sky-800/80">Completed</p>
+                      <p className="text-xl font-semibold text-sky-950">{visitorReportSummary.completed}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-orange-200 bg-orange-50/30">
+                  <Card className="border-orange-200/80 bg-gradient-to-b from-white to-orange-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Incomplete</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.incomplete}</p>
+                      <p className="text-xs text-orange-800/80">Incomplete</p>
+                      <p className="text-xl font-semibold text-orange-950">{visitorReportSummary.incomplete}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-purple-200 bg-purple-50/30">
+                  <Card className="border-fuchsia-200/80 bg-gradient-to-b from-white to-fuchsia-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Rescheduled</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.rescheduled}</p>
+                      <p className="text-xs text-fuchsia-800/80">Rescheduled</p>
+                      <p className="text-xl font-semibold text-fuchsia-950">{visitorReportSummary.rescheduled}</p>
                     </CardContent>
                   </Card>
-                  <Card className="border-rose-200 bg-rose-50/30">
+                  <Card className="border-rose-200/80 bg-gradient-to-b from-white to-rose-50/70 shadow-sm">
                     <CardContent className="pt-4 pb-4">
-                      <p className="text-xs text-muted-foreground">Rejected</p>
-                      <p className="text-xl font-semibold">{visitorReportSummary.rejected}</p>
+                      <p className="text-xs text-rose-800/80">Rejected</p>
+                      <p className="text-xl font-semibold text-rose-950">{visitorReportSummary.rejected}</p>
                     </CardContent>
                   </Card>
                 </div>
@@ -9525,7 +9564,7 @@ export default function AdminPanelPage() {
                 ) : (
                   <div className="space-y-2">
                     {visibleVisitorReportRows.map((row) => (
-                      <div key={row.id} className="rounded-md border border-border/70 p-3">
+                      <div key={row.id} className="rounded-xl border border-violet-100 bg-white/85 p-3 shadow-sm hover:bg-violet-50/40">
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="min-w-0 space-y-1">
                             <div className="flex flex-wrap items-center gap-2">
@@ -9612,7 +9651,17 @@ export default function AdminPanelPage() {
 
           {/* All Quotations Tab */}
           <TabsContent value="quotations" className="space-y-4">
-            <Card>
+            <Card
+              className={cn(
+                operationalTab === "installation"
+                  ? ADMIN_PASTEL.teal
+                  : operationalTab === "metering"
+                    ? ADMIN_PASTEL.cyan
+                    : operationalTab === "confirmation"
+                      ? ADMIN_PASTEL.emerald
+                      : ADMIN_PASTEL.sky,
+              )}
+            >
               <Dialog open={quotationFiltersOpen} onOpenChange={setQuotationFiltersOpen}>
                 <DialogContent className="sm:max-w-xl">
                   <DialogHeader>
@@ -9735,7 +9784,7 @@ export default function AdminPanelPage() {
               </Dialog>
               <CardHeader>
                 {operationalTab === "all" ? (
-                  <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+                  <div className="mb-3 w-full rounded-xl border border-sky-200/70 bg-gradient-to-r from-orange-50/80 to-sky-50/80 p-1.5 flex flex-wrap gap-1.5">
                     {(
                       [
                         { key: "all" as const, label: "All quotations" },
@@ -9744,18 +9793,28 @@ export default function AdminPanelPage() {
                           label: `Send to Metering (${quotationsMeteringActionCounts.send})`,
                         },
                       ] as const
-                    ).map((item) => (
+                    ).map((item) => {
+                      const isActive = operationalProgressTab === item.key
+                      const isMeteringSend = item.key === "metering_send"
+                      return (
                       <Button
                         key={item.key}
                         type="button"
                         size="sm"
-                        variant={operationalProgressTab === item.key ? "default" : "ghost"}
-                        className={cn("h-8", operationalProgressTab === item.key && "shadow-sm")}
+                        variant="ghost"
+                        className={cn(
+                          "h-8 border",
+                          isActive && isMeteringSend && "bg-teal-100 text-teal-800 border-teal-200 shadow-sm hover:bg-teal-100",
+                          isActive && !isMeteringSend && "bg-orange-100 text-orange-800 border-orange-200 shadow-sm hover:bg-orange-100",
+                          !isActive && isMeteringSend && "border-transparent text-teal-800 hover:bg-teal-50",
+                          !isActive && !isMeteringSend && "border-transparent text-orange-800 hover:bg-orange-50",
+                        )}
                         onClick={() => setOperationalProgressTab(item.key)}
                       >
                         {item.label}
                       </Button>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   operationalTab === "metering" ? (
@@ -9836,7 +9895,7 @@ export default function AdminPanelPage() {
                       */}
                     </div>
                   ) : (
-                  <div className="mb-3 w-full rounded-lg border border-border/70 bg-muted/30 p-1 flex flex-wrap gap-1">
+                  <div className="mb-3 w-full rounded-xl border border-teal-200/70 bg-gradient-to-r from-teal-50/80 to-emerald-50/80 p-1.5 flex flex-wrap gap-1.5">
                     {(operationalTab === "installation"
                         ? ([
                             { key: "all" as const, label: "All" },
@@ -9853,18 +9912,28 @@ export default function AdminPanelPage() {
                             { key: "pending" as const, label: "Final process" },
                             { key: "done" as const, label: "Done" },
                           ] as const)
-                    ).map((item) => (
+                    ).map((item) => {
+                      const isActive = operationalProgressTab === item.key
+                      const isConfirm = operationalTab === "confirmation"
+                      return (
                       <Button
                         key={item.key}
                         type="button"
                         size="sm"
-                        variant={operationalProgressTab === item.key ? "default" : "ghost"}
-                        className={cn("h-8", operationalProgressTab === item.key && "shadow-sm")}
+                        variant="ghost"
+                        className={cn(
+                          "h-8 border",
+                          isActive && isConfirm && "bg-emerald-100 text-emerald-800 border-emerald-200 shadow-sm hover:bg-emerald-100",
+                          isActive && !isConfirm && "bg-teal-100 text-teal-800 border-teal-200 shadow-sm hover:bg-teal-100",
+                          !isActive && isConfirm && "border-transparent text-emerald-800 hover:bg-emerald-50",
+                          !isActive && !isConfirm && "border-transparent text-teal-800 hover:bg-teal-50",
+                        )}
                         onClick={() => setOperationalProgressTab(item.key)}
                       >
                         {item.label}
                       </Button>
-                    ))}
+                      )
+                    })}
                   </div>
                   )
                 )}
@@ -9875,14 +9944,14 @@ export default function AdminPanelPage() {
                       placeholder="Search by name, mobile, email, or ID..."
                       value={searchTerm}
                       onDebouncedChange={setSearchTerm}
-                      className="pl-9"
+                      className="pl-9 border-sky-200/80 bg-white focus-visible:ring-sky-200"
                       delayMs={200}
                     />
                   </div>
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full sm:w-auto"
+                    className="w-full sm:w-auto border-violet-200 text-violet-800 hover:bg-violet-50"
                     onClick={() => setQuotationFiltersOpen(true)}
                   >
                     <SlidersHorizontal className="w-4 h-4 mr-2" />
@@ -9892,7 +9961,7 @@ export default function AdminPanelPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    className="w-full sm:w-auto"
+                    className="w-full sm:w-auto border-emerald-200 text-emerald-800 hover:bg-emerald-50"
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
@@ -12101,7 +12170,7 @@ export default function AdminPanelPage() {
                                     <Button
                                       variant="outline"
                                       size="sm"
-                                      className={`flex-1 ${!sendToMetering.enabled || sendingToMeteringId === quotation.id ? "opacity-60" : ""}`}
+                                      className={`flex-1 border-teal-200 bg-teal-50 text-teal-800 hover:bg-teal-100 ${!sendToMetering.enabled || sendingToMeteringId === quotation.id ? "opacity-60" : ""}`}
                                       onClick={() => void handleSendToMetering(quotation)}
                                       disabled={!sendToMetering.enabled || sendingToMeteringId === quotation.id}
                                       title={sendToMetering.hint || "Send to Metering"}
@@ -12120,10 +12189,10 @@ export default function AdminPanelPage() {
                     </div>
 
                     {/* Desktop Table View */}
-                    <div className="hidden md:block overflow-x-auto rounded-xl border border-border/70 bg-card shadow-sm">
+                    <div className="hidden md:block overflow-x-auto rounded-xl border border-sky-200/70 bg-white shadow-sm">
                       <table className="w-full min-w-[72rem] border-collapse text-left">
-                        <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/70">
-                          <tr className="border-b border-border/70 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        <thead className="sticky top-0 z-10 bg-gradient-to-r from-sky-100/95 to-orange-50/90 backdrop-blur">
+                          <tr className="border-b border-sky-200/70 text-[10px] font-semibold uppercase tracking-wider text-sky-900/80">
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Quotation ID</th>
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Customer</th>
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Agent/Dealer</th>
@@ -12134,7 +12203,7 @@ export default function AdminPanelPage() {
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Payment</th>
                             <th className="text-left py-2.5 px-2 whitespace-nowrap">Bank</th>
                             <th className="text-right py-2.5 px-2 whitespace-nowrap">Created</th>
-                            <th className="text-right py-2.5 px-2 whitespace-nowrap md:sticky md:right-0 md:bg-muted/90 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]">
+                            <th className="text-right py-2.5 px-2 whitespace-nowrap md:sticky md:right-0 md:bg-sky-100/95 md:z-10 md:shadow-[-4px_0_8px_-4px_rgba(14,165,233,0.12)]">
                               Actions
                             </th>
                           </tr>
@@ -12173,7 +12242,7 @@ export default function AdminPanelPage() {
                             >
                               <td className="py-2 px-2 align-middle whitespace-nowrap">
                                 <div className="flex flex-col gap-0.5">
-                                  <span className="text-xs font-mono font-medium">{quotation.id}</span>
+                                  <span className="text-xs font-mono font-medium text-sky-800">{quotation.id}</span>
                                   {getAdminOlderCount(quotation) > 0 ? (
                                     <Badge variant="outline" className="w-fit text-[10px]">
                                       {getAdminOlderCount(quotation)} older
@@ -12205,7 +12274,7 @@ export default function AdminPanelPage() {
                                 </div>
                               </td>
                               <td className="py-2 px-2 text-right align-middle whitespace-nowrap">
-                                <p className="text-sm font-semibold">
+                                <p className="text-sm font-semibold text-emerald-700">
                                   ₹{amountLines.total.toLocaleString("en-IN")}
                                 </p>
                                 {amountLines.paymentType === "mix" && amountLines.loan != null ? (
@@ -12333,7 +12402,7 @@ export default function AdminPanelPage() {
 
           {/* Users Tab (formerly Dealers) */}
           <TabsContent value="dealers" className="space-y-4">
-            <Card>
+            <Card className={ADMIN_PASTEL.fuchsia}>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                   <div>
@@ -12400,7 +12469,7 @@ export default function AdminPanelPage() {
                       return (
                         <div
                           key={row.id}
-                          className={`p-4 border rounded-lg ${isPending || (row.kind === "visitor" && isInactive) ? "opacity-75 bg-muted/30 border-orange-200" : ""}`}
+                          className={`p-4 border rounded-xl shadow-sm ${isPending || (row.kind === "visitor" && isInactive) ? "opacity-75 bg-amber-50/70 border-amber-200" : "border-fuchsia-100 bg-white/85 hover:bg-fuchsia-50/50"}`}
                         >
                           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                             <div className="flex-1 min-w-0">
@@ -12547,7 +12616,7 @@ export default function AdminPanelPage() {
 
           {/* Customers Tab */}
           <TabsContent value="customers" className="space-y-4">
-            <Card>
+            <Card className={ADMIN_PASTEL.sky}>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                   <div>
@@ -12613,7 +12682,7 @@ export default function AdminPanelPage() {
                       {filteredCustomers.map((customer) => (
                         <div
                           key={customer.mobile}
-                          className="border border-border rounded-lg p-4 hover:border-primary/50 transition-colors"
+                          className="border border-sky-100 rounded-xl p-4 bg-white/85 shadow-sm hover:border-sky-300 hover:bg-sky-50/50 transition-colors"
                         >
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
@@ -12718,7 +12787,7 @@ export default function AdminPanelPage() {
 
           {/* Visitors Tab — Admin Visitor checkbox users (not legacy visitors table only) */}
           <TabsContent value="visitors" className="space-y-4">
-            <Card>
+            <Card className={ADMIN_PASTEL.violet}>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                   <CardTitle>All Visitors ({visitorAccessUsers.length})</CardTitle>
@@ -12777,7 +12846,7 @@ export default function AdminPanelPage() {
                         return (
                           <div
                             key={visitor.rowId}
-                            className={`p-4 border rounded-lg ${visitor.isActive === false ? "opacity-60 bg-muted/30" : ""}`}
+                            className={`p-4 border rounded-xl shadow-sm ${visitor.isActive === false ? "opacity-60 bg-amber-50/70 border-amber-200" : "border-violet-100 bg-white/85 hover:bg-violet-50/50"}`}
                           >
                             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
                               <div className="flex-1 min-w-0">
@@ -12843,7 +12912,7 @@ export default function AdminPanelPage() {
 
           {/* Account Management Tab */}
           <TabsContent value="account-management" className="space-y-4">
-            <Card>
+            <Card className={ADMIN_PASTEL.amber}>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
                   <CardTitle>Operations User IDs ({accountManagers.length})</CardTitle>
@@ -12907,7 +12976,7 @@ export default function AdminPanelPage() {
                         return (
                           <div
                             key={am.id}
-                            className={`p-4 border rounded-lg transition-colors hover:bg-muted/50 ${am.isActive === false ? "opacity-60 bg-muted/30" : "bg-card"}`}
+                            className={`p-4 border rounded-xl shadow-sm transition-colors ${am.isActive === false ? "opacity-60 bg-amber-50/70 border-amber-200" : "border-amber-100 bg-white/85 hover:bg-amber-50/50"}`}
                           >
                             <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
                               <div className="flex-1 min-w-0">
@@ -13155,10 +13224,10 @@ export default function AdminPanelPage() {
 
           {/* Accounts Tab — Payment Management + Super Admin Inventory */}
           <TabsContent value="payments" className="space-y-6">
-            <Card className="border-border/50">
+            <Card className={ADMIN_PASTEL.amber}>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-primary" />
+                  <Wallet className="w-5 h-5 text-amber-700" />
                   Payment Management
                 </CardTitle>
                 <CardDescription>
@@ -13172,10 +13241,10 @@ export default function AdminPanelPage() {
               </CardContent>
             </Card>
 
-            <Card className="border-border/50">
+            <Card className={ADMIN_PASTEL.orange}>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
-                  <Package className="w-5 h-5 text-primary" />
+                  <Package className="w-5 h-5 text-orange-700" />
                   Super Admin
                 </CardTitle>
                 <CardDescription>
@@ -13244,7 +13313,9 @@ export default function AdminPanelPage() {
           </TabsContent>
 
           <TabsContent value="hr" className="space-y-6">
-            <HrWorkspace embedded />
+            <div className={cn(ADMIN_PASTEL.sky, "p-4 sm:p-5")}>
+              <HrWorkspace embedded />
+            </div>
           </TabsContent>
 
           {/* Catalog Tab — Products + Pricing */}
@@ -13256,15 +13327,29 @@ export default function AdminPanelPage() {
               }
               className="space-y-4"
             >
-              <TabsList>
-                <TabsTrigger value="products">Products</TabsTrigger>
-                <TabsTrigger value="pricing">Pricing</TabsTrigger>
+              <TabsList className="rounded-xl border border-emerald-100 bg-gradient-to-r from-emerald-50/80 to-teal-50/80 p-1">
+                <TabsTrigger
+                  value="products"
+                  className="data-[state=active]:bg-emerald-100 data-[state=active]:text-emerald-800"
+                >
+                  Products
+                </TabsTrigger>
+                <TabsTrigger
+                  value="pricing"
+                  className="data-[state=active]:bg-teal-100 data-[state=active]:text-teal-800"
+                >
+                  Pricing
+                </TabsTrigger>
               </TabsList>
               <TabsContent value="products" className="space-y-6 mt-0">
-                <AdminProductManagement />
+                <div className={cn(ADMIN_PASTEL.emerald, "p-4 sm:p-5")}>
+                  <AdminProductManagement />
+                </div>
               </TabsContent>
               <TabsContent value="pricing" className="space-y-6 mt-0">
-                <AdminPricingTablesManagement />
+                <div className={cn(ADMIN_PASTEL.teal, "p-4 sm:p-5")}>
+                  <AdminPricingTablesManagement />
+                </div>
               </TabsContent>
             </Tabs>
           </TabsContent>

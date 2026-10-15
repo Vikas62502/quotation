@@ -491,19 +491,31 @@ export function AdminSubvendorPanel({
 
   const customersByVendorId = useMemo(() => {
     const out: Record<string, { quotationId: string; name: string; mobile: string; kw: string }[]> = {}
-    const approved = quotations.filter(isApprovedQuotation)
-    const current = keepCurrentQuotationsOnly(approved, approved)
-    for (const quotation of current) {
+    for (const quotation of quotations) {
       const dealerId = String(quotation.dealerId || quotation.dealer?.id || "")
       const vendor = vendorsByDealerId.get(dealerId)
       if (!vendor) continue
       const payment = summarizeQuotationPayment(quotation)
-      ;(out[vendor.id] ||= []).push({
+      const name = String(payment.customerName || "").trim()
+      if (!name || name === "—" || name.toLowerCase() === "unknown") continue
+      const mobile = String(payment.customerMobile || "").trim()
+      const list = (out[vendor.id] ||= [])
+      const duplicate = list.find((row) => {
+        if (row.quotationId === quotation.id) return true
+        const rowMobile = String(row.mobile || "").trim()
+        if (mobile && rowMobile && mobile !== "—" && rowMobile === mobile) return true
+        return false
+      })
+      if (duplicate) continue
+      list.push({
         quotationId: quotation.id,
-        name: payment.customerName,
-        mobile: payment.customerMobile,
+        name,
+        mobile: mobile === "—" ? "" : mobile,
         kw: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
       })
+    }
+    for (const vendorId of Object.keys(out)) {
+      out[vendorId].sort((a, b) => a.name.localeCompare(b.name, "en-IN"))
     }
     return out
   }, [quotations, vendorsByDealerId])
@@ -881,7 +893,7 @@ export function AdminSubvendorPanel({
       ) : embedded && lockKind === "office_inside" ? (
         <div className="space-y-3">{insideVendorBody}</div>
       ) : (
-    <Card className={embedded ? "border-0 shadow-none py-0" : undefined}>
+    <Card className={embedded ? "border-0 shadow-none py-0" : "rounded-2xl border-orange-200/80 bg-gradient-to-b from-white to-orange-50/45 shadow-sm overflow-hidden"}>
               {embedded ? null : (
       <CardHeader>
         <div>
@@ -1234,6 +1246,47 @@ function leaserDraftDateFromAccounts(
   return accountsDueDateInputValue(storedDate) || todayInputDate()
 }
 
+function phaseTransactionIdFromQuotation(
+  quotations: Quotation[],
+  quotationId: string,
+  phaseNumber: number,
+): string {
+  const quotation = quotations.find((row) => row.id === quotationId) as
+    | (Quotation & { payment_phases?: unknown; quotationPaymentPhases?: unknown })
+    | undefined
+  if (!quotation) return ""
+  const phases =
+    quotation.installments ||
+    quotation.paymentPhases ||
+    quotation.payment_phases ||
+    quotation.quotationPaymentPhases ||
+    []
+  if (!Array.isArray(phases) || phases.length === 0) return ""
+  const phase =
+    phases.find((row: { phaseNumber?: number }) => Number(row.phaseNumber) === phaseNumber) ||
+    phases[phaseNumber - 1]
+  return String(
+    (phase as { transactionId?: string; transaction_id?: string } | undefined)?.transactionId ||
+      (phase as { transaction_id?: string } | undefined)?.transaction_id ||
+      "",
+  ).trim()
+}
+
+function leaserRemarkFromAccounts(
+  paymentId: string,
+  storedRemark: string,
+  quotations: Quotation[],
+): string {
+  const collectRow = /^lp-collect-(.+)-(\d+)$/.exec(paymentId)
+  const selfRow = /^lp-self-(.+)-(\d+)$/.exec(paymentId)
+  const match = collectRow || selfRow
+  if (!match) return storedRemark
+  const txn = phaseTransactionIdFromQuotation(quotations, match[1], Number(match[2]))
+  if (!txn) return storedRemark
+  if (storedRemark.includes(txn)) return storedRemark
+  return storedRemark.trim() ? `${storedRemark.trim()} · Txn ${txn}` : `Txn ${txn}`
+}
+
 function emptyLeaserDraft(paymentNumber = 1): LeaserPaymentDraft {
   return {
     key: newLeaserPaymentId(),
@@ -1259,7 +1312,7 @@ function LeaserCustomerPicker({
   const selected = customers.filter((row) => selectedIds.includes(row.quotationId))
   const triggerLabel =
     selected.length === 0
-      ? "Search customers..."
+      ? "All customers"
       : selected.length === 1
         ? selected[0].name
         : `${selected[0].name} +${selected.length - 1}`
@@ -1293,10 +1346,10 @@ function LeaserCustomerPicker({
           </PopoverTrigger>
           <PopoverContent className="w-[min(22rem,calc(100vw-2rem))] p-0" align="start">
             <Command>
-              <CommandInput placeholder="Search name, mobile, kW..." />
-              <CommandList className="max-h-56">
+              <CommandInput placeholder="Search all customers..." />
+              <CommandList className="max-h-80">
                 <CommandEmpty>No customer found.</CommandEmpty>
-                <CommandGroup>
+                <CommandGroup heading={`${customers.length} customer${customers.length === 1 ? "" : "s"}`}>
                   {customers.map((customer) => {
                     const checked = selectedIds.includes(customer.quotationId)
                     return (
@@ -1347,7 +1400,25 @@ function DealerLeaserManager({
   const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
   const [saving, setSaving] = useState(false)
   const manageVendor = vendors.find((row) => row.id === manageVendorId) ?? null
-  const customers = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
+  const customers = useMemo(() => {
+    const base = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
+    if (!manageVendorId) return base
+    const byId = new Map(base.map((row) => [row.quotationId, row]))
+    for (const draft of drafts) {
+      for (const quotationId of draft.customerIds) {
+        if (byId.has(quotationId)) continue
+        const quotation = quotations.find((row) => row.id === quotationId)
+        const payment = quotation ? summarizeQuotationPayment(quotation) : null
+        byId.set(quotationId, {
+          quotationId,
+          name: payment?.customerName || quotationId,
+          mobile: payment?.customerMobile === "—" ? "" : payment?.customerMobile || "",
+          kw: quotation ? formatLedgerSystemSize(getQuotationSystemKw(quotation)) : "",
+        })
+      }
+    }
+    return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "en-IN"))
+  }, [customersByVendorId, drafts, manageVendorId, quotations])
   const fileRows = manageVendorId ? filesByVendorId[manageVendorId] || [] : []
   const manageStats = manageVendorId ? statsById[manageVendorId] ?? emptyVendorLeaserStats : null
 
@@ -1471,7 +1542,7 @@ function DealerLeaserManager({
         date: leaserDraftDateFromAccounts(row.id, row.date, quotations),
         amount: row.amount ? formatInrAmountInput(row.amount) : "",
         paymentType: row.paymentType || "Cash",
-        remark: row.remark,
+        remark: leaserRemarkFromAccounts(row.id, row.remark, quotations),
         customerIds: row.customerIds.slice(),
       }))
     setManageVendorId(vendorId)

@@ -196,7 +196,14 @@ export function DashboardNav() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 border-b border-border/70 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <header
+        className={cn(
+          "sticky top-0 z-50 border-b backdrop-blur",
+          isAdmin
+            ? "border-orange-100/80 bg-gradient-to-r from-orange-50/95 via-white/90 to-sky-50/95"
+            : "border-border/70 bg-background/95 supports-[backdrop-filter]:bg-background/80",
+        )}
+      >
         <div className="container mx-auto px-4">
           <div className="flex h-14 items-center gap-2 sm:gap-3">
             {/* Logo */}

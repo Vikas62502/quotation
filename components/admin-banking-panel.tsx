@@ -405,7 +405,7 @@ export function AdminBankingPanel({
   }
 
   return (
-    <Card>
+    <Card className="rounded-2xl border-amber-200/80 bg-gradient-to-b from-white to-amber-50/45 shadow-sm overflow-hidden">
       <CardHeader className="space-y-3">
         <div className="flex items-start gap-2">
           <Landmark className="w-5 h-5 text-primary mt-0.5 shrink-0" />
@@ -421,7 +421,7 @@ export function AdminBankingPanel({
       </CardHeader>
       <CardContent className="space-y-4">
         <Tabs value={subTab} onValueChange={(value) => setSubTab(value as BankingSubTab)}>
-          <TabsList className="h-9 w-full justify-start bg-muted/40 p-1 gap-0.5 flex-nowrap overflow-hidden">
+          <TabsList className="h-9 w-full justify-start rounded-xl border border-amber-100 bg-gradient-to-r from-amber-50/80 to-orange-50/70 p-1 gap-0.5 flex-nowrap overflow-hidden">
             {BANKING_SUB_TABS.map((tab) => (
               <TabsTrigger key={tab.value} value={tab.value} className="text-xs px-2 py-1.5 min-w-0 flex-1">
                 {tab.label} ({counts[tab.value]})

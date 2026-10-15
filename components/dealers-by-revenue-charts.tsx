@@ -1,15 +1,12 @@
 "use client"
 
-import { useId, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
-  Label,
   LabelList,
-  Pie,
-  PieChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -71,6 +68,146 @@ function neonColorAt(index: number, total: number) {
   const t = index / Math.max(1, total - 2)
   const i = Math.round(t * (NEON_RAMP.length - 1))
   return NEON_RAMP[Math.max(0, Math.min(NEON_RAMP.length - 1, i))]
+}
+
+function parseHex(hex: string): [number, number, number] | null {
+  const raw = hex.replace("#", "").trim()
+  if (raw.length === 3) {
+    return [parseInt(raw[0] + raw[0], 16), parseInt(raw[1] + raw[1], 16), parseInt(raw[2] + raw[2], 16)]
+  }
+  if (raw.length === 6) {
+    return [parseInt(raw.slice(0, 2), 16), parseInt(raw.slice(2, 4), 16), parseInt(raw.slice(4, 6), 16)]
+  }
+  return null
+}
+
+function toHex(r: number, g: number, b: number) {
+  return `#${[r, g, b]
+    .map((value) => Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, "0"))
+    .join("")}`
+}
+
+function mixToward(hex: string, target: [number, number, number], amount: number) {
+  const rgb = parseHex(hex)
+  if (!rgb) return hex
+  return toHex(
+    rgb[0] + (target[0] - rgb[0]) * amount,
+    rgb[1] + (target[1] - rgb[1]) * amount,
+    rgb[2] + (target[2] - rgb[2]) * amount,
+  )
+}
+
+function lightenHex(hex: string, amount = 0.32) {
+  return mixToward(hex, [255, 255, 255], amount)
+}
+
+function darkenHex(hex: string, amount = 0.28) {
+  return mixToward(hex, [15, 23, 42], amount)
+}
+
+function ellipsePoint(cx: number, cy: number, rx: number, ry: number, angle: number) {
+  return { x: cx + rx * Math.cos(angle), y: cy + ry * Math.sin(angle) }
+}
+
+function donutSlicePath(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  inner: number,
+  start: number,
+  end: number,
+) {
+  const irx = rx * inner
+  const iry = ry * inner
+  const large = Math.abs(end - start) > Math.PI ? 1 : 0
+  const p1 = ellipsePoint(cx, cy, rx, ry, start)
+  const p2 = ellipsePoint(cx, cy, rx, ry, end)
+  const p3 = ellipsePoint(cx, cy, irx, iry, end)
+  const p4 = ellipsePoint(cx, cy, irx, iry, start)
+  return [
+    `M ${p1.x} ${p1.y}`,
+    `A ${rx} ${ry} 0 ${large} 1 ${p2.x} ${p2.y}`,
+    `L ${p3.x} ${p3.y}`,
+    `A ${irx} ${iry} 0 ${large} 0 ${p4.x} ${p4.y}`,
+    "Z",
+  ].join(" ")
+}
+
+function frontWallPath(
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  depth: number,
+  start: number,
+  end: number,
+) {
+  const steps = Math.max(6, Math.ceil((Math.abs(end - start) / 0.1) * 2))
+  const top: Array<{ x: number; y: number }> = []
+  for (let i = 0; i <= steps; i += 1) {
+    const angle = start + ((end - start) * i) / steps
+    if (Math.sin(angle) < -0.02) continue
+    top.push(ellipsePoint(cx, cy, rx, ry, angle))
+  }
+  if (top.length < 2) return null
+  const bottom = top.map((point) => ({ x: point.x, y: point.y + depth }))
+  const points = [...top, ...bottom.reverse()]
+  return `M ${points.map((point) => `${point.x} ${point.y}`).join(" L ")} Z`
+}
+
+function Bar3DShape(props: {
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  fill?: string
+  payload?: ChartRow
+}) {
+  const x = Number(props.x) || 0
+  const y = Number(props.y) || 0
+  const width = Number(props.width) || 0
+  const height = Number(props.height) || 0
+  if (width <= 0 || height <= 0) return null
+
+  const row = props.payload
+  const base = row?.isMax ? NEON_MAX_DEEP : row?.color || String(props.fill || NEON_MAX)
+  const front = row?.isMax ? NEON_MAX : base
+  const top = row?.isMax ? "#d1fae5" : lightenHex(base, 0.38)
+  const side = row?.isMax ? "#22c55e" : darkenHex(base, 0.28)
+  const depth = Math.min(14, Math.max(7, width * 0.28), Math.max(6, height * 0.35))
+  const frontWidth = Math.max(4, width - depth)
+  const frontHeight = Math.max(2, height - depth * 0.35)
+
+  return (
+    <g>
+      <ellipse
+        cx={x + frontWidth / 2 + depth * 0.15}
+        cy={y + frontHeight + depth * 0.55}
+        rx={frontWidth * 0.48}
+        ry={5.5}
+        fill={darkenHex(front, 0.45)}
+        opacity={0.18}
+      />
+      <polygon
+        points={`${x + frontWidth},${y + depth * 0.35} ${x + width},${y} ${x + width},${y + frontHeight - depth * 0.2} ${x + frontWidth},${y + frontHeight + depth * 0.15}`}
+        fill={side}
+      />
+      <rect x={x} y={y + depth * 0.35} width={frontWidth} height={frontHeight} rx={5} fill={front} />
+      <polygon
+        points={`${x},${y + depth * 0.35} ${x + depth},${y} ${x + width},${y} ${x + frontWidth},${y + depth * 0.35}`}
+        fill={top}
+      />
+      <line
+        x1={x + 4}
+        y1={y + depth * 0.35 + 3}
+        x2={x + frontWidth - 4}
+        y2={y + depth * 0.35 + 3}
+        stroke="rgba(255,255,255,0.45)"
+        strokeWidth={1.2}
+      />
+    </g>
+  )
 }
 
 function formatRevenueInr(amount: number): string {
@@ -166,23 +303,9 @@ function DealerBarChart({
   formatValue: (row: ChartRow) => string
   formatTick: (value: number) => string
 }) {
-  const reactId = useId().replace(/:/g, "")
-  const maxGradId = `dealer-neon-max-${reactId}`
-  const glowId = `dealer-neon-glow-${reactId}`
-
   return (
     <ChartContainer config={config} className="aspect-auto h-[24rem] w-full">
-      <BarChart data={data} margin={{ left: 4, right: 8, top: 28, bottom: 4 }} barCategoryGap="22%">
-        <defs>
-          <linearGradient id={maxGradId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#d1fae5" />
-            <stop offset="45%" stopColor={NEON_MAX} />
-            <stop offset="100%" stopColor={NEON_MAX_DEEP} />
-          </linearGradient>
-          <filter id={glowId} x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="8" stdDeviation="7" floodColor={NEON_MAX_DEEP} floodOpacity="0.35" />
-          </filter>
-        </defs>
+      <BarChart data={data} margin={{ left: 4, right: 18, top: 32, bottom: 8 }} barCategoryGap="18%">
         <CartesianGrid vertical={false} stroke="#cbd5e1" strokeDasharray="4 10" strokeOpacity={0.45} />
         <XAxis
           type="category"
@@ -206,20 +329,17 @@ function DealerBarChart({
           content={<DealerChartTooltip formatValue={formatValue} />}
           wrapperStyle={{ outline: "none" }}
         />
-        <Bar dataKey="value" radius={[14, 14, 6, 6]} maxBarSize={48}>
+        <Bar dataKey="value" maxBarSize={52} shape={(props) => <Bar3DShape {...props} />}>
           {data.map((row) => (
             <Cell
               key={`${row.rank}-${row.name}`}
-              fill={row.isMax ? `url(#${maxGradId})` : row.color}
-              stroke={row.isMax ? NEON_MAX_DEEP : "transparent"}
-              strokeWidth={row.isMax ? 1.5 : 0}
-              filter={row.isMax ? `url(#${glowId})` : undefined}
+              fill={row.color}
             />
           ))}
           <LabelList
             dataKey="barLabel"
             position="top"
-            offset={8}
+            offset={12}
             style={{ fill: "#0f172a", fontSize: 11, fontWeight: 700 }}
           />
         </Bar>
@@ -230,67 +350,82 @@ function DealerBarChart({
 
 function DealerPieChart({
   data,
-  config,
   formatValue,
   centerTitle,
   centerValue,
 }: {
   data: ChartRow[]
-  config: ChartConfig
   formatValue: (row: ChartRow) => string
   centerTitle: string
   centerValue: string
 }) {
+  const [hover, setHover] = useState<ChartRow | null>(null)
   const total = data.reduce((sum, row) => sum + row.value, 0)
+  const cx = 200
+  const cy = 128
+  const rx = 148
+  const ry = 78
+  const depth = 22
+  const inner = 0.58
+  const gap = 0.035
+
+  const slices = useMemo(() => {
+    if (total <= 0) return []
+    let angle = -Math.PI / 2
+    return data.map((row) => {
+      const sweep = Math.max(0, (row.value / total) * Math.PI * 2 - gap)
+      const start = angle + gap / 2
+      const end = start + sweep
+      angle += (row.value / total) * Math.PI * 2
+      return { ...row, start, end }
+    })
+  }, [data, total])
 
   return (
     <div className="grid items-center gap-4 lg:grid-cols-[minmax(0,1fr)_15.5rem]">
-      <ChartContainer config={config} className="aspect-auto h-[24rem] w-full">
-        <PieChart>
-          <Tooltip content={<DealerChartTooltip formatValue={formatValue} />} wrapperStyle={{ outline: "none" }} />
-          <Pie
-            data={data}
-            dataKey="value"
-            nameKey="name"
-            innerRadius={78}
-            outerRadius={118}
-            paddingAngle={3}
-            stroke="#fff"
-            strokeWidth={3}
-            startAngle={90}
-            endAngle={-270}
-          >
-            {data.map((row) => (
-              <Cell
-                key={`${row.rank}-${row.name}`}
-                fill={row.color}
-                stroke={row.isMax ? NEON_MAX_DEEP : "#fff"}
-                strokeWidth={row.isMax ? 3 : 3}
-              />
-            ))}
-            <Label
-              content={({ viewBox }) => {
-                if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null
-                const cx = Number(viewBox.cx) || 0
-                const cy = Number(viewBox.cy) || 0
-                return (
-                  <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
-                    <tspan x={cx} y={cy - 18} fill="#64748b" fontSize={10} fontWeight={700}>
-                      MAXIMUM
-                    </tspan>
-                    <tspan x={cx} y={cy + 2} fill="#065f46" fontSize={12} fontWeight={600}>
-                      {centerTitle.length > 18 ? `${centerTitle.slice(0, 17)}…` : centerTitle}
-                    </tspan>
-                    <tspan x={cx} y={cy + 22} fill="#16a34a" fontSize={16} fontWeight={800}>
-                      {centerValue}
-                    </tspan>
-                  </text>
-                )
-              }}
+      <div className="relative mx-auto h-[24rem] w-full max-w-[34rem]">
+        <svg viewBox="0 0 400 280" className="h-full w-full" role="img">
+          <ellipse cx={cx} cy={cy + depth + 10} rx={rx * 0.92} ry={18} fill="#0f172a" opacity={0.08} />
+          {slices.map((row) => {
+            const wall = frontWallPath(cx, cy, rx, ry, depth, row.start, row.end)
+            const innerWall = frontWallPath(cx, cy, rx * inner, ry * inner, depth, row.start, row.end)
+            return (
+              <g key={`wall-${row.rank}-${row.name}`}>
+                {wall ? <path d={wall} fill={darkenHex(row.color, 0.32)} /> : null}
+                {innerWall ? <path d={innerWall} fill={darkenHex(row.color, 0.22)} /> : null}
+              </g>
+            )
+          })}
+          {slices.map((row) => (
+            <path
+              key={`top-${row.rank}-${row.name}`}
+              d={donutSlicePath(cx, cy, rx, ry, inner, row.start, row.end)}
+              fill={hover?.rank === row.rank ? lightenHex(row.color, 0.18) : row.color}
+              stroke={row.isMax ? NEON_MAX_DEEP : "rgba(255,255,255,0.85)"}
+              strokeWidth={row.isMax ? 2.4 : 1.4}
+              className="cursor-pointer"
+              onMouseEnter={() => setHover(row)}
+              onMouseLeave={() => setHover(null)}
             />
-          </Pie>
-        </PieChart>
-      </ChartContainer>
+          ))}
+          <text x={cx} y={cy - 4} textAnchor="middle">
+            <tspan x={cx} y={cy - 16} fill="#64748b" fontSize={10} fontWeight={700}>
+              MAXIMUM
+            </tspan>
+            <tspan x={cx} y={cy + 4} fill="#065f46" fontSize={12} fontWeight={600}>
+              {centerTitle.length > 18 ? `${centerTitle.slice(0, 17)}…` : centerTitle}
+            </tspan>
+            <tspan x={cx} y={cy + 24} fill="#16a34a" fontSize={16} fontWeight={800}>
+              {centerValue}
+            </tspan>
+          </text>
+        </svg>
+        {hover ? (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2">
+            <DealerChartTooltip active payload={[{ payload: hover }]} formatValue={formatValue} />
+          </div>
+        ) : null}
+      </div>
       <ul className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-1">
         {data.map((row) => {
           const share = total > 0 ? Math.round((row.value / total) * 100) : 0
@@ -302,7 +437,10 @@ function DealerPieChart({
                 row.isMax ? "bg-emerald-50 ring-1 ring-emerald-200" : "bg-white/60",
               )}
             >
-              <span className="size-2.5 shrink-0 rounded-full shadow-[0_0_8px_currentColor]" style={{ backgroundColor: row.color, color: row.color }} />
+              <span
+                className="size-2.5 shrink-0 rounded-full shadow-[0_0_8px_currentColor]"
+                style={{ backgroundColor: row.color, color: row.color }}
+              />
               <span className="min-w-0 flex-1 truncate text-xs font-medium text-slate-700">{row.name}</span>
               <span className={cn("shrink-0 text-xs font-bold tabular-nums", row.isMax ? "text-emerald-600" : "text-slate-500")}>
                 {row.barLabel}
@@ -471,7 +609,6 @@ export function DealersByRevenueCharts({ stats }: DealersByRevenueChartsProps) {
             {shape === "pie" ? (
               <DealerPieChart
                 data={chartData}
-                config={config}
                 formatValue={formatValue}
                 centerTitle={leader.name}
                 centerValue={formatLeader}
