@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Button } from "@/components/ui/button"
-import { Search } from "lucide-react"
+import { Route, Search } from "lucide-react"
 import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { formatPersonName } from "@/lib/name-display"
 import {
@@ -37,6 +37,7 @@ type CustomerJourneyPanelProps = {
   emptyMessage?: string
   maxHeightClassName?: string
   showDealerDetails?: boolean
+  className?: string
   resolveDealerDetails?: (quotation: Quotation) => { name: string; mobile?: string } | null
 }
 
@@ -47,6 +48,7 @@ export function CustomerJourneyPanel({
   emptyMessage = "No quotations found.",
   maxHeightClassName = "max-h-[520px]",
   showDealerDetails = false,
+  className,
   resolveDealerDetails,
 }: CustomerJourneyPanelProps) {
   const [searchTerm, setSearchTerm] = useState("")
@@ -78,10 +80,17 @@ export function CustomerJourneyPanel({
     Boolean(searchTerm.trim()) || dateFilter !== "all" || (dateFilter === "custom" && (customFromDate || customToDate))
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
+        <div className="flex items-start gap-3">
+          <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
+            <Route className="w-4 h-4" />
+          </div>
+          <div className="min-w-0">
+            <CardTitle>{title}</CardTitle>
+            <CardDescription>{description}</CardDescription>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="space-y-2 mb-3">

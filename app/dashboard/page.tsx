@@ -9,7 +9,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { CustomerJourneyPanel } from "@/components/customer-journey-panel"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Users, FileText, Calendar, Search, Eye, PlusCircle, IndianRupee, Download } from "lucide-react"
+import {
+  Users,
+  FileText,
+  Calendar,
+  Search,
+  Eye,
+  PlusCircle,
+  IndianRupee,
+  Download,
+  Sparkles,
+  type LucideIcon,
+} from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { Badge } from "@/components/ui/badge"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
@@ -27,6 +38,80 @@ import { formatPersonName } from "@/lib/name-display"
 import { canOpenSection, getPostLoginPath } from "@/lib/user-access"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
 import { matchesCityFilter } from "@/lib/service-cities"
+import { cn } from "@/lib/utils"
+import { DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
+
+const DEALER_STAT_TONES = {
+  violet: {
+    card: "border-violet-100 bg-violet-50/80 hover:shadow-sm",
+    icon: "bg-violet-100 text-violet-600",
+    value: "text-violet-950",
+    title: "text-violet-800",
+    hint: "text-violet-600/90",
+    glow: "bg-violet-400/30",
+  },
+  sky: {
+    card: "border-sky-100 bg-sky-50/80 hover:shadow-sm",
+    icon: "bg-sky-100 text-sky-600",
+    value: "text-sky-950",
+    title: "text-sky-800",
+    hint: "text-sky-600/90",
+    glow: "bg-sky-400/30",
+  },
+  emerald: {
+    card: "border-emerald-100 bg-emerald-50/80 hover:shadow-sm",
+    icon: "bg-emerald-100 text-emerald-600",
+    value: "text-emerald-950",
+    title: "text-emerald-800",
+    hint: "text-emerald-600/90",
+    glow: "bg-emerald-400/30",
+  },
+  amber: {
+    card: "border-amber-100 bg-amber-50/80 hover:shadow-sm",
+    icon: "bg-orange-100 text-orange-600",
+    value: "text-amber-950",
+    title: "text-amber-800",
+    hint: "text-amber-700/90",
+    glow: "bg-orange-400/30",
+  },
+} as const
+
+function DealerStatCard({
+  title,
+  value,
+  hint,
+  icon: Icon,
+  tone,
+}: {
+  title: string
+  value: string | number
+  hint: string
+  icon: LucideIcon
+  tone: keyof typeof DEALER_STAT_TONES
+}) {
+  const colors = DEALER_STAT_TONES[tone]
+  return (
+    <Card
+      className={cn(
+        "relative overflow-hidden gap-0 py-5 shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300",
+        colors.card,
+      )}
+    >
+      <div className={cn("pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full blur-2xl", colors.glow)} />
+      <div className={cn("pointer-events-none absolute -bottom-10 left-10 h-20 w-20 rounded-full blur-2xl", colors.glow)} />
+      <CardHeader className="flex flex-row items-start justify-between pb-2">
+        <CardTitle className={cn("text-sm font-semibold", colors.title)}>{title}</CardTitle>
+        <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center", colors.icon)}>
+          <Icon className="w-5 h-5" />
+        </div>
+      </CardHeader>
+      <CardContent>
+        <div className={cn("text-2xl sm:text-3xl font-bold tracking-tight tabular-nums", colors.value)}>{value}</div>
+        <p className={cn("text-xs mt-1.5 font-medium", colors.hint)}>{hint}</p>
+      </CardContent>
+    </Card>
+  )
+}
 
 /** Same amount as the Recent Quotations AMOUNT column (subtotal / package price first). */
 function getQuotationDisplayAmount(quotation: {
@@ -387,6 +472,13 @@ export default function DashboardPage() {
   const totalRevenue = quotations
     .filter((q) => (q.status || "").toLowerCase() === "approved")
     .reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+  const monthDelta = thisMonthQuotations.length - lastMonthQuotations.length
+  const monthHint =
+    monthDelta > 0
+      ? `+${monthDelta} vs last month`
+      : monthDelta < 0
+        ? `${monthDelta} vs last month`
+        : "Same as last month"
 
   const filteredQuotations = quotations.filter(
     (q) =>
@@ -539,71 +631,61 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-5 sm:py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Dashboard</h1>
-            <p className="text-sm sm:text-base text-muted-foreground">Welcome back, {dealer?.firstName}!</p>
+        <div className="relative overflow-hidden rounded-2xl border border-orange-100 bg-gradient-to-r from-orange-50 to-amber-50/80 p-5 sm:p-6 mb-6 sm:mb-8 shadow-sm">
+          <div className="relative flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-orange-100 text-orange-700 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide mb-2">
+                <Sparkles className="w-3.5 h-3.5" />
+                Dealer workspace
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-orange-950">Dashboard</h1>
+              <p className="text-sm sm:text-base text-orange-800/70 mt-1">
+                Welcome back, {dealer?.firstName || "there"}! Here is your sales snapshot.
+              </p>
+            </div>
+            <Button
+              onClick={() => router.push("/dashboard/new-quotation")}
+              className="w-full sm:w-auto font-semibold"
+            >
+              <PlusCircle className="w-4 h-4 mr-2" />
+              New Quotation
+            </Button>
           </div>
-          <Button onClick={() => router.push("/dashboard/new-quotation")} className="shadow-lg shadow-primary/25 w-full sm:w-auto">
-            <PlusCircle className="w-4 h-4 mr-2" />
-            New Quotation
-          </Button>
         </div>
 
-        {/* Stats Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
-          <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Customers</CardTitle>
-              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                <Users className="w-5 h-5 text-primary" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl sm:text-3xl font-bold">{uniqueCustomers}</div>
-              <p className="text-xs text-muted-foreground mt-1">Unique customers</p>
-            </CardContent>
-          </Card>
-          <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Quotations</CardTitle>
-              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                <FileText className="w-5 h-5 text-blue-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl sm:text-3xl font-bold">{quotations.length}</div>
-              <p className="text-xs text-muted-foreground mt-1">All time</p>
-            </CardContent>
-          </Card>
-          <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">This Month</CardTitle>
-              <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
-                <Calendar className="w-5 h-5 text-green-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl sm:text-3xl font-bold">{thisMonthQuotations.length}</div>
-              <p className="text-xs text-muted-foreground mt-1">Quotations created</p>
-            </CardContent>
-          </Card>
-          <Card className="border-border/50 shadow-sm hover:shadow-md transition-shadow">
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Value</CardTitle>
-              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
-                <IndianRupee className="w-5 h-5 text-amber-500" />
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-xl sm:text-2xl font-bold">{formatDashboardTotalValue(totalRevenue)}</div>
-              <p className="text-xs text-muted-foreground mt-1">Approved quotation value</p>
-            </CardContent>
-          </Card>
+          <DealerStatCard
+            title="Total Customers"
+            value={uniqueCustomers}
+            hint="Unique customers"
+            icon={Users}
+            tone="violet"
+          />
+          <DealerStatCard
+            title="Total Quotations"
+            value={quotations.length}
+            hint="All time"
+            icon={FileText}
+            tone="sky"
+          />
+          <DealerStatCard
+            title="This Month"
+            value={thisMonthQuotations.length}
+            hint={`${monthHint} · quotations created`}
+            icon={Calendar}
+            tone="emerald"
+          />
+          <DealerStatCard
+            title="Total Value"
+            value={formatDashboardTotalValue(totalRevenue)}
+            hint="Approved quotation value"
+            icon={IndianRupee}
+            tone="amber"
+          />
         </div>
 
         <CustomerJourneyPanel
@@ -612,13 +694,18 @@ export default function DashboardPage() {
           description="Track where your customers are in approval, installation, metering, and final confirmation."
           emptyMessage="No quotations yet. Create a quotation to see customer journey here."
           maxHeightClassName="max-h-[480px]"
+          className="border-teal-200/80 bg-gradient-to-br from-teal-50/90 via-white to-cyan-50/60 shadow-sm shadow-teal-200/40"
         />
 
-        {/* Search and Recent Quotations */}
-        <Card className="border-border/50 shadow-sm mt-6 sm:mt-8">
-          <CardHeader>
+        <Card className="border-indigo-200/80 bg-gradient-to-br from-white via-white to-indigo-50/50 shadow-sm shadow-indigo-200/40 mt-6 sm:mt-8 overflow-hidden">
+          <CardHeader className="border-b border-indigo-100/80 bg-indigo-50/50">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <CardTitle className="text-base sm:text-lg">Recent Quotations</CardTitle>
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                  <FileText className="w-4 h-4" />
+                </div>
+                <CardTitle className="text-base sm:text-lg text-indigo-950">Recent Quotations</CardTitle>
+              </div>
               <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <div className="relative w-full sm:w-72">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -640,10 +727,10 @@ export default function DashboardPage() {
           <CardContent>
             {recentQuotations.length === 0 ? (
               <div className="text-center py-12 text-muted-foreground">
-                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
-                  <FileText className="w-8 h-8 opacity-50" />
+                <div className="w-16 h-16 rounded-full bg-indigo-100 text-indigo-500 flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8" />
                 </div>
-                <p className="font-medium">No quotations yet</p>
+                <p className="font-semibold text-indigo-950">No quotations yet</p>
                 <p className="text-sm mt-1">Create your first quotation to get started</p>
                 <Button variant="default" onClick={() => router.push("/dashboard/new-quotation")} className="mt-4">
                   <PlusCircle className="w-4 h-4 mr-2" />
@@ -719,7 +806,7 @@ export default function DashboardPage() {
                 <div className="hidden md:block overflow-x-auto">
                   <table className="w-full">
                     <thead>
-                      <tr className="border-b border-border">
+                      <tr className="border-b border-indigo-100 bg-indigo-50/70">
                         <th className="text-left py-3 px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                           ID
                         </th>

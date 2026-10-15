@@ -28,6 +28,7 @@ import { Menu, Home, Users, FileText, LogOut, User, Shield, PhoneCall, Eye, Chev
 import { isQuotationAdminAccess } from "@/lib/admin-access"
 import { canOpenSection, getAccessOptions, resolveEffectiveAccess, type UserAccessKey } from "@/lib/user-access"
 import { cn } from "@/lib/utils"
+import { dealerNavButtonClass } from "@/lib/dealer-portal-ui"
 
 const isQuotationAppPath = (pathname: string) =>
   pathname === "/dashboard" ||
@@ -195,7 +196,7 @@ export function DashboardNav() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80 shadow-sm">
+      <header className="sticky top-0 z-50 border-b border-border/70 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="container mx-auto px-4">
           <div className="flex h-14 items-center gap-2 sm:gap-3">
             {/* Logo */}
@@ -235,12 +236,12 @@ export function DashboardNav() {
               {navItems.map((item) => (
                 <Button
                   key={item.href}
-                  variant={pathname === item.href ? "default" : "ghost"}
+                  variant="ghost"
                   size="sm"
                   onClick={() => router.push(item.href)}
                   className={cn(
-                    "gap-1 shrink-0 h-7 px-2 text-[11px] font-medium leading-none",
-                    pathname === item.href ? "" : "text-muted-foreground hover:text-foreground",
+                    "gap-1 shrink-0 h-7 px-2 text-[11px] font-semibold leading-none",
+                    dealerNavButtonClass(pathname, item.href),
                   )}
                 >
                   <item.icon className="w-3.5 h-3.5 shrink-0" />
@@ -254,7 +255,7 @@ export function DashboardNav() {
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="gap-1 text-muted-foreground hover:text-foreground shrink-0 h-7 px-2 text-[11px] font-medium leading-none"
+                      className="gap-1 text-emerald-700 hover:bg-emerald-50 hover:text-emerald-900 shrink-0 h-7 px-2 text-[11px] font-semibold leading-none"
                     >
                       <Eye className="w-3.5 h-3.5 shrink-0" />
                       Pricing
@@ -281,8 +282,8 @@ export function DashboardNav() {
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="sm" className="gap-1.5 h-7 px-2">
-                    <div className="w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center border border-primary/20">
-                      <User className="w-3 h-3 text-primary" />
+                    <div className="w-6 h-6 rounded-full bg-orange-100 flex items-center justify-center border border-orange-200">
+                      <User className="w-3 h-3 text-orange-700" />
                     </div>
                     <span className="hidden xl:block font-medium text-[11px]">
                       {dealer?.firstName} {dealer?.lastName}
@@ -339,8 +340,8 @@ export function DashboardNav() {
                         {navItems.map((item) => (
                           <SheetClose asChild key={item.href}>
                             <Button
-                              variant={pathname === item.href ? "default" : "ghost"}
-                              className="w-full justify-start gap-2"
+                              variant="ghost"
+                              className={cn("w-full justify-start gap-2", dealerNavButtonClass(pathname, item.href))}
                               onClick={() => router.push(item.href)}
                             >
                               <item.icon className="w-4 h-4" />

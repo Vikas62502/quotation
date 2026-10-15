@@ -12,6 +12,8 @@ import type { JourneyCallingAction } from "@/lib/full-customer-journey"
 import { normalizeJourneyCallingActions } from "@/lib/journey-calling-actions"
 import { readDealerCallingActions } from "@/lib/dealer-calling-action-history"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PANEL_TONES, DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 
 function mergeJourneyCallingActions(lists: JourneyCallingAction[][]): JourneyCallingAction[] {
   const byId = new Map<string, JourneyCallingAction>()
@@ -176,15 +178,14 @@ export default function CustomerJourneyPage() {
   if (!isAuthenticated) return null
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
-        <div className="mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold text-foreground">Customer Journey</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Calling Data → Calling Action → Quotation → Final Confirmation
-          </p>
-        </div>
+        <DealerPageHero
+          tone="teal"
+          title="Customer Journey"
+          description="Calling Data → Calling Action → Quotation → Final Confirmation"
+        />
         <FullCustomerJourneyPanel
           quotations={quotations}
           callingActions={callingActions}
@@ -195,6 +196,7 @@ export default function CustomerJourneyPage() {
           isLoading={isLoading}
           initialDateFilter="today"
           onSearchChange={handleSearchChange}
+          className={DEALER_PANEL_TONES.teal}
         />
       </main>
     </div>

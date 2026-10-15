@@ -99,6 +99,7 @@ type FullCustomerJourneyPanelProps = {
   onDateRangeChange?: (range: JourneyDateRangeChange) => void
   /** Initial date filter (defaults to Today for fast first paint). */
   initialDateFilter?: JourneyDateRangeFilter
+  className?: string
 }
 
 export function FullCustomerJourneyPanel({
@@ -115,6 +116,7 @@ export function FullCustomerJourneyPanel({
   onSearchChange,
   onDateRangeChange,
   initialDateFilter = "today",
+  className,
 }: FullCustomerJourneyPanelProps) {
   const [searchTerm, setSearchTerm] = useState("")
   const [dateFilter, setDateFilter] = useState<JourneyDateRangeFilter>(initialDateFilter)
@@ -286,7 +288,7 @@ export function FullCustomerJourneyPanel({
           : dateFilter.replace(/_/g, " ")
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{description}</CardDescription>

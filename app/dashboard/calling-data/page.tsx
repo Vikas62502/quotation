@@ -25,6 +25,8 @@ import {
 import { extractCallingActionList, journeyMobilesMatch } from "@/lib/journey-calling-actions"
 import { getRealtime } from "@/lib/realtime"
 import { DashboardNav } from "@/components/dashboard-nav"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
 import { matchesCityFilter } from "@/lib/service-cities"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -3642,29 +3644,21 @@ export default function CallingDataPage() {
   if (!authReady || !isAuthenticated) return null
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
       <main className="container mx-auto px-4 py-6 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center border bg-gradient-to-br from-orange-100 to-amber-100 border-orange-200">
-              <PhoneCall className="w-4 h-4 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold">Calling Data</h1>
-              <p className="text-xs text-muted-foreground">Social Media and calling data together</p>
-            </div>
-          </div>
-          <CityMultiSelectFilter
-            value={filterCities}
-            onChange={setFilterCities}
-            className="w-full sm:w-56"
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">
-          One lead at a time. Submit the outcome before the next lead appears. Analytics update on submit; the queue
-          also refreshes every 5 minutes.
-        </p>
+        <DealerPageHero
+          tone="rose"
+          title="Calling Data"
+          description="Social Media and calling data together. One lead at a time — submit the outcome before the next lead appears."
+          action={
+            <CityMultiSelectFilter
+              value={filterCities}
+              onChange={setFilterCities}
+              className="w-full sm:w-56 bg-white"
+            />
+          }
+        />
 
         <Card className="border-orange-200/70 bg-gradient-to-b from-white to-orange-50/20 shadow-sm">
           <CardHeader className="pb-2">
@@ -5188,7 +5182,7 @@ export default function CallingDataPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-8"
+                  className="h-8 ml-auto"
                   onClick={() =>
                     openNewQuotationWithPrefill(
                       { ...currentLead, ...leadForView },

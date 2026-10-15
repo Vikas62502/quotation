@@ -14,6 +14,8 @@ import {
 } from "@/lib/quotation-prefill"
 import { api } from "@/lib/api"
 import { DashboardNav } from "@/components/dashboard-nav"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 import { CustomerDetailsForm } from "@/components/customer-details-form"
 import { ProductSelectionForm } from "@/components/product-selection-form"
 import { QuotationConfirmation } from "@/components/quotation-confirmation"
@@ -258,11 +260,20 @@ function NewQuotationPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-8">
         <div className="max-w-4xl mx-auto">
+          <DealerPageHero
+            tone="orange"
+            title={reviseQuotationId ? "Revise Quotation" : "New Quotation"}
+            description={
+              reviseQuotationId
+                ? "Saving creates a new quotation; the previous one stays in your list."
+                : "Add customer details, pick the system, and confirm the quote."
+            }
+          />
           {reviseQuotationId ? (
             <div className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-foreground">
               Revising system for existing customer. Saving creates a <strong>new</strong> quotation; the
@@ -303,9 +314,9 @@ function NewQuotationPageContent() {
                       <div
                         className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center text-xs sm:text-sm font-medium transition-all ${
                           currentStep > step.id
-                            ? "bg-primary text-primary-foreground"
+                            ? "bg-emerald-100 text-emerald-700"
                             : currentStep === step.id
-                              ? "bg-primary text-primary-foreground"
+                              ? "bg-orange-100 text-orange-700 ring-1 ring-orange-200"
                               : "bg-muted text-muted-foreground"
                         }`}
                       >
@@ -333,7 +344,7 @@ function NewQuotationPageContent() {
                     {index < steps.length - 1 && (
                       <div
                         className={`w-8 sm:w-12 md:w-20 lg:w-28 xl:w-32 h-0.5 mx-1 sm:mx-2 mb-5 sm:mb-6 ${
-                          currentStep > step.id ? "bg-primary" : "bg-muted"
+                          currentStep > step.id ? "bg-emerald-200" : "bg-muted"
                         }`}
                       />
                     )}

@@ -32,6 +32,8 @@ import {
 import { buildReviseQuotationHref } from "@/lib/quotation-system-history"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
 import { matchesCityFilter } from "@/lib/service-cities"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PANEL_TONES, DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 
 const ADMIN_USERNAME = "admin"
 
@@ -660,19 +662,25 @@ export default function QuotationsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-5 sm:py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 sm:mb-8">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-bold text-foreground">Quotations</h1>
-            <p className="text-sm sm:text-base text-muted-foreground">View and manage all your quotations</p>
-          </div>
-          <Button onClick={() => router.push("/dashboard/new-quotation")} className="w-full sm:w-auto">New Quotation</Button>
-        </div>
+        <DealerPageHero
+          tone="sky"
+          title="Quotations"
+          description="View and manage all your quotations"
+          action={
+            <Button
+              onClick={() => router.push("/dashboard/new-quotation")}
+              className="w-full sm:w-auto font-semibold"
+            >
+              New Quotation
+            </Button>
+          }
+        />
 
-        <Card>
+        <Card className={DEALER_PANEL_TONES.sky}>
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="relative flex-1">

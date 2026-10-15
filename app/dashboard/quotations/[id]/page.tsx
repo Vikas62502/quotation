@@ -6,6 +6,7 @@ import { useAuth } from "@/lib/auth-context"
 import { DashboardNav } from "@/components/dashboard-nav"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import type { Quotation } from "@/lib/quotation-context"
+import { DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 
 export default function QuotationDetailPage() {
   const { isAuthenticated, dealer } = useAuth()
@@ -46,7 +47,7 @@ export default function QuotationDetailPage() {
   if (!isAuthenticated) return null
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
       <main className="container mx-auto px-4 py-8">
         {/* Quotation Details Dialog */}

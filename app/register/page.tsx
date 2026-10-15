@@ -232,9 +232,9 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="dealer-portal-canvas flex flex-col">
       {/* Header */}
-      <header className="border-b border-border bg-card">
+      <header className="border-b border-border bg-background">
         <div className="container mx-auto px-4 py-4">
           <button onClick={() => router.push("/")} className="flex items-center">
             <SolarLogo size="md" />

@@ -52,9 +52,9 @@ export default function HomePage() {
   ]
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="dealer-portal-canvas">
       {/* Header */}
-      <header className="border-b border-border bg-card sticky top-0 z-50">
+      <header className="border-b border-border bg-background sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <SolarLogo size="md" />
           <div className="hidden md:flex items-center gap-3">
@@ -158,32 +158,32 @@ export default function HomePage() {
           </div>
 
           <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
-            <div className="bg-card border border-border rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                <Users className="w-6 h-6 text-primary" />
+            <div className="bg-gradient-to-br from-violet-50 to-white border border-violet-200 rounded-xl p-6 shadow-sm shadow-violet-200/50 hover:shadow-lg hover:-translate-y-0.5 transition-all">
+              <div className="w-12 h-12 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center mb-4">
+                <Users className="w-6 h-6" />
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">Customer Management</h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
+              <h3 className="text-lg font-semibold text-violet-950 mb-2">Customer Management</h3>
+              <p className="text-violet-800/80 text-sm leading-relaxed">
                 Track and manage all your customers in one place with detailed profiles and quotation history.
               </p>
             </div>
 
-            <div className="bg-card border border-border rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                <FileText className="w-6 h-6 text-primary" />
+            <div className="bg-gradient-to-br from-sky-50 to-white border border-sky-200 rounded-xl p-6 shadow-sm shadow-sky-200/50 hover:shadow-lg hover:-translate-y-0.5 transition-all">
+              <div className="w-12 h-12 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center mb-4">
+                <FileText className="w-6 h-6" />
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">Quick Quotations</h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
+              <h3 className="text-lg font-semibold text-sky-950 mb-2">Quick Quotations</h3>
+              <p className="text-sky-800/80 text-sm leading-relaxed">
                 Generate professional quotations with DCR, Non-DCR, Hybrid, and fully customizable configurations.
               </p>
             </div>
 
-            <div className="bg-card border border-border rounded-xl p-6 shadow-sm hover:shadow-md transition-shadow">
-              <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center mb-4">
-                <Shield className="w-6 h-6 text-primary" />
+            <div className="bg-gradient-to-br from-emerald-50 to-white border border-emerald-200 rounded-xl p-6 shadow-sm shadow-emerald-200/50 hover:shadow-lg hover:-translate-y-0.5 transition-all">
+              <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center mb-4">
+                <Shield className="w-6 h-6" />
               </div>
-              <h3 className="text-lg font-semibold text-foreground mb-2">Subsidy Calculation</h3>
-              <p className="text-muted-foreground text-sm leading-relaxed">
+              <h3 className="text-lg font-semibold text-emerald-950 mb-2">Subsidy Calculation</h3>
+              <p className="text-emerald-800/80 text-sm leading-relaxed">
                 Automatic central and state subsidy calculations for DCR compliant solar installations.
               </p>
             </div>

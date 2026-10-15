@@ -36,6 +36,8 @@ import {
 } from "@/lib/operational-install-queue"
 import { cn } from "@/lib/utils"
 import { downloadCsvFile } from "@/lib/excel-column-export"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PANEL_TONES, DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
 
 function formatInr(amount: number): string {
   return `₹${Math.round(amount || 0).toLocaleString("en-IN")}`
@@ -208,68 +210,67 @@ export default function DealerPaymentsPage() {
 
   if (!authReady || !isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className={`${DEALER_PORTAL_PAGE_BG} flex items-center justify-center`}>
         <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
       </div>
     )
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-8 space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Payments</h1>
-          <p className="text-muted-foreground text-sm">
-            Approved quotations only — paid amounts, remaining balance, and Cash + loan split.
-          </p>
-        </div>
+        <DealerPageHero
+          tone="amber"
+          title="Payments"
+          description="Approved quotations only — paid amounts, remaining balance, and Cash + loan split."
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-sky-100 bg-sky-50/70 shadow-sm hover:shadow-md transition-shadow">
             <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-sky-100 flex items-center justify-center shrink-0">
-                <Wallet className="w-5 h-5 text-sky-700" />
+              <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-600 flex items-center justify-center shrink-0">
+                <Wallet className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Approved quotations</p>
-                <p className="text-xl font-bold tabular-nums">{stats.count}</p>
+                <p className="text-xs font-medium text-sky-700">Approved quotations</p>
+                <p className="text-xl font-bold tabular-nums text-sky-950">{stats.count}</p>
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-violet-100 bg-violet-50/70 shadow-sm hover:shadow-md transition-shadow">
             <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                <IndianRupee className="w-5 h-5 text-slate-700" />
+              <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 flex items-center justify-center shrink-0">
+                <IndianRupee className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Total amount</p>
-                <p className="text-xl font-bold tabular-nums truncate">{formatInr(stats.totalSubtotal)}</p>
+                <p className="text-xs font-medium text-violet-700">Total amount</p>
+                <p className="text-xl font-bold tabular-nums text-violet-950 truncate">{formatInr(stats.totalSubtotal)}</p>
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-emerald-100 bg-emerald-50/70 shadow-sm hover:shadow-md transition-shadow">
             <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                <IndianRupee className="w-5 h-5 text-emerald-700" />
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+                <IndianRupee className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Total paid</p>
-                <p className="text-xl font-bold tabular-nums text-emerald-700 truncate">
+                <p className="text-xs font-medium text-emerald-700">Total paid</p>
+                <p className="text-xl font-bold tabular-nums text-emerald-800 truncate">
                   {formatInr(stats.totalPaid)}
                 </p>
               </div>
             </CardContent>
           </Card>
-          <Card className="border-border/60 shadow-sm">
+          <Card className="border-amber-100 bg-amber-50/70 shadow-sm hover:shadow-md transition-shadow">
             <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
-                <IndianRupee className="w-5 h-5 text-amber-700" />
+              <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center shrink-0">
+                <IndianRupee className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <p className="text-xs text-muted-foreground">Total remaining</p>
-                <p className="text-xl font-bold tabular-nums text-amber-700 truncate">
+                <p className="text-xs font-medium text-amber-800">Total remaining</p>
+                <p className="text-xl font-bold tabular-nums text-amber-950 truncate">
                   {formatInr(stats.totalRemaining)}
                 </p>
               </div>
@@ -277,9 +278,9 @@ export default function DealerPaymentsPage() {
           </Card>
         </div>
 
-        <Card>
+        <Card className={DEALER_PANEL_TONES.amber}>
           <CardHeader className="space-y-3">
-            <CardTitle className="text-base">Customer payments</CardTitle>
+            <CardTitle className="text-base text-amber-950">Customer payments</CardTitle>
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

@@ -135,9 +135,9 @@ function LoginForm() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="dealer-portal-canvas flex flex-col">
       {/* Header */}
-      <header className="border-b border-border bg-card">
+      <header className="border-b border-border bg-background">
         <div className="container mx-auto px-4 py-4">
           <button onClick={() => router.push("/")} className="flex items-center">
             <SolarLogo size="md" />
@@ -154,7 +154,7 @@ function LoginForm() {
             </div>
           )}
 
-          <Card className="shadow-lg border-border/50">
+          <Card className="shadow-sm border-border bg-card">
             <CardHeader className="text-center pb-4">
               <CardTitle className="text-2xl">Welcome Back</CardTitle>
               <CardDescription>Login as Dealer, Admin, or Visitor</CardDescription>

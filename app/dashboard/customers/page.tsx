@@ -17,6 +17,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { indianStates } from "@/lib/quotation-data"
 import { CityMultiSelectFilter } from "@/components/city-multi-select-filter"
 import { matchesCityFilter } from "@/lib/service-cities"
+import { DealerPageHero } from "@/components/dealer-page-hero"
+import { DEALER_PANEL_TONES, DEALER_PORTAL_PAGE_BG, dealerCustomerCardClass } from "@/lib/dealer-portal-ui"
 
 interface CustomerData {
   id?: string
@@ -209,19 +211,25 @@ export default function CustomersPage() {
   )
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={DEALER_PORTAL_PAGE_BG}>
       <DashboardNav />
 
       <main className="container mx-auto px-4 py-8">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Customers</h1>
-            <p className="text-muted-foreground">{customers.length} total customers</p>
-          </div>
-          <Button onClick={() => router.push("/dashboard/new-quotation")}>New Quotation</Button>
-        </div>
+        <DealerPageHero
+          tone="violet"
+          title="Customers"
+          description={`${customers.length} total customers in your book`}
+          action={
+            <Button
+              onClick={() => router.push("/dashboard/new-quotation")}
+              className="w-full sm:w-auto font-semibold"
+            >
+              New Quotation
+            </Button>
+          }
+        />
 
-        <Card>
+        <Card className={DEALER_PANEL_TONES.violet}>
           <CardHeader>
             <div className="flex flex-col sm:flex-row gap-3">
               <div className="relative flex-1">
@@ -263,10 +271,10 @@ export default function CustomersPage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredCustomers.map((customer) => (
+                {filteredCustomers.map((customer, index) => (
                   <div
                     key={customer.mobile}
-                    className="border border-border rounded-lg p-4 hover:border-primary/50 transition-colors"
+                    className={dealerCustomerCardClass(index)}
                   >
                     <div className="flex items-start justify-between mb-3">
                       <div>

@@ -571,8 +571,8 @@ function accountsPaymentGridClass(showProfit: boolean) {
     "grid w-full items-start gap-x-2 gap-y-2",
     "grid-cols-2 sm:grid-cols-3",
     showProfit
-      ? "xl:grid-cols-[minmax(10.5rem,1.15fr)_minmax(6rem,0.65fr)_minmax(5.25rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.75rem,0.6fr)_minmax(10rem,0.95fr)_minmax(6.25rem,0.7fr)_minmax(4.75rem,0.45fr)_minmax(4.75rem,0.45fr)_7.25rem]"
-      : "xl:grid-cols-[minmax(11rem,1.3fr)_minmax(6.25rem,0.7fr)_minmax(5.5rem,0.6fr)_minmax(5.5rem,0.6fr)_minmax(5.75rem,0.6fr)_minmax(6rem,0.65fr)_minmax(10.25rem,1fr)_minmax(6.75rem,0.8fr)_7.25rem]",
+      ? "xl:grid-cols-[minmax(10.5rem,1.15fr)_minmax(6rem,0.65fr)_minmax(5.25rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.5rem,0.55fr)_minmax(5.75rem,0.6fr)_minmax(10rem,0.95fr)_minmax(6.25rem,0.7fr)_minmax(4.75rem,0.45fr)_minmax(4.75rem,0.45fr)_8.5rem]"
+      : "xl:grid-cols-[minmax(11rem,1.3fr)_minmax(6.25rem,0.7fr)_minmax(5.5rem,0.6fr)_minmax(5.5rem,0.6fr)_minmax(5.75rem,0.6fr)_minmax(6rem,0.65fr)_minmax(10.25rem,1fr)_minmax(6.75rem,0.8fr)_8.5rem]",
   )
 }
 
@@ -726,24 +726,30 @@ function isLoanSidePaymentMode(mode?: string | null): boolean {
   return normalizePaymentMode(mode) === "loan"
 }
 
-/** Loan bucket cap for Cash + loan (falls back to subtotal − cashAmount when loanAmount missing). */
+/** Loan bucket cap. Loan files use the full payable cap when loanAmount is missing. */
 function getMixLoanCap(payment: CustomerPayment): number {
   const cap = getPaymentEffectiveCap(payment)
+  const type = paymentTypeOf(payment)
+  if (type === "cash") return 0
   const loan = Math.max(0, Math.round(Number(payment.loanAmount) || 0))
   if (loan > 0) return Math.min(loan, cap)
+  if (type === "loan") return cap
   const cash = Math.max(0, Math.round(Number(payment.cashAmount) || 0))
   if (cash > 0 && cash < cap) return Math.max(0, cap - cash)
   return 0
 }
 
-/** Cash bucket cap for Cash + loan (falls back to subtotal − loanAmount when cashAmount missing). */
+/** Cash bucket cap. Cash files use the full payable cap when cashAmount is missing. */
 function getMixCashCap(payment: CustomerPayment): number {
   const cap = getPaymentEffectiveCap(payment)
+  const type = paymentTypeOf(payment)
+  if (type === "loan") return 0
   const cash = Math.max(0, Math.round(Number(payment.cashAmount) || 0))
   if (cash > 0) return Math.min(cash, cap)
+  if (type === "cash") return cap
   const loan = Math.max(0, Math.round(Number(payment.loanAmount) || 0))
   if (loan > 0 && loan < cap) return Math.max(0, cap - loan)
-  // Both missing — do not treat full subtotal as "cash" (that made mix look like Cash ₹total).
+  // Mix with both amounts missing — do not treat full subtotal as cash.
   return 0
 }
 
@@ -3264,8 +3270,30 @@ export default function AccountManagementPage() {
       const cashAmt = isMix ? getMixCashCap(payment) || payment.cashAmount || "" : ""
       const loanPaid = isMix || isLoan ? getTotalPaidForSide(payment.phases, "loan") : ""
       const cashPaid = isMix || paymentTypeValue === "cash" ? getTotalPaidForSide(payment.phases, "cash") : ""
-      const loanRem = isMix || isLoan ? getRemainingForSide(payment, "loan") : ""
-      const cashRem = isMix || paymentTypeValue === "cash" ? getRemainingForSide(payment, "cash") : ""
+      let loanRem: number | "" = isLoan
+        ? remainingAmount
+        : isMix
+          ? getRemainingForSide(payment, "loan")
+          : ""
+      let cashRem: number | "" = paymentTypeValue === "cash"
+        ? remainingAmount
+        : isMix
+          ? getRemainingForSide(payment, "cash")
+          : ""
+      if (isMix && typeof loanRem === "number" && typeof cashRem === "number") {
+        const leftover = remainingAmount - loanRem - cashRem
+        if (leftover > 0) {
+          if (loanRem <= 0 && cashRem <= 0) {
+            cashRem = leftover
+          } else if (cashRem <= 0) {
+            cashRem = leftover
+          } else if (loanRem <= 0) {
+            loanRem = leftover
+          } else {
+            cashRem += leftover
+          }
+        }
+      }
       return [
         payment.quotationId,
         payment.customerName,
@@ -5281,12 +5309,12 @@ export default function AccountManagementPage() {
                               ) : null}
 
                               <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end", ACCOUNTS_STICKY_ACTIONS)}>
-                                <div className="flex flex-col items-stretch gap-1 w-full max-w-[7.25rem] min-w-0">
+                                <div className="flex flex-col items-stretch gap-1 w-full max-w-[8.5rem] min-w-0">
                                   {sentToInstaller ? (
-                                    <>
+                                    <div className="flex items-center gap-1 min-w-0">
                                       <Badge
                                         variant="outline"
-                                        className="justify-center text-[9px] px-1.5 h-6 border-emerald-500 text-emerald-700 whitespace-nowrap truncate"
+                                        className="min-w-0 flex-1 justify-center text-[9px] px-1.5 h-6 border-emerald-500 text-emerald-700 whitespace-nowrap truncate"
                                       >
                                         Sent to installer
                                       </Badge>
@@ -5294,7 +5322,7 @@ export default function AccountManagementPage() {
                                         type="button"
                                         variant="outline"
                                         size="sm"
-                                        className="h-6 px-1.5 text-[10px] leading-none w-full font-medium border-amber-800/40"
+                                        className="h-6 w-6 p-0 shrink-0 border-amber-800/40 text-amber-950"
                                         onClick={() => void handleRetrieveFromInstallation(payment.quotation)}
                                         disabled={
                                           accountsReadOnly ||
@@ -5306,14 +5334,18 @@ export default function AccountManagementPage() {
                                           "Revert to Accounts (undo Send to Installer)"
                                         }
                                       >
-                                        <RotateCcw className="w-3 h-3 mr-1 shrink-0" />
-                                        <span className="truncate">
+                                        {retrievingInstallationId === payment.quotationId ? (
+                                          <Loader2 className="w-3 h-3 animate-spin" />
+                                        ) : (
+                                          <RotateCcw className="w-3 h-3" />
+                                        )}
+                                        <span className="sr-only">
                                           {retrievingInstallationId === payment.quotationId
                                             ? "Reverting..."
                                             : "Revert"}
                                         </span>
                                       </Button>
-                                    </>
+                                    </div>
                                   ) : (
                                     <Button
                                       type="button"
