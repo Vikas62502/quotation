@@ -17,6 +17,7 @@ import { formatOverviewKw } from "@/lib/quotation-system-kw"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
+import { useIsMobile } from "@/hooks/use-mobile"
 
 export type DealerRevenueStat = {
   dealer: Dealer
@@ -315,9 +316,18 @@ function DealerBarChart({
   formatValue: (row: ChartRow) => string
   formatTick: (value: number) => string
 }) {
+  const isMobile = useIsMobile()
+
   return (
-    <ChartContainer config={config} className="aspect-auto h-[24rem] w-full">
-      <BarChart data={data} margin={{ left: 4, right: 18, top: 32, bottom: 8 }} barCategoryGap="18%">
+    <ChartContainer
+      config={config}
+      className={cn("aspect-auto w-full", isMobile ? "h-[18rem]" : "h-[24rem]")}
+    >
+      <BarChart
+        data={data}
+        margin={{ left: 4, right: isMobile ? 8 : 18, top: 32, bottom: isMobile ? 0 : 8 }}
+        barCategoryGap={isMobile ? "12%" : "18%"}
+      >
         <CartesianGrid vertical={false} stroke="#cbd5e1" strokeDasharray="4 10" strokeOpacity={0.45} />
         <XAxis
           type="category"
@@ -325,15 +335,15 @@ function DealerBarChart({
           tickLine={false}
           axisLine={false}
           interval={0}
-          height={52}
-          tick={<TwoLineDealerTick />}
+          height={isMobile ? 0 : 52}
+          tick={isMobile ? false : <TwoLineDealerTick />}
         />
         <YAxis
           type="number"
           tickLine={false}
           axisLine={false}
-          width={48}
-          tick={{ fontSize: 11, fill: "#94a3b8" }}
+          width={isMobile ? 36 : 48}
+          tick={{ fontSize: isMobile ? 10 : 11, fill: "#94a3b8" }}
           tickFormatter={(value) => formatTick(Number(value) || 0)}
         />
         <Tooltip
@@ -341,7 +351,7 @@ function DealerBarChart({
           content={<DealerChartTooltip formatValue={formatValue} />}
           wrapperStyle={{ outline: "none" }}
         />
-        <Bar dataKey="value" maxBarSize={52} shape={(props) => <Bar3DShape {...props} />}>
+        <Bar dataKey="value" maxBarSize={isMobile ? 36 : 52} shape={(props) => <Bar3DShape {...props} />}>
           {data.map((row) => (
             <Cell
               key={`${row.rank}-${row.name}`}
@@ -351,8 +361,8 @@ function DealerBarChart({
           <LabelList
             dataKey="barLabel"
             position="top"
-            offset={12}
-            style={{ fill: "#0f172a", fontSize: 11, fontWeight: 700 }}
+            offset={isMobile ? 8 : 12}
+            style={{ fill: "#0f172a", fontSize: isMobile ? 10 : 11, fontWeight: 700 }}
           />
         </Bar>
       </BarChart>

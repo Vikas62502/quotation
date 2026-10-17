@@ -161,6 +161,10 @@ export function normalizeJourneyCallingAction(item: any, index: number): Journey
     readNestedMobile(customer) ||
     ""
 
+  const upload =
+    (lead?.upload && typeof lead.upload === "object" ? lead.upload : null) ||
+    (item?.upload && typeof item.upload === "object" ? item.upload : null)
+
   return {
     id: String(item?.id || item?._id || `${leadId || "lead"}-${actionAt || "na"}-${index}`),
     leadId,
@@ -203,6 +207,43 @@ export function normalizeJourneyCallingAction(item: any, index: number): Journey
     status_text: item?.status_text || tagged.status || "",
     actionAt: String(actionAt || ""),
     nextFollowUpAt: item?.nextFollowUpAt || item?.next_follow_up_at || lead?.nextFollowUpAt,
+    sourceType: String(
+      item?.sourceType ||
+        item?.source_type ||
+        lead?.sourceType ||
+        lead?.source_type ||
+        upload?.sourceType ||
+        upload?.source_type ||
+        "",
+    ).trim() || undefined,
+    source_type: String(item?.source_type || lead?.source_type || "").trim() || undefined,
+    sheetSourceId: String(
+      item?.sheetSourceId || item?.sheet_source_id || lead?.sheetSourceId || lead?.sheet_source_id || "",
+    ).trim() || undefined,
+    sheet_source_id: String(item?.sheet_source_id || lead?.sheet_source_id || "").trim() || undefined,
+    uploadFileName: String(
+      item?.uploadFileName ||
+        item?.upload_file_name ||
+        lead?.uploadFileName ||
+        lead?.upload_file_name ||
+        upload?.fileName ||
+        upload?.file_name ||
+        "",
+    ).trim() || undefined,
+    upload_file_name: String(item?.upload_file_name || lead?.upload_file_name || "").trim() || undefined,
+    fileName: String(item?.fileName || item?.file_name || lead?.fileName || lead?.file_name || "").trim() || undefined,
+    file_name: String(item?.file_name || lead?.file_name || "").trim() || undefined,
+    platform: String(item?.platform || lead?.platform || "").trim() || undefined,
+    campaignName: String(
+      item?.campaignName || item?.campaign_name || lead?.campaignName || lead?.campaign_name || "",
+    ).trim() || undefined,
+    campaign_name: String(item?.campaign_name || lead?.campaign_name || "").trim() || undefined,
+    sheetLeadStatus: String(item?.sheetLeadStatus || lead?.sheetLeadStatus || "").trim() || undefined,
+    leadStatus: String(item?.leadStatus || item?.lead_status || lead?.leadStatus || lead?.lead_status || "").trim() || undefined,
+    lead_status: String(item?.lead_status || lead?.lead_status || "").trim() || undefined,
+    externalId: String(item?.externalId || item?.external_id || lead?.externalId || lead?.external_id || "").trim() || undefined,
+    external_id: String(item?.external_id || lead?.external_id || "").trim() || undefined,
+    customerNote: String(item?.customerNote || lead?.customerNote || "").trim() || undefined,
   }
 }
 

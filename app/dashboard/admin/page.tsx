@@ -8616,9 +8616,9 @@ export default function AdminPanelPage() {
         <Tabs value={activeTab} onValueChange={onAdminDesktopTabChange} className="space-y-4">
           {!reportsOnlyAccess ? (
           <div className="md:hidden">
-            <div className="text-xs font-medium text-muted-foreground mb-2">Select Section</div>
+            <div className="text-xs font-medium text-orange-800/70 mb-2">Select Section</div>
             <Select value={adminMobileNavValue} onValueChange={onAdminMobileNavChange}>
-              <SelectTrigger className="w-full h-10 rounded-xl border-border/70 bg-card shadow-sm">
+              <SelectTrigger className="w-full h-11 rounded-xl border-orange-200/80 bg-gradient-to-r from-orange-50/90 via-white to-sky-50/80 shadow-sm text-base">
                 <SelectValue placeholder="Select section" />
               </SelectTrigger>
               <SelectContent>
@@ -9023,6 +9023,7 @@ export default function AdminPanelPage() {
             </Card>
 
             <CustomerJourneyPanel
+              className={ADMIN_PASTEL.teal}
               quotations={quotations}
               title="Customer Journey (Current Hold)"
               description="Shows who currently holds each customer file in the workflow."
@@ -12632,30 +12633,44 @@ export default function AdminPanelPage() {
 
           {/* Customers Tab */}
           <TabsContent value="customers" className="space-y-4">
-            <Card className={ADMIN_PASTEL.sky}>
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <CardTitle>All Customers ({customers.length})</CardTitle>
-                    <p className="text-sm text-muted-foreground mt-1">Customers from all dealers</p>
+            <Card className={cn(ADMIN_PASTEL.sky, "bg-gradient-to-b from-white via-sky-50/40 to-violet-50/35")}>
+              <CardHeader className="space-y-3 p-3 sm:p-6 pb-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+                  <div className="flex items-start gap-2.5 sm:gap-3 min-w-0">
+                    <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl border border-sky-200 bg-gradient-to-br from-sky-100 via-cyan-50 to-violet-100 flex items-center justify-center shrink-0 shadow-[0_0_14px_-4px_rgba(14,165,233,0.5)]">
+                      <Users className="w-4 h-4 sm:w-5 sm:h-5 text-sky-700" />
+                    </div>
+                    <div className="min-w-0">
+                      <CardTitle className="text-base sm:text-lg text-sky-950">
+                        All Customers{" "}
+                        <span className="tabular-nums text-sky-700">({customers.length})</span>
+                      </CardTitle>
+                      <p className="text-xs sm:text-sm text-sky-900/70 mt-0.5">Customers from all dealers</p>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-emerald-200/80 bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 shadow-sm shrink-0 self-start sm:self-auto">
+                    <p className="text-[10px] uppercase tracking-wide text-emerald-800/70">Showing</p>
+                    <p className="text-sm font-semibold tabular-nums text-emerald-950">
+                      {customers.length.toLocaleString()} customers
+                    </p>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+              <CardContent className="p-3 sm:p-6 pt-0">
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4 rounded-xl border border-sky-100 bg-gradient-to-r from-sky-50/80 via-white to-violet-50/60 p-2 sm:p-2.5 shadow-sm">
                   <div className="relative flex-1">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-sky-500/80" />
                     <Input
-                      placeholder="Search customers by name, mobile, email, or dealer..."
+                      placeholder="Search name, mobile, email, dealer..."
                       value={customerSearchTerm}
                       onChange={(e) => setCustomerSearchTerm(e.target.value)}
-                      className="pl-9"
+                      className="h-11 sm:h-9 pl-9 border-sky-200 bg-white/90 focus-visible:ring-sky-200 text-base sm:text-sm"
                     />
                   </div>
                   <CityMultiSelectFilter
                     value={customerFilterCities}
                     onChange={setCustomerFilterCities}
-                    className="w-full sm:w-52"
+                    className="h-11 sm:h-9 w-full sm:w-52 border-sky-200 bg-white/90 text-base sm:text-sm"
                   />
                 </div>
                 {(() => {
@@ -12674,8 +12689,8 @@ export default function AdminPanelPage() {
 
                   if (filteredCustomers.length === 0) {
                     return (
-                      <div className="text-center py-12 text-muted-foreground">
-                        <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                      <div className="text-center py-12 text-sky-900/60 rounded-2xl border border-dashed border-sky-200 bg-gradient-to-b from-white to-sky-50/50">
+                        <Users className="w-12 h-12 mx-auto mb-4 text-sky-300" />
                         <p>No customers found</p>
                         {customerSearchTerm || customerFilterCities.length > 0 ? (
                           <Button
@@ -12684,7 +12699,7 @@ export default function AdminPanelPage() {
                               setCustomerSearchTerm("")
                               setCustomerFilterCities([])
                             }}
-                            className="mt-2"
+                            className="mt-2 text-sky-700"
                           >
                             Clear filters
                           </Button>
@@ -12693,107 +12708,331 @@ export default function AdminPanelPage() {
                     )
                   }
 
+                  const customerCardAccents = [
+                    {
+                      card: "border-sky-200/70 hover:shadow-[0_8px_28px_-10px_rgba(14,165,233,0.45)]",
+                      cardBg:
+                        "linear-gradient(145deg, #e0f2fe 0%, #ffffff 42%, #ecfeff 72%, #f0f9ff 100%)",
+                      edge: "linear-gradient(180deg, #38bdf8, #22d3ee, #818cf8)",
+                      avatar:
+                        "border-sky-200/80 text-sky-900 shadow-[0_0_16px_-4px_rgba(56,189,248,0.55)]",
+                      avatarBg: "linear-gradient(135deg, #7dd3fc, #a5f3fc, #c4b5fd)",
+                      quote:
+                        "border-sky-300/70 bg-gradient-to-r from-sky-100 via-cyan-50 to-violet-100 text-sky-900",
+                      dealer:
+                        "border-amber-200/70 bg-gradient-to-r from-amber-100 via-orange-50 to-yellow-50",
+                      dealerLabel: "text-amber-800/80",
+                      dealerText: "text-amber-950",
+                      address:
+                        "border-rose-100 bg-gradient-to-r from-rose-50 via-white to-orange-50/70",
+                      pin: "text-rose-500",
+                      spent:
+                        "border-emerald-200/70 shadow-[0_0_18px_-6px_rgba(16,185,129,0.45)]",
+                      spentBg:
+                        "linear-gradient(120deg, #d1fae5 0%, #ecfdf5 45%, #ccfbf1 100%)",
+                      spentLabel: "text-emerald-800/75",
+                      spentAmount: "text-emerald-800",
+                      edit: "border-sky-300/80 text-sky-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #bae6fd, #a5f3fc, #ddd6fe)",
+                    },
+                    {
+                      card: "border-violet-200/70 hover:shadow-[0_8px_28px_-10px_rgba(168,85,247,0.4)]",
+                      cardBg:
+                        "linear-gradient(145deg, #f3e8ff 0%, #ffffff 40%, #fdf4ff 70%, #ede9fe 100%)",
+                      edge: "linear-gradient(180deg, #c084fc, #e879f9, #f472b6)",
+                      avatar:
+                        "border-violet-200/80 text-violet-900 shadow-[0_0_16px_-4px_rgba(192,132,252,0.55)]",
+                      avatarBg: "linear-gradient(135deg, #d8b4fe, #f0abfc, #fda4af)",
+                      quote:
+                        "border-violet-300/70 bg-gradient-to-r from-violet-100 via-fuchsia-50 to-pink-100 text-violet-900",
+                      dealer:
+                        "border-fuchsia-200/70 bg-gradient-to-r from-fuchsia-100 via-violet-50 to-pink-50",
+                      dealerLabel: "text-fuchsia-800/80",
+                      dealerText: "text-fuchsia-950",
+                      address:
+                        "border-violet-100 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50/70",
+                      pin: "text-fuchsia-500",
+                      spent:
+                        "border-violet-200/70 shadow-[0_0_18px_-6px_rgba(139,92,246,0.4)]",
+                      spentBg:
+                        "linear-gradient(120deg, #ede9fe 0%, #faf5ff 45%, #fce7f3 100%)",
+                      spentLabel: "text-violet-800/75",
+                      spentAmount: "text-violet-800",
+                      edit: "border-violet-300/80 text-violet-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #e9d5ff, #f5d0fe, #fbcfe8)",
+                    },
+                    {
+                      card: "border-teal-200/70 hover:shadow-[0_8px_28px_-10px_rgba(20,184,166,0.4)]",
+                      cardBg:
+                        "linear-gradient(145deg, #ccfbf1 0%, #ffffff 40%, #ecfdf5 70%, #e0f2fe 100%)",
+                      edge: "linear-gradient(180deg, #2dd4bf, #34d399, #38bdf8)",
+                      avatar:
+                        "border-teal-200/80 text-teal-900 shadow-[0_0_16px_-4px_rgba(45,212,191,0.55)]",
+                      avatarBg: "linear-gradient(135deg, #5eead4, #6ee7b7, #7dd3fc)",
+                      quote:
+                        "border-teal-300/70 bg-gradient-to-r from-teal-100 via-emerald-50 to-cyan-100 text-teal-900",
+                      dealer:
+                        "border-emerald-200/70 bg-gradient-to-r from-emerald-100 via-teal-50 to-cyan-50",
+                      dealerLabel: "text-emerald-800/80",
+                      dealerText: "text-emerald-950",
+                      address:
+                        "border-teal-100 bg-gradient-to-r from-teal-50 via-white to-emerald-50/70",
+                      pin: "text-teal-500",
+                      spent:
+                        "border-teal-200/70 shadow-[0_0_18px_-6px_rgba(20,184,166,0.45)]",
+                      spentBg:
+                        "linear-gradient(120deg, #ccfbf1 0%, #ecfdf5 45%, #d1fae5 100%)",
+                      spentLabel: "text-teal-800/75",
+                      spentAmount: "text-teal-800",
+                      edit: "border-teal-300/80 text-teal-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #99f6e4, #a7f3d0, #bae6fd)",
+                    },
+                    {
+                      card: "border-orange-200/70 hover:shadow-[0_8px_28px_-10px_rgba(249,115,22,0.35)]",
+                      cardBg:
+                        "linear-gradient(145deg, #ffedd5 0%, #ffffff 40%, #fef3c7 70%, #fff7ed 100%)",
+                      edge: "linear-gradient(180deg, #fb923c, #fbbf24, #f472b6)",
+                      avatar:
+                        "border-orange-200/80 text-orange-900 shadow-[0_0_16px_-4px_rgba(251,146,60,0.5)]",
+                      avatarBg: "linear-gradient(135deg, #fdba74, #fcd34d, #f9a8d4)",
+                      quote:
+                        "border-orange-300/70 bg-gradient-to-r from-orange-100 via-amber-50 to-rose-100 text-orange-900",
+                      dealer:
+                        "border-amber-200/70 bg-gradient-to-r from-amber-100 via-orange-50 to-yellow-50",
+                      dealerLabel: "text-amber-800/80",
+                      dealerText: "text-amber-950",
+                      address:
+                        "border-orange-100 bg-gradient-to-r from-orange-50 via-white to-amber-50/70",
+                      pin: "text-orange-500",
+                      spent:
+                        "border-amber-200/70 shadow-[0_0_18px_-6px_rgba(245,158,11,0.4)]",
+                      spentBg:
+                        "linear-gradient(120deg, #fef3c7 0%, #fffbeb 45%, #ffedd5 100%)",
+                      spentLabel: "text-amber-800/75",
+                      spentAmount: "text-amber-900",
+                      edit: "border-orange-300/80 text-orange-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #fed7aa, #fde68a, #fbcfe8)",
+                    },
+                    {
+                      card: "border-rose-200/70 hover:shadow-[0_8px_28px_-10px_rgba(244,63,94,0.35)]",
+                      cardBg:
+                        "linear-gradient(145deg, #ffe4e6 0%, #ffffff 40%, #fce7f3 70%, #fff1f2 100%)",
+                      edge: "linear-gradient(180deg, #fb7185, #e879f9, #a78bfa)",
+                      avatar:
+                        "border-rose-200/80 text-rose-900 shadow-[0_0_16px_-4px_rgba(251,113,133,0.5)]",
+                      avatarBg: "linear-gradient(135deg, #fda4af, #f0abfc, #c4b5fd)",
+                      quote:
+                        "border-rose-300/70 bg-gradient-to-r from-rose-100 via-pink-50 to-violet-100 text-rose-900",
+                      dealer:
+                        "border-pink-200/70 bg-gradient-to-r from-pink-100 via-rose-50 to-fuchsia-50",
+                      dealerLabel: "text-rose-800/80",
+                      dealerText: "text-rose-950",
+                      address:
+                        "border-rose-100 bg-gradient-to-r from-rose-50 via-white to-pink-50/70",
+                      pin: "text-rose-500",
+                      spent:
+                        "border-rose-200/70 shadow-[0_0_18px_-6px_rgba(244,63,94,0.35)]",
+                      spentBg:
+                        "linear-gradient(120deg, #ffe4e6 0%, #fff1f2 45%, #fce7f3 100%)",
+                      spentLabel: "text-rose-800/75",
+                      spentAmount: "text-rose-800",
+                      edit: "border-rose-300/80 text-rose-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #fecdd3, #fbcfe8, #e9d5ff)",
+                    },
+                    {
+                      card: "border-cyan-200/70 hover:shadow-[0_8px_28px_-10px_rgba(6,182,212,0.4)]",
+                      cardBg:
+                        "linear-gradient(145deg, #cffafe 0%, #ffffff 40%, #e0f2fe 70%, #ecfeff 100%)",
+                      edge: "linear-gradient(180deg, #22d3ee, #38bdf8, #34d399)",
+                      avatar:
+                        "border-cyan-200/80 text-cyan-900 shadow-[0_0_16px_-4px_rgba(34,211,238,0.55)]",
+                      avatarBg: "linear-gradient(135deg, #67e8f9, #7dd3fc, #6ee7b7)",
+                      quote:
+                        "border-cyan-300/70 bg-gradient-to-r from-cyan-100 via-sky-50 to-emerald-100 text-cyan-900",
+                      dealer:
+                        "border-sky-200/70 bg-gradient-to-r from-sky-100 via-cyan-50 to-teal-50",
+                      dealerLabel: "text-cyan-800/80",
+                      dealerText: "text-cyan-950",
+                      address:
+                        "border-cyan-100 bg-gradient-to-r from-cyan-50 via-white to-sky-50/70",
+                      pin: "text-cyan-500",
+                      spent:
+                        "border-cyan-200/70 shadow-[0_0_18px_-6px_rgba(6,182,212,0.4)]",
+                      spentBg:
+                        "linear-gradient(120deg, #cffafe 0%, #ecfeff 45%, #dbeafe 100%)",
+                      spentLabel: "text-cyan-800/75",
+                      spentAmount: "text-cyan-800",
+                      edit: "border-cyan-300/80 text-cyan-900 hover:brightness-105",
+                      editBg: "linear-gradient(90deg, #a5f3fc, #bae6fd, #a7f3d0)",
+                    },
+                  ] as const
+
                   return (
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {filteredCustomers.map((customer) => (
-                        <div
-                          key={customer.mobile}
-                          className="border border-sky-100 rounded-xl p-4 bg-white/85 shadow-sm hover:border-sky-300 hover:bg-sky-50/50 transition-colors"
-                        >
-                          <div className="flex items-start justify-between mb-3">
-                            <div className="flex-1">
-                              <h3 className="font-medium">
-                                {customer.firstName} {customer.lastName}
-                              </h3>
-                              <p className="text-sm text-muted-foreground">{customer.mobile}</p>
-                            </div>
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <FileText className="w-3 h-3" />
-                              {customer.quotationCount}
-                            </div>
-                          </div>
-                          <p className="text-xs text-muted-foreground mb-2">{customer.email}</p>
-                          {customer.dealers && customer.dealers.length > 0 && (
-                            <div className="mb-2">
-                              <p className="text-xs text-muted-foreground">
-                                <span className="font-medium">Dealers:</span> {customer.dealers.join(", ")}
-                              </p>
-                            </div>
-                          )}
-                          <div className="mb-2">
-                            <div className="text-xs text-muted-foreground mb-1">
-                              {customer.address?.street && (
-                                <div className="mb-1">{customer.address.street}</div>
-                              )}
-                              <div>
-                                {[
-                                  customer.address?.city,
-                                  customer.address?.state,
-                                  customer.address?.pincode
-                                ].filter(Boolean).join(", ")}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-3.5">
+                      {filteredCustomers.map((customer, index) => {
+                        const accent = customerCardAccents[index % customerCardAccents.length]
+                        const initials =
+                          `${(customer.firstName || "").charAt(0)}${(customer.lastName || "").charAt(0)}`.toUpperCase() ||
+                          "?"
+                        const cityLine = [
+                          customer.address?.city,
+                          customer.address?.state,
+                          customer.address?.pincode,
+                        ]
+                          .filter(Boolean)
+                          .join(", ")
+
+                        return (
+                          <div
+                            key={customer.mobile}
+                            className={cn(
+                              "relative overflow-hidden rounded-2xl border p-3 sm:p-4 shadow-sm transition-all hover:-translate-y-0.5 active:scale-[0.99]",
+                              accent.card,
+                            )}
+                            style={{ background: accent.cardBg }}
+                          >
+                            <div
+                              className="absolute inset-y-0 left-0 w-1 sm:w-1.5"
+                              style={{ background: accent.edge }}
+                              aria-hidden
+                            />
+                            <div
+                              className="pointer-events-none absolute -right-8 -top-10 h-28 w-28 rounded-full opacity-40 blur-2xl"
+                              style={{ background: accent.edge }}
+                              aria-hidden
+                            />
+                            <div className="relative pl-1 sm:pl-1.5">
+                              <div className="flex items-start justify-between gap-2 mb-3">
+                                <div className="flex items-start gap-2.5 min-w-0">
+                                  <div
+                                    className={cn(
+                                      "w-9 h-9 rounded-xl border flex items-center justify-center text-xs font-bold shrink-0",
+                                      accent.avatar,
+                                    )}
+                                    style={{ background: accent.avatarBg }}
+                                  >
+                                    {initials}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h3 className="font-semibold text-slate-900 truncate leading-tight">
+                                      {customer.firstName} {customer.lastName}
+                                    </h3>
+                                    <p className="text-sm text-slate-600 tabular-nums">{customer.mobile}</p>
+                                  </div>
+                                </div>
+                                <Badge
+                                  variant="outline"
+                                  className={cn("h-6 shrink-0 gap-1 text-[10px] font-medium", accent.quote)}
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  {customer.quotationCount}
+                                </Badge>
                               </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center justify-between text-sm mb-2">
-                            <span className="text-muted-foreground text-xs">
-                              Total Spent
-                            </span>
-                            <span className="font-medium text-primary">₹{Math.abs(customer.totalAmount || 0).toLocaleString()}</span>
-                          </div>
-                          {customer.lastQuotation && customer.lastQuotation !== "" && !isNaN(new Date(customer.lastQuotation).getTime()) && (
-                            <p className="text-xs text-muted-foreground mb-3">
-                              Last: {new Date(customer.lastQuotation).toLocaleDateString()}
-                            </p>
-                          )}
-                          <div className="flex gap-2 mt-3">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1"
-                              onClick={async () => {
-                                // Load full customer details if we have an ID
-                                if (customer.id && useApi) {
-                                  try {
-                                    const response = await api.customers.getById(customer.id)
-                                    const fullCustomer = response.customer || response.data || response
-                                    setEditingCustomer({
-                                      ...customer,
-                                      ...fullCustomer,
-                                      address: {
-                                        street: fullCustomer.address?.street || customer.address?.street || "",
-                                        city: fullCustomer.address?.city || customer.address?.city || "",
-                                        state: fullCustomer.address?.state || customer.address?.state || "",
-                                        pincode: fullCustomer.address?.pincode || customer.address?.pincode || "",
-                                      },
-                                    })
-                                  } catch (error) {
-                                    console.error("Error loading customer details:", error)
+
+                              {customer.email ? (
+                                <p className="text-xs text-slate-500 truncate mb-2">{customer.email}</p>
+                              ) : null}
+
+                              {customer.dealers && customer.dealers.length > 0 ? (
+                                <div className={cn("mb-2 rounded-xl border px-2.5 py-1.5", accent.dealer)}>
+                                  <p className={cn("text-[10px] uppercase tracking-wide", accent.dealerLabel)}>
+                                    Dealers
+                                  </p>
+                                  <p className={cn("text-xs font-medium truncate", accent.dealerText)}>
+                                    {customer.dealers.join(", ")}
+                                  </p>
+                                </div>
+                              ) : null}
+
+                              {(customer.address?.street || cityLine) ? (
+                                <div
+                                  className={cn(
+                                    "mb-3 flex items-start gap-1.5 rounded-xl border px-2.5 py-1.5 text-xs text-slate-600",
+                                    accent.address,
+                                  )}
+                                >
+                                  <MapPin className={cn("w-3.5 h-3.5 mt-0.5 shrink-0", accent.pin)} />
+                                  <div className="min-w-0">
+                                    {customer.address?.street ? (
+                                      <div className="mb-0.5 break-words">{customer.address.street}</div>
+                                    ) : null}
+                                    {cityLine ? <div>{cityLine}</div> : null}
+                                  </div>
+                                </div>
+                              ) : null}
+
+                              <div
+                                className={cn("rounded-xl border px-2.5 py-2 mb-3", accent.spent)}
+                                style={{ background: accent.spentBg }}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className={cn("text-[10px] uppercase tracking-wide", accent.spentLabel)}>
+                                    Total Spent
+                                  </span>
+                                  <span className={cn("text-sm font-semibold tabular-nums", accent.spentAmount)}>
+                                    ₹{Math.abs(customer.totalAmount || 0).toLocaleString()}
+                                  </span>
+                                </div>
+                                {customer.lastQuotation &&
+                                customer.lastQuotation !== "" &&
+                                !isNaN(new Date(customer.lastQuotation).getTime()) ? (
+                                  <p className={cn("mt-1 text-[11px] flex items-center gap-1 opacity-80", accent.spentLabel)}>
+                                    <Calendar className="w-3 h-3" />
+                                    Last: {new Date(customer.lastQuotation).toLocaleDateString()}
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className={cn("h-10 sm:h-9 w-full border shadow-sm", accent.edit)}
+                                style={{ background: accent.editBg }}
+                                onClick={async () => {
+                                  // Load full customer details if we have an ID
+                                  if (customer.id && useApi) {
+                                    try {
+                                      const response = await api.customers.getById(customer.id)
+                                      const fullCustomer = response.customer || response.data || response
+                                      setEditingCustomer({
+                                        ...customer,
+                                        ...fullCustomer,
+                                        address: {
+                                          street: fullCustomer.address?.street || customer.address?.street || "",
+                                          city: fullCustomer.address?.city || customer.address?.city || "",
+                                          state: fullCustomer.address?.state || customer.address?.state || "",
+                                          pincode: fullCustomer.address?.pincode || customer.address?.pincode || "",
+                                        },
+                                      })
+                                    } catch (error) {
+                                      console.error("Error loading customer details:", error)
+                                      setEditingCustomer(customer)
+                                    }
+                                  } else {
                                     setEditingCustomer(customer)
                                   }
-                                } else {
-                                  setEditingCustomer(customer)
-                                }
-                                setCustomerEditForm({
-                                  firstName: customer.firstName || "",
-                                  lastName: customer.lastName || "",
-                                  mobile: customer.mobile || "",
-                                  email: customer.email || "",
-                                  address: {
-                                    street: customer.address?.street || "",
-                                    city: customer.address?.city || "",
-                                    state: customer.address?.state || "",
-                                    pincode: customer.address?.pincode || "",
-                                  },
-                                })
-                                setCustomerEditDialogOpen(true)
-                              }}
-                            >
-                              <Edit className="w-3 h-3 mr-1" />
-                              Edit
-                            </Button>
+                                  setCustomerEditForm({
+                                    firstName: customer.firstName || "",
+                                    lastName: customer.lastName || "",
+                                    mobile: customer.mobile || "",
+                                    email: customer.email || "",
+                                    address: {
+                                      street: customer.address?.street || "",
+                                      city: customer.address?.city || "",
+                                      state: customer.address?.state || "",
+                                      pincode: customer.address?.pincode || "",
+                                    },
+                                  })
+                                  setCustomerEditDialogOpen(true)
+                                }}
+                              >
+                                <Edit className="w-3 h-3 mr-1" />
+                                Edit
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </div>
                   )
                 })()}

@@ -6475,10 +6475,6 @@ export default function AccountManagementPage() {
                                 />
                               </div>
                               <div className="flex items-center gap-2 shrink-0 h-8 ml-auto">
-                                <p className="text-[11px] text-muted-foreground whitespace-nowrap">
-                                  {isMix ? `${sideLabel} remaining` : "Remaining"} after: ₹
-                                  {Math.max(remainingBefore - phase.paidAmount, 0).toLocaleString()}
-                                </p>
                                 <Button
                                   type="button"
                                   variant="ghost"

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Route, Search } from "lucide-react"
 import { formatYmdLocal } from "@/lib/calling-report-date-range"
 import { formatPersonName } from "@/lib/name-display"
+import { cn } from "@/lib/utils"
 import {
   formatJourneyStageStatusLabel,
   getJourneyFileLoginLabel,
@@ -24,10 +25,27 @@ import {
   type JourneyStageStatus,
 } from "@/lib/customer-journey"
 
+const HOLD_CARD_DEFAULT =
+  "rounded-2xl border-teal-200/80 bg-gradient-to-b from-white via-cyan-50/25 to-teal-50/45 shadow-sm overflow-hidden"
+
 function statusBadgeClass(status: JourneyStageStatus) {
-  if (status === "completed") return "bg-green-600 text-white"
-  if (status === "in_progress") return "bg-amber-500 text-white"
-  return "bg-muted text-muted-foreground"
+  if (status === "completed") {
+    return "border border-emerald-300/80 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-800"
+  }
+  if (status === "in_progress") {
+    return "border border-amber-300/80 bg-gradient-to-r from-amber-100 to-orange-50 text-amber-900"
+  }
+  return "border border-slate-200 bg-slate-50 text-slate-500"
+}
+
+function stageShellClass(status: JourneyStageStatus) {
+  if (status === "completed") {
+    return "border-emerald-200/80 bg-gradient-to-b from-white to-emerald-50/70 shadow-[0_0_12px_-4px_rgba(16,185,129,0.35)]"
+  }
+  if (status === "in_progress") {
+    return "border-amber-200/80 bg-gradient-to-b from-white to-amber-50/70 shadow-[0_0_12px_-4px_rgba(245,158,11,0.3)]"
+  }
+  return "border-slate-200/70 bg-white/80"
 }
 
 type CustomerJourneyPanelProps = {
@@ -80,15 +98,15 @@ export function CustomerJourneyPanel({
     Boolean(searchTerm.trim()) || dateFilter !== "all" || (dateFilter === "custom" && (customFromDate || customToDate))
 
   return (
-    <Card className={className}>
+    <Card className={cn(HOLD_CARD_DEFAULT, className)}>
       <CardHeader>
         <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-xl bg-teal-100 text-teal-600 flex items-center justify-center shrink-0">
-            <Route className="w-4 h-4" />
+          <div className="w-10 h-10 rounded-xl border border-teal-200 bg-gradient-to-br from-teal-100 via-cyan-50 to-sky-100 flex items-center justify-center shrink-0 shadow-[0_0_14px_-4px_rgba(20,184,166,0.55)]">
+            <Route className="w-5 h-5 text-teal-700" />
           </div>
           <div className="min-w-0">
-            <CardTitle>{title}</CardTitle>
-            <CardDescription>{description}</CardDescription>
+            <CardTitle className="text-teal-950">{title}</CardTitle>
+            <CardDescription className="text-teal-900/70">{description}</CardDescription>
           </div>
         </div>
       </CardHeader>
@@ -96,16 +114,16 @@ export function CustomerJourneyPanel({
         <div className="space-y-2 mb-3">
           <div className="flex flex-col sm:flex-row gap-2">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-teal-500/80" />
               <Input
                 placeholder="Search by name, mobile, quotation id, stage..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9"
+                className="pl-9 border-teal-200 bg-gradient-to-r from-white to-teal-50/50 focus-visible:ring-teal-200"
               />
             </div>
             <Select value={dateFilter} onValueChange={(v) => setDateFilter(v as JourneyDateRangeFilter)}>
-              <SelectTrigger className="w-full sm:w-52">
+              <SelectTrigger className="w-full sm:w-52 border-cyan-200 bg-white/90">
                 <SelectValue placeholder="Date range" />
               </SelectTrigger>
               <SelectContent>
@@ -124,23 +142,23 @@ export function CustomerJourneyPanel({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">From</Label>
-                <Input type="date" value={customFromDate} onChange={(e) => setCustomFromDate(e.target.value)} />
+                <Input type="date" value={customFromDate} onChange={(e) => setCustomFromDate(e.target.value)} className="border-teal-200 bg-white" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">To</Label>
-                <Input type="date" value={customToDate} onChange={(e) => setCustomToDate(e.target.value)} />
+                <Input type="date" value={customToDate} onChange={(e) => setCustomToDate(e.target.value)} className="border-teal-200 bg-white" />
               </div>
             </div>
           ) : null}
         </div>
         {rows.length === 0 ? (
-          <div className="text-sm text-muted-foreground space-y-2">
+          <div className="text-sm text-teal-900/70 space-y-2 rounded-2xl border border-dashed border-teal-200 bg-gradient-to-b from-white to-teal-50/40 px-4 py-8 text-center">
             <p>{emptyMessage}</p>
             {hasActiveFilters ? (
               <Button
                 type="button"
                 variant="link"
-                className="h-auto p-0"
+                className="h-auto p-0 text-teal-700"
                 onClick={() => {
                   setSearchTerm("")
                   setDateFilter("this_month")
@@ -153,7 +171,7 @@ export function CustomerJourneyPanel({
             ) : null}
           </div>
         ) : (
-          <div className={`${maxHeightClassName} overflow-y-auto space-y-2 pr-1`}>
+          <div className={`${maxHeightClassName} overflow-y-auto space-y-2.5 pr-1`}>
             {rows.map((quotation) => {
               const hold = getJourneyHoldInfo(quotation)
               const progress = getJourneyStageProgress(quotation)
@@ -173,10 +191,13 @@ export function CustomerJourneyPanel({
               const dealerName = resolvedDealer?.name || fallbackDealerName || "Unknown Dealer"
               const dealerMobile = resolvedDealer?.mobile || fallbackDealerMobile || "—"
               return (
-                <div key={quotation.id} className="rounded-md border border-border/60 px-3 py-2 space-y-2">
+                <div
+                  key={quotation.id}
+                  className="rounded-2xl border border-teal-200/80 border-l-4 border-l-teal-400 bg-gradient-to-r from-teal-50/70 via-white to-cyan-50/40 px-3 py-2.5 space-y-2.5 shadow-sm"
+                >
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <div>
-                      <p className="text-sm font-medium">
+                      <p className="text-sm font-semibold text-slate-900">
                         {formatPersonName(
                           quotation.customer?.firstName,
                           quotation.customer?.lastName,
@@ -193,13 +214,18 @@ export function CustomerJourneyPanel({
                       ) : null}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="outline" className="text-xs border-amber-200 bg-amber-50 text-amber-900">
                         File login: {fileLoginLabel}
                       </Badge>
-                      <Badge variant="outline" className="text-xs">
+                      <Badge variant="outline" className="text-xs border-violet-200 bg-violet-50 text-violet-800">
                         {hold.holder}
                       </Badge>
-                      <Badge className="text-xs">{hold.stageLabel}</Badge>
+                      <Badge
+                        variant="outline"
+                        className="text-xs border-emerald-300 bg-gradient-to-r from-emerald-100 to-teal-50 text-emerald-800"
+                      >
+                        {hold.stageLabel}
+                      </Badge>
                     </div>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
@@ -211,10 +237,13 @@ export function CustomerJourneyPanel({
                     ].map((item) => (
                       <div
                         key={item.label}
-                        className="rounded border border-border/60 px-2 py-1.5 flex items-center justify-between gap-2"
+                        className={cn(
+                          "rounded-xl border px-2 py-1.5 flex items-center justify-between gap-2",
+                          stageShellClass(item.status),
+                        )}
                       >
                         <span className="text-[11px] text-muted-foreground">{item.label}</span>
-                        <Badge className={`text-[10px] ${statusBadgeClass(item.status)}`}>
+                        <Badge className={cn("text-[10px]", statusBadgeClass(item.status))}>
                           {formatJourneyStageStatusLabel(item.status, item.stage)}
                         </Badge>
                       </div>

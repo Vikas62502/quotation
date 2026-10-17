@@ -27,6 +27,7 @@ import {
 } from "@/lib/customer-journey"
 import { formatPersonName } from "@/lib/name-display"
 import { getQuotationApprovalDate } from "@/lib/quotation-approval-date"
+import { isSocialMediaCallingLead } from "@/lib/google-sheets-social-leads"
 
 export type FullJourneyStageKey =
   | "callingData"
@@ -49,6 +50,23 @@ export type JourneyCallingAction = CallingActionLike & {
   actionAt?: string
   nextFollowUpAt?: string
   callRemark?: string
+  sourceType?: string
+  source_type?: string
+  sheetSourceId?: string
+  sheet_source_id?: string
+  uploadFileName?: string
+  upload_file_name?: string
+  fileName?: string
+  file_name?: string
+  platform?: string
+  campaignName?: string
+  campaign_name?: string
+  sheetLeadStatus?: string
+  leadStatus?: string
+  lead_status?: string
+  externalId?: string
+  external_id?: string
+  customerNote?: string
 }
 
 export type JourneyTimelineEvent = {
@@ -858,7 +876,7 @@ export function formatFullJourneyStageLabel(
   return formatJourneyStageStatusLabel(status)
 }
 
-export type JourneyCallingSourceFilter = "all" | "calling_data" | "not_calling_data"
+export type JourneyCallingSourceFilter = "all" | "social" | "normal" | "calling_data" | "not_calling_data"
 export type JourneyConnectionFilter = "all" | "connected" | "not_connected"
 export type JourneyOutcomeFilter = "all" | "interested" | "followUp" | "notInterested" | "others"
 
@@ -872,6 +890,11 @@ export function getRowLatestCallingAction(row: FullCustomerJourneyRow): JourneyC
   return [...row.callingActions].sort(
     (a, b) => new Date(b.actionAt || 0).getTime() - new Date(a.actionAt || 0).getTime(),
   )[0]
+}
+
+/** True when any calling action on the row came from Social Media / Google Sheet. */
+export function rowHasSocialMediaCalling(row: FullCustomerJourneyRow): boolean {
+  return row.callingActions.some((action) => isSocialMediaCallingLead(action))
 }
 
 /**
@@ -908,8 +931,14 @@ export function matchesJourneyCallingSourceFilter(
 ): boolean {
   if (filter === "all") return true
   const hasCalling = rowHasCallingData(row)
+  // Legacy filters (kept for older saved state / docs)
   if (filter === "calling_data") return hasCalling
-  return !hasCalling
+  if (filter === "not_calling_data") return !hasCalling
+  // Social Media vs Calling data (normal CSV) — same split as Calling Reports
+  if (!hasCalling) return false
+  const isSocial = rowHasSocialMediaCalling(row)
+  if (filter === "social") return isSocial
+  return !isSocial
 }
 
 export function matchesJourneyConnectionFilter(
