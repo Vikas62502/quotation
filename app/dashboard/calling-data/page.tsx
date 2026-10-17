@@ -3958,26 +3958,31 @@ export default function CallingDataPage() {
                             : "border-blue-200/80 bg-gradient-to-b from-white to-blue-50/40 shadow-sm border-l-4 border-l-blue-500",
                         )}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-semibold truncate">{lead.name} • {lead.mobile}</p>
-                          <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-blue-200 bg-blue-50 text-blue-800">
-                            Decision Pending
-                          </Badge>
-                          {socialLead ? (
-                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Social
+                        <div className="flex flex-col gap-1 min-w-0 sm:flex-row sm:items-start sm:gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold break-words leading-snug">{lead.name || "—"}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{lead.mobile || "No mobile"}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end sm:shrink-0">
+                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-blue-200 bg-blue-50 text-blue-800">
+                              Decision Pending
                             </Badge>
-                          ) : (
-                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-orange-200 bg-orange-50 text-orange-800">
-                              Calling data
-                            </Badge>
-                          )}
-                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(lead.nextFollowUpAt)}
-                          </span>
+                            {socialLead ? (
+                              <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Social
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-orange-200 bg-orange-50 text-orange-800">
+                                Calling data
+                              </Badge>
+                            )}
+                            <span className="text-[11px] text-muted-foreground">
+                              {formatDateTime(lead.nextFollowUpAt)}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p className="text-[11px] text-muted-foreground break-words sm:truncate">
                           {[
                             lead.kNumber ? `K ${lead.kNumber}` : null,
                             lead.address || null,
@@ -4206,30 +4211,35 @@ export default function CallingDataPage() {
                               : "border-amber-200/80 bg-gradient-to-b from-white to-amber-50/35 shadow-sm border-l-4 border-l-amber-400",
                         )}
                       >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "shrink-0 h-5 px-1.5 text-[10px]",
-                              notConnected
-                                ? "border-rose-200 bg-rose-50 text-rose-800"
-                                : "border-emerald-200 bg-emerald-50 text-emerald-800",
-                            )}
-                          >
-                            {notConnected ? "Not Connected" : "Connected"}
-                          </Badge>
-                          {socialLead ? (
-                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Social
+                        <div className="flex flex-col gap-1 min-w-0 sm:flex-row sm:items-start sm:gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold break-words leading-snug">{item.name || "—"}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{item.mobile || "No mobile"}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end sm:shrink-0">
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "shrink-0 h-5 px-1.5 text-[10px]",
+                                notConnected
+                                  ? "border-rose-200 bg-rose-50 text-rose-800"
+                                  : "border-emerald-200 bg-emerald-50 text-emerald-800",
+                              )}
+                            >
+                              {notConnected ? "Not Connected" : "Connected"}
                             </Badge>
-                          ) : null}
-                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
-                            {item.action || parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
-                          </span>
+                            {socialLead ? (
+                              <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Social
+                              </Badge>
+                            ) : null}
+                            <span className="text-[11px] text-muted-foreground">
+                              {item.action || parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p className="text-[11px] text-muted-foreground break-words sm:truncate">
                           {[
                             item.kNumber ? `K ${item.kNumber}` : null,
                             item.address || null,
@@ -4477,20 +4487,25 @@ export default function CallingDataPage() {
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     const socialLead = isSocialMediaCallingLead(item)
                     return (
-                      <div key={`connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5", historyCardClass(item, "connected"))}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
-                          {socialLead ? (
-                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Social
-                            </Badge>
-                          ) : null}
-                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
-                            {parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
-                          </span>
+                      <div key={`connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5 min-w-0", historyCardClass(item, "connected"))}>
+                        <div className="flex flex-col gap-1 min-w-0 sm:flex-row sm:items-start sm:gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold break-words leading-snug">{item.name || "—"}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{item.mobile || "No mobile"}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end sm:shrink-0">
+                            {socialLead ? (
+                              <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Social
+                              </Badge>
+                            ) : null}
+                            <span className="text-[11px] text-muted-foreground">
+                              {parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p className="text-[11px] text-muted-foreground break-words sm:truncate">
                           {[
                             item.kNumber ? `K ${item.kNumber}` : null,
                             item.address || null,
@@ -4666,20 +4681,25 @@ export default function CallingDataPage() {
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     const socialLead = isSocialMediaCallingLead(item)
                     return (
-                      <div key={`not-connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5", historyCardClass(item, "not_connected"))}>
-                        <div className="flex items-center gap-2 min-w-0">
-                          <p className="font-semibold truncate">{item.name} • {item.mobile}</p>
-                          {socialLead ? (
-                            <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              Social
-                            </Badge>
-                          ) : null}
-                          <span className="ml-auto text-[11px] text-muted-foreground whitespace-nowrap">
-                            {selectedReason || "N/A"} · {formatDateTime(item.actionAt)}
-                          </span>
+                      <div key={`not-connected-${item.id}`} className={cn("rounded-lg px-3 py-2 text-sm space-y-1.5 min-w-0", historyCardClass(item, "not_connected"))}>
+                        <div className="flex flex-col gap-1 min-w-0 sm:flex-row sm:items-start sm:gap-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="font-semibold break-words leading-snug">{item.name || "—"}</p>
+                            <p className="text-xs text-muted-foreground tabular-nums">{item.mobile || "No mobile"}</p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end sm:shrink-0">
+                            {socialLead ? (
+                              <Badge variant="outline" className="shrink-0 h-5 px-1.5 text-[10px] border-sky-200 bg-sky-50 text-sky-900 gap-0.5">
+                                <Sparkles className="w-2.5 h-2.5" />
+                                Social
+                              </Badge>
+                            ) : null}
+                            <span className="text-[11px] text-muted-foreground">
+                              {selectedReason || "N/A"} · {formatDateTime(item.actionAt)}
+                            </span>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground truncate">
+                        <p className="text-[11px] text-muted-foreground break-words sm:truncate">
                           {[
                             item.kNumber ? `K ${item.kNumber}` : null,
                             item.address || null,

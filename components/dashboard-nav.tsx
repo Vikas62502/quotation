@@ -321,12 +321,15 @@ export function DashboardNav() {
                         <Menu className="w-5 h-5" />
                       </Button>
                     </SheetTrigger>
-                    <SheetContent side="right" className="w-[85vw] max-w-sm">
-                      <SheetHeader>
+                    <SheetContent
+                      side="right"
+                      className="w-[85vw] max-w-sm p-0 gap-0 overflow-hidden"
+                    >
+                      <SheetHeader className="shrink-0 border-b border-border/60 px-4 pt-4 pb-3 pr-12">
                         <SheetTitle>Navigation</SheetTitle>
                         <SheetDescription>Move quickly across dashboard sections.</SheetDescription>
                       </SheetHeader>
-                      <div className="px-4 pb-4 space-y-2">
+                      <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 py-3 space-y-2 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
                         {showAccessSwitcher ? (
                           <>
                             <p className="text-xs font-medium text-muted-foreground px-1">Your access</p>
@@ -334,7 +337,7 @@ export function DashboardNav() {
                               <SheetClose asChild key={item.key}>
                                 <Button
                                   variant={isAccessSectionActive(item.key, pathname) ? "default" : "ghost"}
-                                  className="w-full justify-start"
+                                  className="w-full justify-start h-10"
                                   onClick={() => router.push(item.href)}
                                 >
                                   {item.label}
@@ -348,7 +351,7 @@ export function DashboardNav() {
                           <SheetClose asChild key={item.href}>
                             <Button
                               variant="ghost"
-                              className={cn("w-full justify-start gap-2", dealerNavButtonClass(pathname, item.href))}
+                              className={cn("w-full justify-start gap-2 h-10", dealerNavButtonClass(pathname, item.href))}
                               onClick={() => router.push(item.href)}
                             >
                               <item.icon className="w-4 h-4" />
@@ -364,7 +367,7 @@ export function DashboardNav() {
                                 <Button
                                   type="button"
                                   variant="ghost"
-                                  className="w-full justify-start gap-2"
+                                  className="w-full justify-start gap-2 h-10"
                                   onClick={() => setPricingViewScope(opt.value as PricingPdfScope)}
                                 >
                                   <Eye className="w-4 h-4" />
@@ -377,7 +380,7 @@ export function DashboardNav() {
                         <SheetClose asChild>
                           <Button
                             variant="outline"
-                            className="w-full justify-start gap-2 text-destructive border-destructive/30 hover:text-destructive"
+                            className="w-full justify-start gap-2 h-10 text-destructive border-destructive/30 hover:text-destructive"
                             onClick={handleLogout}
                           >
                             <LogOut className="w-4 h-4" />
