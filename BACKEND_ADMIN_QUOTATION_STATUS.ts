@@ -1583,6 +1583,19 @@ export function callingActionToApiJson(row) {
  * If you currently store only callRemark text, you can still pass these
  * values through by parsing during GET responses (parse on the fly).
  */
+/**
+ * Map tagged Connected / transfer status_text → sheet Final Decision.
+ * SPA also sends finalDecision / final_decision via enrichCallingActionPayload.
+ */
+export function mapTaggedStatusToFinalDecision(statusText) {
+  const s = String(statusText || "").trim().toLowerCase()
+  if (!s) return undefined
+  if (s.includes("not interested") || s.includes("not intrested")) return "Not Interested"
+  if (s.includes("interested")) return "Interested"
+  if (s.includes("follow-up") || s.includes("follow up") || s.includes("pending")) return "Pending"
+  return undefined
+}
+
 export async function patchDealerCallingQueueAction(req, res, db) {
   try {
     const dealer = req.dealer ?? req.user
@@ -1605,7 +1618,8 @@ export async function patchDealerCallingQueueAction(req, res, db) {
     const normalizedCategory = normalizeStatusCategory(parsed.statusCategory)
 
     // Suggested DB fields on hr/dealer calling leads table:
-    //   status_category, status_text, remark
+    //   status_category, status_text, remark, call_remark,
+    //   final_decision, final_decision_reason, second_call_response, first_call_response
     const updates = {
       action,
       nextFollowUpAt: body.nextFollowUpAt ?? null,
@@ -1630,6 +1644,32 @@ export async function patchDealerCallingQueueAction(req, res, db) {
 
       // Maintain legacy combined string if you have the column.
       updates.call_remark = `[${normalizedCategory}] ${parsed.status}${parsed.remark ? ` | ${parsed.remark}` : ""}`
+
+      // Sheet fields — Connected outcome / Not Connected→Connected transfer.
+      // Accept SPA body (finalDecision, secondCallResponse) or derive from tagged status.
+      const finalDecision =
+        body.finalDecision ||
+        body.final_decision ||
+        mapTaggedStatusToFinalDecision(parsed.status)
+      if (finalDecision) {
+        updates.final_decision = finalDecision
+        updates.final_decision_reason =
+          body.finalDecisionReason ||
+          body.final_decision_reason ||
+          parsed.remark ||
+          undefined
+        updates.second_call_response =
+          body.secondCallResponse ||
+          body.second_call_response ||
+          updates.call_remark
+      }
+
+      // First Not Connected reason → keep as 1st call if column empty (optional).
+      const isNotConnectedTag = normalizedCategory === "call_connectivity"
+      if (isNotConnectedTag) {
+        updates.first_call_response =
+          body.firstCallResponse || body.first_call_response || updates.call_remark
+      }
     }
 
     // Persist:
@@ -1639,6 +1679,22 @@ export async function patchDealerCallingQueueAction(req, res, db) {
     await db.dealerCallingLeads.updateById(leadId, updates)
 
     const updatedRow = await db.dealerCallingLeads.findById(leadId)
+
+    // P0: push Final Decision / 2nd Call / Remarks back to Google Sheet for sheet leads.
+    // Prefer immediate write-back; cron sync-all (every 30 min) is the fallback ≤ ~1 hour.
+    // Import writeBackHrLeadToSheet from BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts (or your sheets module).
+    if (updatedRow?.sheet_source_id || updatedRow?.sheetSourceId) {
+      try {
+        // await writeBackHrLeadToSheet(updatedRow, { dealerNameById })
+        if (typeof db.writeBackHrLeadToSheet === "function") {
+          await db.writeBackHrLeadToSheet(updatedRow)
+        }
+      } catch (writeErr) {
+        console.error("sheet write-back after calling action failed", writeErr)
+        // Do not fail the dealer PATCH — cron will retry write-back.
+      }
+    }
+
     res.json({
       success: true,
       lead: callingActionToApiJson(updatedRow),

@@ -4452,9 +4452,28 @@ Same `PATCH /api/dealers/me/calling-queue/{leadId}/action`. Classify from the **
 | Connected → Not Interested | `not_interested` | `competition` | `Not Interested Currently` | omit |
 | Connected → Decision Pending | `follow_up` (alias `rescheduled`) | `schedule` | `Follow-up Pending` | ISO when reschedule |
 | Not Connected → reason | `not_interested` | `call_connectivity` | `Call Unanswered` / `Busy / Line Busy` / … | omit |
-| Not Connected tab **Move** | same as Connected rows | | | free remark `Transfer Reason: {text}` |
+| Not Connected tab **Move** | same as Connected rows | | | free remark `Transferred from Not Connected: {text}` (legacy `Transfer Reason:` still OK) |
 
 `callRemark` is tagged, e.g. `[call_connectivity] Call Unanswered | no pickup`. Persist `status_category` + `status_text` + free `remark` + `call_remark` (§4.1 / §E).
+
+**Sheet write-back (P0) on Connected outcome / transfer** — SPA now also sends:
+
+```json
+{
+  "action": "called",
+  "callRemark": "[customer_intent] Interested | Transferred from Not Connected: Intrested hai coustomer",
+  "finalDecision": "Interested",
+  "final_decision": "Interested",
+  "finalDecisionReason": "Transferred from Not Connected: Intrested hai coustomer",
+  "secondCallResponse": "[customer_intent] Interested | Transferred from Not Connected: Intrested hai coustomer",
+  "second_call_response": "[customer_intent] Interested | Transferred from Not Connected: Intrested hai coustomer"
+}
+```
+
+Backend MUST:
+1. Persist `final_decision`, `final_decision_reason`, `second_call_response` on the lead (derive from `status_text` if body omits them — see `mapTaggedStatusToFinalDecision` / `applyConnectedOutcomePatch`).
+2. Call `writeBackHrLeadToSheet(lead)` after PATCH for sheet leads (`sheet_source_id` set), so Google Sheet **Final Decision** becomes **Interested** (not stale Not Interested). Immediate preferred; cron sync-all every 30 min is fallback (≤ ~1 hour).
+3. Pull sync must **not** overwrite DB `final_decision` / call fields from empty or older sheet cells.
 
 After Dialled Update:
 - **Not Connected** reason → latest action on **Not Connected** + **Dialled**; leave **Connected** / **Scheduled**
@@ -4469,6 +4488,7 @@ Decision Pending: accept `follow_up` **or** `rescheduled`; set lead `status = re
 - Put Not Connected reschedules on Scheduled
 - Return HTTP 500 for valid `follow_up` + `nextFollowUpAt`
 - Require Part 1–4 category pickers on Dialled / Scheduled / Connected (SPA sends Connected | Not Connected, then the conditional second field)
+- Leave sheet Final Decision as Not Interested after dealer transfers/updates to Interested
 
 ### QA
 
@@ -4478,8 +4498,9 @@ Decision Pending: accept `follow_up` **or** `rescheduled`; set lead `status = re
 4. Dialled: change to Connected + Interested → Update → Connected + Dialled; gone from Not Connected.
 5. Not Connected **Move to Connected** + Interested → appears on Connected; gone from Not Connected.
 6. Refresh / second device shows the same buckets (no local-only transfer).
+7. Sheet lead transfer → Interested → DB `final_decision=Interested`, `second_call_response` tagged; sheet Final Decision updates within write-back / ≤1h cron; HR **Leads from sheet** shows Interested (not Not interested).
 
-**Copy-paste:** `BACKEND_CALLING_DATA_TABS.ts` · REQUIRED **§BQ**
+**Copy-paste:** `BACKEND_CALLING_DATA_TABS.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchDealerCallingQueueAction`) · `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` (`writeBackHrLeadToSheet`) · REQUIRED **§BQ**
 
 ---
 

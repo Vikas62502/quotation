@@ -17,6 +17,7 @@ import {
   extractUploadBatchesList,
   extractUploadRowsFromBatchResponse,
   filterSourcesToDiscoveredTabs,
+  extractLatestTaggedCallStatus,
   getSocialLeadStatusDisplay,
   isGoogleSheetsCredentialsPendingError,
   mapHrUploadRowToSocialLead,
@@ -26,6 +27,7 @@ import {
   normalizeSocialLeadsResponse,
   readHrSheetSourcesFromStorage,
   reconcileSheetSourcesWithDiscoveredTabs,
+  rowHasTransferFromNotConnected,
   SOCIAL_LEAD_STATUS_TABS,
   type SocialLeadStatusBucket,
   type SocialMediaLeadRow,
@@ -33,7 +35,7 @@ import {
   writeDiscoveredSheetTabsToStorage,
   writeHrSheetSourcesToStorage,
 } from "@/lib/google-sheets-social-leads"
-import { Loader2, RefreshCw, Sheet } from "lucide-react"
+import { ArrowLeftRight, Loader2, RefreshCw, Sheet } from "lucide-react"
 
 type DealerOption = {
   id: string
@@ -864,6 +866,13 @@ export function HrSocialMediaSheetsPanel({
                     <div className="space-y-2 max-h-[480px] overflow-auto pr-1">
                       {filteredLeads.map((row, idx) => {
                         const display = getSocialLeadStatusDisplay(row)
+                        const transferred = rowHasTransferFromNotConnected(row)
+                        const latestTagged = extractLatestTaggedCallStatus(row)
+                        const sheetFinalStale =
+                          Boolean(row.finalDecision) &&
+                          Boolean(latestTagged) &&
+                          display.label !== "Not interested" &&
+                          /not interest/i.test(String(row.finalDecision || ""))
                         return (
                           <div
                             key={row.id || `${row.mobile}-${idx}`}
@@ -878,9 +887,20 @@ export function HrSocialMediaSheetsPanel({
                                   {row.campaignName ? ` · ${row.campaignName}` : ""}
                                 </p>
                               </div>
-                              <Badge variant="outline" className={display.badgeClassName}>
-                                {display.label}
-                              </Badge>
+                              <div className="flex flex-wrap items-center gap-1.5 justify-end">
+                                {transferred ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="h-5 px-1.5 text-[10px] border-amber-200 bg-amber-50 text-amber-900 gap-0.5"
+                                  >
+                                    <ArrowLeftRight className="w-2.5 h-2.5" />
+                                    From Not Connected
+                                  </Badge>
+                                ) : null}
+                                <Badge variant="outline" className={display.badgeClassName}>
+                                  {display.label}
+                                </Badge>
+                              </div>
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-xs">
                               {row.address ? (
@@ -905,7 +925,19 @@ export function HrSocialMediaSheetsPanel({
                                 <p><span className="text-muted-foreground">Remarks:</span> {row.remarks}</p>
                               ) : null}
                               {row.finalDecision ? (
-                                <p><span className="text-muted-foreground">Final:</span> {row.finalDecision}</p>
+                                <p>
+                                  <span className="text-muted-foreground">Final:</span>{" "}
+                                  {sheetFinalStale ? (
+                                    <span>
+                                      <span className="line-through text-muted-foreground">{row.finalDecision}</span>
+                                      {" → "}
+                                      <span className="font-medium text-emerald-800">{display.label}</span>
+                                      <span className="text-muted-foreground"> (dealer update; sheet sync ≤1h)</span>
+                                    </span>
+                                  ) : (
+                                    row.finalDecision
+                                  )}
+                                </p>
                               ) : null}
                             </div>
                           </div>

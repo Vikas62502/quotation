@@ -501,10 +501,16 @@ function sheetsColumnLetter(index0) {
  * Hook points (call writeBackHrLeadToSheet):
  * 1. After assignUnassignedWithActiveCap — for each newly assigned sheet lead
  * 2. After dealer calling-queue action (submit / complete / reschedule / not_interested)
+ *    — including Not Connected → Connected transfer. Persist final_decision +
+ *      second_call_response from tagged callRemark (see applyConnectedOutcomePatch),
+ *      then writeBack so sheet Final Decision matches Interested within the next
+ *      cron cycle (every 30 min sync-all, i.e. within ~30–60 min / “1 hour”).
  * 3. After HR/admin PATCH that changes assignment or calling fields on sheet leads
  *
  * Pull sync (syncSheetTabSource) MUST NOT overwrite these DB fields from empty sheet cells
  * for existing external_id rows — DB is source of truth for assignment + calling status.
+ * Especially: do not reset final_decision to an older sheet "Not Interested" when DB
+ * already has Interested from a dealer transfer/update.
  */
 
 // -----------------------------------------------------------------------------

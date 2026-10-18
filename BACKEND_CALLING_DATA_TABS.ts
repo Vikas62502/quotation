@@ -203,9 +203,15 @@ function dedupeByLeadId(items) {
  *   Connected outcome    → connectedActions + dialledActions; leave notConnected;
  *                          scheduledLeads only if decision_pending
  *
- * Not Connected "Move to Connected" uses the Connected rows; free remark includes
- * `Transfer Reason: …`. After persist, that lead MUST appear in connectedActions
- * (latest action) and MUST leave notConnectedActions.
+ * Not Connected "Move to Connected" free remark is the transfer message only:
+ *   `Transferred from Not Connected: …` (legacy: `Transfer Reason: …` still accepted).
+ * After persist, that lead MUST appear in connectedActions (latest action) and
+ * MUST leave notConnectedActions.
+ *
+ * Sheet write-back (P0, within cron ≤ ~30–60 min): on Connected outcome / transfer,
+ * set final_decision from tagged status (Interested / Not Interested / Pending),
+ * second_call_response = call_remark, final_decision_reason = free remark, then
+ * call writeBackHrLeadToSheet so HR "Leads from sheet" matches dealer outcome.
  *
  * Decision Pending: accept action `follow_up` OR `rescheduled`. Set lead status
  * `rescheduled` when nextFollowUpAt is present. Never 500 — see §E.2.
@@ -231,7 +237,9 @@ function dedupeByLeadId(items) {
  * Transfer Not Connected → Connected:
  *   {
  *     "action": "called",
- *     "callRemark": "[customer_intent] Interested | called back | Transfer Reason: customer picked up later"
+ *     "callRemark": "[customer_intent] Interested | Transferred from Not Connected: Intrested hai coustomer",
+ *     "finalDecision": "Interested",
+ *     "secondCallResponse": "[customer_intent] Interested | Transferred from Not Connected: Intrested hai coustomer"
  *   }
  */
 export function applyConnectedOutcomePatch(lead, body) {
@@ -241,16 +249,35 @@ export function applyConnectedOutcomePatch(lead, body) {
   const statusText = body.statusText || body.status_text || parsed.status
   const statusCategory = body.statusCategory || body.status_category || parsed.statusCategory
   const remark = body.remark || parsed.remark
+  const callRemark = body.callRemark || body.call_remark
 
   const isHold = action === "follow_up" || action === "rescheduled" || Boolean(nextFollowUpAt)
   lead.status = isHold ? "rescheduled" : "completed"
   lead.action = action
-  lead.call_remark = body.callRemark || body.call_remark
+  lead.call_remark = callRemark
   lead.status_category = statusCategory
   lead.status_text = statusText
   lead.remark = remark
   lead.next_follow_up_at = isHold ? nextFollowUpAt : null
   lead.action_at = body.actionAt || body.action_at || new Date().toISOString()
+
+  // Sheet Final Decision + 2nd call — SPA also sends these via enrichCallingActionPayload.
+  const st = String(statusText || "").toLowerCase()
+  const finalFromBody = body.finalDecision || body.final_decision
+  if (finalFromBody) {
+    lead.final_decision = finalFromBody
+  } else if (st.includes("interested") && !st.includes("not interested") && !st.includes("not intrested")) {
+    lead.final_decision = "Interested"
+  } else if (st.includes("not interested") || st.includes("not intrested")) {
+    lead.final_decision = "Not Interested"
+  } else if (st.includes("follow-up") || st.includes("follow up") || st.includes("pending")) {
+    lead.final_decision = "Pending"
+  }
+  lead.final_decision_reason =
+    body.finalDecisionReason || body.final_decision_reason || remark || lead.final_decision_reason
+  lead.second_call_response =
+    body.secondCallResponse || body.second_call_response || callRemark || lead.second_call_response
+
   return lead
 }
 

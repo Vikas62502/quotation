@@ -92,6 +92,23 @@ export type CallingLeadActionPayload = {
   statusText?: string
   status_text?: string
   remark?: string
+  /** Sheet Final Decision — so write-back updates within ~30–60 min sync. */
+  finalDecision?: string
+  final_decision?: string
+  finalDecisionReason?: string
+  final_decision_reason?: string
+  secondCallResponse?: string
+  second_call_response?: string
+}
+
+/** Map tagged Connected outcome → sheet Final Decision cell. */
+export function mapTaggedStatusToFinalDecision(statusText?: string): string | undefined {
+  const s = String(statusText || "").trim().toLowerCase()
+  if (!s) return undefined
+  if (s.includes("not interested") || s.includes("not intrested")) return "Not Interested"
+  if (s.includes("interested")) return "Interested"
+  if (s.includes("follow-up") || s.includes("follow up") || s.includes("pending")) return "Pending"
+  return undefined
 }
 
 /** Send camelCase + snake_case + structured fields so backends persist remarks reliably. */
@@ -117,6 +134,11 @@ export function enrichCallingActionPayload(payload: CallingLeadActionPayload): C
     statusText: statusText || undefined,
   })
 
+  const finalDecision =
+    payload.finalDecision ||
+    payload.final_decision ||
+    mapTaggedStatusToFinalDecision(statusText)
+
   return {
     ...enriched,
     callRemark,
@@ -126,6 +148,16 @@ export function enrichCallingActionPayload(payload: CallingLeadActionPayload): C
     statusText: statusText || undefined,
     status_text: statusText || undefined,
     remark: freeRemark || undefined,
+    ...(finalDecision
+      ? {
+          finalDecision,
+          final_decision: finalDecision,
+          finalDecisionReason: freeRemark || payload.finalDecisionReason || payload.final_decision_reason,
+          final_decision_reason: freeRemark || payload.finalDecisionReason || payload.final_decision_reason,
+          secondCallResponse: callRemark,
+          second_call_response: callRemark,
+        }
+      : {}),
   }
 }
 

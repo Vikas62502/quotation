@@ -155,11 +155,68 @@ export type SocialLeadStatusDisplay = {
   bucket: SocialLeadStatusBucket
 }
 
+/** Latest `[category] Status` tag from call logs / remarks (dealer Calling Data sync). */
+export function extractLatestTaggedCallStatus(row: SocialMediaLeadRow): string {
+  // Prefer 2nd call / remarks over 1st call so a transfer to Interested wins
+  // over an earlier Call Unanswered / Not Interested first-call log.
+  const sources = [
+    row.secondCallResponse,
+    row.remarks,
+    row.remarks2,
+    row.finalDecisionReason,
+    row.firstCallResponse,
+  ]
+  for (const part of sources) {
+    const text = String(part || "")
+    const matches = [...text.matchAll(/\[[^\]]+\]\s*([^|\n]+)/g)]
+    if (matches.length > 0) {
+      return String(matches[matches.length - 1]?.[1] || "").trim()
+    }
+  }
+  return ""
+}
+
+export function rowHasTransferFromNotConnected(row: SocialMediaLeadRow): boolean {
+  const blob = [row.secondCallResponse, row.remarks, row.remarks2, row.firstCallResponse]
+    .map((part) => String(part || ""))
+    .join("\n")
+    .toLowerCase()
+  return blob.includes("transfer reason:") || blob.includes("transferred from not connected")
+}
+
 /** Sheet lead_status + final decision → badge / card colours (match spreadsheet semantics). */
 export function getSocialLeadStatusDisplay(row: SocialMediaLeadRow): SocialLeadStatusDisplay {
   const leadStatus = String(row.leadStatus || "").trim().toUpperCase()
   const final = String(row.finalDecision || "").trim().toLowerCase()
   const reason = String(row.finalDecisionReason || row.remarks || "").toLowerCase()
+  const latestTagged = extractLatestTaggedCallStatus(row).toLowerCase()
+
+  // Prefer latest dealer calling tag over a stale Final Decision (e.g. transferred
+  // Not Connected → Interested while Final still says Not Interested).
+  if (
+    latestTagged &&
+    latestTagged.includes("interested") &&
+    !latestTagged.includes("not interested") &&
+    !latestTagged.includes("not intrested")
+  ) {
+    return {
+      label: "Interested / Visit",
+      badgeClassName: "border-emerald-200 text-emerald-900 bg-emerald-50",
+      cardAccentClassName: "border-l-emerald-500",
+      bucket: "interested",
+    }
+  }
+  if (
+    latestTagged.includes("not interested") ||
+    latestTagged.includes("not intrested")
+  ) {
+    return {
+      label: "Not interested",
+      badgeClassName: "border-rose-200 text-rose-900 bg-rose-50",
+      cardAccentClassName: "border-l-rose-500",
+      bucket: "not_interested",
+    }
+  }
 
   if (final.includes("not interested") || reason.includes("not intrested") || reason.includes("not interested")) {
     return {

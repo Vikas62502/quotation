@@ -60,7 +60,7 @@ import { downloadPricingPdf, PRICING_PDF_SCOPE_OPTIONS, type PricingPdfScope } f
 import { downloadCsvFile } from "@/lib/excel-column-export"
 import { PricingSheetViewDialog } from "@/components/pricing-sheet-view-dialog"
 import { usePricingTables } from "@/lib/use-pricing-tables"
-import { PhoneCall, Pencil, Check, X, Loader2, Download, ChevronDown, Eye, Sheet, Sparkles, PhoneOff, PhoneIncoming, CalendarDays, User, Phone, MapPin, Hash, StickyNote, Copy, Inbox } from "lucide-react"
+import { PhoneCall, Pencil, Check, X, Loader2, Download, ChevronDown, Eye, Sheet, Sparkles, PhoneOff, PhoneIncoming, CalendarDays, User, Phone, MapPin, Hash, StickyNote, Copy, Inbox, ArrowLeftRight } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
@@ -1604,8 +1604,18 @@ export default function CallingDataPage() {
   const extractTransferReason = (remark?: string) => {
     const text = (remark || "").trim()
     if (!text) return ""
-    const match = text.match(/(?:^|\|\s*)Transfer Reason:\s*([^|]+)/i)
+    const match = text.match(
+      /(?:^|\|\s*)(?:Transfer Reason|Transferred from Not Connected):\s*([^|]+)/i,
+    )
     return (match?.[1] || "").trim()
+  }
+
+  /** Prefer transfer message as the editable remark when lead was moved from Not Connected. */
+  const getConnectedDisplayRemark = (item: ActionLogItem) => {
+    const parsed = parseTaggedRemark(item.callRemark)
+    const transferReason = extractTransferReason(parsed.remark)
+    if (transferReason) return transferReason
+    return getSavedActionRemarkText(item)
   }
 
   const historyCardClass = (item: ActionLogItem, kind: "connected" | "not_connected") => {
@@ -4479,11 +4489,12 @@ export default function CallingDataPage() {
                   {pagedConnected.items.map((item) => {
                     const parsed = parseTaggedRemark(item.callRemark)
                     const transferReasonText = extractTransferReason(parsed.remark)
+                    const wasTransferred = Boolean(transferReasonText)
                     const rowKey = actionRowKey(item)
                     const derivedOutcome = getConnectedOutcomeForStatus((parsed.status || "").trim())
                     const connectedOutcome = connectedCardOutcomes[rowKey] ?? derivedOutcome
                     const isReschedule = recentRescheduleChecks[rowKey] ?? false
-                    const remark = recentEditRemarks[rowKey] ?? getSavedActionRemarkText(item)
+                    const remark = recentEditRemarks[rowKey] ?? getConnectedDisplayRemark(item)
                     const editedTime = recentEditTimes[rowKey] ?? formatForDatetimeLocal(item.nextFollowUpAt)
                     const socialLead = isSocialMediaCallingLead(item)
                     return (
@@ -4500,6 +4511,16 @@ export default function CallingDataPage() {
                                 Social
                               </Badge>
                             ) : null}
+                            {wasTransferred ? (
+                              <Badge
+                                variant="outline"
+                                className="shrink-0 h-5 px-1.5 text-[10px] border-amber-200 bg-amber-50 text-amber-900 gap-0.5"
+                                title="Moved from Not Connected"
+                              >
+                                <ArrowLeftRight className="w-2.5 h-2.5" />
+                                From Not Connected
+                              </Badge>
+                            ) : null}
                             <span className="text-[11px] text-muted-foreground">
                               {parsed.status || "N/A"} · {formatDateTime(item.actionAt)}
                             </span>
@@ -4511,15 +4532,22 @@ export default function CallingDataPage() {
                             item.address || null,
                             item.platform,
                             item.campaignName,
-                            transferReasonText ? `Transfer: ${transferReasonText}` : null,
                           ]
                             .filter(Boolean)
                             .join(" · ") || "K No / Address —"}
                         </p>
+                        {wasTransferred ? (
+                          <div className="flex items-start gap-1.5 rounded-md border border-amber-200/80 bg-amber-50/70 px-2 py-1.5 text-[11px] text-amber-950">
+                            <ArrowLeftRight className="mt-0.5 h-3 w-3 shrink-0 text-amber-700" />
+                            <p className="min-w-0 break-words">
+                              <span className="font-medium">Transfer:</span> {transferReasonText}
+                            </p>
+                          </div>
+                        ) : null}
                         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.4fr)_11rem_auto_12rem_auto] gap-1.5 items-center">
                           <Input
                             className="h-8"
-                            placeholder="Remark"
+                            placeholder={wasTransferred ? "Transfer message" : "Remark"}
                             value={remark}
                             onChange={(e) => setRecentEditRemarks((prev) => ({ ...prev, [rowKey]: e.target.value }))}
                           />
@@ -4777,10 +4805,9 @@ export default function CallingDataPage() {
                                   nextFollowUpAt = isReschedule && editedTime ? new Date(editedTime).toISOString() : undefined
                                 }
                                 if (isReschedule && !editedTime) return
-                                const combinedRemark = [remark, `Transfer Reason: ${transferReason.trim()}`]
-                                  .map((part) => part.trim())
-                                  .filter(Boolean)
-                                  .join(" | ")
+                                // Primary remark = transfer message (not the old Not Connected reason).
+                                const transferMsg = transferReason.trim()
+                                const combinedRemark = `Transferred from Not Connected: ${transferMsg}`
                                 submitAction(
                                   item.leadId,
                                   {
@@ -4793,11 +4820,16 @@ export default function CallingDataPage() {
                                     skipRescheduleFallback: transferOutcome !== "decision_pending",
                                     afterSuccess: () => {
                                       setNotConnectedTransferChecks((prev) => ({ ...prev, [rowKey]: false }))
+                                      setNotConnectedTransferReasons((prev) => {
+                                        const next = { ...prev }
+                                        delete next[rowKey]
+                                        return next
+                                      })
                                       setFlowTab("connected")
                                       setConnectedPage(1)
                                       toast({
                                         title: "Moved to Connected",
-                                        description: `${item.name} is now in Connected Data.`,
+                                        description: `${item.name} is now in Connected Data. Sheet Final Decision will sync within ~1 hour.`,
                                       })
                                     },
                                   },
