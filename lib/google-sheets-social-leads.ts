@@ -35,12 +35,18 @@ export type SocialMediaLeadSource = {
   uploadId?: string
 }
 
+export type SocialFormAnswer = {
+  question: string
+  answer: string
+}
+
 export type SocialMediaLeadRow = {
   id?: string
   externalId?: string
   name: string
   mobile: string
   altMobile?: string
+  email?: string
   address?: string
   city?: string
   state?: string
@@ -64,6 +70,8 @@ export type SocialMediaLeadRow = {
   assignedDealerName?: string
   assignmentStatus?: string
   sourceTab?: string
+  /** Meta lead-form Q&A (electricity bill, install timeline, rooftop, …). */
+  formAnswers?: SocialFormAnswer[]
   raw: Record<string, string>
 }
 
@@ -75,6 +83,156 @@ const getFromRaw = (raw: Record<string, string>, aliases: string[]) => {
     if (value) return value
   }
   return ""
+}
+
+/** Meta / CRM columns — not treated as lead-form questions. */
+const SOCIAL_SHEET_NON_QUESTION_KEYS = new Set(
+  [
+    "id",
+    "createdtime",
+    "adid",
+    "adname",
+    "adsetid",
+    "adsetname",
+    "campaignid",
+    "campaignname",
+    "formid",
+    "formname",
+    "isorganic",
+    "platform",
+    "fullname",
+    "name",
+    "phonenumber",
+    "phone",
+    "mobile",
+    "email",
+    "emailaddress",
+    "leadstatus",
+    "streetaddress",
+    "address",
+    "postcode",
+    "pincode",
+    "remarks",
+    "remarks2",
+    "kw",
+    "1stcallresponse",
+    "2ndcallresponse",
+    "firstcallresponse",
+    "secondcallresponse",
+    "login",
+    "finaldecison",
+    "finaldecision",
+    "reasonoffinaldecision",
+    "assigneddealerid",
+    "assigneddealername",
+    "assignmentstatus",
+    "dealerid",
+    "dealername",
+  ].map(normalizeHeaderKey),
+)
+
+/** Known Meta form questions → short dealer-facing labels (EN + HI). */
+const SOCIAL_FORM_QUESTION_LABELS: Array<{ keys: string[]; label: string }> = [
+  {
+    keys: [
+      "what_is_your_average_monthly_electricity_bill?",
+      "whatisyouraveragemonthlyelectricitybill",
+      "आपका_महीने_का_बिजली_बिल_कितना_आता_है?",
+    ],
+    label: "Average monthly electricity bill",
+  },
+  {
+    keys: [
+      "when_are_you_planning_to_install_solar?",
+      "whenareyouplanningtoinstallsolar",
+      "आप_सोलर_सिस्टम_कब_लगवाना_चाहते_हैं?",
+    ],
+    label: "When planning to install solar",
+  },
+  {
+    keys: [
+      "do_you_have_an_open_rooftop?",
+      "doyouhaveanopenrooftop",
+      "क्या_आपके_पास_खुली_छत_है?",
+    ],
+    label: "Open rooftop",
+  },
+  {
+    keys: ["आप_सोलर_कहाँ_लगवाना_चाहते_हैं?"],
+    label: "Preferred solar location",
+  },
+]
+
+export function humanizeSheetFormAnswer(value: string): string {
+  const text = String(value || "")
+    .replace(/_-+_/g, " - ")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!text) return ""
+  return text.replace(/^[a-z]/, (ch) => ch.toUpperCase())
+}
+
+export function humanizeSheetFormQuestion(key: string): string {
+  const normalized = normalizeHeaderKey(key)
+  for (const entry of SOCIAL_FORM_QUESTION_LABELS) {
+    if (entry.keys.some((k) => normalizeHeaderKey(k) === normalized)) return entry.label
+  }
+  return String(key || "")
+    .replace(/\?/g, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\w/, (ch) => ch.toUpperCase())
+}
+
+export function extractSocialLeadEmail(raw?: Record<string, string> | null): string {
+  if (!raw || typeof raw !== "object") return ""
+  return getFromRaw(raw, ["email", "email_address", "emailaddress", "e_mail"]).trim()
+}
+
+/** Pull Meta lead-form Q&A from sheet row / raw_json. */
+export function extractSocialFormAnswers(
+  raw?: Record<string, string> | null,
+): SocialFormAnswer[] {
+  if (!raw || typeof raw !== "object") return []
+
+  const answers: SocialFormAnswer[] = []
+  const seenLabels = new Set<string>()
+
+  for (const entry of SOCIAL_FORM_QUESTION_LABELS) {
+    const value = getFromRaw(raw, entry.keys)
+    if (!value) continue
+    const label = entry.label
+    if (seenLabels.has(label.toLowerCase())) continue
+    seenLabels.add(label.toLowerCase())
+    answers.push({ question: label, answer: humanizeSheetFormAnswer(value) })
+  }
+
+  for (const [key, value] of Object.entries(raw)) {
+    const answer = humanizeSheetFormAnswer(String(value || ""))
+    if (!answer) continue
+    const normalized = normalizeHeaderKey(key)
+    if (!normalized || SOCIAL_SHEET_NON_QUESTION_KEYS.has(normalized)) continue
+    if (SOCIAL_FORM_QUESTION_LABELS.some((e) => e.keys.some((k) => normalizeHeaderKey(k) === normalized))) {
+      continue
+    }
+    // Heuristic: form questions usually contain ? or intent words.
+    const looksLikeQuestion =
+      String(key).includes("?") ||
+      /bill|solar|rooftop|install|month|planning|electric|खुली|बिजली|सोलर|छत/i.test(key)
+    if (!looksLikeQuestion) continue
+    const question = humanizeSheetFormQuestion(key)
+    if (!question || seenLabels.has(question.toLowerCase())) continue
+    seenLabels.add(question.toLowerCase())
+    answers.push({ question, answer })
+  }
+
+  return answers
+}
+
+export function formatSocialFormAnswersForNote(answers: SocialFormAnswer[]): string {
+  return answers.map((row) => `${row.question}: ${row.answer}`).join(" · ")
 }
 
 export const normalizeSocialLeadMobile = (value: string) => {
@@ -110,10 +268,15 @@ export function mapSocialSheetRowToLead(
     "location",
   ])
 
+  const email = extractSocialLeadEmail(raw)
+  const formAnswers = extractSocialFormAnswers(raw)
+  const formNote = formatSocialFormAnswersForNote(formAnswers)
+
   return {
     externalId: getFromRaw(raw, ["id", "lead_id", "external_id"]),
     name,
     mobile,
+    email: email || undefined,
     address,
     city: cityHint,
     platform: getFromRaw(raw, ["platform", "is_organic"]),
@@ -133,11 +296,12 @@ export function mapSocialSheetRowToLead(
     assignedDealerId: getFromRaw(raw, ["assigneddealerid", "dealerid"]),
     assignedDealerName: getFromRaw(raw, ["assigneddealername", "dealername"]),
     assignmentStatus: getFromRaw(raw, ["assignmentstatus", "callstatus"]),
+    formAnswers,
     customerNote: [
+      email ? `Email: ${email}` : "",
+      formNote,
       getFromRaw(raw, ["adset_name"]),
       getFromRaw(raw, ["form_name"]),
-      getFromRaw(raw, ["आपका_महीने_का_बिजली_बिल_कितना_आता_है?"]),
-      getFromRaw(raw, ["आप_सोलर_सिस्टम_कब_लगवाना_चाहते_हैं?"]),
     ]
       .filter(Boolean)
       .join(" · "),
@@ -307,9 +471,12 @@ export type SocialMediaCallingLeadLike = {
   sheetLeadStatus?: string
   externalId?: string
   external_id?: string
+  email?: string
   customerNote?: string
   campaignName?: string
   campaign_name?: string
+  formAnswers?: SocialFormAnswer[]
+  form_answers?: SocialFormAnswer[]
   raw?: Record<string, string>
   raw_json?: Record<string, string>
 }
@@ -405,9 +572,18 @@ export function callingLeadToSocialDisplayRow(lead: SocialMediaCallingLeadLike &
   second_call_response?: string
   address?: string
 }): SocialMediaLeadRow {
+  const raw = (lead.raw || lead.raw_json || {}) as Record<string, string>
+  const formAnswers =
+    (Array.isArray(lead.formAnswers) && lead.formAnswers.length > 0
+      ? lead.formAnswers
+      : Array.isArray(lead.form_answers) && lead.form_answers.length > 0
+        ? lead.form_answers
+        : extractSocialFormAnswers(raw)) || []
+  const email = String(lead.email || extractSocialLeadEmail(raw) || "").trim()
   return {
     name: String(lead.name || ""),
     mobile: String((lead as { mobile?: string }).mobile || ""),
+    email: email || undefined,
     address: String(lead.address || ""),
     platform: String(lead.platform || ""),
     campaignName: String(lead.campaignName || lead.campaign_name || ""),
@@ -419,7 +595,8 @@ export function callingLeadToSocialDisplayRow(lead: SocialMediaCallingLeadLike &
     finalDecisionReason: String(lead.finalDecisionReason || lead.final_decision_reason || ""),
     firstCallResponse: String(lead.firstCallResponse || lead.first_call_response || ""),
     secondCallResponse: String(lead.secondCallResponse || lead.second_call_response || ""),
-    raw: (lead.raw || lead.raw_json || {}) as Record<string, string>,
+    formAnswers,
+    raw,
   }
 }
 
@@ -749,12 +926,28 @@ export function normalizeSocialLeadApiRow(raw: Record<string, unknown>): SocialM
     String(raw.mobile || raw.phone_number || raw.phoneNumber || mapped?.mobile || ""),
   )
 
+  const email = String(
+    raw.email || mapped?.email || extractSocialLeadEmail(baseRaw) || "",
+  ).trim()
+  const formAnswersFromApi = Array.isArray(raw.formAnswers)
+    ? (raw.formAnswers as SocialFormAnswer[])
+    : Array.isArray(raw.form_answers)
+      ? (raw.form_answers as SocialFormAnswer[])
+      : []
+  const formAnswers =
+    formAnswersFromApi.length > 0
+      ? formAnswersFromApi
+      : mapped?.formAnswers?.length
+        ? mapped.formAnswers
+        : extractSocialFormAnswers(baseRaw)
+
   return {
     id: raw.id ? String(raw.id) : undefined,
     externalId: String(raw.externalId || raw.external_id || mapped?.externalId || ""),
     name: String(raw.name || raw.full_name || raw.fullName || mapped?.name || ""),
     mobile,
     altMobile: raw.altMobile || raw.alt_mobile ? String(raw.altMobile || raw.alt_mobile) : undefined,
+    email: email || undefined,
     address: String(raw.address || mapped?.address || ""),
     city: String(raw.city || mapped?.city || ""),
     state: raw.state ? String(raw.state) : undefined,
@@ -793,6 +986,7 @@ export function normalizeSocialLeadApiRow(raw: Record<string, unknown>): SocialM
     ),
     assignmentStatus: String(raw.assignmentStatus || raw.assignment_status || mapped?.assignmentStatus || ""),
     sourceTab: String(raw.sourceTab || raw.source_tab || mapped?.sourceTab || ""),
+    formAnswers,
     raw: baseRaw,
   }
 }

@@ -66,8 +66,10 @@ const DEFAULT_SPREADSHEET_ID = "18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0"
  *   login_flag BOOLEAN
  *   final_decision, final_decision_reason
  *   created_time TIMESTAMPTZ
- *   raw_json JSONB
- *   -- plus standard hr_leads: name, mobile, address, city, assigned_dealer_id, status
+ *   email VARCHAR(256)              -- Meta form email column
+ *   form_answers JSONB              -- [{ question, answer }] from lead-form Q&A
+ *   raw_json JSONB                  -- full sheet row (includes Q&A + email)
+ *   -- plus standard hr_leads: name, mobile, address, city, customer_note, assigned_dealer_id, status
  *
  * Reuse hr_lead_uploads with:
  *   source_type = 'google_sheet'
@@ -122,6 +124,8 @@ ALTER TABLE hr_leads
   ADD COLUMN IF NOT EXISTS final_decision VARCHAR(128),
   ADD COLUMN IF NOT EXISTS final_decision_reason TEXT,
   ADD COLUMN IF NOT EXISTS created_time TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS email VARCHAR(256),
+  ADD COLUMN IF NOT EXISTS form_answers JSONB,
   ADD COLUMN IF NOT EXISTS raw_json JSONB;
 
 CREATE INDEX IF NOT EXISTS idx_hr_leads_sheet_source ON hr_leads(sheet_source_id);
@@ -155,14 +159,59 @@ function mapSheetSourceForApi(row, counts) {
   }
 }
 
+/** Humanize Meta lead-form answers (₹3,000_-_₹6,000 → ₹3,000 - ₹6,000). */
+function humanizeSheetFormAnswer(value) {
+  const text = String(value || "")
+    .replace(/_-+_/g, " - ")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+  if (!text) return ""
+  return text.replace(/^[a-z]/, (ch) => ch.toUpperCase())
+}
+
+function extractFormAnswersFromRaw(raw) {
+  if (!raw || typeof raw !== "object") return []
+  const pick = (...aliases) => {
+    for (const a of aliases) {
+      const key = normalizeHeader(a)
+      const v = raw[key]
+      if (v) return String(v).trim()
+    }
+    return ""
+  }
+  const out = []
+  const bill = pick(
+    "what_is_your_average_monthly_electricity_bill?",
+    "whatisyouraveragemonthlyelectricitybill",
+  )
+  if (bill) out.push({ question: "Average monthly electricity bill", answer: humanizeSheetFormAnswer(bill) })
+  const when = pick(
+    "when_are_you_planning_to_install_solar?",
+    "whenareyouplanningtoinstallsolar",
+  )
+  if (when) out.push({ question: "When planning to install solar", answer: humanizeSheetFormAnswer(when) })
+  const roof = pick("do_you_have_an_open_rooftop?", "doyouhaveanopenrooftop")
+  if (roof) out.push({ question: "Open rooftop", answer: humanizeSheetFormAnswer(roof) })
+  return out
+}
+
 function mapSocialLeadForApi(r, dealerNameById) {
   const assignedDealerId = normalizeAssigneeId(r.assigned_dealer_id) || null
   const status = r.status || "queued"
+  const raw = r.raw_json || r.raw || {}
+  const formAnswers =
+    (Array.isArray(r.form_answers) && r.form_answers.length > 0
+      ? r.form_answers
+      : extractFormAnswersFromRaw(raw)) || []
+  const email =
+    String(r.email || raw[normalizeHeader("email")] || raw.email || "").trim() || null
   return {
     id: r.id,
     externalId: r.external_id,
     name: r.name,
     mobile: r.mobile,
+    email,
     address: r.address,
     city: r.city,
     customerNote: r.customer_note,
@@ -180,12 +229,15 @@ function mapSocialLeadForApi(r, dealerNameById) {
     finalDecision: r.final_decision,
     finalDecisionReason: r.final_decision_reason,
     createdTime: r.created_time,
+    formAnswers,
+    form_answers: formAnswers,
     assignedDealerId,
     assignedDealerName: assignedDealerId ? dealerNameById?.[assignedDealerId] || null : null,
     assignmentStatus: status,
     status,
     sourceTab: r.source_sheet_tab,
-    raw: r.raw_json,
+    raw,
+    raw_json: raw,
   }
 }
 
@@ -531,8 +583,23 @@ function sheetsColumnLetter(index0) {
  * ASSIGN dealers from hr_sheet_sources.dealer_ids (NOT from sheet columns).
  *
  * IGNORE for mapping (optional raw_json only): ad_id, adset_id, adset_name, campaign_id, form_id, is_organic
- * OPTIONAL display: platform, campaign_name, ad_name, form_name, created_time
+ * OPTIONAL display: platform, campaign_name, ad_name, form_name, created_time, email
+ * OPTIONAL lead-form Q&A (persist + show on dealer Current Lead):
+ *   what_is_your_average_monthly_electricity_bill?
+ *   when_are_you_planning_to_install_solar?
+ *   do_you_have_an_open_rooftop?
+ *   → form_answers JSONB + customer_note summary; full row in raw_json
  * OPTIONAL status outcomes (other tabs): Final Decison, Reason of Final Decision, Remarks, KW, address
+ *
+ * Calling queue GET (currentLead / next / lists) MUST echo:
+ *   email, formAnswers (or form_answers), raw / raw_json, customerNote
+ * so dealer Current Lead can render Q&A without another round-trip.
+ *
+ * ASSIGN RULE (Meta sheet):
+ *   Every row with empty Final Decision (typically lead_status=CREATED) MUST be
+ *   imported + assigned to the dealer pool on sync. Do not leave Assignment Status
+ *   blank on the sheet while other rows show assigned/completed (e.g. 14 rows → 14).
+ *   Use assignOpenSheetLeadsWithoutFinalDecision after active_cap top-up.
  */
 export const SOCIAL_SHEET_COLUMN_MAP = {
   externalId: ["id"],
@@ -555,6 +622,10 @@ export const SOCIAL_SHEET_COLUMN_MAP = {
   adName: ["ad_name"],
   campaignName: ["campaign_name"],
   formName: ["form_name"],
+  email: ["email", "email_address"],
+  electricityBill: ["what_is_your_average_monthly_electricity_bill?"],
+  installTimeline: ["when_are_you_planning_to_install_solar?"],
+  openRooftop: ["do_you_have_an_open_rooftop?"],
 }
 
 function normalizeHeader(h) {
@@ -579,10 +650,15 @@ function rowToLeadObject(headers, values) {
   )
   if (mobile.length !== 10) return null
 
+  const email = raw[normalizeHeader("email")] || raw[normalizeHeader("email_address")] || ""
+  const formAnswers = extractFormAnswersFromRaw(raw)
+  const formNote = formAnswers.map((row) => `${row.question}: ${row.answer}`).join(" · ")
+
   return {
     externalId: raw[normalizeHeader("id")] || null,
     name: raw[normalizeHeader("full_name")] || raw[normalizeHeader("name")] || "",
     mobile,
+    email,
     address: [raw[normalizeHeader("street_address")], raw[normalizeHeader("post_code")]]
       .filter(Boolean)
       .join(", "),
@@ -599,6 +675,18 @@ function rowToLeadObject(headers, values) {
     finalDecision: raw[normalizeHeader("finaldecison")] || raw[normalizeHeader("finaldecision")] || "",
     finalDecisionReason: raw[normalizeHeader("reasonoffinaldecision")] || "",
     createdTime: raw[normalizeHeader("created_time")] || null,
+    formAnswers,
+    // Dealer Current Lead reads customer_note + formAnswers + email from queue GET.
+    customerNote: [
+      email ? `Email: ${email}` : "",
+      formNote,
+      raw[normalizeHeader("adset_name")] || "",
+      raw[normalizeHeader("form_name")] || "",
+      raw[normalizeHeader("campaign_name")] || "",
+      raw[normalizeHeader("ad_name")] || "",
+    ]
+      .filter(Boolean)
+      .join(" · "),
     raw,
   }
 }
@@ -607,11 +695,70 @@ function rowToLeadObject(headers, values) {
 // Sync one tab
 // -----------------------------------------------------------------------------
 
+/** Open Meta lead = no Final Decision yet (CREATED / blank). These MUST be assigned. */
+export function isOpenSheetLeadWithoutFinalDecision(lead) {
+  const status = String(lead?.status || "").trim().toLowerCase()
+  if (["completed", "done", "closed", "complete"].includes(status)) return false
+  const final = String(lead?.final_decision || lead?.finalDecision || "").trim()
+  // Tagged CRM outcomes in Final Decision count as closed for assign purposes.
+  if (final) return false
+  return true
+}
+
+/**
+ * Assign every open sheet lead (empty Final Decision) to the dealer pool.
+ * Product: sheet may show 14 rows but only 11 with Assignment Status — the remaining
+ * CREATED / blank-Final rows must still get a dealer (not stay blank forever).
+ * Uses round-robin across dealerIds (not active_cap of 1).
+ */
+export async function assignOpenSheetLeadsWithoutFinalDecision(
+  uploadId,
+  { dealerIds, dealerNameById } = {},
+) {
+  const pool = (dealerIds || []).map(String).filter(Boolean)
+  if (!uploadId || pool.length === 0) return { assigned: 0 }
+
+  const allLeads = await HrLead.findAll({ where: { upload_id: uploadId } })
+  const open = (allLeads || []).filter((lead) => {
+    if (!isOpenSheetLeadWithoutFinalDecision(lead)) return false
+    const assignee = normalizeAssigneeId(lead.assigned_dealer_id || lead.assignedDealerId)
+    return !assignee
+  })
+  open.sort((a, b) => {
+    const ta = new Date(a.created_time || a.created_at || a.createdAt || 0).getTime()
+    const tb = new Date(b.created_time || b.created_at || b.createdAt || 0).getTime()
+    return ta - tb
+  })
+
+  let assigned = 0
+  for (let i = 0; i < open.length; i++) {
+    const lead = open[i]
+    const dealerId = pool[i % pool.length]
+    await lead.update({
+      assigned_dealer_id: dealerId,
+      status: "assigned",
+      assigned_at: new Date(),
+    })
+    assigned += 1
+    try {
+      const fresh = typeof lead.reload === "function" ? await lead.reload() : lead
+      await writeBackHrLeadToSheet(fresh, { dealerNameById })
+    } catch (e) {
+      console.error("sheet write-back after open-lead assign failed", e)
+    }
+  }
+  return { assigned }
+}
+
+/**
+ * Pull every sheet data row (full rescan — do not rely only on last_synced_row cursor).
+ * Upsert by mobile: create missing CREATED leads; refresh open leads' Meta fields.
+ * Then assign all open leads that still have empty Final Decision.
+ */
 export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } = {}) {
   const sheets = getSheetsClient()
   const spreadsheetId = sourceRow.spreadsheet_id || DEFAULT_SPREADSHEET_ID
   const tab = sourceRow.sheet_tab_name
-  const startRow = Number(sourceRow.last_synced_row || 1)
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -620,11 +767,12 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
 
   const rows = response.data.values || []
   if (rows.length < 2) {
-    return { imported: 0, skipped: 0, message: "No data rows" }
+    return { imported: 0, skipped: 0, updated: 0, assignedOpen: 0, message: "No data rows" }
   }
 
   const headers = rows[0]
-  const dataRows = rows.slice(Math.max(1, startRow - 1))
+  // Always full-scan data rows so CREATED leads missed earlier (cursor / bad phone) still import.
+  const dataRows = rows.slice(1)
   const leads = []
   let skipped = 0
 
@@ -636,13 +784,13 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
     }
     leads.push({
       ...mapped,
-      sheetRowIndex: startRow + i,
+      sheetRowIndex: i + 2, // Excel 1-based (row 1 = header)
     })
   }
 
-  // Dedupe by mobile + external_id within upload
   const upload = await createOrGetSheetUploadBatch(sourceRow, db)
   let imported = 0
+  let updated = 0
 
   for (const lead of leads) {
     const exists = await HrLead.findOne({
@@ -651,8 +799,29 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
         mobile: lead.mobile,
       },
     })
+
     if (exists) {
-      skipped += 1
+      // Refresh Meta fields for open leads (no Final Decision yet). Never wipe CRM calling fields.
+      if (isOpenSheetLeadWithoutFinalDecision(exists)) {
+        await exists.update({
+          external_id: lead.externalId || exists.external_id,
+          sheet_row_index: lead.sheetRowIndex,
+          name: lead.name || exists.name,
+          email: lead.email || exists.email,
+          address: lead.address || exists.address,
+          customer_note: lead.customerNote || exists.customer_note,
+          form_answers: lead.formAnswers?.length ? lead.formAnswers : exists.form_answers,
+          platform: lead.platform || exists.platform,
+          campaign_name: lead.campaignName || exists.campaign_name,
+          ad_name: lead.adName || exists.ad_name,
+          lead_status: lead.leadStatus || exists.lead_status || "CREATED",
+          created_time: lead.createdTime || exists.created_time,
+          raw_json: lead.raw || exists.raw_json,
+        })
+        updated += 1
+      } else {
+        skipped += 1
+      }
       continue
     }
 
@@ -663,18 +832,22 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
       sheet_row_index: lead.sheetRowIndex,
       name: lead.name,
       mobile: lead.mobile,
+      email: lead.email || null,
       address: lead.address,
-      customer_note: [lead.campaignName, lead.adName].filter(Boolean).join(" · "),
+      customer_note: lead.customerNote || [lead.campaignName, lead.adName].filter(Boolean).join(" · "),
+      form_answers: lead.formAnswers || [],
       platform: lead.platform,
-      lead_status: lead.leadStatus,
+      campaign_name: lead.campaignName || null,
+      ad_name: lead.adName || null,
+      lead_status: lead.leadStatus || "CREATED",
       remarks: lead.remarks,
       remarks_2: lead.remarks2,
       kw: lead.kw,
       first_call_response: lead.firstCallResponse,
       second_call_response: lead.secondCallResponse,
       login_flag: lead.loginFlag,
-      final_decision: lead.finalDecision,
-      final_decision_reason: lead.finalDecisionReason,
+      final_decision: lead.finalDecision || null,
+      final_decision_reason: lead.finalDecisionReason || null,
       created_time: lead.createdTime,
       raw_json: lead.raw,
       status: "queued",
@@ -690,14 +863,21 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
     upload_id: upload.id,
   })
 
+  let assignedOpen = 0
   if (assignLeads && sourceRow.enabled && sourceRow.dealer_ids?.length) {
+    // 1) Keep FIFO active_cap top-up for calling queue.
     await assignUnassignedWithActiveCap(upload.id, {
       dealerIds: sourceRow.dealer_ids,
       activeLimitPerDealer: sourceRow.active_limit_per_dealer || 1,
     })
+    // 2) Then force-assign every remaining open lead (empty Final Decision / CREATED)
+    //    so Assignment Status is not left blank on the sheet (e.g. 14 rows → all 14 assigned).
+    const openResult = await assignOpenSheetLeadsWithoutFinalDecision(upload.id, {
+      dealerIds: asArray(sourceRow.dealer_ids),
+    })
+    assignedOpen = openResult.assigned || 0
   }
 
-  // SPA: HR Social Media + Calling Data listen for this (rooms: stream:hr + stream:dealers).
   emitSocket("calling:uploads-updated", {
     reason: "sheet_sync",
     sourceId: sourceRow.id,
@@ -710,7 +890,7 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
     reason: "sheet_sync",
   })
 
-  return { imported, skipped, uploadId: upload.id }
+  return { imported, skipped, updated, assignedOpen, uploadId: upload.id, rowCount: leads.length }
 }
 
 // -----------------------------------------------------------------------------
@@ -970,5 +1150,7 @@ Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLe
 4. POST sync → imported N rows; hr_leads created; assigned via active_cap.
 5. HR Social Media tab shows coloured status badges.
 6. Dealer Calling Data queue receives assigned leads.
-7. Re-sync skips duplicate mobiles.
+7. Re-sync full-scans all rows; upserts missing CREATED leads (empty Final Decision).
+8. Open leads (no Final Decision) that are still unassigned get round-robin assigned
+   so sheet Assignment Status is not left blank (e.g. 14 sheet rows → 14 assigned).
 */

@@ -350,7 +350,9 @@ export function pickLedgerMapFromApi(response: unknown): Record<string, Subvendo
     for (const row of list) {
       if (!row || typeof row !== "object") continue
       const rec = row as Record<string, unknown>
-      const id = String(rec.quotationId || rec.quotation_id || rec.id || "").trim()
+      const id = String(
+        rec.recordId || rec.record_id || rec.quotationId || rec.quotation_id || rec.id || "",
+      ).trim()
       if (!id) continue
       out[id] = parseLedgerAmounts(rec)
     }

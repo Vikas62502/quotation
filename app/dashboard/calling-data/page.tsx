@@ -65,9 +65,12 @@ import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import {
   callingLeadToSocialDisplayRow,
+  extractSocialFormAnswers,
+  extractSocialLeadEmail,
   getSocialLeadCardSurfaceClass,
   getSocialLeadStatusDisplay,
   isSocialMediaCallingLead,
+  type SocialFormAnswer,
 } from "@/lib/google-sheets-social-leads"
 import {
   DropdownMenu,
@@ -81,6 +84,7 @@ type CallingLead = {
   name: string
   mobile: string
   altMobile?: string
+  email?: string
   kNumber?: string
   address?: string
   customerNote?: string
@@ -113,6 +117,9 @@ type CallingLead = {
   finalDecisionReason?: string
   firstCallResponse?: string
   secondCallResponse?: string
+  /** Meta lead-form Q&A from Google Sheet (bill / timeline / rooftop / …). */
+  formAnswers?: SocialFormAnswer[]
+  raw?: Record<string, string>
   externalId?: string
   eligibleDealerIds?: string[]
 }
@@ -1174,11 +1181,33 @@ export default function CallingDataPage() {
 
   const normalizeApiLead = (lead: any): CallingLead => {
     const source = lead?.lead || lead?.customerLead || lead
+    const rawJson =
+      (source?.raw && typeof source.raw === "object" && !Array.isArray(source.raw)
+        ? (source.raw as Record<string, string>)
+        : null) ||
+      (source?.raw_json && typeof source.raw_json === "object" && !Array.isArray(source.raw_json)
+        ? (source.raw_json as Record<string, string>)
+        : null) ||
+      (source?.rawJson && typeof source.rawJson === "object" && !Array.isArray(source.rawJson)
+        ? (source.rawJson as Record<string, string>)
+        : null) ||
+      undefined
+    const formAnswersFromApi = Array.isArray(source?.formAnswers)
+      ? (source.formAnswers as SocialFormAnswer[])
+      : Array.isArray(source?.form_answers)
+        ? (source.form_answers as SocialFormAnswer[])
+        : []
+    const formAnswers =
+      formAnswersFromApi.length > 0 ? formAnswersFromApi : extractSocialFormAnswers(rawJson)
+    const email = String(
+      source?.email || extractSocialLeadEmail(rawJson) || "",
+    ).trim()
     return {
       id: source?.id || source?._id || source?.leadId || source?.lead_id || `lead-${Date.now()}`,
       name: source?.name || source?.customerName || "Unknown",
       mobile: source?.mobile || source?.phone || "",
       altMobile: source?.altMobile || source?.alternateMobile || source?.alt_mobile || "",
+      email: email || undefined,
       kNumber: source?.kNumber || source?.k_number || "",
       address: source?.address || "",
       customerNote: source?.customerNote || source?.customer_note || source?.note || "",
@@ -1250,6 +1279,8 @@ export default function CallingDataPage() {
       finalDecisionReason: String(source?.finalDecisionReason || source?.final_decision_reason || "").trim() || undefined,
       firstCallResponse: String(source?.firstCallResponse || source?.first_call_response || "").trim() || undefined,
       secondCallResponse: String(source?.secondCallResponse || source?.second_call_response || "").trim() || undefined,
+      formAnswers: formAnswers.length > 0 ? formAnswers : undefined,
+      raw: rawJson,
       externalId: String(source?.externalId || source?.external_id || "").trim() || undefined,
       eligibleDealerIds: (() => {
         const raw =
@@ -5037,9 +5068,22 @@ export default function CallingDataPage() {
                   {currentLead.campaignName ? (
                     <p><span className="text-muted-foreground">Campaign:</span> {currentLead.campaignName}</p>
                   ) : null}
+                  {currentLead.email ? (
+                    <p className="sm:col-span-2 break-all">
+                      <span className="text-muted-foreground">Email:</span> {currentLead.email}
+                    </p>
+                  ) : null}
                   {currentLead.kw ? (
                     <p><span className="text-muted-foreground">KW:</span> {currentLead.kw}</p>
                   ) : null}
+                  {(currentLead.formAnswers && currentLead.formAnswers.length > 0
+                    ? currentLead.formAnswers
+                    : extractSocialFormAnswers(currentLead.raw)
+                  ).map((qa) => (
+                    <p key={`${qa.question}-${qa.answer}`} className="sm:col-span-2">
+                      <span className="text-muted-foreground">{qa.question}:</span> {qa.answer}
+                    </p>
+                  ))}
                   {currentLead.firstCallResponse ? (
                     <p><span className="text-muted-foreground">1st call:</span> {currentLead.firstCallResponse}</p>
                   ) : null}

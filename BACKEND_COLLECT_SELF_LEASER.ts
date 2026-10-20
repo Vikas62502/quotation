@@ -9,10 +9,14 @@
  *   - Cash / UPI only: **Office** dropdown **Chairbord** (default) | **Other**
  *   - Chairbord: installment save only; no auto leaser row
  *   - Other: office-inside subvendor dropdown + Amount (≤ paidAmount)
+ *     Office Outside files: Other lists office_outside vendors (the file’s Vendor Outside)
  *   - Amount posts to that subvendor’s leaser (`lp-collect-{quotationId}-{phaseNumber}`)
+ *     For Office Outside, quotationId in the leaser row id is the OO-* record id
  *   - Legacy `self` still means the file’s own office-inside vendor
+ *     Office Outside: self / Other default = that file’s outsideVendorId
  *   - `app/dashboard/account-management/page.tsx`
- *   - `lib/api.ts` → `api.quotations.updatePaymentDetails` (phase.collectDestination)
+ *   - Quotations: `api.quotations.updatePaymentDetails`
+ *   - Office Outside: local + PATCH `/admin/office-outside/:id/payment-details`
  *   - After save, SPA PUT `/admin/subvendors/:id/leaser` with id `lp-collect-{quotationId}-{phaseNumber}`
  *
  * Auth: same as installment replace — `account-management` or `admin`.
@@ -53,6 +57,7 @@
  *   collectSelfAmount: number   // INR; leaser amount when Other/self > 0
  *   collectChairbordAmount: number
  *   collectVendorId: string     // office-inside subvendor id when Other
+ *                               // office_outside vendor id when the file is Office Outside
  *
  * Aliases (read any, write both):
  *   collect_destination, collectedBy, collected_by,

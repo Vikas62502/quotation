@@ -38,6 +38,22 @@ interface Props {
   onEditProducts?: () => void
   /** When set, updates this quotation's system and stores previous for revert. */
   reviseQuotationId?: string
+  /** Save somewhere other than All quotations (e.g. Admin → All Outside). */
+  onSaveOverride?: (payload: {
+    discount: number
+    subtotal: number
+    totalAmount: number
+  }) => Promise<{ id: string }> | { id: string }
+  confirmLabel?: string
+  reviewTitle?: string
+  reviewBody?: string
+  successTitle?: string
+  successBody?: string
+  doneLabel?: string
+  onDone?: (id: string) => void
+  initialDiscount?: number
+  /** Skip Chairbord-branded proposal PDF (Office Outside uses a plain 1-page quotation). */
+  hideBrandedProposal?: boolean
 }
 
 // Company Information
@@ -159,11 +175,21 @@ export function QuotationConfirmation({
   onEditCustomer,
   onEditProducts,
   reviseQuotationId,
+  onSaveOverride,
+  confirmLabel,
+  reviewTitle,
+  reviewBody,
+  successTitle,
+  successBody,
+  doneLabel,
+  onDone,
+  initialDiscount,
+  hideBrandedProposal = false,
 }: Props) {
   const router = useRouter()
   const { saveQuotation, clearCurrent } = useQuotation()
   const { dealer: authDealer } = useAuth()
-  const [discountAmount, setDiscountAmount] = useState(0)
+  const [discountAmount, setDiscountAmount] = useState(Math.max(0, Number(initialDiscount) || 0))
   const [isGenerating, setIsGenerating] = useState(false)
   const [generated, setGenerated] = useState(false)
   const [quotationId, setQuotationId] = useState("")
@@ -477,6 +503,19 @@ export function QuotationConfirmation({
         return
       }
 
+      if (onSaveOverride) {
+        const saved = await onSaveOverride({
+          discount: sanitizedDiscountAmount,
+          subtotal: finalSubtotal,
+          totalAmount: Math.max(finalTotalAmount, 0),
+        })
+        setQuotationId(saved.id)
+        setSavedDateSource({ createdAt: new Date().toISOString() })
+        setIsGenerating(false)
+        setGenerated(true)
+        return
+      }
+
       // Save quotation via API
       // finalSubtotal is now the total project cost (subtotal) - aligned with backend
       // This MUST be > 0, otherwise backend will reject it
@@ -776,7 +815,7 @@ const getStructureDetails = (products: ProductSelection) => {
   return (
     <div className="space-y-6">
       {/* Hidden PDF — 3-page Solar Installation Proposal */}
-      <QuotationProposalPdf data={proposalPdfData} />
+      {hideBrandedProposal ? null : <QuotationProposalPdf data={proposalPdfData} />}
 
       {/* UI elements for the web page */}
       <div>
@@ -1115,12 +1154,14 @@ const getStructureDetails = (products: ProductSelection) => {
             </div>
             <div className="flex-1">
               <p className="font-semibold text-blue-800 mb-1">
-                {reviseQuotationId ? "Review New System Before Saving" : "Review Before Confirming"}
+                {reviewTitle
+                  || (reviseQuotationId ? "Review New System Before Saving" : "Review Before Confirming")}
               </p>
               <p className="text-sm text-blue-700">
-                {reviseQuotationId
-                  ? "Customer stays the same. Saving creates a NEW quotation; the previous one (e.g. Adani) remains in your quotations list so you can open or use it again."
-                  : "Please review all the details above. You can edit customer information or product selection using the Edit buttons. Once you confirm and generate the quotation, it will be saved to your quotations list."}
+                {reviewBody
+                  || (reviseQuotationId
+                    ? "Customer stays the same. Saving creates a NEW quotation; the previous one (e.g. Adani) remains in your quotations list so you can open or use it again."
+                    : "Please review all the details above. You can edit customer information or product selection using the Edit buttons. Once you confirm and generate the quotation, it will be saved to your quotations list.")}
               </p>
             </div>
           </div>
@@ -1147,9 +1188,10 @@ const getStructureDetails = (products: ProductSelection) => {
                 ) : (
                   <>
                     <Check className="w-4 h-4 mr-2" />
-                    {reviseQuotationId
-                      ? "Save New System Quotation"
-                      : "Confirm & Generate Quotation"}
+                    {confirmLabel
+                      || (reviseQuotationId
+                        ? "Save New System Quotation"
+                        : "Confirm & Generate Quotation")}
                   </>
                 )}
               </Button>
@@ -1157,11 +1199,17 @@ const getStructureDetails = (products: ProductSelection) => {
           ) : (
             <div className="w-full">
               <Button 
-                onClick={() => router.push("/dashboard/quotations")} 
+                onClick={() => {
+                  if (onDone) {
+                    onDone(quotationId)
+                    return
+                  }
+                  router.push("/dashboard/quotations")
+                }} 
                 className="w-full h-12 shadow-lg shadow-primary/25 bg-primary hover:bg-primary/90"
               >
                 <FileText className="w-4 h-4 mr-2" />
-                Go to Quotations
+                {doneLabel || "Go to Quotations"}
               </Button>
             </div>
           )}
@@ -1174,12 +1222,15 @@ const getStructureDetails = (products: ProductSelection) => {
             </div>
             <div className="flex-1">
               <p className="font-semibold text-green-800">
-                {reviseQuotationId
-                  ? "New quotation saved — previous quotation kept!"
-                  : "Quotation Generated Successfully!"}
+                {successTitle
+                  || (reviseQuotationId
+                    ? "New quotation saved — previous quotation kept!"
+                    : "Quotation Generated Successfully!")}
               </p>
-              <p className="text-sm text-green-600">Quotation ID: {quotationId}</p>
-              <p className="text-sm text-green-700 mt-1">Redirecting to quotations page... You can download the PDF from there.</p>
+              <p className="text-sm text-green-600">ID: {quotationId}</p>
+              <p className="text-sm text-green-700 mt-1">
+                {successBody || "Redirecting to quotations page... You can download the PDF from there."}
+              </p>
             </div>
           </div>
         )}

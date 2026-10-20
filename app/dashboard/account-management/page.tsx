@@ -53,6 +53,24 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
+import { OfficeOutsideAccountsLedger } from "@/components/office-outside-accounts-ledger"
+import {
+  customerFromOfficeOutsideRecord,
+  getOfficeOutsideRecord,
+  isOfficeOutsideRecordId,
+  listOfficeOutsideSentToAccounts,
+  mergeOfficeOutsideRecordsFromApi,
+  normalizeOfficeOutsideFileType,
+  OFFICE_OUTSIDE_FILE_TYPES,
+  officeOutsideSubtotalAmount,
+  pickOfficeOutsideListFromApi,
+  pickOfficeOutsideRecordFromApi,
+  quotationFromOfficeOutsideRecord,
+  setOfficeOutsideFileType,
+  setOutsideVendorForRecord,
+  type OfficeOutsideFileType,
+  type OfficeOutsideRecord,
+} from "@/lib/office-outside-accounts"
 import { api, ApiError, retrieveQuotationFromInstallation } from "@/lib/api"
 import { formatPersonName } from "@/lib/name-display"
 import {
@@ -169,6 +187,8 @@ interface SubsidyChequeRecord {
 
 interface CustomerPayment {
   quotationId: string
+  /** Office Outside rows sit in the same Accounts table as approved quotations. */
+  source?: "quotation" | "office_outside"
   customerName: string
   customerMobile: string
   dealerName?: string
@@ -272,8 +292,8 @@ function getStoredFinalSettlements(): Record<string, StoredFinalSettlement> {
   const parse = (raw: string | null): Record<string, StoredFinalSettlement> => {
     if (!raw) return {}
     try {
-      const parsed = JSON.parse(raw)
-      return parsed && typeof parsed === "object" ? parsed : {}
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? parsed : {}
     } catch {
       return {}
     }
@@ -327,7 +347,7 @@ function clearFinalSettlementLocal(quotationId: string, extraIds?: string[]) {
   let changed = false
   for (const id of ids) {
     if (id in map) {
-      delete map[id]
+  delete map[id]
       changed = true
     }
   }
@@ -1043,6 +1063,11 @@ type MixSideFilterValue = "loan" | "cash"
 type SendToInstallationFilter = "all" | "yes" | "no"
 
 type PaymentTypeFilterValue = "loan" | "cash" | "mix" | "unknown"
+type PaymentSourceFilter = "all" | "quotations" | "office_outside"
+
+function isOfficeOutsidePayment(payment: CustomerPayment): boolean {
+  return payment.source === "office_outside" || isOfficeOutsideRecordId(payment.quotationId)
+}
 
 const PAYMENT_TYPE_FILTER_OPTIONS: { value: PaymentTypeFilterValue; label: string }[] = [
   { value: "loan", label: "Loan" },
@@ -1812,6 +1837,91 @@ function coercePhasesPaymentModes(phases: PaymentPhase[]): PaymentPhase[] {
   })
 }
 
+function mapStoredPhasesToPaymentPhases(sourcePhases: unknown): PaymentPhase[] {
+  if (!Array.isArray(sourcePhases) || sourcePhases.length === 0) return []
+  return coercePhasesPaymentModes(
+    sourcePhases.map((phase: any, index: number) => ({
+      phaseNumber: Number(phase.phaseNumber || index + 1),
+      phaseName: phase.phaseName || `Installment ${index + 1}`,
+      amount: Number(phase.amount || 0),
+      dueDate: phase.dueDate,
+      status: (phase.status || "pending") as PaymentPhase["status"],
+      paidAmount: Number(phase.paidAmount || 0),
+      paymentDate: phase.paymentDate,
+      paymentMode: normalizePaymentMode(phase.paymentMode || phase.mode || phase.payment_method),
+      collectDestination: normalizeCollectDestination(
+        phase.collectDestination ||
+          phase.collect_destination ||
+          phase.collectedBy ||
+          phase.collected_by,
+      ),
+      collectKind: pickCollectKindFromPhase(phase),
+      collectSelfAmount: pickCollectSelfAmountFromPhase(phase),
+      collectChairbordAmount: pickCollectChairbordAmountFromPhase(phase),
+      collectVendorId: pickCollectVendorIdFromPhase(phase),
+      transactionId: phase.transactionId,
+      note: phase.note || phase.remarks || "",
+    })),
+  )
+}
+
+function officeOutsideRecordToCustomerPayment(
+  row: OfficeOutsideRecord,
+  ledger: SubvendorLedgerAmounts,
+  storedPlan?: { phases?: unknown; paymentMode?: string; paymentStatus?: string } | null,
+  vendor?: AdminSubvendorRecord | null,
+): CustomerPayment {
+  const quotation = quotationFromOfficeOutsideRecord(row)
+  const customer = customerFromOfficeOutsideRecord(row)
+  const subtotal = officeOutsideSubtotalAmount(row)
+  const received = Math.max(0, Math.round(Number(ledger.receivedAmount) || 0))
+  const storedPhases = mapStoredPhasesToPaymentPhases(storedPlan?.phases)
+  const paidFromLedger = Math.min(received, subtotal)
+  const ledgerStatus: PaymentPhase["status"] =
+    paidFromLedger <= 0 ? "pending" : paidFromLedger >= subtotal ? "completed" : "partial"
+  const phases: PaymentPhase[] =
+    storedPhases.length > 0
+      ? storedPhases
+      : [
+          {
+            phaseNumber: 1,
+            phaseName: "Received",
+            amount: subtotal,
+            paidAmount: paidFromLedger,
+            status: ledgerStatus,
+            paymentDate: paidFromLedger > 0 ? row.sentToAccountsAt : undefined,
+            paymentMode: row.fileType === "loan" ? "loan" : "cash",
+          },
+        ]
+  const siteCostRaw = normalVendorSiteCost(ledger)
+  const vendorName =
+    String(vendor?.name || vendor?.contactName || row.outsideVendorName || "").trim() || "Unassigned"
+  return {
+    quotationId: row.id,
+    source: "office_outside",
+    customerName:
+      row.customerName ||
+      formatPersonName(customer?.firstName, customer?.lastName, "Unknown"),
+    customerMobile: row.mobile || customer?.mobile || "",
+    dealerName: vendorName,
+    dealerMobile: String(vendor?.mobile || "").trim() || undefined,
+    dealerId: String(row.outsideVendorId || "").trim() || undefined,
+    subtotal,
+    originalSubtotal: subtotal,
+    discountAmount: 0,
+    totalAmount: subtotal,
+    finalAmount: subtotal,
+    paymentType: row.fileType,
+    paymentMode: row.fileType || storedPlan?.paymentMode,
+    siteCost: siteCostRaw > 0 ? siteCostRaw : undefined,
+    paymentStatus: storedPlan?.paymentStatus as CustomerPayment["paymentStatus"] | undefined,
+    phases,
+    quotation,
+    statusApprovedAt: row.sentToAccountsAt || row.createdAt,
+    subsidyCheques: [],
+  }
+}
+
 function calendarDateLocalYmd(d: Date): string {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, "0")
@@ -1956,6 +2066,8 @@ export default function AccountManagementPage() {
   const [paymentIfscFilter, setPaymentIfscFilter] = useState("all")
   /** Office inside subvendor: all files, all inside vendors, or one vendor dealer id. */
   const [officeInsideVendorFilter, setOfficeInsideVendorFilter] = useState("all")
+  const [paymentSourceFilter, setPaymentSourceFilter] = useState<PaymentSourceFilter>("all")
+  const [officeOutsideVendorFilter, setOfficeOutsideVendorFilter] = useState("all")
   /** Approve date filter as calendar range (local YYYY-MM-DD derived for row matching). */
   const [approveDateRange, setApproveDateRange] = useState<DateRange | undefined>()
   const [paymentFiltersOpen, setPaymentFiltersOpen] = useState(false)
@@ -1972,6 +2084,10 @@ export default function AccountManagementPage() {
   const [officeInsideVendors, setOfficeInsideVendors] = useState<AdminSubvendorRecord[]>(() =>
     readAdminSubvendors().filter((row) => row.kind === "office_inside"),
   )
+  const [officeOutsideVendors, setOfficeOutsideVendors] = useState<AdminSubvendorRecord[]>(() =>
+    readAdminSubvendors().filter((row) => row.kind === "office_outside"),
+  )
+  const [officeOutsideVersion, setOfficeOutsideVersion] = useState(0)
   const [subvendorDealers, setSubvendorDealers] = useState<SubvendorDealerOption[]>([])
   const [subvendorLedgerMap, setSubvendorLedgerMap] = useState<Record<string, SubvendorLedgerAmounts>>(
     () => readSubvendorLedger(),
@@ -2511,7 +2627,59 @@ export default function AccountManagementPage() {
   useEffect(() => {
     if (activeTab !== "payments") return
     setOfficeInsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_inside"))
+    setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
+    setOfficeOutsideVersion((n) => n + 1)
   }, [activeTab])
+
+  useEffect(() => {
+    let cancelled = false
+    const loadOfficeOutside = async () => {
+      setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
+      if (useApi) {
+        try {
+          const [recordsRes, ledgerRes, vendorsRes] = await Promise.all([
+            api.admin.officeOutside.getAll({ status: "sent" }).catch(() => null),
+            api.admin.officeOutside.ledger.getAll().catch(() => null),
+            api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
+          ])
+          if (cancelled) return
+          if (recordsRes) {
+            const remote = pickOfficeOutsideListFromApi(recordsRes)
+            if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
+          }
+          if (ledgerRes) {
+            const ledger = pickLedgerMapFromApi(ledgerRes)
+            const merged = { ...readSubvendorLedger(), ...ledger }
+            writeSubvendorLedger(merged)
+            setSubvendorLedgerMap((prev) => ({ ...prev, ...ledger }))
+          }
+          if (vendorsRes) {
+            const remote = pickSubvendorListFromApi(vendorsRes).filter(
+              (row) => row.kind === "office_outside",
+            )
+            if (remote.length > 0) {
+              writeAdminSubvendors([
+                ...remote,
+                ...readAdminSubvendors().filter(
+                  (row) => row.kind !== "office_outside" || !remote.some((item) => item.id === row.id),
+                ),
+              ])
+              setOfficeOutsideVendors(remote)
+            }
+          }
+        } catch {
+          if (!cancelled) {
+            setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
+          }
+        }
+      }
+      if (!cancelled) setOfficeOutsideVersion((n) => n + 1)
+    }
+    void loadOfficeOutside()
+    return () => {
+      cancelled = true
+    }
+  }, [useApi])
 
   const officeInsideDealerIds = useMemo(
     () => new Set(officeInsideVendors.map((row) => row.dealerId).filter(Boolean)),
@@ -2521,6 +2689,12 @@ export default function AccountManagementPage() {
   const isOfficeInsideDealer = useCallback(
     (dealerId?: string | null) => Boolean(dealerId && officeInsideDealerIds.has(dealerId)),
     [officeInsideDealerIds],
+  )
+
+  const usesOfficeInsideStyleLedger = useCallback(
+    (payment: CustomerPayment) =>
+      isOfficeOutsidePayment(payment) || isOfficeInsideDealer(payment.dealerId),
+    [isOfficeInsideDealer],
   )
 
   // Initialize payment phases for quotations (permission-scoped — Selected one / office / everyone)
@@ -2711,8 +2885,22 @@ export default function AccountManagementPage() {
           subsidyCheques: mergedSubsidy,
         }
       })
-      setCustomerPayments(payments)
-  }, [permissionVisibleQuotations, useApi])
+      const vendorsById = new Map(officeOutsideVendors.map((vendor) => [vendor.id, vendor]))
+      const storedPlans = getStoredPaymentPlans()
+      const ledgerMap = subvendorLedgerMap
+      const seenIds = new Set(payments.map((payment) => payment.quotationId).filter(Boolean))
+      const officeOutsidePayments = listOfficeOutsideSentToAccounts()
+        .filter((row) => row.id && !seenIds.has(row.id))
+        .map((row) =>
+          officeOutsideRecordToCustomerPayment(
+            row,
+            getLedgerAmounts(ledgerMap, row.id),
+            storedPlans[row.id],
+            vendorsById.get(row.outsideVendorId) || null,
+          ),
+        )
+      setCustomerPayments([...payments, ...officeOutsidePayments])
+  }, [permissionVisibleQuotations, useApi, officeOutsideVersion, officeOutsideVendors, subvendorLedgerMap])
 
   const paymentDealerOptions = useMemo(() => {
     const byId = new Map<string, string>()
@@ -2845,9 +3033,11 @@ export default function AccountManagementPage() {
 
   const paymentMatchesRowFilters = useCallback(
     (payment: CustomerPayment, fileStatus: FileStatusFilter = fileStatusFilter) => {
+      const isOfficeOutside = isOfficeOutsidePayment(payment)
       // One row per customer for normal payments — but keep every Send-to-Installer
       // row so Account FILE STATUS matches Admin Installation counts (e.g. Pending 27).
       if (
+        !isOfficeOutside &&
         currentQuotationIdsForPayments.size > 0 &&
         payment.quotationId &&
         !currentQuotationIdsForPayments.has(payment.quotationId)
@@ -2881,7 +3071,9 @@ export default function AccountManagementPage() {
         paymentInstallmentFilter,
         mixSideFilter,
       )
-      const matchesFileStatus = paymentMatchesFileStatusFilter(payment.quotation, fileStatus)
+      const matchesFileStatus = isOfficeOutside
+        ? fileStatus === "all"
+        : paymentMatchesFileStatusFilter(payment.quotation, fileStatus)
       const sentToInstaller = isQuotationSentToInstaller(
         payment.quotation as unknown as Record<string, unknown>,
         installerReleaseMapForPayments,
@@ -2900,6 +3092,12 @@ export default function AccountManagementPage() {
         (officeInsideVendorFilter === "inside"
           ? isOfficeInsideDealer(payment.dealerId)
           : payment.dealerId === officeInsideVendorFilter)
+      const matchesSource =
+        paymentSourceFilter === "all" ||
+        (paymentSourceFilter === "office_outside" ? isOfficeOutside : !isOfficeOutside)
+      const matchesOfficeOutsideVendor =
+        officeOutsideVendorFilter === "all" ||
+        (isOfficeOutside && payment.dealerId === officeOutsideVendorFilter)
       const isLoanOrMix = paymentTypeValue === "loan" || paymentTypeValue === "mix"
       const matchesBank =
         paymentBankFilter === "all" ||
@@ -2921,6 +3119,8 @@ export default function AccountManagementPage() {
         matchesSendToInstallation &&
         matchesDealer &&
         matchesOfficeInside &&
+        matchesSource &&
+        matchesOfficeOutsideVendor &&
         matchesBank &&
         matchesIfsc &&
         matchesApproveDateRange
@@ -2939,6 +3139,8 @@ export default function AccountManagementPage() {
       paymentDealerFilter,
       officeInsideVendorFilter,
       officeInsideDealerIds,
+      paymentSourceFilter,
+      officeOutsideVendorFilter,
       paymentBankFilter,
       paymentIfscFilter,
       approveDateRange,
@@ -2951,7 +3153,11 @@ export default function AccountManagementPage() {
   )
 
   const permissionScopedCustomerPayments = useMemo(
-    () => customerPayments.filter((payment) => visibleQuotationIds.has(payment.quotationId)),
+    () =>
+      customerPayments.filter(
+        (payment) =>
+          isOfficeOutsidePayment(payment) || visibleQuotationIds.has(payment.quotationId),
+      ),
     [customerPayments, visibleQuotationIds],
   )
 
@@ -3239,6 +3445,9 @@ export default function AccountManagementPage() {
     fileStatusFilter,
     sendToInstallationFilter,
     paymentDealerFilter,
+    officeInsideVendorFilter,
+    paymentSourceFilter,
+    officeOutsideVendorFilter,
     paymentBankFilter,
     paymentIfscFilter,
     approveDateRange?.from?.toISOString() ?? "",
@@ -3618,9 +3827,9 @@ export default function AccountManagementPage() {
       persistFinalSettlementLocal(
         String(activePayment.quotationId),
         {
-          discount: newDiscount,
-          amount: settlementWriteOff,
-          remarks: remarks || undefined,
+        discount: newDiscount,
+        amount: settlementWriteOff,
+        remarks: remarks || undefined,
         },
         quotationIdentityKeys(activePayment.quotation),
       )
@@ -3674,9 +3883,9 @@ export default function AccountManagementPage() {
       persistFinalSettlementLocal(
         String(activePayment.quotationId),
         {
-          discount: newDiscount,
-          amount: settlementWriteOff,
-          remarks: remarks || undefined,
+        discount: newDiscount,
+        amount: settlementWriteOff,
+        remarks: remarks || undefined,
         },
         quotationIdentityKeys(activePayment.quotation),
       )
@@ -3716,9 +3925,9 @@ export default function AccountManagementPage() {
       persistFinalSettlementLocal(
         String(activePayment.quotationId),
         {
-          discount: Math.max(0, getPaymentOriginalSubtotal(activePayment) - getTotalPaidPhases(activePayment.phases)),
-          amount: Math.max(settlementWriteOff, getDisplayRemaining(activePayment)),
-          remarks: settlementRemarksDraft.trim() || undefined,
+        discount: Math.max(0, getPaymentOriginalSubtotal(activePayment) - getTotalPaidPhases(activePayment.phases)),
+        amount: Math.max(settlementWriteOff, getDisplayRemaining(activePayment)),
+        remarks: settlementRemarksDraft.trim() || undefined,
         },
         quotationIdentityKeys(activePayment.quotation),
       )
@@ -4001,7 +4210,7 @@ export default function AccountManagementPage() {
 
   const seedOfficeInsideLedgerDrafts = (payment: CustomerPayment) => {
     const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
-    if (!isOfficeInsideDealer(payment.dealerId)) {
+    if (!usesOfficeInsideStyleLedger(payment)) {
       const pi = stored.pi ?? 0
       const others =
         stored.others != null
@@ -4017,18 +4226,21 @@ export default function AccountManagementPage() {
           costOfSite: normalVendorSiteCost({ pi, others }),
         }),
       )
-      return
-    }
-    const proposal = stored.proposal ?? 0
+        return
+      }
+    const proposalFallback = Math.round(Number(payment.subtotal) || 0)
+    const proposal = stored.proposal && stored.proposal > 0 ? stored.proposal : proposalFallback
     const loanCash = quotationLoanCashAmountsForLedger(
       payment.quotation,
-      proposal > 0 ? proposal : Math.round(Number(payment.subtotal) || 0),
+      proposal > 0 ? proposal : proposalFallback,
     )
     const paid = Math.round(getTotalPaidPhases(payment.phases) || 0)
     const remaining =
       stored.remaining ??
       Math.max(0, Math.round(Number(payment.remainingFromApi ?? getPaymentEffectiveCap(payment) - paid) || 0))
-    const vendor = officeInsideVendors.find((row) => row.dealerId === payment.dealerId)
+    const vendor = isOfficeOutsidePayment(payment)
+      ? officeOutsideVendors.find((row) => row.id === payment.dealerId)
+      : officeInsideVendors.find((row) => row.dealerId === payment.dealerId)
     const autoFileCharges = fileChargesFromVendorRate(
       getQuotationSystemKw(payment.quotation),
       vendor?.fileCostPerKw ?? 0,
@@ -4053,6 +4265,57 @@ export default function AccountManagementPage() {
     )
   }
 
+  const persistOfficeOutsideVendorOrFileType = async (
+    payment: CustomerPayment,
+    patch: { outsideVendorId?: string; fileType?: OfficeOutsideFileType },
+  ) => {
+    try {
+      let next = getOfficeOutsideRecord(payment.quotationId)
+      if (!next) throw new Error("Office Outside record not found")
+      if (patch.outsideVendorId) {
+        const vendor = officeOutsideVendors.find((row) => row.id === patch.outsideVendorId)
+        next = setOutsideVendorForRecord(payment.quotationId, patch.outsideVendorId, vendor?.name)
+      }
+      if (patch.fileType) {
+        next = setOfficeOutsideFileType(payment.quotationId, patch.fileType)
+      }
+      const vendor = officeOutsideVendors.find((row) => row.id === next.outsideVendorId)
+      const updatedRecord = next
+      setCustomerPayments((prev) =>
+        prev.map((row) =>
+          row.quotationId === payment.quotationId
+            ? {
+                ...row,
+                dealerId: updatedRecord.outsideVendorId || undefined,
+                dealerName: vendor?.name || updatedRecord.outsideVendorName || row.dealerName,
+                dealerMobile: String(vendor?.mobile || "").trim() || row.dealerMobile,
+                paymentType: updatedRecord.fileType || row.paymentType,
+                paymentMode: updatedRecord.fileType || row.paymentMode,
+                quotation: quotationFromOfficeOutsideRecord(updatedRecord),
+              }
+            : row,
+        ),
+      )
+      try {
+        const res = await api.admin.officeOutside.update(updatedRecord.id, {
+          outsideVendorId: updatedRecord.outsideVendorId,
+          outsideVendorName: updatedRecord.outsideVendorName,
+          fileType: updatedRecord.fileType,
+        })
+        const remote = pickOfficeOutsideRecordFromApi(res)
+        if (remote) mergeOfficeOutsideRecordsFromApi([remote])
+      } catch {
+        // Local record already updated; Accounts / Admin / slip read the same store.
+      }
+    } catch (error) {
+      toast({
+        title: "Could not update Office Outside",
+        description: error instanceof Error ? error.message : "Try again.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const persistDerivedSiteCost = (quotationId: string, siteCost: number) => {
     setCustomerPayments((prev) =>
       prev.map((p) =>
@@ -4073,7 +4336,7 @@ export default function AccountManagementPage() {
     try {
       await api.admin.subvendors.ledger.update(quotationId, ledgerPatchToApiBody(patch))
     } catch (error) {
-      toast({
+    toast({
         title: "Accounts amounts saved on this device",
         description:
           error instanceof ApiError
@@ -4129,17 +4392,17 @@ export default function AccountManagementPage() {
   const submitInstallments = async () => {
     if (!activePayment) return
 
-    const officeInside = isOfficeInsideDealer(activePayment.dealerId)
+    const officeInsideStyle = usesOfficeInsideStyleLedger(activePayment)
     const liveAmounts = subvendorLedgerDrafts ? amountsFromLedgerDrafts(subvendorLedgerDrafts) : null
     const draftRaw = siteCostDrafts[activePayment.quotationId]
     const resolvedSiteCost =
-      liveAmounts && officeInside
+      liveAmounts && officeInsideStyle
         ? normalVendorSiteCost(applyOfficeInsideGstToAmounts(liveAmounts))
-        : liveAmounts && !officeInside
+        : liveAmounts && !officeInsideStyle
           ? normalVendorSiteCost(liveAmounts)
           : draftRaw !== undefined
-            ? parseSiteCostInput(draftRaw)
-            : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
+        ? parseSiteCostInput(draftRaw)
+        : Math.max(0, Math.round(Number(activePayment.siteCost) || 0))
 
     if (draftRaw !== undefined || liveAmounts != null) {
       setCustomerPayments((prev) =>
@@ -4166,14 +4429,20 @@ export default function AccountManagementPage() {
       })
       return
     }
-    const fileOfficeVendorId = officeInsideVendors.find(
-      (row) => row.dealerId === activePayment.dealerId,
-    )?.id
+    const collectVendors = isOfficeOutsidePayment(activePayment)
+      ? officeOutsideVendors
+      : officeInsideVendors
+    const fileOfficeVendorId = isOfficeOutsidePayment(activePayment)
+      ? collectVendors.find((row) => row.id === activePayment.dealerId)?.id
+      : collectVendors.find((row) => row.dealerId === activePayment.dealerId)?.id
     const resolvePhaseCollectVendorId = (phase: PaymentPhase) => {
-      if (phase.collectVendorId && officeInsideVendors.some((row) => row.id === phase.collectVendorId)) {
+      if (phase.collectVendorId && collectVendors.some((row) => row.id === phase.collectVendorId)) {
         return phase.collectVendorId
       }
       if (phase.collectDestination === "self") return fileOfficeVendorId
+      if (isOfficeOutsidePayment(activePayment) && isCollectOtherLike(phase.collectDestination)) {
+        return fileOfficeVendorId
+      }
       return undefined
     }
     const collectError = activePayment.phases.find((phase) => {
@@ -4188,7 +4457,9 @@ export default function AccountManagementPage() {
     if (collectError) {
       toast({
         title: "Cannot save",
-        description: `Installment ${collectError.phaseNumber}: choose an office subvendor and an amount up to the paid cash/UPI.`,
+        description: `Installment ${collectError.phaseNumber}: choose a ${
+          isOfficeOutsidePayment(activePayment) ? "Vendor Outside" : "office"
+        } subvendor and an amount up to the paid cash/UPI.`,
         variant: "destructive",
       })
       return
@@ -4196,6 +4467,26 @@ export default function AccountManagementPage() {
     if (!confirmSave("Save installment / payment details?")) return
     if (subvendorLedgerDrafts && isOfficeInsideDealer(activePayment.dealerId)) {
       await commitOfficeInsideLedger(activePayment.quotationId, subvendorLedgerDrafts)
+    } else if (subvendorLedgerDrafts && isOfficeOutsidePayment(activePayment)) {
+      const amounts = applyOfficeInsideGstToAmounts(amountsFromLedgerDrafts(subvendorLedgerDrafts))
+      const next = upsertLedgerAmounts(activePayment.quotationId, amounts)
+      setSubvendorLedgerMap(next)
+      persistDerivedSiteCost(activePayment.quotationId, normalVendorSiteCost(amounts))
+      try {
+        await api.admin.officeOutside.ledger.update(
+          activePayment.quotationId,
+          ledgerPatchToApiBody(amounts),
+        )
+      } catch (error) {
+        toast({
+          title: "Office Outside ledger saved on this device",
+          description:
+            error instanceof ApiError
+              ? error.message
+              : "Backend Office Outside ledger route is not live yet.",
+          variant: "destructive",
+        })
+      }
     } else if (subvendorLedgerDrafts) {
       await commitNormalVendorCharges(activePayment.quotationId, subvendorLedgerDrafts)
     }
@@ -4276,9 +4567,16 @@ export default function AccountManagementPage() {
     try {
       let phasesToApply = payload.phases as PaymentPhase[]
 
-      if (!useApi) {
+      if (!useApi || isOfficeOutsidePayment(activePayment)) {
         saveStoredPaymentPlan(activePayment.quotationId, payload)
         persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
+        if (useApi && isOfficeOutsidePayment(activePayment)) {
+          try {
+            await api.admin.officeOutside.paymentDetails(activePayment.quotationId, payload)
+          } catch {
+            // Ledger/installments already saved on this device.
+          }
+        }
       } else {
         const response = await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
         const phasesFromResponse = extractPhasesFromPaymentUpdateResponse(response)
@@ -4339,7 +4637,11 @@ export default function AccountManagementPage() {
         const collectPrefix = `lp-collect-${activePayment.quotationId}-`
         const selfPrefix = `lp-self-${activePayment.quotationId}-`
         let existingAll = readLeaserPayments()
-        const vendorIdsToLoad = new Set(officeInsideVendors.map((row) => row.id))
+        const vendorIdsToLoad = new Set(
+          (isOfficeOutsidePayment(activePayment) ? officeOutsideVendors : officeInsideVendors).map(
+            (row) => row.id,
+          ),
+        )
         for (const row of existingAll) {
           if (row.id.startsWith(collectPrefix) || row.id.startsWith(selfPrefix)) {
             vendorIdsToLoad.add(row.vendorId)
@@ -4375,19 +4677,22 @@ export default function AccountManagementPage() {
           ...previousVendorIds,
           ...nextAll.filter((row) => row.id.startsWith(collectPrefix)).map((row) => row.vendorId),
         ])
-        setOfficeInsideVendors((prev) =>
+        const applyLeaserPaid = (prev: AdminSubvendorRecord[]) =>
           prev.map((row) => {
             if (!touchedVendorIds.has(row.id)) return row
             const paid = nextAll
               .filter((item) => item.vendorId === row.id)
               .reduce((sum, item) => sum + item.amount, 0)
             return { ...row, leaserPaid: paid }
-          }),
-        )
+          })
+        setOfficeInsideVendors(applyLeaserPaid)
+        setOfficeOutsideVendors(applyLeaserPaid)
         if (useApi) {
           await Promise.all(
             [...touchedVendorIds].map(async (vendorId) => {
-              const vendor = officeInsideVendors.find((row) => row.id === vendorId)
+              const vendor =
+                officeInsideVendors.find((row) => row.id === vendorId) ||
+                officeOutsideVendors.find((row) => row.id === vendorId)
               const vendorRows = nextAll.filter((row) => row.vendorId === vendorId)
               const paid = vendorRows.reduce((sum, row) => sum + row.amount, 0)
               try {
@@ -4408,9 +4713,11 @@ export default function AccountManagementPage() {
 
       toast({
         title: "Payment details saved",
-        description: isOfficeInsideDealer(activePayment.dealerId)
-          ? "Installments, Accounts amounts, cost of site, and profit updated."
-          : "Installments, PI, others, cost of site, and profit updated successfully.",
+        description: isOfficeOutsidePayment(activePayment)
+          ? "Office Outside GST, file charges, and Vendor Outside leaser updated."
+          : isOfficeInsideDealer(activePayment.dealerId)
+            ? "Installments, Accounts amounts, cost of site, and profit updated."
+            : "Installments, PI, others, cost of site, and profit updated successfully.",
       })
       setInstallmentDialogOpen(false)
       setActivePaymentId(null)
@@ -4444,6 +4751,7 @@ export default function AccountManagementPage() {
 
   const handleReleaseToInstaller = async (quotation: Quotation) => {
     if (!quotation?.id) return
+    if (isOfficeOutsideRecordId(quotation.id)) return
     if (isQuotationSentToInstaller(quotation as unknown as Record<string, unknown>, readInstallerReleaseMap())) {
       toast({
         title: "Already sent",
@@ -4780,11 +5088,11 @@ export default function AccountManagementPage() {
                 onChange={(e) => setPaymentSearchTerm(e.target.value)}
                 className="pl-8 h-9 text-sm"
               />
-            </div>
-            )}
           </div>
+            )}
+                  </div>
 
-          <TabsContent value="approved" className="mt-0 space-y-0">
+          <TabsContent value="approved" className="mt-0 space-y-3">
             <Card className="border-border/50 shadow-sm py-0">
               <CardContent className="p-3 sm:p-4">
                 <AdminSubvendorPanel
@@ -4796,6 +5104,7 @@ export default function AccountManagementPage() {
                 />
               </CardContent>
             </Card>
+            <OfficeOutsideAccountsLedger />
           </TabsContent>
 
           <TabsContent value="subvendors" className="mt-0 space-y-0">
@@ -4807,8 +5116,8 @@ export default function AccountManagementPage() {
                   dealers={subvendorDealers}
                   quotations={quotations}
                 />
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
           </TabsContent>
 
           <TabsContent value="payments" className="mt-0 space-y-0">
@@ -4828,7 +5137,7 @@ export default function AccountManagementPage() {
                       Pending & Partial
                       <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
                         {paymentSectionBuckets.activePayments.length}
-                      </Badge>
+                                  </Badge>
                     </TabsTrigger>
                     <TabsTrigger
                       value="overdue"
@@ -4837,7 +5146,7 @@ export default function AccountManagementPage() {
                       Outstanding 30+ days
                       <Badge variant="secondary" className="h-5 min-w-5 px-1.5 text-[10px]">
                         {paymentSectionBuckets.overduePayments.length}
-                      </Badge>
+                                  </Badge>
                     </TabsTrigger>
                     <TabsTrigger
                       value="completed"
@@ -4869,6 +5178,9 @@ export default function AccountManagementPage() {
                           (fileStatusFilter !== "all" ? 1 : 0) +
                           (sendToInstallationFilter !== "all" ? 1 : 0) +
                           (paymentDealerFilter !== "all" ? 1 : 0) +
+                          (officeInsideVendorFilter !== "all" ? 1 : 0) +
+                          (paymentSourceFilter !== "all" ? 1 : 0) +
+                          (officeOutsideVendorFilter !== "all" ? 1 : 0) +
                           (paymentBankFilter !== "all" ? 1 : 0) +
                           (paymentIfscFilter !== "all" ? 1 : 0) +
                           (approveDateRange?.from || approveDateRange?.to ? 1 : 0)
@@ -4889,7 +5201,7 @@ export default function AccountManagementPage() {
                       <Download className="w-3.5 h-3.5" />
                       Download Excel
                     </Button>
-                </div>
+                  </div>
                 </div>
                 {!isLoading && permissionScopedCustomerPayments.length > 0 && (
                   <div
@@ -5120,9 +5432,18 @@ export default function AccountManagementPage() {
                                   </span>
                                 </p>
                                 <p className="text-[10px] text-muted-foreground mt-0.5 break-words">
-                                  Dealer: {payment.dealerName || "Unassigned"} •{" "}
+                                  {isOfficeOutsidePayment(payment) ? "Vendor" : "Dealer"}:{" "}
+                                  {payment.dealerName || "Unassigned"} •{" "}
                                   {payment.dealerMobile || "No contact"}
                                 </p>
+                                {isOfficeOutsidePayment(payment) ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="mt-0.5 h-4 px-1.5 text-[9px] font-medium border-sky-400/70 text-sky-800 bg-sky-50"
+                                  >
+                                    Office Outside
+                                  </Badge>
+                                ) : null}
                               </AccountsCol>
 
                               <AccountsCol label="Subtotal">
@@ -5170,7 +5491,7 @@ export default function AccountManagementPage() {
                                           ) : null}
                                         </p>
                                       ) : null}
-                                    </div>
+                              </div>
                                   )
                                 })()}
                               </AccountsCol>
@@ -5323,7 +5644,9 @@ export default function AccountManagementPage() {
 
                               <AccountsCol label="File status" className="min-w-0 xl:min-w-[11rem]">
                                 <div className="mt-0.5 space-y-px">
-                                  {getJourneyFileStatusStages(payment.quotation).map((item) => {
+                                  {isOfficeOutsidePayment(payment) ? (
+                                    <p className="text-[10px] text-muted-foreground">Office Outside</p>
+                                  ) : getJourneyFileStatusStages(payment.quotation).map((item) => {
                                     const stageLabel =
                                       item.label === "Final confirmation"
                                         ? "Final approval"
@@ -5332,18 +5655,18 @@ export default function AccountManagementPage() {
                                     return (
                                       <div key={item.label} className="min-w-0">
                                         <div className="flex items-center gap-1.5 whitespace-nowrap">
-                                          <span className="text-[10px] text-muted-foreground shrink-0">
-                                            {stageLabel}
-                                          </span>
-                                          <Badge
-                                            variant="outline"
-                                            className={cn(
-                                              "text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium",
-                                              journeyStageStatusBadgeClass(item.status),
-                                            )}
-                                          >
-                                            {item.statusLabel}
-                                          </Badge>
+                                        <span className="text-[10px] text-muted-foreground shrink-0">
+                                          {stageLabel}
+                                        </span>
+                                        <Badge
+                                          variant="outline"
+                                          className={cn(
+                                            "text-[9px] px-1.5 py-0 h-4 shrink-0 font-medium",
+                                            journeyStageStatusBadgeClass(item.status),
+                                          )}
+                                        >
+                                          {item.statusLabel}
+                                        </Badge>
                                           {approvedAtLabel ? (
                                             <span className="text-[9px] leading-none text-muted-foreground tabular-nums">
                                               {approvedAtLabel}
@@ -5407,7 +5730,7 @@ export default function AccountManagementPage() {
 
                               <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end", ACCOUNTS_STICKY_ACTIONS)}>
                                 <div className="flex flex-col items-stretch gap-1 w-full max-w-[8.5rem] min-w-0">
-                                  {sentToInstaller ? (
+                                  {isOfficeOutsidePayment(payment) ? null : sentToInstaller ? (
                                     <div className="flex items-center gap-1 min-w-0">
                                       <Badge
                                         variant="outline"
@@ -5553,27 +5876,27 @@ export default function AccountManagementPage() {
                   {MIX_SIDE_FILTER_OPTIONS.map((option) => {
                     const checked = mixSideFilter.includes(option.value)
                     const inputId = `mix-side-${option.value}`
-                    return (
-                      <label
-                        key={option.value}
+                      return (
+                        <label
+                          key={option.value}
                         htmlFor={inputId}
                         className="flex cursor-pointer items-center gap-2 text-sm"
-                      >
-                        <Checkbox
+                        >
+                          <Checkbox
                           id={inputId}
-                          checked={checked}
+                            checked={checked}
                           onCheckedChange={(value) => {
                             setMixSideFilter((prev) =>
                               toggleCheckboxFilterValue(prev, option.value, value === true),
                             )
-                          }}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </div>
+                            }}
+                          />
+                          <span>{option.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+            </div>
             ) : null}
             <CheckboxFilterPopover
               label="Installments"
@@ -5633,6 +5956,38 @@ export default function AccountManagementPage() {
                   <SelectItem value="all">All</SelectItem>
                   <SelectItem value="no">No</SelectItem>
                   <SelectItem value="yes">Yes</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Source</Label>
+              <Select
+                value={paymentSourceFilter}
+                onValueChange={(value) => setPaymentSourceFilter(value as PaymentSourceFilter)}
+              >
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue placeholder="All files" />
+                </SelectTrigger>
+                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
+                  <SelectItem value="all">All files</SelectItem>
+                  <SelectItem value="quotations">Quotations</SelectItem>
+                  <SelectItem value="office_outside">Office Outside</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Office Outside vendor</Label>
+              <Select value={officeOutsideVendorFilter} onValueChange={setOfficeOutsideVendorFilter}>
+                <SelectTrigger className="h-9 w-full text-sm">
+                  <SelectValue placeholder="Office Outside vendor" />
+                </SelectTrigger>
+                <SelectContent {...PAYMENT_FILTER_SELECT_CONTENT_PROPS}>
+                  <SelectItem value="all">All Office Outside vendors</SelectItem>
+                  {officeOutsideVendors.map((vendor) => (
+                    <SelectItem key={vendor.id} value={vendor.id}>
+                      {vendor.name || vendor.contactName || vendor.id}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -5728,6 +6083,8 @@ export default function AccountManagementPage() {
                   setSendToInstallationFilter("all")
                   setPaymentDealerFilter("all")
                   setOfficeInsideVendorFilter("all")
+                  setPaymentSourceFilter("all")
+                  setOfficeOutsideVendorFilter("all")
                   setPaymentBankFilter("all")
                   setPaymentIfscFilter("all")
                 }}
@@ -5776,13 +6133,13 @@ export default function AccountManagementPage() {
             if (
               subvendorLedgerDrafts &&
               activePayment &&
-              !isOfficeInsideDealer(activePayment.dealerId)
+              !usesOfficeInsideStyleLedger(activePayment)
             ) {
               void commitNormalVendorCharges(activePaymentId, subvendorLedgerDrafts)
             } else {
-              const draft = siteCostDrafts[activePaymentId]
-              if (draft !== undefined) {
-                void updatePaymentSiteCost(activePaymentId, draft)
+            const draft = siteCostDrafts[activePaymentId]
+            if (draft !== undefined) {
+              void updatePaymentSiteCost(activePaymentId, draft)
               }
             }
           }
@@ -5816,42 +6173,98 @@ export default function AccountManagementPage() {
                   <p className="text-xs text-muted-foreground leading-tight">
                     Customer No: {activePayment.customerMobile || "N/A"}
                     <span className="mx-1.5 text-border">·</span>
-                    Dealer: {activePayment.dealerName || "Unassigned"} • {activePayment.dealerMobile || "No contact"}
+                    {isOfficeOutsidePayment(activePayment) ? "Vendor" : "Dealer"}:{" "}
+                    {activePayment.dealerName || "Unassigned"} • {activePayment.dealerMobile || "No contact"}
                   </p>
+                  {isOfficeOutsidePayment(activePayment) ? (
+                    <div className="flex flex-wrap items-center gap-2 pt-1.5">
+                      <Select
+                        value={activePayment.dealerId || undefined}
+                        onValueChange={(value) => {
+                          const vendor = officeOutsideVendors.find((row) => row.id === value)
+                          void persistOfficeOutsideVendorOrFileType(activePayment, {
+                            outsideVendorId: value,
+                          }).then(() => {
+                            seedOfficeInsideLedgerDrafts({
+                              ...activePayment,
+                              dealerId: value,
+                              dealerName: vendor?.name || activePayment.dealerName,
+                              dealerMobile: vendor?.mobile || activePayment.dealerMobile,
+                            })
+                          })
+                        }}
+                        disabled={accountsReadOnly || !canWriteAccounts}
+                      >
+                        <SelectTrigger className="h-8 w-[12.5rem] text-xs">
+                          <SelectValue placeholder="Outside vendor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {officeOutsideVendors.map((vendor) => (
+                            <SelectItem key={vendor.id} value={vendor.id}>
+                              {vendor.name || vendor.contactName || vendor.id}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        value={
+                          normalizeOfficeOutsideFileType(activePayment.paymentType) ||
+                          undefined
+                        }
+                        onValueChange={(value) => {
+                          void persistOfficeOutsideVendorOrFileType(activePayment, {
+                            fileType: value as OfficeOutsideFileType,
+                          })
+                        }}
+                        disabled={accountsReadOnly || !canWriteAccounts}
+                      >
+                        <SelectTrigger className="h-8 w-[9.5rem] text-xs">
+                          <SelectValue placeholder="File type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {OFFICE_OUTSIDE_FILE_TYPES.map((item) => (
+                            <SelectItem key={item.value} value={item.value}>
+                              {item.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="sm:text-right shrink-0 space-y-0.5">
                   <div className="flex items-baseline justify-start sm:justify-end gap-2">
                     <span className="text-[11px] text-muted-foreground">Subtotal</span>
-                    {isFinalSettlementApplied(activePayment) ||
-                    getPaymentDiscountAmount(activePayment) > 0 ? (
-                      <>
+                  {isFinalSettlementApplied(activePayment) ||
+                  getPaymentDiscountAmount(activePayment) > 0 ? (
+                    <>
                         <span className="text-xs line-through text-muted-foreground tabular-nums">
-                          ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                        ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
                         </span>
                         <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                          ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
+                        ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
                         </span>
                         <span className="text-[11px] text-amber-700 dark:text-amber-400">
                           − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()}
-                          {getSettlementDiscountAmount(activePayment) > 0
-                            ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
-                            : ""}
+                        {getSettlementDiscountAmount(activePayment) > 0
+                          ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
+                          : ""}
                         </span>
-                      </>
-                    ) : (
+                    </>
+                  ) : (
                       <span className="text-sm font-semibold tabular-nums">
-                        ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                      ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
                       </span>
-                    )}
+                  )}
                   </div>
                   <p className="text-[11px] leading-tight">
                     <span
-                      className={cn(
-                        getDisplayRemaining(activePayment) <= 0
-                          ? "font-semibold text-emerald-700"
-                          : "text-muted-foreground",
-                      )}
-                    >
+                    className={cn(
+                      getDisplayRemaining(activePayment) <= 0
+                        ? "font-semibold text-emerald-700"
+                        : "text-muted-foreground",
+                    )}
+                  >
                       Remaining: ₹{getDisplayRemaining(activePayment).toLocaleString("en-IN")}
                     </span>
                     <span className="mx-1.5 text-border">·</span>
@@ -5880,39 +6293,39 @@ export default function AccountManagementPage() {
                     <span className="text-muted-foreground">Bank · IFSC </span>
                     <span className="font-medium">{getFinancingBankDisplay(activePayment)}</span>
                     <span className="mx-2 text-border">·</span>
-                    <span className="text-muted-foreground">Loan amount: </span>
-                    <span className="font-medium">
-                      {getMixLoanCap(activePayment) > 0
-                        ? `₹${getMixLoanCap(activePayment).toLocaleString("en-IN")}`
-                        : activePayment.loanAmount != null && activePayment.loanAmount > 0
-                          ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
-                          : "—"}
-                    </span>
+                      <span className="text-muted-foreground">Loan amount: </span>
+                      <span className="font-medium">
+                        {getMixLoanCap(activePayment) > 0
+                          ? `₹${getMixLoanCap(activePayment).toLocaleString("en-IN")}`
+                          : activePayment.loanAmount != null && activePayment.loanAmount > 0
+                            ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
+                            : "—"}
+                      </span>
                     {getPaymentTypeValue(activePayment) === "mix" ? (
                       <>
                         <span className="mx-2 text-border">·</span>
-                        <span className="text-muted-foreground">Cash amount: </span>
-                        <span className="font-medium">
-                          {getMixCashCap(activePayment) > 0
-                            ? `₹${getMixCashCap(activePayment).toLocaleString("en-IN")}`
-                            : activePayment.cashAmount != null && activePayment.cashAmount > 0
-                              ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
-                              : "—"}
-                        </span>
+                          <span className="text-muted-foreground">Cash amount: </span>
+                          <span className="font-medium">
+                            {getMixCashCap(activePayment) > 0
+                              ? `₹${getMixCashCap(activePayment).toLocaleString("en-IN")}`
+                              : activePayment.cashAmount != null && activePayment.cashAmount > 0
+                                ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
+                                : "—"}
+                          </span>
                       </>
                     ) : null}
                   </p>
                   {getPaymentTypeValue(activePayment) === "mix" ? (
                     <p className="mt-0.5">
-                      <span className="text-muted-foreground">Loan remaining: </span>
-                      <span className="font-medium text-amber-700 dark:text-amber-400">
-                        ₹{getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")}
-                      </span>
+                          <span className="text-muted-foreground">Loan remaining: </span>
+                          <span className="font-medium text-amber-700 dark:text-amber-400">
+                            ₹{getRemainingForSide(activePayment, "loan").toLocaleString("en-IN")}
+                          </span>
                       <span className="mx-2 text-border">·</span>
-                      <span className="text-muted-foreground">Cash remaining: </span>
-                      <span className="font-medium text-amber-700 dark:text-amber-400">
-                        ₹{getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
-                      </span>
+                          <span className="text-muted-foreground">Cash remaining: </span>
+                          <span className="font-medium text-amber-700 dark:text-amber-400">
+                            ₹{getRemainingForSide(activePayment, "cash").toLocaleString("en-IN")}
+                          </span>
                     </p>
                   ) : null}
                 </div>
@@ -6017,22 +6430,30 @@ export default function AccountManagementPage() {
                     {[...activePayment.phases]
                       .sort((a, b) => b.phaseNumber - a.phaseNumber)
                       .map((phase) => {
-                        const isCompleted = phase.status === "completed"
-                        const isPartial = phase.status === "partial"
-                        const remainingBefore = getRemainingBeforeInstallment(activePayment, phase)
-                        const isMix = getPaymentTypeValue(activePayment) === "mix"
-                        const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
-                        const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
+                                  const isCompleted = phase.status === "completed"
+                                  const isPartial = phase.status === "partial"
+                      const remainingBefore = getRemainingBeforeInstallment(activePayment, phase)
+                      const isMix = getPaymentTypeValue(activePayment) === "mix"
+                      const sideLabel = isLoanSidePaymentMode(phase.paymentMode) ? "Loan" : "Cash"
+                      const modeOptions = paymentModeOptionsForSide(getPaymentTypeValue(activePayment))
                         const showCollect = isCashOrUpiPaymentMode(
                           normalizePaymentMode(phase.paymentMode) ||
                             defaultInstallmentPaymentMode(activePayment),
                         )
-                        const fileOfficeVendorId = officeInsideVendors.find(
-                          (vendor) => vendor.dealerId === activePayment.dealerId,
-                        )?.id
+                        const collectVendors = isOfficeOutsidePayment(activePayment)
+                          ? officeOutsideVendors
+                          : officeInsideVendors
+                        const fileOfficeVendorId = isOfficeOutsidePayment(activePayment)
+                          ? collectVendors.find((vendor) => vendor.id === activePayment.dealerId)?.id
+                          : collectVendors.find((vendor) => vendor.dealerId === activePayment.dealerId)
+                              ?.id
                         const selectedCollectVendorId =
                           phase.collectVendorId ||
-                          (phase.collectDestination === "self" ? fileOfficeVendorId : undefined)
+                          (phase.collectDestination === "self" ||
+                          (isOfficeOutsidePayment(activePayment) &&
+                            isCollectOtherLike(phase.collectDestination))
+                            ? fileOfficeVendorId
+                            : undefined)
                         const collectOtherAmount = showCollect
                           ? collectLeaserAmount({
                               ...phase,
@@ -6040,94 +6461,94 @@ export default function AccountManagementPage() {
                                 phase.collectDestination === "self" ? "self" : phase.collectDestination,
                             }) || (isCollectOtherLike(phase.collectDestination) ? roundCollectInr(phase.paidAmount) : 0)
                           : 0
-
-                        return (
-                          <div
-                            key={phase.phaseNumber}
+                                  
+                                  return (
+                                    <div
+                                      key={phase.phaseNumber}
                             className={cn(
                               "rounded-lg border px-3 py-2.5 space-y-2",
-                              isCompleted
-                                ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
-                                : isPartial
-                                  ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
+                                        isCompleted
+                                          ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800"
+                                          : isPartial
+                                          ? "bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800"
                                   : "bg-muted/30 border-border",
                             )}
-                          >
+                                    >
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2 min-w-0">
-                                <div
+                                          <div
                                   className={cn(
                                     "w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0",
-                                    isCompleted
-                                      ? "bg-green-500 text-white"
-                                      : isPartial
-                                        ? "bg-amber-500 text-white"
+                                              isCompleted
+                                                ? "bg-green-500 text-white"
+                                                : isPartial
+                                                ? "bg-amber-500 text-white"
                                         : "bg-muted-foreground/30 text-muted-foreground",
                                   )}
-                                >
-                                  {phase.phaseNumber}
-                                </div>
+                                          >
+                                            {phase.phaseNumber}
+                                          </div>
                                 <p className="text-sm font-semibold truncate">{phase.phaseName}</p>
                                 <span className="text-[11px] text-muted-foreground truncate">
                                   {isMix ? `${sideLabel} remaining` : "Remaining"} before: ₹
                                   {remainingBefore.toLocaleString()}
                                 </span>
-                              </div>
-                              <Badge
+                                        </div>
+                                        <Badge
                                 className={cn(
                                   "h-5 px-1.5 text-[10px] shrink-0",
-                                  isCompleted
-                                    ? "bg-green-600 text-white"
-                                    : isPartial
-                                      ? "bg-amber-600 text-white"
+                                            isCompleted
+                                              ? "bg-green-600 text-white"
+                                              : isPartial
+                                              ? "bg-amber-600 text-white"
                                       : "bg-gray-500 text-white",
                                 )}
-                              >
-                                {isCompleted ? (
-                                  <>
+                                        >
+                                          {isCompleted ? (
+                                <>
                                     <CheckCircle2 className="w-3 h-3 mr-0.5" /> Completed
-                                  </>
-                                ) : isPartial ? (
-                                  <>
+                                </>
+                                          ) : isPartial ? (
+                                <>
                                     <Clock className="w-3 h-3 mr-0.5" /> Partial
-                                  </>
-                                ) : (
-                                  <>
+                                </>
+                                          ) : (
+                                <>
                                     <AlertCircle className="w-3 h-3 mr-0.5" /> Pending
-                                  </>
-                                )}
-                              </Badge>
-                            </div>
-
+                                </>
+                                          )}
+                                        </Badge>
+                                      </div>
+                                      
                             <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
                               <div className="min-w-0">
                                 <Label className="text-[11px] text-muted-foreground">Paid Amount</Label>
-                                <Input
-                                  type="number"
-                                  value={phase.paidAmount}
-                                  onChange={(e) => {
-                                    const paid = Number.parseFloat(e.target.value) || 0
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
-                                            phases: coercePhasesPaymentModes(
-                                              p.phases.map((ph) =>
-                                                ph.phaseNumber === phase.phaseNumber
-                                                  ? (() => {
-                                                      const nextStatus: PaymentPhase["status"] =
-                                                        paid >= ph.amount
-                                                          ? "completed"
-                                                          : paid > 0
-                                                            ? "partial"
-                                                            : "pending"
+                                          <Input
+                                            type="number"
+                                            value={phase.paidAmount}
+                                            onChange={(e) => {
+                                              const paid = Number.parseFloat(e.target.value) || 0
+                                              const updated = customerPayments.map((p) =>
+                                                p.quotationId === activePayment.quotationId
+                                                  ? {
+                                                      ...p,
+                                                      phases: coercePhasesPaymentModes(
+                                                        p.phases.map((ph) =>
+                                                          ph.phaseNumber === phase.phaseNumber
+                                                            ? (() => {
+                                                                const nextStatus: PaymentPhase["status"] =
+                                                                  paid >= ph.amount
+                                                                    ? "completed"
+                                                                    : paid > 0
+                                                                      ? "partial"
+                                                                      : "pending"
                                                       const nextPhase: PaymentPhase = {
-                                                        ...ph,
-                                                        paidAmount: paid,
-                                                        status: nextStatus,
-                                                        paymentDate:
-                                                          paid > 0 ? new Date().toISOString() : undefined,
-                                                      }
+                                                                  ...ph,
+                                                                  paidAmount: paid,
+                                                                  status: nextStatus,
+                                                                  paymentDate:
+                                                                    paid > 0 ? new Date().toISOString() : undefined,
+                                                                }
                                                       if (isCollectOtherLike(ph.collectDestination)) {
                                                         const paidAmt = roundCollectInr(paid)
                                                         const other = Math.min(
@@ -6145,59 +6566,59 @@ export default function AccountManagementPage() {
                                                         }
                                                       }
                                                       return nextPhase
-                                                    })()
-                                                  : ph,
-                                              ),
-                                            ),
-                                          }
-                                        : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
+                                                              })()
+                                                            : ph,
+                                                        ),
+                                                      ),
+                                                    }
+                                                  : p,
+                                              )
+                                              setCustomerPayments(updated)
+                                            }}
                                   className="mt-0.5 h-8"
-                                  placeholder="0"
-                                />
-                              </div>
+                                            placeholder="0"
+                                          />
+                                        </div>
                               <div className="min-w-0">
                                 <Label className="text-[11px] text-muted-foreground">Due Date</Label>
-                                <Input
-                                  type="date"
+                                          <Input
+                                            type="date"
                                   value={
                                     phase.dueDate
                                       ? new Date(phase.dueDate).toISOString().split("T")[0]
                                       : ""
                                   }
-                                  onChange={(e) => {
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
-                                            phases: p.phases.map((ph) =>
-                                              ph.phaseNumber === phase.phaseNumber
-                                                ? { ...ph, dueDate: e.target.value }
+                                            onChange={(e) => {
+                                              const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                                  ? {
+                                                      ...p,
+                                                      phases: p.phases.map((ph) =>
+                                                        ph.phaseNumber === phase.phaseNumber
+                                                          ? { ...ph, dueDate: e.target.value }
                                                 : ph,
-                                            ),
-                                          }
+                                                      ),
+                                                    }
                                         : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
+                                              )
+                                              setCustomerPayments(updated)
+                                            }}
                                   className="mt-0.5 h-8"
-                                />
-                              </div>
+                                          />
+                                        </div>
                               <div className="min-w-0">
                                 <Label className="text-[11px] text-muted-foreground">Payment Mode</Label>
-                                <Select
-                                  value={
-                                    normalizePaymentMode(phase.paymentMode) ||
-                                    defaultInstallmentPaymentMode(activePayment)
-                                  }
-                                  onValueChange={(value) => {
+                              <Select
+                                value={
+                                  normalizePaymentMode(phase.paymentMode) ||
+                                  defaultInstallmentPaymentMode(activePayment)
+                                }
+                                onValueChange={(value) => {
                                     const keepCollect = isCashOrUpiPaymentMode(value)
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
                                             phases: p.phases.map((ph) => {
                                               if (ph.phaseNumber !== phase.phaseNumber) return ph
                                               const keepOther = keepCollect && isCollectOtherLike(ph.collectDestination)
@@ -6227,46 +6648,46 @@ export default function AccountManagementPage() {
                                             }),
                                           }
                                         : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
-                                >
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
+                              >
                                   <SelectTrigger className="mt-0.5 h-8">
-                                    <SelectValue placeholder="Select payment mode" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {modeOptions.map((opt) => (
-                                      <SelectItem key={opt.value} value={opt.value}>
-                                        {opt.label}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              </div>
+                                  <SelectValue placeholder="Select payment mode" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {modeOptions.map((opt) => (
+                                    <SelectItem key={opt.value} value={opt.value}>
+                                      {opt.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                                        </div>
                               <div className="min-w-0">
                                 <Label className="text-[11px] text-muted-foreground">Notes</Label>
-                                <Input
-                                  value={phase.note || ""}
-                                  onChange={(e) => {
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
-                                            phases: p.phases.map((ph) =>
+                              <Input
+                                value={phase.note || ""}
+                                onChange={(e) => {
+                                  const updated = customerPayments.map((p) =>
+                                    p.quotationId === activePayment.quotationId
+                                      ? {
+                                          ...p,
+                                          phases: p.phases.map((ph) =>
                                               ph.phaseNumber === phase.phaseNumber
                                                 ? { ...ph, note: e.target.value }
                                                 : ph,
-                                            ),
-                                          }
-                                        : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
+                                          ),
+                                        }
+                                      : p,
+                                  )
+                                  setCustomerPayments(updated)
+                                }}
                                   className="mt-0.5 h-8"
                                   placeholder="Optional notes"
-                                />
-                              </div>
+                              />
                             </div>
+                          </div>
 
                             <div className="flex flex-wrap xl:flex-nowrap items-end gap-2">
                               {showCollect ? (
@@ -6323,7 +6744,11 @@ export default function AccountManagementPage() {
                                   {isCollectOtherLike(phase.collectDestination) ? (
                                     <>
                                       <div className="w-[12.5rem] shrink-0">
-                                        <Label className="text-[11px] text-muted-foreground">Office subvendor</Label>
+                                        <Label className="text-[11px] text-muted-foreground">
+                                          {isOfficeOutsidePayment(activePayment)
+                                            ? "Outside vendor"
+                                            : "Office subvendor"}
+                                        </Label>
                                         <Select
                                           value={selectedCollectVendorId}
                                           onValueChange={(vendorId) => {
@@ -6350,12 +6775,14 @@ export default function AccountManagementPage() {
                                             <SelectValue placeholder="Select office" />
                                           </SelectTrigger>
                                           <SelectContent>
-                                            {officeInsideVendors.length === 0 ? (
+                                            {collectVendors.length === 0 ? (
                                               <SelectItem value="__none" disabled>
-                                                No office subvendors
+                                                {isOfficeOutsidePayment(activePayment)
+                                                  ? "No outside vendors"
+                                                  : "No office subvendors"}
                                               </SelectItem>
                                             ) : (
-                                              officeInsideVendors.map((vendor) => (
+                                              collectVendors.map((vendor) => (
                                                 <SelectItem key={vendor.id} value={vendor.id}>
                                                   {vendor.name || vendor.contactName || vendor.dealerId}
                                                 </SelectItem>
@@ -6454,56 +6881,56 @@ export default function AccountManagementPage() {
                               <div className="min-w-0 flex-1">
                                 <Label className="text-[11px] text-muted-foreground">Transaction ID</Label>
                                 <Input
-                                  value={phase.transactionId || ""}
-                                  onChange={(e) => {
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
-                                            phases: p.phases.map((ph) =>
-                                              ph.phaseNumber === phase.phaseNumber
-                                                ? { ...ph, transactionId: e.target.value }
-                                                : ph,
-                                            ),
-                                          }
-                                        : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
+                              value={phase.transactionId || ""}
+                              onChange={(e) => {
+                                const updated = customerPayments.map((p) =>
+                                  p.quotationId === activePayment.quotationId
+                                    ? {
+                                        ...p,
+                                        phases: p.phases.map((ph) =>
+                                          ph.phaseNumber === phase.phaseNumber
+                                            ? { ...ph, transactionId: e.target.value }
+                                            : ph,
+                                        ),
+                                      }
+                                    : p,
+                                )
+                                setCustomerPayments(updated)
+                              }}
                                   className="mt-0.5 h-8"
-                                  placeholder="Optional"
-                                />
-                              </div>
-                              <div className="flex items-center gap-2 shrink-0 h-8 ml-auto">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    const updated = customerPayments.map((p) =>
-                                      p.quotationId === activePayment.quotationId
-                                        ? {
-                                            ...p,
-                                            phases: removePaymentPhase(
-                                              p.phases,
-                                              phase.phaseNumber,
-                                              p.subtotal,
-                                            ),
-                                          }
-                                        : p,
-                                    )
-                                    setCustomerPayments(updated)
-                                  }}
-                                  className="text-destructive h-8 px-2 text-xs"
-                                >
-                                  Remove
-                                </Button>
-                              </div>
-                            </div>
+                              placeholder="Optional"
+                            />
                           </div>
-                        )
-                      })}
-                  </div>
+                              <div className="flex items-center gap-2 shrink-0 h-8 ml-auto">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                const updated = customerPayments.map((p) =>
+                                  p.quotationId === activePayment.quotationId
+                                    ? {
+                                        ...p,
+                                        phases: removePaymentPhase(
+                                          p.phases,
+                                          phase.phaseNumber,
+                                          p.subtotal,
+                                        ),
+                                      }
+                                    : p,
+                                )
+                                setCustomerPayments(updated)
+                              }}
+                                  className="text-destructive h-8 px-2 text-xs"
+                            >
+                                  Remove
+                            </Button>
+                              </div>
+                                  </div>
+                                  </div>
+                      )
+                    })}
+                                </div>
                 </>
               )}
               {["cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
@@ -6582,14 +7009,14 @@ export default function AccountManagementPage() {
                   )}
                 </div>
               )}
-              {!isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
+              {!usesOfficeInsideStyleLedger(activePayment) && subvendorLedgerDrafts ? (
               <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-3 space-y-3">
                 <div className="space-y-2">
                   <div className="grid grid-cols-1 sm:grid-cols-[1.2fr_1fr_1fr] gap-3 items-end">
                     <div className="space-y-1.5 min-w-0">
                       <p className="text-xs font-medium text-muted-foreground">PI upload</p>
                       <div className="flex items-center gap-2">
-                        <Input
+                      <Input
                           id={`am-pi-upload-${activePayment.quotationId}`}
                           type="file"
                           accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp,.heic,.heif,.gif"
@@ -6747,9 +7174,16 @@ export default function AccountManagementPage() {
                 ) : null}
               </div>
               ) : null}
-              {isOfficeInsideDealer(activePayment.dealerId) && subvendorLedgerDrafts ? (
+              {usesOfficeInsideStyleLedger(activePayment) && subvendorLedgerDrafts ? (
                 <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2.5 space-y-2">
-                  <p className="text-sm font-medium">Accounts amounts</p>
+                  <p className="text-sm font-medium">
+                    Accounts amounts
+                    {isOfficeOutsidePayment(activePayment) ? (
+                      <span className="ml-2 text-[11px] font-normal text-muted-foreground">
+                        Office Outside · GST same as Office Inside · leaser on Vendor Outside
+                      </span>
+                    ) : null}
+                  </p>
                   <div className="flex items-end gap-2 min-w-0">
                     <div className="space-y-0.5 min-w-0 flex-1">
                       <Label htmlFor="accounts-ledger-pi" className="text-[11px] text-muted-foreground">
@@ -6835,7 +7269,7 @@ export default function AccountManagementPage() {
                             })
                           }}
                         />
-                      </div>
+                  </div>
                       )
                     })}
                   </div>

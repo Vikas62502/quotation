@@ -1494,7 +1494,16 @@ export function normalizeStatusCategory(rawCategory) {
  */
 export function callingActionToApiJson(row) {
   const a = row.get ? row.get({ plain: true }) : row
+  const lead = a.lead || a
   const parsed = parseTaggedCallRemark(a.callRemark ?? a.call_remark)
+  const raw = lead.raw_json || lead.raw || a.raw_json || a.raw || null
+  const formAnswers =
+    lead.form_answers ||
+    lead.formAnswers ||
+    a.form_answers ||
+    a.formAnswers ||
+    null
+  const email = lead.email || a.email || null
   return {
     ...a,
     // Keep legacy combined field for compatibility
@@ -1508,6 +1517,15 @@ export function callingActionToApiJson(row) {
     // Required in Calling Data > Recent Actions card
     kNumber: a.kNumber ?? a.k_number ?? a.lead?.kNumber ?? a.lead?.k_number ?? null,
     address: a.address ?? a.leadAddress ?? a.lead_address ?? a.lead?.address ?? null,
+
+    // Social / Meta sheet — Current Lead shows email + form Q&A
+    email,
+    formAnswers,
+    form_answers: formAnswers,
+    raw,
+    raw_json: raw,
+    customerNote: a.customerNote ?? a.customer_note ?? lead.customer_note ?? null,
+    customer_note: a.customer_note ?? a.customerNote ?? lead.customer_note ?? null,
   }
 }
 

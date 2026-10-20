@@ -4806,6 +4806,86 @@ export const api = {
         },
       },
     },
+
+    officeOutside: {
+      getAll: async (params?: {
+        status?: "all" | "pending" | "sent"
+        search?: string
+        vendorId?: string
+        fileType?: "loan" | "cash" | "mix"
+      }) => {
+        const queryParams = new URLSearchParams()
+        if (params?.status) queryParams.append("status", params.status)
+        if (params?.search) queryParams.append("search", params.search)
+        if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
+        if (params?.fileType) queryParams.append("fileType", params.fileType)
+        const query = queryParams.toString()
+        return apiRequest(`/admin/office-outside${query ? `?${query}` : ""}`, {
+          suppressErrorLog: true,
+        })
+      },
+
+      create: async (body: Record<string, unknown>) => {
+        return apiRequest("/admin/office-outside", {
+          method: "POST",
+          body,
+        })
+      },
+
+      update: async (id: string, body: Record<string, unknown>) => {
+        return apiRequest(`/admin/office-outside/${id}`, {
+          method: "PATCH",
+          body,
+        })
+      },
+
+      delete: async (id: string) => {
+        return apiRequest(`/admin/office-outside/${id}`, {
+          method: "DELETE",
+        })
+      },
+
+      sendToAccounts: async (id: string) => {
+        return apiRequest(`/admin/office-outside/${id}/send-to-accounts`, {
+          method: "POST",
+          body: {},
+        })
+      },
+
+      saveSlip: async (id: string, body: { items?: string; notes?: string }) => {
+        return apiRequest(`/admin/office-outside/${id}/slip`, {
+          method: "PATCH",
+          body,
+        })
+      },
+
+      paymentDetails: async (id: string, body: Record<string, unknown>) => {
+        return apiRequest(`/admin/office-outside/${id}/payment-details`, {
+          method: "PATCH",
+          body,
+          suppressErrorLog: true,
+        })
+      },
+
+      ledger: {
+        getAll: async (params?: { vendorId?: string; search?: string }) => {
+          const queryParams = new URLSearchParams()
+          if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
+          if (params?.search) queryParams.append("search", params.search)
+          const query = queryParams.toString()
+          return apiRequest(`/admin/office-outside/ledger${query ? `?${query}` : ""}`, {
+            suppressErrorLog: true,
+          })
+        },
+
+        update: async (recordId: string, body: Record<string, unknown>) => {
+          return apiRequest(`/admin/office-outside/ledger/${recordId}`, {
+            method: "PATCH",
+            body,
+          })
+        },
+      },
+    },
   },
 
   // System Config

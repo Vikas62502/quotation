@@ -113,6 +113,8 @@ import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel
 import { AdminBankingPanel } from "@/components/admin-banking-panel"
 import { HrWorkspace } from "@/app/dashboard/hr/page"
 import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
+import { OfficeOutsideAdminPanel } from "@/components/office-outside-admin-panel"
+import { readOfficeOutsideRecords } from "@/lib/office-outside-accounts"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -690,6 +692,11 @@ type AdminOperationalProgressTab =
   | "pending_payment"
   | "metering_send"
   | "metering_retrieve"
+  /** Office Outside custom tabs (outside vendors only). */
+  | "outside_vendors"
+  | "outside_all"
+  | "outside_accounts"
+  | "outside_meter"
 type AdminMeteringModalDraft = {
   discomName: string
   meterType: "" | "solar" | "net" | "both"
@@ -5034,10 +5041,15 @@ export default function AdminPanelPage() {
       list = groupQuotationsByCustomerCurrentFirst(sortedQuotations).map(
         (g) => g.current as Quotation,
       )
-      if (operationalProgressTab === "metering_send") {
-        list = list.filter((q) =>
-          getAdminQuotationsTabSendToMeteringState(q, quotationsSendToMeteringOptions(q)).visible,
-        )
+      if (
+        operationalProgressTab === "outside_all" ||
+        operationalProgressTab === "metering_send" ||
+        operationalProgressTab === "outside_accounts" ||
+        operationalProgressTab === "outside_meter" ||
+        operationalProgressTab === "outside_vendors"
+      ) {
+        // All Outside uses OfficeOutsideAdminPanel (separate data), not quotation rows.
+        list = []
       }
     }
 
@@ -5113,6 +5125,31 @@ export default function AdminPanelPage() {
     filterPaymentType === "all" &&
     filterBankDetails === "all" &&
     filterInstallOverdue === "all"
+
+  const [outsideOfficeTick, setOutsideOfficeTick] = useState(0)
+  const outsideOfficeTabCounts = useMemo(() => {
+    void outsideOfficeTick
+    return { all: readOfficeOutsideRecords().length }
+  }, [outsideOfficeTick])
+
+  // Quotations sub-tabs are only All + All Outside — reset leftover tab keys.
+  useEffect(() => {
+    if (operationalTab !== "all") return
+    if (
+      operationalProgressTab === "metering_send" ||
+      operationalProgressTab === "outside_vendors" ||
+      operationalProgressTab === "outside_accounts" ||
+      operationalProgressTab === "outside_meter"
+    ) {
+      setOperationalProgressTab("all")
+    }
+  }, [operationalTab, operationalProgressTab])
+
+  useEffect(() => {
+    if (operationalProgressTab === "outside_all") {
+      setOutsideOfficeTick((n) => n + 1)
+    }
+  }, [operationalProgressTab])
 
   const quotationListResetKey = [
     operationalTab,
@@ -9801,37 +9838,46 @@ export default function AdminPanelPage() {
               </Dialog>
               <CardHeader>
                 {operationalTab === "all" ? (
-                  <div className="mb-3 w-full rounded-xl border border-sky-200/70 bg-gradient-to-r from-orange-50/80 to-sky-50/80 p-1.5 flex flex-wrap gap-1.5">
-                    {(
-                      [
-                        { key: "all" as const, label: "All quotations" },
-                        {
-                          key: "metering_send" as const,
-                          label: `Send to Metering (${quotationsMeteringActionCounts.send})`,
-                        },
-                      ] as const
-                    ).map((item) => {
-                      const isActive = operationalProgressTab === item.key
-                      const isMeteringSend = item.key === "metering_send"
-                      return (
-                      <Button
-                        key={item.key}
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className={cn(
-                          "h-8 border",
-                          isActive && isMeteringSend && "bg-teal-100 text-teal-800 border-teal-200 shadow-sm hover:bg-teal-100",
-                          isActive && !isMeteringSend && "bg-orange-100 text-orange-800 border-orange-200 shadow-sm hover:bg-orange-100",
-                          !isActive && isMeteringSend && "border-transparent text-teal-800 hover:bg-teal-50",
-                          !isActive && !isMeteringSend && "border-transparent text-orange-800 hover:bg-orange-50",
-                        )}
-                        onClick={() => setOperationalProgressTab(item.key)}
-                      >
-                        {item.label}
-                      </Button>
-                      )
-                    })}
+                  <div className="mb-3 space-y-2">
+                    <div className="w-full rounded-xl border border-sky-200/70 bg-gradient-to-r from-orange-50/80 to-sky-50/80 p-1.5 flex flex-wrap gap-1.5">
+                      {(
+                        [
+                          { key: "all" as const, label: "All quotations", tone: "orange" as const },
+                          {
+                            key: "outside_all" as const,
+                            label: `All Outside (${outsideOfficeTabCounts.all})`,
+                            tone: "violet" as const,
+                          },
+                        ] as const
+                      ).map((item) => {
+                        const isActive = operationalProgressTab === item.key
+                        const tone = item.tone
+                        return (
+                        <Button
+                          key={item.key}
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className={cn(
+                            "h-8 border",
+                            isActive && tone === "orange" && "bg-orange-100 text-orange-800 border-orange-200 shadow-sm hover:bg-orange-100",
+                            isActive && tone === "violet" && "bg-violet-100 text-violet-900 border-violet-200 shadow-sm hover:bg-violet-100",
+                            !isActive && tone === "orange" && "border-transparent text-orange-800 hover:bg-orange-50",
+                            !isActive && tone === "violet" && "border-transparent text-violet-800 hover:bg-violet-50",
+                          )}
+                          onClick={() => setOperationalProgressTab(item.key)}
+                        >
+                          {item.label}
+                        </Button>
+                        )
+                      })}
+                    </div>
+                    {operationalProgressTab === "outside_all" ? (
+                      <p className="text-[11px] text-muted-foreground px-1">
+                        Separate Office Outside data (not All quotations). Create uses the same quotation form.
+                        Pick an outside vendor, then Send to Accounts — Accounts manages it under Vendor Outside.
+                      </p>
+                    ) : null}
                   </div>
                 ) : (
                   operationalTab === "metering" ? (
@@ -10152,7 +10198,9 @@ export default function AdminPanelPage() {
                 </DialogContent>
               </Dialog>
               <CardContent>
-                {operationalTab === "metering" ? (
+                {operationalTab === "all" && operationalProgressTab === "outside_all" ? (
+                  <OfficeOutsideAdminPanel />
+                ) : operationalTab === "metering" ? (
                   (() => {
                     const meteringStageBadgeClass = (stage: "processing" | "approved" | "meter_install" | "mco" | null) => {
                       if (stage === "processing") return "border-amber-300/80 bg-amber-50 text-amber-800"

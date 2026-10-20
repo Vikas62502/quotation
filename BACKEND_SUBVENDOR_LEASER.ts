@@ -5,13 +5,16 @@
  * =============================================================================
  *
  * Frontend (Oct 2026):
- *   - Account Management → Subvendor office → Dealer leaser → Manage
+ *   - Account Management → Vendor Office → Dealer leaser → Manage
+ *   - Account Management → Vendor Outside → Vendor leaser → Manage
+ *     (office_outside vendors; customers are Office Outside records, ids OO-*)
  *   - `lib/api.ts` → `api.admin.subvendors.leaser`
  *   - `lib/admin-subvendors.ts` (`SubvendorLeaserPayment`)
  *   - `components/admin-subvendor-panel.tsx`
  *
  * Auth: same admin JWT as `/admin/subvendors` (role admin / super-admin, or access includes "admin").
- * 403 for dealer / visitor / account-management unless they have admin access.
+ * Account-management JWT may PUT leaser for both office_inside and office_outside vendors.
+ * 403 for dealer / visitor unless they have admin or accounts access.
  *
  * Why:
  *   Dealer leaser payments are still localStorage-only. Refresh / other devices lose rows.
@@ -33,6 +36,13 @@
  *   Total payment     = SUM(leaser payment amounts) = leaser_paid — INITIAL 0
  *                       (UI label; same as former Current balance)
  *   Total remaining   = Profit vendor − Total payment
+ *
+ * Per office_outside vendor (Vendor Outside — same leaser table / routes):
+ *   Customers in the dropdown = sent Office Outside records for that vendor (ids OO-*)
+ *   Profit is COMPLETE (ignore profit_ratio):
+ *     sum of (file subtotal − (PI + fileCharges + GST + others))
+ *   Total remaining stored on PUT = complete profit − leaser_paid
+ *   Do NOT compute remaining from file charges or profit_ratio for this kind.
  *
  * Download Mini / Full statement is **client CSV**. No download endpoint.
  *
@@ -96,7 +106,10 @@
  * CREATE INDEX IF NOT EXISTS subvendor_leaser_payments_vendor_idx
  *   ON subvendor_leaser_payments (vendor_id, sort_order);
  *
- * customer_ids is a JSON array of quotation id strings, e.g. ["uuid-1","uuid-2"].
+ * customer_ids is a JSON array of id strings:
+ *   office_inside  → quotation ids
+ *   office_outside → office_outside_records.id (OO-…)
+ * Do not reject OO-* ids. Do not require a quotations row.
  *
  * -----------------------------------------------------------------------------
  * Sequelize (copy-paste)
@@ -162,7 +175,7 @@
  *       "amount": 20000,
  *       "paymentType": "Cash",
  *       "remark": "casg",
- *       "customerIds": ["quotation-id-1", "quotation-id-2"],
+ *       "customerIds": ["quotation-id-1", "OO-A1B2C3D4"],
  *       "sortOrder": 1
  *     }
  *   ],
@@ -179,7 +192,7 @@
  *   Do **not** rewrite a sent date to NOW() / created_at / paymentDate.
  *   Collect-self (`lp-self-*`) sends the installment Due Date (same as Accounts).
  *   GET must echo `date` + `payment_date` as `"YYYY-MM-DD"` (not ISO datetime).
- * customerIds: array of strings (quotation ids). Invalid / missing → [].
+ * customerIds: array of strings (quotation ids or OO-* office-outside record ids). Invalid / missing → [].
  * sortOrder: integer ≥ 1. If omitted, use 1..n in body order.
  *
  * Empty payments [] is valid (clears that vendor's leaser; current balance → 0).
@@ -228,8 +241,8 @@
  * Order on GET: sort_order ASC (Payment 1 first). Frontend reverses for newest-on-top.
  *
  * Errors:
- *   AUTH_004        — not admin
- *   SUBVENDOR_404   — vendor id not found / not office_inside
+ *   AUTH_004        — not admin / not accounts
+ *   SUBVENDOR_404   — vendor id not found (office_inside OR office_outside is valid)
  *   VAL_PAYMENTS    — payments missing or not an array
  *   VAL_AMOUNT      — amount negative / not a number
  *

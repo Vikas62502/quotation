@@ -65,6 +65,16 @@ import {
 } from "@/lib/admin-subvendors"
 import { cn } from "@/lib/utils"
 import {
+  customerFromOfficeOutsideRecord,
+  listOfficeOutsideSentToAccounts,
+  mergeOfficeOutsideRecordsFromApi,
+  officeOutsideSubtotalAmount,
+  pickOfficeOutsideListFromApi,
+  quotationFromOfficeOutsideRecord,
+  type OfficeOutsideRecord,
+} from "@/lib/office-outside-accounts"
+import { formatPersonName } from "@/lib/name-display"
+import {
   getLedgerAmounts,
   isApprovedQuotation,
   LEDGER_FIELD_LABELS,
@@ -151,6 +161,58 @@ type InsideLedgerRow = {
   others: number
 }
 
+function officeOutsideToLedgerRow(
+  row: OfficeOutsideRecord,
+  vendor: AdminSubvendorRecord,
+  ledgerMap: Record<string, SubvendorLedgerAmounts>,
+): InsideLedgerRow {
+  const stored = getLedgerAmounts(ledgerMap, row.id)
+  const subtotal = officeOutsideSubtotalAmount(row)
+  const quotation = quotationFromOfficeOutsideRecord(row)
+  const customer = customerFromOfficeOutsideRecord(row)
+  const proposal = stored.proposal && stored.proposal > 0 ? stored.proposal : subtotal
+  const pi = stored.pi ?? 0
+  const autoFileCharges = fileChargesFromVendorRate(
+    getQuotationSystemKw(quotation),
+    vendor.fileCostPerKw ?? 0,
+  )
+  const fileCharges =
+    stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
+  const gstCharges = officeInsideGstCharges(proposal, pi)
+  const others = stored.others ?? 0
+  const vendorAmounts = { proposal, pi, fileCharges, gstCharges, others }
+  const receivedAmount = stored.receivedAmount ?? 0
+  const paymentType = (row.fileType === "loan" || row.fileType === "mix" || row.fileType === "cash"
+    ? row.fileType
+    : "cash") as LedgerPaymentType
+  return {
+    quotationId: row.id,
+    dealerId: row.outsideVendorId,
+    customerName:
+      row.customerName ||
+      formatPersonName(customer?.firstName, customer?.lastName, "Unknown"),
+    customerMobile: row.mobile || customer?.mobile || "",
+    vendorName: vendor.name,
+    vendorMobile: vendor.mobile,
+    systemSize: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
+    systemKw: getQuotationSystemKw(quotation),
+    paymentType,
+    paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
+    subtotal,
+    loanAmount: stored.loanAmount ?? (paymentType === "loan" || paymentType === "mix" ? subtotal : 0),
+    cashAmount: stored.cashAmount ?? (paymentType === "cash" || paymentType === "mix" ? subtotal : 0),
+    receivedAmount,
+    remaining: stored.remaining ?? Math.max(0, subtotal - receivedAmount),
+    proposal,
+    costOfSite: officeInsideDeductedTotal(vendorAmounts),
+    profitVendor: officeInsideProfitFromAmounts(subtotal, vendorAmounts),
+    fileCharges,
+    pi,
+    gstCharges,
+    others,
+  }
+}
+
 function ledgerStatus(row: Pick<InsideLedgerRow, "receivedAmount" | "remaining">) {
   if (row.remaining <= 0) return { label: "Completed", tone: "completed" as const }
   if (row.receivedAmount > 0) return { label: "Partial", tone: "partial" as const }
@@ -218,28 +280,41 @@ export function AdminSubvendorPanel({
   const [form, setForm] = useState(emptyForm)
   const [savingVendor, setSavingVendor] = useState(false)
   const [leaserPayments, setLeaserPayments] = useState<SubvendorLeaserPayment[]>(() => readLeaserPayments())
+  const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>(() =>
+    listOfficeOutsideSentToAccounts(),
+  )
 
   useEffect(() => {
     let cancelled = false
     const loadRemote = async () => {
+      setOutsideRecords(listOfficeOutsideSentToAccounts())
       if (!useApi) return
       try {
-        const [vendorsRes, ledgerRes, leaserRes] = await Promise.all([
+        const [vendorsRes, ledgerRes, leaserRes, outsideRes, outsideLedgerRes] = await Promise.all([
           api.admin.subvendors.getAll(),
           api.admin.subvendors.ledger.getAll(),
           api.admin.subvendors.leaser.getAll().catch(() => null),
+          api.admin.officeOutside.getAll({ status: "sent" }).catch(() => null),
+          api.admin.officeOutside.ledger.getAll().catch(() => null),
         ])
         if (cancelled) return
         const vendors = pickSubvendorListFromApi(vendorsRes)
         writeAdminSubvendors(vendors)
         setRows(vendors)
-        const ledger = pickLedgerMapFromApi(ledgerRes)
-        writeSubvendorLedger(ledger)
-        setLedgerMap(ledger)
+        const insideLedger = pickLedgerMapFromApi(ledgerRes)
+        const outsideLedger = outsideLedgerRes ? pickLedgerMapFromApi(outsideLedgerRes) : {}
+        const mergedLedger = { ...readSubvendorLedger(), ...insideLedger, ...outsideLedger }
+        writeSubvendorLedger(mergedLedger)
+        setLedgerMap(mergedLedger)
         if (leaserRes) {
           const payments = pickLeaserPaymentList(leaserRes)
           writeLeaserPayments(payments)
           setLeaserPayments(payments)
+        }
+        if (outsideRes) {
+          const remote = pickOfficeOutsideListFromApi(outsideRes)
+          if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
+          setOutsideRecords(listOfficeOutsideSentToAccounts())
         }
       } catch {
         // Keep local cache when the subvendor API is not live yet.
@@ -301,8 +376,14 @@ export function AdminSubvendorPanel({
       const amount = Math.round((Math.max(0, proposal) * parseProfitRatio(vendor.profitRatio)) / 100)
       out[vendor.id] = (out[vendor.id] || 0) + amount
     }
+    for (const record of outsideRecords) {
+      const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
+      if (!vendor) continue
+      const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
+      out[vendor.id] = (out[vendor.id] || 0) + ledgerRow.profitVendor
+    }
     return out
-  }, [ledgerMap, quotations, vendorsByDealerId])
+  }, [ledgerMap, outsideRecords, outsideRows, quotations, vendorsByDealerId])
 
   const ledgerRows = useMemo(() => {
     const approved = quotations.filter(isApprovedQuotation)
@@ -486,8 +567,37 @@ export function AdminSubvendorPanel({
       item.currentBalance = item.paid
       item.totalRemaining = Math.round(item.profitVendor - item.paid)
     }
+    for (const vendor of outsideRows) {
+      stats[vendor.id] = {
+        totalFile: 0,
+        fileAmount: 0,
+        totalKw: 0,
+        subtotal: 0,
+        costOfSite: 0,
+        profitVendor: 0,
+        paid: paidByVendor[vendor.id] ?? 0,
+        currentBalance: 0,
+        totalRemaining: 0,
+      }
+    }
+    for (const record of outsideRecords) {
+      const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
+      if (!vendor || !stats[vendor.id]) continue
+      const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
+      stats[vendor.id].totalFile += 1
+      stats[vendor.id].fileAmount += ledgerRow.fileCharges
+      stats[vendor.id].totalKw += ledgerRow.systemKw || 0
+      stats[vendor.id].subtotal += ledgerRow.subtotal
+      stats[vendor.id].costOfSite += ledgerRow.costOfSite
+      stats[vendor.id].profitVendor += ledgerRow.profitVendor
+    }
+    for (const vendor of outsideRows) {
+      const item = stats[vendor.id]
+      item.currentBalance = item.paid
+      item.totalRemaining = Math.round(item.profitVendor - item.paid)
+    }
     return stats
-  }, [insideRows, ledgerMap, leaserPayments, quotations, vendorsByDealerId])
+  }, [insideRows, ledgerMap, leaserPayments, outsideRecords, outsideRows, quotations, vendorsByDealerId])
 
   const customersByVendorId = useMemo(() => {
     const out: Record<string, { quotationId: string; name: string; mobile: string; kw: string }[]> = {}
@@ -514,11 +624,33 @@ export function AdminSubvendorPanel({
         kw: formatLedgerSystemSize(getQuotationSystemKw(quotation)),
       })
     }
+    for (const record of outsideRecords) {
+      const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
+      if (!vendor) continue
+      const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
+      const name = String(ledgerRow.customerName || "").trim()
+      if (!name || name === "—" || name.toLowerCase() === "unknown") continue
+      const mobile = String(ledgerRow.customerMobile || "").trim()
+      const list = (out[vendor.id] ||= [])
+      const duplicate = list.find((item) => {
+        if (item.quotationId === record.id) return true
+        const rowMobile = String(item.mobile || "").trim()
+        if (mobile && rowMobile && mobile !== "—" && rowMobile === mobile) return true
+        return false
+      })
+      if (duplicate) continue
+      list.push({
+        quotationId: record.id,
+        name,
+        mobile: mobile === "—" ? "" : mobile,
+        kw: ledgerRow.systemSize,
+      })
+    }
     for (const vendorId of Object.keys(out)) {
       out[vendorId].sort((a, b) => a.name.localeCompare(b.name, "en-IN"))
     }
     return out
-  }, [quotations, vendorsByDealerId])
+  }, [ledgerMap, outsideRecords, outsideRows, quotations, vendorsByDealerId])
 
   const filesByVendorId = useMemo(() => {
     const out: Record<string, InsideLedgerRow[]> = {}
@@ -580,8 +712,13 @@ export function AdminSubvendorPanel({
         others: stored.others ?? 0,
       })
     }
+    for (const record of outsideRecords) {
+      const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
+      if (!vendor) continue
+      ;(out[vendor.id] ||= []).push(officeOutsideToLedgerRow(record, vendor, ledgerMap))
+    }
     return out
-  }, [ledgerMap, quotations, vendorsByDealerId])
+  }, [ledgerMap, outsideRecords, outsideRows, quotations, vendorsByDealerId])
 
   useEffect(() => {
     if (ledgerVendorId !== "all" && !insideDealerIds.has(ledgerVendorId)) {
@@ -785,8 +922,11 @@ export function AdminSubvendorPanel({
     writeLeaserPayments(all)
     setLeaserPayments(all)
     const paid = nextPayments.reduce((sum, row) => sum + row.amount, 0)
-    const fileAmount = vendorLeaserStats[vendorId]?.fileAmount ?? 0
-    const remaining = Math.max(0, fileAmount - paid)
+    const vendorKind = rows.find((row) => row.id === vendorId)?.kind
+    const stats = vendorLeaserStats[vendorId]
+    const remainingBase =
+      vendorKind === "office_outside" ? stats?.profitVendor ?? 0 : stats?.fileAmount ?? 0
+    const remaining = Math.max(0, remainingBase - paid)
     await saveLeaser(vendorId, String(paid), String(remaining))
     if (!useApi) return
     try {
@@ -837,7 +977,21 @@ export function AdminSubvendorPanel({
         addLabel="Register vendor"
         showAdd={outsideRows.length === 0}
         compact={embedded}
+        profitById={vendorProfitById}
+        profitHint="complete"
       />
+      {filtered.length > 0 ? (
+        <DealerLeaserManager
+          vendors={filtered}
+          statsById={vendorLeaserStats}
+          customersByVendorId={customersByVendorId}
+          filesByVendorId={filesByVendorId}
+          payments={leaserPayments}
+          quotations={outsideRecords.map(quotationFromOfficeOutsideRecord)}
+          onSave={saveLeaserPayments}
+          heading="Vendor leaser"
+        />
+      ) : null}
     </>
   )
 
@@ -1386,6 +1540,7 @@ function DealerLeaserManager({
   payments,
   quotations,
   onSave,
+  heading = "Dealer leaser",
 }: {
   vendors: AdminSubvendorRecord[]
   statsById: Record<string, VendorLeaserStats>
@@ -1394,6 +1549,7 @@ function DealerLeaserManager({
   payments: SubvendorLeaserPayment[]
   quotations: Quotation[]
   onSave: (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => Promise<void> | void
+  heading?: string
 }) {
   const { toast } = useToast()
   const [manageVendorId, setManageVendorId] = useState<string | null>(null)
@@ -1678,7 +1834,7 @@ function DealerLeaserManager({
           <DialogHeader>
             <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:justify-between">
               <div className="space-y-1">
-                <DialogTitle>Dealer leaser</DialogTitle>
+                <DialogTitle>{heading}</DialogTitle>
                 <DialogDescription>
                   Add date, amount, payment type, remark, and customers. Each payment stays in one row.
                 </DialogDescription>
@@ -1905,6 +2061,7 @@ function VendorGrid({
   showAdd,
   compact,
   profitById,
+  profitHint = "ratio",
   showStats = true,
 }: {
   rows: AdminSubvendorRecord[]
@@ -1918,6 +2075,7 @@ function VendorGrid({
   showAdd: boolean
   compact?: boolean
   profitById?: Record<string, number>
+  profitHint?: "ratio" | "complete"
   showStats?: boolean
 }) {
   if (rows.length === 0) {
@@ -1972,7 +2130,7 @@ function VendorGrid({
                 {formatLedgerInr(profitAmount)}
               </p>
               <p className="text-[11px] text-muted-foreground tabular-nums mt-0.5">
-                {formatProfitRatioLabel(row.profitRatio)}
+                {profitHint === "complete" ? "Complete" : formatProfitRatioLabel(row.profitRatio)}
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2">

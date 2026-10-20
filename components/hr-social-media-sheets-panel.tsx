@@ -18,6 +18,8 @@ import {
   extractUploadRowsFromBatchResponse,
   filterSourcesToDiscoveredTabs,
   extractLatestTaggedCallStatus,
+  extractSocialFormAnswers,
+  extractSocialLeadEmail,
   getSocialLeadStatusDisplay,
   isGoogleSheetsCredentialsPendingError,
   mapHrUploadRowToSocialLead,
@@ -809,7 +811,8 @@ export function HrSocialMediaSheetsPanel({
                       <CardTitle className="text-base">Leads from sheet</CardTitle>
                       <CardDescription>
                         Filter by status: New (sky), Pending (amber), Not interested (rose), Interested / Visit
-                        (green). List updates every 30 minutes and on socket sync.
+                        (green). Sheet rows with empty Final Decision (CREATED) are imported and assigned on
+                        Sync — list updates every 30 minutes and on socket sync.
                       </CardDescription>
                     </div>
                     {isAutoSyncing || isLoadingLeads ? (
@@ -873,6 +876,11 @@ export function HrSocialMediaSheetsPanel({
                           Boolean(latestTagged) &&
                           display.label !== "Not interested" &&
                           /not interest/i.test(String(row.finalDecision || ""))
+                        const email = row.email || extractSocialLeadEmail(row.raw)
+                        const formAnswers =
+                          row.formAnswers && row.formAnswers.length > 0
+                            ? row.formAnswers
+                            : extractSocialFormAnswers(row.raw)
                         return (
                           <div
                             key={row.id || `${row.mobile}-${idx}`}
@@ -906,6 +914,11 @@ export function HrSocialMediaSheetsPanel({
                               {row.address ? (
                                 <p><span className="text-muted-foreground">Address:</span> {row.address}</p>
                               ) : null}
+                              {email ? (
+                                <p className="break-all">
+                                  <span className="text-muted-foreground">Email:</span> {email}
+                                </p>
+                              ) : null}
                               {row.kw ? (
                                 <p><span className="text-muted-foreground">KW:</span> {row.kw}</p>
                               ) : null}
@@ -915,6 +928,11 @@ export function HrSocialMediaSheetsPanel({
                               {row.assignedDealerName ? (
                                 <p><span className="text-muted-foreground">Dealer:</span> {row.assignedDealerName}</p>
                               ) : null}
+                              {formAnswers.map((qa) => (
+                                <p key={`${qa.question}-${qa.answer}`} className="sm:col-span-2">
+                                  <span className="text-muted-foreground">{qa.question}:</span> {qa.answer}
+                                </p>
+                              ))}
                               {row.firstCallResponse ? (
                                 <p><span className="text-muted-foreground">1st call:</span> {row.firstCallResponse}</p>
                               ) : null}
