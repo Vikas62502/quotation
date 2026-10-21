@@ -37,7 +37,7 @@ import {
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
 import {
-  fetchOfficeOutsideRecordsFromApi,
+  fetchOfficeOutsideSentRecordsFromApi,
   listOfficeOutsideSentToAccounts,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideFileTypeLabel,
@@ -105,10 +105,10 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
     try {
       const [vendorsRes, remoteRecords, ledgerRes] = await Promise.all([
         api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
-        fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
+        fetchOfficeOutsideSentRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
         api.admin.officeOutside.ledger.getAll().catch(() => null),
       ])
-      setRecords(listOfficeOutsideSentToAccounts(remoteRecords))
+      setRecords(remoteRecords)
       if (vendorsRes) {
         const remote = pickSubvendorListFromApi(vendorsRes).filter((row) => row.kind === "office_outside")
         if (remote.length > 0) {

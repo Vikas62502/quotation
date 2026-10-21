@@ -417,7 +417,7 @@ export function listOfficeOutsidePending(records: OfficeOutsideRecord[] = []): O
 }
 
 export function listOfficeOutsideSentToAccounts(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
-  return records.filter((row) => Boolean(row.sentToAccountsAt && row.outsideVendorId))
+  return records.filter((row) => Boolean(row.sentToAccountsAt))
 }
 
 export function isOfficeOutsideRecordId(id?: string | null): boolean {
@@ -531,9 +531,36 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
     subtotal,
     amount: subtotal,
     fileType: normalizeOfficeOutsideFileType(String(row.fileType || row.file_type || "")),
-    outsideVendorId: String(row.outsideVendorId || row.outside_vendor_id || "").trim(),
-    outsideVendorName: String(row.outsideVendorName || row.outside_vendor_name || "").trim() || undefined,
-    sentToAccountsAt: String(row.sentToAccountsAt || row.sent_to_accounts_at || "").trim() || undefined,
+    outsideVendorId: String(
+      row.outsideVendorId ||
+        row.outside_vendor_id ||
+        row.vendorId ||
+        row.vendor_id ||
+        asRecord(row.vendor)?.id ||
+        asRecord(row.outsideVendor)?.id ||
+        asRecord(row.outside_vendor)?.id ||
+        "",
+    ).trim(),
+    outsideVendorName:
+      String(
+        row.outsideVendorName ||
+          row.outside_vendor_name ||
+          row.vendorName ||
+          row.vendor_name ||
+          asRecord(row.vendor)?.name ||
+          asRecord(row.outsideVendor)?.name ||
+          asRecord(row.outside_vendor)?.name ||
+          "",
+      ).trim() || undefined,
+    sentToAccountsAt: (() => {
+      const direct = String(row.sentToAccountsAt || row.sent_to_accounts_at || "").trim()
+      if (direct) return direct
+      const status = String(row.status || row.accountsStatus || row.accounts_status || "").trim().toLowerCase()
+      if (status === "sent" || status === "in_accounts" || status === "accounts") {
+        return String(row.updatedAt || row.updated_at || new Date().toISOString())
+      }
+      return undefined
+    })(),
     requirementSlip: slip
       ? {
           items: String(slip.items || "").trim(),
@@ -598,6 +625,19 @@ export async function fetchOfficeOutsideRecordsFromApi(
 ): Promise<OfficeOutsideRecord[]> {
   const res = await api.admin.officeOutside.getAll(params)
   return mergeOfficeOutsideRecordsFromApi(pickOfficeOutsideListFromApi(res))
+}
+
+/** Accounts / Vendor Outside: only rows already sent to Accounts. */
+export async function fetchOfficeOutsideSentRecordsFromApi(): Promise<OfficeOutsideRecord[]> {
+  const [fromSent, all] = await Promise.all([
+    fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
+    fetchOfficeOutsideRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
+  ])
+  const byId = new Map<string, OfficeOutsideRecord>()
+  for (const row of [...fromSent, ...all]) {
+    if (row.sentToAccountsAt) byId.set(row.id, row)
+  }
+  return sortOfficeOutsideRecords([...byId.values()])
 }
 
 export function pickOfficeOutsideDuplicateId(error: unknown): string | null {

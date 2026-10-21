@@ -10,6 +10,12 @@
  *   One customer (10-digit mobile) = one live Office Outside quotation.
  *   POST upserts that row. GET ?mobile= is the lookup. Unique index required.
  *
+ * CHANGELOG Oct 21 2026 (later) — Send to Accounts
+ *   No new route. SPA button is now always clickable on pending rows.
+ *   Send still calls POST /admin/office-outside/:id/send-to-accounts.
+ *   :id may be OO-* OR a UUID (live row for Rajkumar Saini was a UUID).
+ *   PATCH vendor MUST persist outside_vendor_id and echo it on GET, or Send 400s.
+ *
  * Frontend (Oct 2026):
  *   Admin → Quotations → All Outside   (`components/office-outside-admin-panel.tsx`)
  *   Accounts → Accounts list (sent rows mixed with quotations)
@@ -42,8 +48,10 @@
  *   1. POST record (customer + products + subtotal + fileType)
  *      If mobile already exists → upsert that row (do not create a second quotation)
  *   2. PATCH outsideVendorId (subvendors.kind must be office_outside)
- *   3. POST send-to-accounts  → sets sentToAccountsAt
- *   4. Accounts list = rows where sentToAccountsAt IS NOT NULL
+ *   3. POST send-to-accounts  → sets sentToAccountsAt (id = OO-* or UUID PK)
+ *   4. Accounts list = GET ?status=sent  (sentToAccountsAt IS NOT NULL).
+ *      Vendor is optional. Sent rows MUST appear in Accounts even if
+ *      outside_vendor_id is null. Pending (not sent) must NOT appear.
  *   5. Slip = 1-page quotation (customer, selected dealer, required products, subtotal)
  *      Chairbord / company name / GST / bank / logo must NOT appear on this document
  *      (PDF is generated on the client; backend only stores slip notes + product snapshot)
@@ -64,7 +72,11 @@
  *   - Persist GST with Office Inside formula (8.9% of proposal − PI when PI > 0)
  *   - Persist installments on the OO record (not quotations)
  *   - Accept office_outside vendor ids on PUT /admin/subvendors/:id/leaser
- *   - Accept OO-* ids in leaser customer_ids
+ *   - Accept OO-* ids AND UUID PKs on every /admin/office-outside/:id route
+ *     (including send-to-accounts). Do not 404 because id is not OO- prefixed.
+ *   - PATCH outsideVendorId must persist and echo outsideVendorId + outsideVendorName
+ *     on the very next GET. Empty vendor after PATCH leaves Send returning 400.
+ *   - Accept OO-* ids AND UUID PKs in leaser customer_ids
  *   - Enforce UNIQUE 10-digit mobile (one live quotation per customer)
  *   - POST duplicate mobile → upsert existing row (preferred) or 409 OO_DUPLICATE_CUSTOMER
  *
@@ -269,7 +281,8 @@
  *
  * POST /admin/office-outside body:
  * {
- *   "id": "OO-A1B2C3D4",          // optional; if omitted generate OO- + 8 hex
+ *   "id": "OO-A1B2C3D4",          // optional; UUID also accepted as PK
+ *                                 // if omitted generate OO- + 8 hex (UUID is OK too)
  *   "customerName": "Aman Rajak",
  *   "mobile": "8920094209",
  *   "email": "",
@@ -321,11 +334,22 @@
  * Echo the new vendor name on GET (join subvendors.name).
  *
  * POST /admin/office-outside/:id/send-to-accounts
+ *   :id is office_outside_records.id — OO-A1B2C3D4 or UUID. Look up by PK, not prefix.
+ *   404 OO_404 if that id is missing
  *   400 OO_VENDOR_REQUIRED if outside_vendor_id is null
  *   400 OO_VENDOR_KIND if vendor is not office_outside
  *   Sets sent_to_accounts_at = NOW() (idempotent if already set)
  *   Upsert office_outside_ledger with proposal = subtotal when proposal is 0
  *   Does NOT freeze vendor / fileType
+ *   200 body MUST include the updated record:
+ *     { success: true, data: { record: publicOfficeOutside(row) } }
+ *     with sentToAccountsAt / sent_to_accounts_at set, plus outsideVendorId.
+ *   After this, GET ?status=sent must include the row (this is how it “comes” in Accounts).
+ *
+ * PATCH vendor (required for Send to work):
+ *   PATCH /admin/office-outside/:id  { "outsideVendorId": "<subvendors.id>" }
+ *   Persist outside_vendor_id. Join subvendors.name onto GET as outsideVendorName.
+ *   If GET still returns outsideVendorId "", SPA cannot send (backend 400).
  *
  * PATCH /admin/office-outside/:id/payment-details
  *   Same body as quotations payment-details (phases / installments / paymentStatus / paymentMode).

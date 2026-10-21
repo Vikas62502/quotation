@@ -56,7 +56,7 @@ import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
 import { OfficeOutsideAccountsLedger } from "@/components/office-outside-accounts-ledger"
 import {
   customerFromOfficeOutsideRecord,
-  fetchOfficeOutsideRecordsFromApi,
+  fetchOfficeOutsideSentRecordsFromApi,
   isOfficeOutsideRecordId,
   listOfficeOutsideSentToAccounts,
   normalizeOfficeOutsideFileType,
@@ -2634,12 +2634,12 @@ export default function AccountManagementPage() {
       if (useApi) {
         try {
           const [remoteRecords, ledgerRes, vendorsRes] = await Promise.all([
-            fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
+            fetchOfficeOutsideSentRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
             api.admin.officeOutside.ledger.getAll().catch(() => null),
             api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
           ])
           if (cancelled) return
-          setOfficeOutsideRecords(listOfficeOutsideSentToAccounts(remoteRecords))
+          setOfficeOutsideRecords(remoteRecords)
           if (ledgerRes) {
             const ledger = pickLedgerMapFromApi(ledgerRes)
             const merged = { ...readSubvendorLedger(), ...ledger }
@@ -4284,10 +4284,10 @@ export default function AccountManagementPage() {
       })
       const remote = pickOfficeOutsideRecordFromApi(res)
       if (!remote) throw new Error("Office Outside save did not return a record from the API")
-      const latest = await fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => null)
+      const latest = await fetchOfficeOutsideSentRecordsFromApi().catch(() => null)
       setOfficeOutsideRecords((prev) =>
-        latest
-          ? listOfficeOutsideSentToAccounts(latest)
+        latest && latest.length > 0
+          ? latest
           : upsertOfficeOutsideRecordInList(prev, remote),
       )
       const nextVendor = officeOutsideVendors.find((row) => row.id === remote.outsideVendorId)
@@ -4569,9 +4569,9 @@ export default function AccountManagementPage() {
       if (isOfficeOutsidePayment(activePayment)) {
         persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
         await api.admin.officeOutside.paymentDetails(activePayment.quotationId, payload)
-        const latest = await fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => null)
-        if (latest) {
-          setOfficeOutsideRecords(listOfficeOutsideSentToAccounts(latest))
+        const latest = await fetchOfficeOutsideSentRecordsFromApi().catch(() => null)
+        if (latest && latest.length > 0) {
+          setOfficeOutsideRecords(latest)
         } else {
           setOfficeOutsideRecords((prev) =>
             prev.map((row) =>

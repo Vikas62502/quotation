@@ -66,8 +66,7 @@ import {
 import { cn } from "@/lib/utils"
 import {
   customerFromOfficeOutsideRecord,
-  fetchOfficeOutsideRecordsFromApi,
-  listOfficeOutsideSentToAccounts,
+  fetchOfficeOutsideSentRecordsFromApi,
   officeOutsideSubtotalAmount,
   quotationFromOfficeOutsideRecord,
   type OfficeOutsideRecord,
@@ -293,7 +292,7 @@ export function AdminSubvendorPanel({
           api.admin.subvendors.getAll(),
           api.admin.subvendors.ledger.getAll(),
           api.admin.subvendors.leaser.getAll().catch(() => null),
-          fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
+          fetchOfficeOutsideSentRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
           api.admin.officeOutside.ledger.getAll().catch(() => null),
         ])
         if (cancelled) return
@@ -310,7 +309,7 @@ export function AdminSubvendorPanel({
           writeLeaserPayments(payments)
           setLeaserPayments(payments)
         }
-        setOutsideRecords(listOfficeOutsideSentToAccounts(remoteOutside))
+        setOutsideRecords(remoteOutside)
       } catch {
         if (!cancelled) setOutsideRecords([])
       }
@@ -620,26 +619,28 @@ export function AdminSubvendorPanel({
       })
     }
     for (const record of outsideRecords) {
-      const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
-      if (!vendor) continue
-      const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
-      const name = String(ledgerRow.customerName || "").trim()
-      if (!name || name === "—" || name.toLowerCase() === "unknown") continue
-      const mobile = String(ledgerRow.customerMobile || "").trim()
-      const list = (out[vendor.id] ||= [])
-      const duplicate = list.find((item) => {
-        if (item.quotationId === record.id) return true
-        const rowMobile = String(item.mobile || "").trim()
-        if (mobile && rowMobile && mobile !== "—" && rowMobile === mobile) return true
-        return false
-      })
-      if (duplicate) continue
-      list.push({
-        quotationId: record.id,
-        name,
-        mobile: mobile === "—" ? "" : mobile,
-        kw: ledgerRow.systemSize,
-      })
+      const assigned = outsideRows.find((row) => row.id === record.outsideVendorId)
+      const targets = assigned ? [assigned] : outsideRows
+      for (const vendor of targets) {
+        const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
+        const name = String(ledgerRow.customerName || "").trim()
+        if (!name || name === "—" || name.toLowerCase() === "unknown") continue
+        const mobile = String(ledgerRow.customerMobile || "").trim()
+        const list = (out[vendor.id] ||= [])
+        const duplicate = list.find((item) => {
+          if (item.quotationId === record.id) return true
+          const rowMobile = String(item.mobile || "").trim()
+          if (mobile && rowMobile && mobile !== "—" && rowMobile === mobile) return true
+          return false
+        })
+        if (duplicate) continue
+        list.push({
+          quotationId: record.id,
+          name,
+          mobile: mobile === "—" ? "" : mobile,
+          kw: ledgerRow.systemSize,
+        })
+      }
     }
     for (const vendorId of Object.keys(out)) {
       out[vendorId].sort((a, b) => a.name.localeCompare(b.name, "en-IN"))

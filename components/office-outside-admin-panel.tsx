@@ -104,6 +104,9 @@ export function OfficeOutsideAdminPanel({
     try {
       const res = await api.admin.subvendors.getAll({ kind: "office_outside" })
       const remote = pickSubvendorListFromApi(res).filter((row) => row.kind === "office_outside")
+      const byId = new Map<string, AdminSubvendorRecord>()
+      for (const row of [...local, ...remote]) byId.set(row.id, row)
+      const merged = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name))
       if (remote.length > 0) {
         writeAdminSubvendors([
           ...remote,
@@ -111,8 +114,8 @@ export function OfficeOutsideAdminPanel({
             (row) => row.kind !== "office_outside" || !remote.some((r) => r.id === row.id),
           ),
         ])
-        setVendors(remote)
       }
+      if (merged.length > 0) setVendors(merged)
     } catch {
       // keep local
     }
@@ -200,6 +203,13 @@ export function OfficeOutsideAdminPanel({
       return
     }
     const vendor = vendors.find((v) => v.id === value)
+    const optimistic: OfficeOutsideRecord = {
+      ...row,
+      outsideVendorId: value,
+      outsideVendorName: vendor?.name || row.outsideVendorName,
+      updatedAt: new Date().toISOString(),
+    }
+    setRecords((prev) => upsertOfficeOutsideRecordInList(prev, optimistic))
     setMutatingId(row.id)
     try {
       const res = await api.admin.officeOutside.update(row.id, {
@@ -207,8 +217,13 @@ export function OfficeOutsideAdminPanel({
         outsideVendorName: vendor?.name,
       })
       const remote = pickOfficeOutsideRecordFromApi(res)
-      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
-      await refreshRecords({ silent: true })
+      setRecords((prev) =>
+        upsertOfficeOutsideRecordInList(prev, {
+          ...(remote || optimistic),
+          outsideVendorId: remote?.outsideVendorId || value,
+          outsideVendorName: remote?.outsideVendorName || vendor?.name || row.outsideVendorName,
+        }),
+      )
     } catch (error) {
       toast({
         title: "Could not update vendor",
@@ -314,23 +329,31 @@ export function OfficeOutsideAdminPanel({
   }
 
   const sendToAccounts = async (row: OfficeOutsideRecord) => {
-    if (!row.outsideVendorId) {
+    const current = records.find((item) => item.id === row.id) || row
+    if (!current.outsideVendorId) {
       toast({
         title: "Select outside vendor",
-        description: "Choose a vendor first.",
+        description: "Pick an outside vendor on this row, then tap Send to Accounts.",
         variant: "destructive",
       })
       return
     }
-    setSendingId(row.id)
+    setSendingId(current.id)
     try {
-      const res = await api.admin.officeOutside.sendToAccounts(row.id)
+      const res = await api.admin.officeOutside.sendToAccounts(current.id)
       const remote = pickOfficeOutsideRecordFromApi(res)
-      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
-      await refreshRecords({ silent: true })
+      const sentAt = remote?.sentToAccountsAt || new Date().toISOString()
+      setRecords((prev) =>
+        upsertOfficeOutsideRecordInList(prev, {
+          ...(remote || current),
+          outsideVendorId: remote?.outsideVendorId || current.outsideVendorId,
+          outsideVendorName: remote?.outsideVendorName || current.outsideVendorName,
+          sentToAccountsAt: sentAt,
+        }),
+      )
       toast({
         title: "Sent to Accounts",
-        description: `${row.customerName} is now in Accounts → Office Outside.`,
+        description: `${current.customerName} is now in Accounts → Vendor Outside.`,
       })
     } catch (error) {
       toast({
@@ -545,7 +568,6 @@ export function OfficeOutsideAdminPanel({
                   <Select
                     value={row.outsideVendorId || undefined}
                     onValueChange={(value) => void onVendorChange(row, value)}
-                    disabled={mutatingId === row.id}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="Select outside vendor" />
@@ -567,7 +589,6 @@ export function OfficeOutsideAdminPanel({
                   <Select
                     value={row.fileType || undefined}
                     onValueChange={(value) => void onFileTypeChange(row, value)}
-                    disabled={mutatingId === row.id}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="File type" />
@@ -586,7 +607,7 @@ export function OfficeOutsideAdminPanel({
                         type="button"
                         size="sm"
                         className="h-8 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white"
-                        disabled={!row.outsideVendorId || sendingId === row.id}
+                        disabled={sendingId === row.id}
                         onClick={() => void sendToAccounts(row)}
                       >
                         {sendingId === row.id ? (
