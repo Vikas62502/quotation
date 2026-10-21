@@ -32,7 +32,10 @@
  *   kW                = sum of those customers' system kW
  *   Subtotal          = sum of file subtotals
  *   Cost of site vendor = sum of office-inside ledger cost of site (PI + file charges + GST + others)
- *   Profit vendor     = sum of (file subtotal − cost of site vendor)
+ *                       If PI is 0 for a file, that file's cost of site vendor is 0.
+ *   Profit vendor     = sum of (file subtotal − cost of site vendor) × (profitRatio / 100)
+ *                       Example: 50% → 50% of that complete profit. 0% → ₹0. 100% → complete profit.
+ *                       If PI is 0 for a file, that file's profit vendor is 0.
  *   Total payment     = SUM(leaser payment amounts) = leaser_paid — INITIAL 0
  *                       (UI label; same as former Current balance)
  *   Total remaining   = Profit vendor − Total payment
@@ -41,6 +44,7 @@
  *   Customers in the dropdown = sent Office Outside records for that vendor (ids OO-*)
  *   Profit is COMPLETE (ignore profit_ratio):
  *     sum of (file subtotal − (PI + fileCharges + GST + others))
+ *     If PI is 0, that file's cost of site vendor and profit vendor are 0.
  *   Total remaining stored on PUT = complete profit − leaser_paid
  *   Do NOT compute remaining from file charges or profit_ratio for this kind.
  *
@@ -58,18 +62,20 @@
  *       = subtotal − site_cost
  *
  *   subvendor_ledger.cost_of_site / PATCH ledger `costOfSite`
- *     = Cost of site vendor = PI + fileCharges + GST + others
- *     Profit vendor = file subtotal − cost_of_site vendor
+ *     = Cost of site vendor = PI + fileCharges + GST + others; 0 when PI is 0
+ *     Complete profit = file subtotal − cost_of_site vendor; 0 when PI is 0
+ *     Profit vendor   = complete profit × (profit_ratio / 100)
  *
  * Do **not**:
  *   - copy `quotations.site_cost` onto ledger `cost_of_site` (or the reverse)
  *   - overwrite ledger `costOfSite` from `siteCost` on installment save
- *   - store dealer-leaser remaining from profit_ratio (proposal × %)
+ *   - store dealer-leaser remaining from proposal × profit_ratio
  *   - add a stats/download endpoint — remaining is FE: Profit vendor − SUM(leaser)
  *
  * If `subvendors.leaser_remaining` is written on leaser PUT, set it to
  *   Profit vendor − leaser_paid, **or** leave 0 and let the SPA compute.
- * Do not set leaser_remaining = (proposal × profit_ratio) − paid.
+ * office_inside Profit vendor uses profit_ratio as a percent of complete profit
+ * (subtotal − cost), not proposal × %. office_outside still ignores profit_ratio.
  *
  * Ledger GET must still echo pi, others, fileCharges, gstCharges, proposal, costOfSite
  * so the SPA can rebuild both pairs after refresh.

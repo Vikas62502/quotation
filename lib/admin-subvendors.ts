@@ -23,7 +23,7 @@ export type AdminSubvendorRecord = {
   city: string
   category: string
   notes: string
-  /** Vendor profit ratio as a percent (0–100). */
+  /** Vendor profit share as a percent of complete profit (0–100). 50 → 50% of (subtotal − cost). */
   profitRatio: number
   /** File charges rate: INR per rounded kW (4.4 → 4, 4.6 → 5). */
   fileCostPerKw: number
@@ -61,6 +61,15 @@ export function formatProfitRatioInput(value: number) {
 export function formatProfitRatioLabel(value: number) {
   const n = parseProfitRatio(value)
   return `${n}%`
+}
+
+/** Vendor's share of complete profit. 50 → 50% of (subtotal − cost of site). */
+export function vendorProfitShare(completeProfit: number, profitRatioPercent: number): number {
+  const base = Math.max(0, Math.round(Number(completeProfit) || 0))
+  const ratio = parseProfitRatio(profitRatioPercent)
+  if (base <= 0 || ratio <= 0) return 0
+  if (ratio >= 100) return base
+  return Math.round((base * ratio) / 100)
 }
 
 export function parseInrAmount(raw: unknown): number {

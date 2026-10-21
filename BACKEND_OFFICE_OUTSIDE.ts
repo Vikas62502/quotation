@@ -16,6 +16,11 @@
  *   :id may be OO-* OR a UUID (live row for Rajkumar Saini was a UUID).
  *   PATCH vendor MUST persist outside_vendor_id and echo it on GET, or Send 400s.
  *
+ * CHANGELOG Oct 21 2026 (revert) — Retrieve from Accounts
+ *   POST /admin/office-outside/:id/retrieve-from-accounts
+ *   Clears sent_to_accounts_at. Row leaves Accounts. All Outside shows
+ *   Send to Accounts again. PATCH { sentToAccountsAt: null } is the fallback.
+ *
  * Frontend (Oct 2026):
  *   Admin → Quotations → All Outside   (`components/office-outside-admin-panel.tsx`)
  *   Accounts → Accounts list (sent rows mixed with quotations)
@@ -26,9 +31,10 @@
  *   `lib/office-outside-accounts.ts`
  *
  * Auth:
- *   Admin JWT for create / list / vendor / send / slip / delete
+ *   Admin JWT for create / list / vendor / send / retrieve / slip / delete
  *   Account-management JWT (and admin) for GET sent list, PATCH vendor/fileType,
- *     ledger PATCH, payment-details PATCH, leaser PUT on office_outside vendors
+ *     send-to-accounts, retrieve-from-accounts, ledger PATCH, payment-details PATCH,
+ *     leaser PUT on office_outside vendors
  *   Dealers must NOT see or mutate these rows
  *
  * This is a SEPARATE dataset from `quotations`.
@@ -64,6 +70,10 @@
  *      Profit on that vendor card is COMPLETE file profit:
  *        subtotal − (PI + fileCharges + GST + others)
  *      Ignore subvendors.profit_ratio for kind=office_outside.
+ *   9. Revert (Accounts ↺ or All Outside Revert):
+ *      POST /admin/office-outside/:id/retrieve-from-accounts
+ *      → sent_to_accounts_at = NULL. Row leaves Accounts. All Outside shows
+ *        Send to Accounts again. Same id (OO-* or UUID). Do not delete the row.
  *
  * Display amount is ALWAYS subtotal (set price), never amount-after-subsidy.
  *
@@ -79,6 +89,8 @@
  *   - Accept OO-* ids AND UUID PKs in leaser customer_ids
  *   - Enforce UNIQUE 10-digit mobile (one live quotation per customer)
  *   - POST duplicate mobile → upsert existing row (preferred) or 409 OO_DUPLICATE_CUSTOMER
+ *   - Implement POST retrieve-from-accounts (and PATCH sentToAccountsAt: null)
+ *   - Echo sentToAccountsAt: null after revert (do not omit the key, do not keep the old timestamp)
  *
  * Do not:
  *   - Insert OO rows into quotations
@@ -89,6 +101,9 @@
  *   - 404 leaser because vendor.kind is office_outside
  *   - Insert a second office_outside_records row for the same 10-digit mobile
  *   - Rely on the SPA localStorage key officeOutsideRecordsById
+ *   - Delete the OO row on revert
+ *   - 400 OO_VENDOR_REQUIRED / OO_ALREADY_SENT on retrieve
+ *   - Leave sent_to_accounts_at set after a 200 retrieve (SPA would show In Accounts again on refresh)
  *
  * -----------------------------------------------------------------------------
  * SQL
@@ -259,6 +274,7 @@
  * PATCH  /admin/office-outside/:id
  * DELETE /admin/office-outside/:id
  * POST   /admin/office-outside/:id/send-to-accounts
+ * POST   /admin/office-outside/:id/retrieve-from-accounts   ← revert Send to Accounts
  * PATCH  /admin/office-outside/:id/slip
  * PATCH  /admin/office-outside/:id/payment-details   ← installments (same shape as quotations)
  *
@@ -345,6 +361,37 @@
  *     { success: true, data: { record: publicOfficeOutside(row) } }
  *     with sentToAccountsAt / sent_to_accounts_at set, plus outsideVendorId.
  *   After this, GET ?status=sent must include the row (this is how it “comes” in Accounts).
+ *
+ * POST /admin/office-outside/:id/retrieve-from-accounts
+ *   Revert Send to Accounts. SPA: Accounts list ↺ and All Outside “Revert”.
+ *   :id = office_outside_records.id (OO-* or UUID). Look up by PK, not prefix.
+ *   Body may be {} or { "retrieveFromAccounts": true, "allowRevert": true }.
+ *   Auth: admin or account-management JWT.
+ *   404 OO_404 if missing. Do NOT 400 for missing vendor. Do NOT 400 OO_ALREADY_SENT.
+ *   Sets sent_to_accounts_at = NULL (idempotent if already null).
+ *   Keep vendor, fileType, products, customer, installments, slip, ledger row.
+ *   GET ?status=sent must NOT include this row after revert.
+ *   GET ?status=pending / GET all must include it with sentToAccountsAt: null
+ *     so All Outside enables Send to Accounts again.
+ *   200:
+ *   {
+ *     "success": true,
+ *     "data": {
+ *       "record": {
+ *         "id": "2e5620c8-5519-4c3c-9e59-74950432925f",
+ *         "customerName": "RAJKUMAR SAINI",
+ *         "mobile": "7733078752",
+ *         "sentToAccountsAt": null,
+ *         "sent_to_accounts_at": null,
+ *         "outsideVendorId": "…",
+ *         "fileType": "loan",
+ *         "subtotal": 198000
+ *       }
+ *     }
+ *   }
+ *   PATCH /admin/office-outside/:id
+ *     { "sentToAccountsAt": null }  or  { "sent_to_accounts_at": null }
+ *     must do the same (SPA falls back here if retrieve is 404/405/501).
  *
  * PATCH vendor (required for Send to work):
  *   PATCH /admin/office-outside/:id  { "outsideVendorId": "<subvendors.id>" }
@@ -632,7 +679,26 @@ function applyRecordPatch(row, body) {
   if (body.outsideVendorId !== undefined || body.outside_vendor_id !== undefined) {
     row.outsideVendorId = body.outsideVendorId || body.outside_vendor_id || null
   }
+  if (body.sentToAccountsAt !== undefined || body.sent_to_accounts_at !== undefined) {
+    const raw = body.sentToAccountsAt !== undefined ? body.sentToAccountsAt : body.sent_to_accounts_at
+    row.sentToAccountsAt = raw ? new Date(raw) : null
+  }
   return row
+}
+
+async function retrieveOfficeOutsideFromAccounts(req, res, { OfficeOutsideRecord, Subvendor }) {
+  const row = await OfficeOutsideRecord.findByPk(req.params.id)
+  if (!row) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "OO_404", message: "Office Outside record not found" },
+    })
+  }
+  row.sentToAccountsAt = null
+  row.updatedBy = req.user?.id || row.updatedBy
+  await row.save()
+  const vendor = row.outsideVendorId ? await Subvendor.findByPk(row.outsideVendorId) : null
+  return res.json({ success: true, data: { record: publicOfficeOutside(row, vendor) } })
 }
 
 async function listOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor }) {
@@ -799,6 +865,7 @@ async function updateOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor, O
  *
  * Do not 400 if fileType is omitted on create (frontend may set it later on the row).
  * Do not 400 OO_ALREADY_SENT for vendor / fileType PATCH on a sent row.
+ * Do not 400 retrieve-from-accounts when the row is already pending (idempotent 200).
  */
 export const OFFICE_OUTSIDE_ERROR_CODES = {
   AUTH_004: "AUTH_004",
@@ -827,6 +894,7 @@ export {
   getOfficeOutside,
   createOfficeOutside,
   updateOfficeOutside,
+  retrieveOfficeOutsideFromAccounts,
   findByMobile,
   duplicateCustomerError,
   OFFICE_INSIDE_GST_RATE,

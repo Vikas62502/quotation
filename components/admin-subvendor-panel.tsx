@@ -43,6 +43,7 @@ import {
   parseFileCostPerKw,
   parseInrAmount,
   parseProfitRatio,
+  vendorProfitShare,
   fileChargesFromVendorRate,
   formatInrAmountInput,
   pickSubvendorListFromApi,
@@ -211,6 +212,14 @@ function officeOutsideToLedgerRow(
   }
 }
 
+function officeInsideProfitShare(
+  subtotal: number,
+  amounts: Parameters<typeof officeInsideProfitFromAmounts>[1],
+  profitRatio: number,
+) {
+  return vendorProfitShare(officeInsideProfitFromAmounts(subtotal, amounts), profitRatio)
+}
+
 function ledgerStatus(row: Pick<InsideLedgerRow, "receivedAmount" | "remaining">) {
   if (row.remaining <= 0) return { label: "Completed", tone: "completed" as const }
   if (row.receivedAmount > 0) return { label: "Partial", tone: "partial" as const }
@@ -366,9 +375,23 @@ export function AdminSubvendorPanel({
       if (!vendor) continue
       const stored = getLedgerAmounts(ledgerMap, quotation.id)
       const payment = summarizeQuotationPayment(quotation)
-      const proposal = stored.proposal ?? payment.subtotal
-      const amount = Math.round((Math.max(0, proposal) * parseProfitRatio(vendor.profitRatio)) / 100)
-      out[vendor.id] = (out[vendor.id] || 0) + amount
+      const proposal = stored.proposal ?? 0
+      const pi = stored.pi ?? 0
+      const autoFileCharges = fileChargesFromVendorRate(
+        getQuotationSystemKw(quotation),
+        vendor.fileCostPerKw ?? 0,
+      )
+      const fileCharges =
+        stored.fileCharges != null && stored.fileCharges > 0 ? stored.fileCharges : autoFileCharges
+      const vendorAmounts = {
+        proposal,
+        pi,
+        fileCharges,
+        gstCharges: officeInsideGstCharges(proposal, pi),
+        others: stored.others ?? 0,
+      }
+      out[vendor.id] =
+        (out[vendor.id] || 0) + officeInsideProfitShare(payment.subtotal, vendorAmounts, vendor.profitRatio)
     }
     for (const record of outsideRecords) {
       const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
@@ -457,13 +480,17 @@ export function AdminSubvendorPanel({
             gstCharges: officeInsideGstCharges(proposal, pi),
             others: stored.others ?? 0,
           }),
-          profitVendor: officeInsideProfitFromAmounts(payment.subtotal, {
-            proposal,
-            pi,
-            fileCharges,
-            gstCharges: officeInsideGstCharges(proposal, pi),
-            others: stored.others ?? 0,
-          }),
+          profitVendor: officeInsideProfitShare(
+            payment.subtotal,
+            {
+              proposal,
+              pi,
+              fileCharges,
+              gstCharges: officeInsideGstCharges(proposal, pi),
+              others: stored.others ?? 0,
+            },
+            vendor?.profitRatio ?? 0,
+          ),
           fileCharges,
           pi,
           gstCharges: officeInsideGstCharges(proposal, pi),
@@ -554,7 +581,11 @@ export function AdminSubvendorPanel({
       stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
       stats[vendor.id].subtotal += Math.max(0, Math.round(payment.subtotal || 0))
       stats[vendor.id].costOfSite += costOfSite
-      stats[vendor.id].profitVendor += officeInsideProfitFromAmounts(payment.subtotal, vendorAmounts)
+      stats[vendor.id].profitVendor += officeInsideProfitShare(
+        payment.subtotal,
+        vendorAmounts,
+        vendor.profitRatio,
+      )
     }
     for (const vendor of insideRows) {
       const item = stats[vendor.id]
@@ -695,13 +726,17 @@ export function AdminSubvendorPanel({
           gstCharges: officeInsideGstCharges(proposal, pi),
           others: stored.others ?? 0,
         }),
-        profitVendor: officeInsideProfitFromAmounts(payment.subtotal, {
-          proposal,
-          pi,
-          fileCharges,
-          gstCharges: officeInsideGstCharges(proposal, pi),
-          others: stored.others ?? 0,
-        }),
+        profitVendor: officeInsideProfitShare(
+          payment.subtotal,
+          {
+            proposal,
+            pi,
+            fileCharges,
+            gstCharges: officeInsideGstCharges(proposal, pi),
+            others: stored.others ?? 0,
+          },
+          vendor.profitRatio,
+        ),
         fileCharges,
         pi,
         gstCharges: officeInsideGstCharges(proposal, pi),
@@ -918,10 +953,8 @@ export function AdminSubvendorPanel({
     writeLeaserPayments(all)
     setLeaserPayments(all)
     const paid = nextPayments.reduce((sum, row) => sum + row.amount, 0)
-    const vendorKind = rows.find((row) => row.id === vendorId)?.kind
     const stats = vendorLeaserStats[vendorId]
-    const remainingBase =
-      vendorKind === "office_outside" ? stats?.profitVendor ?? 0 : stats?.fileAmount ?? 0
+    const remainingBase = stats?.profitVendor ?? 0
     const remaining = Math.max(0, remainingBase - paid)
     await saveLeaser(vendorId, String(paid), String(remaining))
     if (!useApi) return
@@ -1242,7 +1275,9 @@ export function AdminSubvendorPanel({
                 value={form.profitRatio}
                 onChange={(e) => setForm((p) => ({ ...p, profitRatio: e.target.value }))}
               />
-              <p className="text-[11px] text-muted-foreground mt-1">Percent of this vendor's profit, 0–100.</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Percent of complete profit (subtotal − cost of site). 50 means Profit vendor is 50% of that amount.
+              </p>
               {editingId ? (
                 <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300 mt-1.5">
                   Profit {formatLedgerInr(vendorProfitById[editingId] ?? 0)}
@@ -1792,6 +1827,11 @@ function DealerLeaserManager({
                 <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                   {formatLedgerInr(stats.profitVendor)}
                 </p>
+                {vendor.kind === "office_inside" ? (
+                  <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
+                    {formatProfitRatioLabel(vendor.profitRatio)} of profit
+                  </p>
+                ) : null}
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
@@ -1900,6 +1940,11 @@ function DealerLeaserManager({
                       <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                         {formatLedgerInr(manageStats.profitVendor)}
                       </p>
+                      {manageVendor.kind === "office_inside" ? (
+                        <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
+                          {formatProfitRatioLabel(manageVendor.profitRatio)} of profit
+                        </p>
+                      ) : null}
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
@@ -2499,7 +2544,7 @@ function InsideVendorLedger({
                           {formatLedgerInr(vendorCost)}
                         </p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          PI + file + GST + others
+                          PI + file + GST + others · 0 if PI is 0
                         </p>
                       </div>
                       <div>
@@ -2513,7 +2558,7 @@ function InsideVendorLedger({
                           {formatLedgerInr(vendorProfit)}
                         </p>
                         <p className="text-[11px] text-muted-foreground mt-0.5">
-                          Subtotal − cost of site vendor
+                          Subtotal − cost of site vendor · 0 if PI is 0
                         </p>
                       </div>
                     </>

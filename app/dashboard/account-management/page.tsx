@@ -59,6 +59,7 @@ import {
   fetchOfficeOutsideSentRecordsFromApi,
   isOfficeOutsideRecordId,
   listOfficeOutsideSentToAccounts,
+  retrieveOfficeOutsideFromAccountsApi,
   normalizeOfficeOutsideFileType,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideSubtotalAmount,
@@ -96,6 +97,12 @@ import {
   type LedgerAmountField,
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
+import {
+  findRajeshPortalLedger,
+  isRajeshDealerName,
+  mergeRajeshPortalIntoLedger,
+  rajeshPortalNeedsApply,
+} from "@/lib/rajesh-customer-portal-ledger"
 import {
   fileChargesFromVendorRate,
   leaserPaymentsToApiBody,
@@ -2097,6 +2104,7 @@ export default function AccountManagementPage() {
   const [isRevertingFinalSettlement, setIsRevertingFinalSettlement] = useState(false)
   const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
   const [retrievingInstallationId, setRetrievingInstallationId] = useState<string | null>(null)
+  const [retrievingOfficeOutsideId, setRetrievingOfficeOutsideId] = useState<string | null>(null)
   /** Draft Cost of site values while typing; flushed to backend on blur. */
   const [siteCostDrafts, setSiteCostDrafts] = useState<Record<string, string>>({})
   const [savingSiteCostId, setSavingSiteCostId] = useState<string | null>(null)
@@ -2108,6 +2116,7 @@ export default function AccountManagementPage() {
    * Not localStorage — cleared on full page reload (backend GET must echo siteCost).
    */
   const siteCostSessionRef = useRef<Record<string, number>>({})
+  const rajeshPortalPatchedRef = useRef<Set<string>>(new Set())
   const [settlementRemarksDraft, setSettlementRemarksDraft] = useState("")
   const sessionUserId = accountManager?.id ?? dealer?.id
   const accountsPermissionCtx = {
@@ -2688,9 +2697,72 @@ export default function AccountManagementPage() {
 
   const usesOfficeInsideStyleLedger = useCallback(
     (payment: CustomerPayment) =>
-      isOfficeOutsidePayment(payment) || isOfficeInsideDealer(payment.dealerId),
+      isOfficeOutsidePayment(payment) ||
+      isOfficeInsideDealer(payment.dealerId) ||
+      isRajeshDealerName(
+        payment.dealerName,
+        payment.quotation?.dealer?.firstName,
+        payment.quotation?.dealer?.lastName,
+      ),
     [isOfficeInsideDealer],
   )
+
+  useEffect(() => {
+    const pending: { id: string; patch: SubvendorLedgerAmounts }[] = []
+    for (const payment of customerPayments) {
+      if (isOfficeOutsidePayment(payment)) continue
+      if (
+        !isRajeshDealerName(
+          payment.dealerName,
+          payment.quotation?.dealer?.firstName,
+          payment.quotation?.dealer?.lastName,
+        )
+      ) {
+        continue
+      }
+      const portal = findRajeshPortalLedger(payment.customerName)
+      if (!portal) continue
+      const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+      if (!rajeshPortalNeedsApply(stored, portal)) continue
+      pending.push({
+        id: payment.quotationId,
+        patch: mergeRajeshPortalIntoLedger(stored, portal),
+      })
+    }
+    if (pending.length === 0) return
+
+    let nextMap = { ...subvendorLedgerMap }
+    const siteById: Record<string, number> = {}
+    for (const { id, patch } of pending) {
+      nextMap = { ...nextMap, [id]: { ...getLedgerAmounts(nextMap, id), ...patch } }
+      upsertLedgerAmounts(id, patch)
+      siteById[id] = normalVendorSiteCost(patch)
+    }
+    writeSubvendorLedger({ ...readSubvendorLedger(), ...nextMap })
+    setSubvendorLedgerMap(nextMap)
+    setCustomerPayments((prev) =>
+      prev.map((row) => {
+        const siteCost = siteById[row.quotationId]
+        if (siteCost == null) return row
+        return { ...row, siteCost: siteCost > 0 ? siteCost : undefined }
+      }),
+    )
+    for (const { id } of pending) {
+      const siteCost = siteById[id] ?? 0
+      persistSiteCostForQuotation(id, siteCost)
+      if (siteCost > 0) siteCostSessionRef.current[id] = siteCost
+      else delete siteCostSessionRef.current[id]
+    }
+    if (!useApi) return
+    for (const { id, patch } of pending) {
+      const signature = `${id}:${patch.proposal ?? 0}:${patch.pi ?? 0}:${patch.others ?? 0}`
+      if (rajeshPortalPatchedRef.current.has(signature)) continue
+      rajeshPortalPatchedRef.current.add(signature)
+      void api.admin.subvendors.ledger.update(id, ledgerPatchToApiBody(patch)).catch(() => {
+        rajeshPortalPatchedRef.current.delete(signature)
+      })
+    }
+  }, [customerPayments, subvendorLedgerMap, useApi])
 
   // Initialize payment phases for quotations (permission-scoped — Selected one / office / everyone)
   useEffect(() => {
@@ -4209,7 +4281,17 @@ export default function AccountManagementPage() {
   }
 
   const seedOfficeInsideLedgerDrafts = (payment: CustomerPayment) => {
-    const stored = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+    const storedBase = getLedgerAmounts(subvendorLedgerMap, payment.quotationId)
+    const portal =
+      !isOfficeOutsidePayment(payment) &&
+      isRajeshDealerName(
+        payment.dealerName,
+        payment.quotation?.dealer?.firstName,
+        payment.quotation?.dealer?.lastName,
+      )
+        ? findRajeshPortalLedger(payment.customerName)
+        : null
+    const stored = portal ? mergeRajeshPortalIntoLedger(storedBase, portal) : storedBase
     if (!usesOfficeInsideStyleLedger(payment)) {
       const pi = stored.pi ?? 0
       const others =
@@ -4902,6 +4984,35 @@ export default function AccountManagementPage() {
     }
   }
 
+  const handleRetrieveOfficeOutsideFromAccounts = async (payment: CustomerPayment) => {
+    if (!payment?.quotationId) return
+    if (
+      !confirmSave(
+        `Revert ${payment.customerName} from Accounts?\n\nThis returns the file to All Outside and enables Send to Accounts again.`,
+      )
+    ) {
+      return
+    }
+    setRetrievingOfficeOutsideId(payment.quotationId)
+    try {
+      await retrieveOfficeOutsideFromAccountsApi(payment.quotationId)
+      setOfficeOutsideRecords((prev) => prev.filter((row) => row.id !== payment.quotationId))
+      setCustomerPayments((prev) => prev.filter((row) => row.quotationId !== payment.quotationId))
+      toast({
+        title: "Reverted from Accounts",
+        description: `${payment.customerName} is back on All Outside. Send to Accounts is enabled.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Could not revert",
+        description: error instanceof Error ? error.message : "Try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setRetrievingOfficeOutsideId(null)
+    }
+  }
+
   const handleRetrieveFromInstallation = async (quotation: Quotation) => {
     if (!quotation?.id) return
     const releaseMap = readInstallerReleaseMap()
@@ -5449,14 +5560,6 @@ export default function AccountManagementPage() {
                                   {payment.dealerName || "Unassigned"} •{" "}
                                   {payment.dealerMobile || "No contact"}
                                 </p>
-                                {isOfficeOutsidePayment(payment) ? (
-                                  <Badge
-                                    variant="outline"
-                                    className="mt-0.5 h-4 px-1.5 text-[9px] font-medium border-sky-400/70 text-sky-800 bg-sky-50"
-                                  >
-                                    Office Outside
-                                  </Badge>
-                                ) : null}
                               </AccountsCol>
 
                               <AccountsCol label="Subtotal">
@@ -5743,7 +5846,40 @@ export default function AccountManagementPage() {
 
                               <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end", ACCOUNTS_STICKY_ACTIONS)}>
                                 <div className="flex flex-col items-stretch gap-1 w-full max-w-[8.5rem] min-w-0">
-                                  {isOfficeOutsidePayment(payment) ? null : sentToInstaller ? (
+                                  {isOfficeOutsidePayment(payment) ? (
+                                    <div className="flex items-center gap-1 min-w-0">
+                                      <Badge
+                                        variant="outline"
+                                        className="min-w-0 flex-1 justify-center text-[9px] px-1.5 h-6 border-sky-400/80 text-sky-800 bg-sky-50 whitespace-nowrap truncate"
+                                      >
+                                        Office Outside
+                                      </Badge>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-6 w-6 p-0 shrink-0 border-amber-800/40 text-amber-950"
+                                        onClick={() => void handleRetrieveOfficeOutsideFromAccounts(payment)}
+                                        disabled={
+                                          accountsReadOnly ||
+                                          !canWriteAccounts ||
+                                          retrievingOfficeOutsideId === payment.quotationId
+                                        }
+                                        title="Revert to All Outside (enable Send to Accounts)"
+                                      >
+                                        {retrievingOfficeOutsideId === payment.quotationId ? (
+                                          <Loader2 className="w-3 h-3 animate-spin" />
+                                        ) : (
+                                          <RotateCcw className="w-3 h-3" />
+                                        )}
+                                        <span className="sr-only">
+                                          {retrievingOfficeOutsideId === payment.quotationId
+                                            ? "Reverting..."
+                                            : "Revert"}
+                                        </span>
+                                      </Button>
+                                    </div>
+                                  ) : sentToInstaller ? (
                                     <div className="flex items-center gap-1 min-w-0">
                                       <Badge
                                         variant="outline"
@@ -7301,7 +7437,7 @@ export default function AccountManagementPage() {
                               <p className="text-sm font-semibold tabular-nums">
                                 ₹{vendorCost.toLocaleString("en-IN")}
                               </p>
-                              <p className="text-[10px] text-muted-foreground">PI + file + GST + others</p>
+                              <p className="text-[10px] text-muted-foreground">PI + file + GST + others · 0 if PI is 0</p>
                             </div>
                             <div className="min-w-0">
                               <p className="text-[11px] font-medium text-muted-foreground">Profit vendor</p>
@@ -7313,7 +7449,7 @@ export default function AccountManagementPage() {
                               >
                                 ₹{vendorProfit.toLocaleString("en-IN")}
                               </p>
-                              <p className="text-[10px] text-muted-foreground">Subtotal − cost of site vendor</p>
+                              <p className="text-[10px] text-muted-foreground">Subtotal − cost of site vendor · 0 if PI is 0</p>
                             </div>
                             <div className="min-w-0">
                               <p className="text-[11px] font-medium text-muted-foreground">Cost of site</p>

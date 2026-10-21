@@ -4860,6 +4860,13 @@ export const api = {
         })
       },
 
+      retrieveFromAccounts: async (id: string) => {
+        return apiRequest(`/admin/office-outside/${id}/retrieve-from-accounts`, {
+          method: "POST",
+          body: {},
+        })
+      },
+
       saveSlip: async (id: string, body: { items?: string; notes?: string }) => {
         return apiRequest(`/admin/office-outside/${id}/slip`, {
           method: "PATCH",

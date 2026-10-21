@@ -26,6 +26,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Trash2,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -43,6 +44,7 @@ import {
   fetchOfficeOutsideRecordsFromApi,
   listOfficeOutsidePending,
   listOfficeOutsideSentToAccounts,
+  retrieveOfficeOutsideFromAccountsApi,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideFileTypeLabel,
   officeOutsideSubtotalAmount,
@@ -90,6 +92,7 @@ export function OfficeOutsideAdminPanel({
   const [vendorCreateOpen, setVendorCreateOpen] = useState(false)
   const [active, setActive] = useState<OfficeOutsideRecord | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [revertingId, setRevertingId] = useState<string | null>(null)
   const [mutatingId, setMutatingId] = useState<string | null>(null)
 
   const [slipNotes, setSlipNotes] = useState("")
@@ -325,6 +328,34 @@ export function OfficeOutsideAdminPanel({
       toast({ title: "Outside vendor created", description: created.name })
     } finally {
       setSaving(false)
+    }
+  }
+
+  const revertFromAccounts = async (row: OfficeOutsideRecord) => {
+    if (!window.confirm(`Revert ${row.customerName} from Accounts?\n\nSend to Accounts will be enabled again on All Outside.`)) {
+      return
+    }
+    setRevertingId(row.id)
+    try {
+      const remote = await retrieveOfficeOutsideFromAccountsApi(row.id)
+      setRecords((prev) =>
+        upsertOfficeOutsideRecordInList(prev, {
+          ...(remote || row),
+          sentToAccountsAt: undefined,
+        }),
+      )
+      toast({
+        title: "Reverted from Accounts",
+        description: `${row.customerName} is pending on All Outside. Send to Accounts is enabled.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Could not revert",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setRevertingId(null)
     }
   }
 
@@ -602,7 +633,24 @@ export function OfficeOutsideAdminPanel({
                     </SelectContent>
                   </Select>
                   <div className="flex flex-wrap gap-1.5">
-                    {!sent ? (
+                    {sent ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[11px] gap-1 border-amber-800/40 text-amber-950"
+                        disabled={revertingId === row.id}
+                        onClick={() => void revertFromAccounts(row)}
+                        title="Revert from Accounts — Send to Accounts will be enabled again"
+                      >
+                        {revertingId === row.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <RotateCcw className="w-3.5 h-3.5" />
+                        )}
+                        Revert
+                      </Button>
+                    ) : (
                       <Button
                         type="button"
                         size="sm"
@@ -617,7 +665,7 @@ export function OfficeOutsideAdminPanel({
                         )}
                         Send to Accounts
                       </Button>
-                    ) : null}
+                    )}
                     <Button type="button" variant="outline" size="sm" className="h-8 text-[11px] gap-1" onClick={() => openSlip(row)}>
                       <ClipboardList className="w-3.5 h-3.5" />
                       Slip

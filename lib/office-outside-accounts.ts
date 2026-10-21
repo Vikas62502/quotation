@@ -553,13 +553,13 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
           "",
       ).trim() || undefined,
     sentToAccountsAt: (() => {
-      const direct = String(row.sentToAccountsAt || row.sent_to_accounts_at || "").trim()
-      if (direct) return direct
+      const raw = row.sentToAccountsAt ?? row.sent_to_accounts_at
+      if (raw == null || raw === false || raw === "") return undefined
+      const direct = String(raw).trim()
+      if (!direct || direct === "null" || direct === "undefined") return undefined
       const status = String(row.status || row.accountsStatus || row.accounts_status || "").trim().toLowerCase()
-      if (status === "sent" || status === "in_accounts" || status === "accounts") {
-        return String(row.updatedAt || row.updated_at || new Date().toISOString())
-      }
-      return undefined
+      if (status === "pending" || status === "reverted") return undefined
+      return direct
     })(),
     requirementSlip: slip
       ? {
@@ -625,6 +625,26 @@ export async function fetchOfficeOutsideRecordsFromApi(
 ): Promise<OfficeOutsideRecord[]> {
   const res = await api.admin.officeOutside.getAll(params)
   return mergeOfficeOutsideRecordsFromApi(pickOfficeOutsideListFromApi(res))
+}
+
+export async function retrieveOfficeOutsideFromAccountsApi(
+  id: string,
+): Promise<OfficeOutsideRecord | null> {
+  const key = String(id || "").trim()
+  if (!key) throw new Error("Office Outside record id required")
+  try {
+    const res = await api.admin.officeOutside.retrieveFromAccounts(key)
+    const remote = pickOfficeOutsideRecordFromApi(res)
+    if (remote) return { ...remote, sentToAccountsAt: undefined }
+  } catch {
+    // Fall through to PATCH clear if retrieve route is not live yet.
+  }
+  const res = await api.admin.officeOutside.update(key, {
+    sentToAccountsAt: null,
+    sent_to_accounts_at: null,
+  })
+  const remote = pickOfficeOutsideRecordFromApi(res)
+  return remote ? { ...remote, sentToAccountsAt: undefined } : null
 }
 
 /** Accounts / Vendor Outside: only rows already sent to Accounts. */
