@@ -1,10 +1,13 @@
 /**
  * Admin → Quotations → All Outside: separate Office Outside records (not All quotations).
+ * Source of truth is GET/POST/PATCH `/admin/office-outside` (database), not localStorage.
  * Create → assign outside vendor → Send to Accounts → Accounts Office Outside ledger.
+ * One customer (10-digit mobile) = one live Office Outside quotation.
  */
 
 import type { Customer, ProductSelection, Quotation } from "@/lib/quotation-context"
 import { formatPersonName } from "@/lib/name-display"
+import { api, ApiError } from "@/lib/api"
 
 export const OFFICE_OUTSIDE_RECORDS_STORAGE_KEY = "officeOutsideRecordsById"
 
@@ -60,6 +63,9 @@ export type OfficeOutsideRecord = {
   outsideVendorName?: string
   sentToAccountsAt?: string
   requirementSlip?: RequirementSlipData
+  installments?: unknown
+  paymentStatus?: string
+  paymentMode?: string
   createdAt: string
   updatedAt: string
 }
@@ -146,7 +152,7 @@ export function snapshotFromOfficeOutsideForm(input: {
   const customer = input.customer
   return {
     customerName: formatPersonName(customer.firstName, customer.lastName, "Customer"),
-    mobile: String(customer.mobile || "").replace(/\D/g, "").slice(-10),
+    mobile: normalizeOfficeOutsideMobile(customer.mobile),
     email: String(customer.email || "").trim() || undefined,
     address: formatOfficeOutsideAddress(customer) || undefined,
     notes: String(customer.remarks || "").trim() || undefined,
@@ -174,25 +180,69 @@ const newId = () =>
     ? `OO-${crypto.randomUUID().slice(0, 8).toUpperCase()}`
     : `OO-${Date.now().toString(36).toUpperCase()}`
 
-function readRecords(): Record<string, OfficeOutsideRecord> {
-  if (typeof window === "undefined") return {}
-  try {
-    const raw = JSON.parse(localStorage.getItem(OFFICE_OUTSIDE_RECORDS_STORAGE_KEY) || "{}")
-    return raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, OfficeOutsideRecord>)
-      : {}
-  } catch {
-    return {}
-  }
+export function normalizeOfficeOutsideMobile(value?: string | null): string {
+  return String(value || "").replace(/\D/g, "").slice(-10)
 }
 
-function writeRecords(map: Record<string, OfficeOutsideRecord>) {
+export function clearOfficeOutsideRecordsCache() {
   if (typeof window === "undefined") return
   try {
-    localStorage.setItem(OFFICE_OUTSIDE_RECORDS_STORAGE_KEY, JSON.stringify(map))
+    localStorage.removeItem(OFFICE_OUTSIDE_RECORDS_STORAGE_KEY)
   } catch {
     // no-op
   }
+}
+
+export function sortOfficeOutsideRecords(rows: OfficeOutsideRecord[]): OfficeOutsideRecord[] {
+  return [...rows].sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  )
+}
+
+export function findOfficeOutsideRecordByMobile(
+  records: OfficeOutsideRecord[],
+  mobile?: string | null,
+): OfficeOutsideRecord | null {
+  const key = normalizeOfficeOutsideMobile(mobile)
+  if (key.length !== 10) return null
+  return records.find((row) => normalizeOfficeOutsideMobile(row.mobile) === key) || null
+}
+
+export function dedupeOfficeOutsideRecordsByMobile(records: OfficeOutsideRecord[]): OfficeOutsideRecord[] {
+  const byMobile = new Map<string, OfficeOutsideRecord>()
+  const noMobile: OfficeOutsideRecord[] = []
+  for (const row of sortOfficeOutsideRecords(records)) {
+    const mobile = normalizeOfficeOutsideMobile(row.mobile)
+    if (mobile.length !== 10) {
+      noMobile.push(row)
+      continue
+    }
+    if (!byMobile.has(mobile)) byMobile.set(mobile, row)
+  }
+  return sortOfficeOutsideRecords([...byMobile.values(), ...noMobile])
+}
+
+export function upsertOfficeOutsideRecordInList(
+  records: OfficeOutsideRecord[],
+  next: OfficeOutsideRecord,
+): OfficeOutsideRecord[] {
+  const mobile = normalizeOfficeOutsideMobile(next.mobile)
+  return sortOfficeOutsideRecords([
+    next,
+    ...records.filter((row) => {
+      if (row.id === next.id) return false
+      if (mobile.length === 10 && normalizeOfficeOutsideMobile(row.mobile) === mobile) return false
+      return true
+    }),
+  ])
+}
+
+export function removeOfficeOutsideRecordFromList(
+  records: OfficeOutsideRecord[],
+  id: string,
+): OfficeOutsideRecord[] {
+  const key = String(id || "").trim()
+  return records.filter((row) => row.id !== key)
 }
 
 function readLegacyLinks(): Record<string, OfficeOutsideAccountsLink> {
@@ -217,15 +267,16 @@ function writeLegacyLinks(map: Record<string, OfficeOutsideAccountsLink>) {
 }
 
 export function readOfficeOutsideRecords(): OfficeOutsideRecord[] {
-  return Object.values(readRecords()).sort(
-    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-  )
+  return []
 }
 
-export function getOfficeOutsideRecord(id: string): OfficeOutsideRecord | null {
+export function getOfficeOutsideRecord(
+  id: string,
+  records: OfficeOutsideRecord[] = [],
+): OfficeOutsideRecord | null {
   const key = String(id || "").trim()
   if (!key) return null
-  return readRecords()[key] || null
+  return records.find((row) => row.id === key) || null
 }
 
 export function createOfficeOutsideRecord(input: {
@@ -258,7 +309,7 @@ export function createOfficeOutsideRecord(input: {
   const row: OfficeOutsideRecord = {
     id,
     customerName: snapshot?.customerName || String(input.customerName || "").trim(),
-    mobile: snapshot?.mobile || String(input.mobile || "").replace(/\D/g, "").slice(-10),
+    mobile: snapshot?.mobile || normalizeOfficeOutsideMobile(input.mobile),
     email: snapshot?.email || String(input.email || "").trim() || undefined,
     address: snapshot?.address || String(input.address || "").trim() || undefined,
     amount: snapshot?.amount ?? Math.max(0, Math.round(Number(input.amount) || 0)),
@@ -273,19 +324,14 @@ export function createOfficeOutsideRecord(input: {
     createdAt: now,
     updatedAt: now,
   }
-  const prev = readRecords()
-  writeRecords({ ...prev, [id]: row })
   return row
 }
 
-export function updateOfficeOutsideRecord(
-  id: string,
+export function patchOfficeOutsideRecord(
+  existing: OfficeOutsideRecord,
   patch: Partial<Omit<OfficeOutsideRecord, "id" | "createdAt">>,
 ): OfficeOutsideRecord {
-  const prev = readRecords()
-  const existing = prev[id]
-  if (!existing) throw new Error("Office Outside record not found")
-  const next: OfficeOutsideRecord = {
+  return {
     ...existing,
     ...patch,
     id: existing.id,
@@ -296,7 +342,7 @@ export function updateOfficeOutsideRecord(
         : existing.customerName,
     mobile:
       patch.mobile !== undefined
-        ? String(patch.mobile).replace(/\D/g, "").slice(-10)
+        ? normalizeOfficeOutsideMobile(patch.mobile)
         : existing.mobile,
     amount:
       patch.amount !== undefined
@@ -312,49 +358,52 @@ export function updateOfficeOutsideRecord(
         : existing.fileType,
     updatedAt: new Date().toISOString(),
   }
-  writeRecords({ ...prev, [id]: next })
-  return next
+}
+
+export function updateOfficeOutsideRecord(
+  existing: OfficeOutsideRecord,
+  patch: Partial<Omit<OfficeOutsideRecord, "id" | "createdAt">>,
+): OfficeOutsideRecord {
+  return patchOfficeOutsideRecord(existing, patch)
 }
 
 export function setOutsideVendorForRecord(
-  recordId: string,
+  record: OfficeOutsideRecord,
   outsideVendorId: string,
   outsideVendorName?: string,
 ) {
-  return updateOfficeOutsideRecord(recordId, {
+  return patchOfficeOutsideRecord(record, {
     outsideVendorId,
     outsideVendorName: outsideVendorName || undefined,
   })
 }
 
 export function setOfficeOutsideFileType(
-  recordId: string,
+  record: OfficeOutsideRecord,
   fileType: OfficeOutsideFileType | string,
 ) {
   const normalized = normalizeOfficeOutsideFileType(fileType)
   if (!normalized) throw new Error("Select file type: Loan, Cash, or Cash + loan")
-  return updateOfficeOutsideRecord(recordId, { fileType: normalized })
+  return patchOfficeOutsideRecord(record, { fileType: normalized })
 }
 
-export function markOfficeOutsideSentToAccounts(recordId: string) {
-  const row = getOfficeOutsideRecord(recordId)
-  if (!row?.outsideVendorId) {
+export function markOfficeOutsideSentToAccounts(record: OfficeOutsideRecord) {
+  if (!record.outsideVendorId) {
     throw new Error("Select an outside vendor before sending to Accounts")
   }
-  return updateOfficeOutsideRecord(recordId, {
+  return patchOfficeOutsideRecord(record, {
     sentToAccountsAt: new Date().toISOString(),
   })
 }
 
 export function saveOfficeOutsideRequirementSlip(
-  recordId: string,
+  record: OfficeOutsideRecord,
   slip: { items: string; notes: string },
 ) {
-  const row = getOfficeOutsideRecord(recordId)
-  if (!row?.outsideVendorId) {
+  if (!record.outsideVendorId) {
     throw new Error("Select an outside vendor before editing the requirement slip")
   }
-  return updateOfficeOutsideRecord(recordId, {
+  return patchOfficeOutsideRecord(record, {
     requirementSlip: {
       items: String(slip.items || "").trim(),
       notes: String(slip.notes || "").trim(),
@@ -363,12 +412,12 @@ export function saveOfficeOutsideRequirementSlip(
   })
 }
 
-export function listOfficeOutsidePending(): OfficeOutsideRecord[] {
-  return readOfficeOutsideRecords().filter((row) => !row.sentToAccountsAt)
+export function listOfficeOutsidePending(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
+  return records.filter((row) => !row.sentToAccountsAt)
 }
 
-export function listOfficeOutsideSentToAccounts(): OfficeOutsideRecord[] {
-  return readOfficeOutsideRecords().filter((row) => Boolean(row.sentToAccountsAt && row.outsideVendorId))
+export function listOfficeOutsideSentToAccounts(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
+  return records.filter((row) => Boolean(row.sentToAccountsAt && row.outsideVendorId))
 }
 
 export function isOfficeOutsideRecordId(id?: string | null): boolean {
@@ -422,12 +471,8 @@ export function quotationFromOfficeOutsideRecord(row: OfficeOutsideRecord): Quot
   }
 }
 
-export function deleteOfficeOutsideRecord(id: string) {
-  const prev = readRecords()
-  if (!prev[id]) return
-  const next = { ...prev }
-  delete next[id]
-  writeRecords(next)
+export function deleteOfficeOutsideRecord(_id: string) {
+  clearOfficeOutsideRecordsCache()
 }
 
 export function officeOutsideRecordToApiBody(row: Partial<OfficeOutsideRecord>): Record<string, unknown> {
@@ -476,7 +521,7 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
   return {
     id,
     customerName: String(row.customerName || row.customer_name || "").trim(),
-    mobile: String(row.mobile || "").replace(/\D/g, "").slice(-10),
+    mobile: normalizeOfficeOutsideMobile(String(row.mobile || "")),
     email: String(row.email || "").trim() || undefined,
     address: String(row.address || "").trim() || undefined,
     notes: String(row.notes || "").trim() || undefined,
@@ -496,6 +541,17 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
           updatedAt: String(slip.updatedAt || slip.updated_at || new Date().toISOString()),
         }
       : undefined,
+    installments: Array.isArray(row.installments)
+      ? row.installments
+      : Array.isArray(row.installments_json)
+        ? row.installments_json
+        : Array.isArray(row.paymentPhases)
+          ? row.paymentPhases
+          : Array.isArray(row.payment_phases)
+            ? row.payment_phases
+            : undefined,
+    paymentStatus: String(row.paymentStatus || row.payment_status || "").trim() || undefined,
+    paymentMode: String(row.paymentMode || row.payment_mode || "").trim() || undefined,
     createdAt: String(row.createdAt || row.created_at || new Date().toISOString()),
     updatedAt: String(row.updatedAt || row.updated_at || new Date().toISOString()),
   }
@@ -525,12 +581,94 @@ export function pickOfficeOutsideRecordFromApi(response: unknown): OfficeOutside
 }
 
 export function mergeOfficeOutsideRecordsFromApi(remote: OfficeOutsideRecord[]) {
-  if (!remote.length) return readOfficeOutsideRecords()
-  const prev = readRecords()
-  const next: Record<string, OfficeOutsideRecord> = { ...prev }
-  for (const row of remote) next[row.id] = { ...prev[row.id], ...row }
-  writeRecords(next)
-  return readOfficeOutsideRecords()
+  clearOfficeOutsideRecordsCache()
+  return dedupeOfficeOutsideRecordsByMobile(remote)
+}
+
+export type OfficeOutsideListParams = {
+  status?: "all" | "pending" | "sent"
+  search?: string
+  vendorId?: string
+  fileType?: "loan" | "cash" | "mix"
+  mobile?: string
+}
+
+export async function fetchOfficeOutsideRecordsFromApi(
+  params?: OfficeOutsideListParams,
+): Promise<OfficeOutsideRecord[]> {
+  const res = await api.admin.officeOutside.getAll(params)
+  return mergeOfficeOutsideRecordsFromApi(pickOfficeOutsideListFromApi(res))
+}
+
+export function pickOfficeOutsideDuplicateId(error: unknown): string | null {
+  if (!(error instanceof ApiError)) return null
+  const code = String(error.code || "").toUpperCase()
+  if (code !== "OO_DUPLICATE_CUSTOMER" && code !== "HTTP_409") return null
+  const fromDetails = error.details?.find((item) =>
+    /existing/i.test(String(item.field || "")),
+  )
+  const fromDetailMessage = String(fromDetails?.message || "").match(/OO-[A-Z0-9]+/i)
+  if (fromDetailMessage?.[0]) return fromDetailMessage[0]
+  if (fromDetails?.field && /^OO-/i.test(String(fromDetails.message || ""))) {
+    return String(fromDetails.message).trim()
+  }
+  const fromMessage = String(error.message || "").match(/OO-[A-Z0-9]+/i)
+  return fromMessage?.[0] || null
+}
+
+export async function persistOfficeOutsideRecordToApi(input: {
+  recordId?: string
+  body: Record<string, unknown>
+}): Promise<OfficeOutsideRecord> {
+  const mobile = normalizeOfficeOutsideMobile(String(input.body.mobile || ""))
+  let existing: OfficeOutsideRecord | null = null
+  if (mobile.length === 10) {
+    try {
+      const matches = await fetchOfficeOutsideRecordsFromApi({ mobile, search: mobile })
+      existing = findOfficeOutsideRecordByMobile(matches, mobile)
+    } catch {
+      existing = null
+    }
+  }
+  if (existing && input.recordId && existing.id !== input.recordId) {
+    throw new Error("This customer already has an Office Outside quotation. Open that row to edit.")
+  }
+  const targetId = input.recordId || existing?.id
+  if (targetId) {
+    const res = await api.admin.officeOutside.update(targetId, { ...input.body, id: targetId })
+    const remote = pickOfficeOutsideRecordFromApi(res)
+    if (!remote) throw new Error("Office Outside save did not return a record from the API")
+    return remote
+  }
+  try {
+    const createBody = { ...input.body }
+    delete createBody.id
+    const res = await api.admin.officeOutside.create(createBody)
+    const remote = pickOfficeOutsideRecordFromApi(res)
+    if (!remote) throw new Error("Office Outside save did not return a record from the API")
+    return remote
+  } catch (error) {
+    const existingId = pickOfficeOutsideDuplicateId(error)
+    if (existingId) {
+      const res = await api.admin.officeOutside.update(existingId, input.body)
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) return remote
+    }
+    if (
+      mobile.length === 10 &&
+      error instanceof ApiError &&
+      (error.code === "OO_DUPLICATE_CUSTOMER" || error.code === "HTTP_409")
+    ) {
+      const matches = await fetchOfficeOutsideRecordsFromApi({ mobile, search: mobile })
+      const existing = findOfficeOutsideRecordByMobile(matches, mobile)
+      if (existing) {
+        const res = await api.admin.officeOutside.update(existing.id, input.body)
+        const remote = pickOfficeOutsideRecordFromApi(res)
+        if (remote) return remote
+      }
+    }
+    throw error
+  }
 }
 
 /* ——— Legacy quotation-link helpers (still used by older UI paths) ——— */

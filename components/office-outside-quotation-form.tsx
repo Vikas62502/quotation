@@ -17,18 +17,16 @@ import { ProductSelectionForm } from "@/components/product-selection-form"
 import { QuotationConfirmation } from "@/components/quotation-confirmation"
 import type { Customer, ProductSelection } from "@/lib/quotation-context"
 import {
-  createOfficeOutsideRecord,
   customerFromOfficeOutsideRecord,
   snapshotFromOfficeOutsideForm,
-  updateOfficeOutsideRecord,
   officeOutsideRecordToApiBody,
-  pickOfficeOutsideRecordFromApi,
-  mergeOfficeOutsideRecordsFromApi,
+  persistOfficeOutsideRecordToApi,
+  normalizeOfficeOutsideMobile,
   OFFICE_OUTSIDE_FILE_TYPES,
   type OfficeOutsideFileType,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
-import { api } from "@/lib/api"
+import { apiErrorToUserMessage } from "@/lib/api"
 
 const steps = [
   { id: 1, name: "Customer Details" },
@@ -67,6 +65,9 @@ export function OfficeOutsideQuotationForm({ record, onCancel, onSaved }: Props)
     if (!customer || !products) {
       throw new Error("Complete customer and product selection first")
     }
+    if (normalizeOfficeOutsideMobile(customer.mobile).length !== 10) {
+      throw new Error("Enter a valid 10-digit mobile. One customer can have only one Office Outside quotation.")
+    }
     const snapshot = snapshotFromOfficeOutsideForm({
       customer,
       products: { ...products, systemPrice: payload.subtotal },
@@ -75,19 +76,21 @@ export function OfficeOutsideQuotationForm({ record, onCancel, onSaved }: Props)
       totalAmount: payload.totalAmount,
       fileType: fileType || undefined,
     })
-    const row = record?.id
-      ? updateOfficeOutsideRecord(record.id, snapshot)
-      : createOfficeOutsideRecord(snapshot)
     try {
-      const res = record?.id
-        ? await api.admin.officeOutside.update(row.id, officeOutsideRecordToApiBody(row))
-        : await api.admin.officeOutside.create(officeOutsideRecordToApiBody(row))
-      const remote = pickOfficeOutsideRecordFromApi(res)
-      if (remote) mergeOfficeOutsideRecordsFromApi([remote])
-    } catch {
-      // local row already saved
+      const remote = await persistOfficeOutsideRecordToApi({
+        recordId: record?.id,
+        body: officeOutsideRecordToApiBody({
+          ...snapshot,
+          id: record?.id,
+          outsideVendorId: record?.outsideVendorId || "",
+          outsideVendorName: record?.outsideVendorName,
+          sentToAccountsAt: record?.sentToAccountsAt,
+        }),
+      })
+      return { id: remote.id }
+    } catch (error) {
+      throw new Error(apiErrorToUserMessage(error) || "Could not save Office Outside to the database")
     }
-    return { id: row.id }
   }
 
   return (
@@ -98,7 +101,7 @@ export function OfficeOutsideQuotationForm({ record, onCancel, onSaved }: Props)
             {record?.id ? "Edit Office Outside" : "Create Office Outside"}
           </h3>
           <p className="text-xs text-muted-foreground">
-            Same quotation form as All quotations — this save stays in All Outside only.
+            Saved to the database only — one quotation per customer. This stays in All Outside.
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" className="h-8" onClick={onCancel}>
@@ -195,7 +198,7 @@ export function OfficeOutsideQuotationForm({ record, onCancel, onSaved }: Props)
             initialDiscount={record?.discount}
             confirmLabel={record?.id ? "Save Office Outside" : "Confirm & Save to All Outside"}
             reviewTitle="Review Office Outside before saving"
-            reviewBody="This is the same quotation form. Confirming saves here in All Outside only — it will not appear in All quotations. Pick an outside vendor afterwards, then open Slip for the 1-page quotation (customer + dealer + required products, no company name)."
+            reviewBody="This is the same quotation form. Confirming saves to the database in All Outside only — it will not appear in All quotations. One customer can have only one Office Outside quotation (same mobile updates the existing row). Pick an outside vendor afterwards, then open Slip for the 1-page quotation (customer + dealer + required products, no company name)."
             successTitle="Office Outside saved"
             successBody="This record is in All Outside only. Pick an outside vendor, then open Slip for the 1-page quotation."
             doneLabel="Back to All Outside"

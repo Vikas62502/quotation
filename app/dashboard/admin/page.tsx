@@ -114,7 +114,7 @@ import { AdminBankingPanel } from "@/components/admin-banking-panel"
 import { HrWorkspace } from "@/app/dashboard/hr/page"
 import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
 import { OfficeOutsideAdminPanel } from "@/components/office-outside-admin-panel"
-import { readOfficeOutsideRecords } from "@/lib/office-outside-accounts"
+import { fetchOfficeOutsideRecordsFromApi } from "@/lib/office-outside-accounts"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -5126,11 +5126,21 @@ export default function AdminPanelPage() {
     filterBankDetails === "all" &&
     filterInstallOverdue === "all"
 
-  const [outsideOfficeTick, setOutsideOfficeTick] = useState(0)
-  const outsideOfficeTabCounts = useMemo(() => {
-    void outsideOfficeTick
-    return { all: readOfficeOutsideRecords().length }
-  }, [outsideOfficeTick])
+  const [outsideOfficeCount, setOutsideOfficeCount] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    void fetchOfficeOutsideRecordsFromApi()
+      .then((rows) => {
+        if (!cancelled) setOutsideOfficeCount(rows.length)
+      })
+      .catch(() => {
+        if (!cancelled) setOutsideOfficeCount(0)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Quotations sub-tabs are only All + All Outside — reset leftover tab keys.
   useEffect(() => {
@@ -5145,11 +5155,6 @@ export default function AdminPanelPage() {
     }
   }, [operationalTab, operationalProgressTab])
 
-  useEffect(() => {
-    if (operationalProgressTab === "outside_all") {
-      setOutsideOfficeTick((n) => n + 1)
-    }
-  }, [operationalProgressTab])
 
   const quotationListResetKey = [
     operationalTab,
@@ -9845,7 +9850,7 @@ export default function AdminPanelPage() {
                           { key: "all" as const, label: "All quotations", tone: "orange" as const },
                           {
                             key: "outside_all" as const,
-                            label: `All Outside (${outsideOfficeTabCounts.all})`,
+                            label: `All Outside (${outsideOfficeCount})`,
                             tone: "violet" as const,
                           },
                         ] as const
@@ -10199,7 +10204,7 @@ export default function AdminPanelPage() {
               </Dialog>
               <CardContent>
                 {operationalTab === "all" && operationalProgressTab === "outside_all" ? (
-                  <OfficeOutsideAdminPanel />
+                  <OfficeOutsideAdminPanel onCountChange={setOutsideOfficeCount} />
                 ) : operationalTab === "metering" ? (
                   (() => {
                     const meteringStageBadgeClass = (stage: "processing" | "approved" | "meter_install" | "mco" | null) => {

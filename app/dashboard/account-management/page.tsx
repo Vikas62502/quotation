@@ -56,18 +56,15 @@ import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
 import { OfficeOutsideAccountsLedger } from "@/components/office-outside-accounts-ledger"
 import {
   customerFromOfficeOutsideRecord,
-  getOfficeOutsideRecord,
+  fetchOfficeOutsideRecordsFromApi,
   isOfficeOutsideRecordId,
   listOfficeOutsideSentToAccounts,
-  mergeOfficeOutsideRecordsFromApi,
   normalizeOfficeOutsideFileType,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideSubtotalAmount,
-  pickOfficeOutsideListFromApi,
   pickOfficeOutsideRecordFromApi,
   quotationFromOfficeOutsideRecord,
-  setOfficeOutsideFileType,
-  setOutsideVendorForRecord,
+  upsertOfficeOutsideRecordInList,
   type OfficeOutsideFileType,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
@@ -2087,7 +2084,7 @@ export default function AccountManagementPage() {
   const [officeOutsideVendors, setOfficeOutsideVendors] = useState<AdminSubvendorRecord[]>(() =>
     readAdminSubvendors().filter((row) => row.kind === "office_outside"),
   )
-  const [officeOutsideVersion, setOfficeOutsideVersion] = useState(0)
+  const [officeOutsideRecords, setOfficeOutsideRecords] = useState<OfficeOutsideRecord[]>([])
   const [subvendorDealers, setSubvendorDealers] = useState<SubvendorDealerOption[]>([])
   const [subvendorLedgerMap, setSubvendorLedgerMap] = useState<Record<string, SubvendorLedgerAmounts>>(
     () => readSubvendorLedger(),
@@ -2628,7 +2625,6 @@ export default function AccountManagementPage() {
     if (activeTab !== "payments") return
     setOfficeInsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_inside"))
     setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
-    setOfficeOutsideVersion((n) => n + 1)
   }, [activeTab])
 
   useEffect(() => {
@@ -2637,16 +2633,13 @@ export default function AccountManagementPage() {
       setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
       if (useApi) {
         try {
-          const [recordsRes, ledgerRes, vendorsRes] = await Promise.all([
-            api.admin.officeOutside.getAll({ status: "sent" }).catch(() => null),
+          const [remoteRecords, ledgerRes, vendorsRes] = await Promise.all([
+            fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
             api.admin.officeOutside.ledger.getAll().catch(() => null),
             api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
           ])
           if (cancelled) return
-          if (recordsRes) {
-            const remote = pickOfficeOutsideListFromApi(recordsRes)
-            if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
-          }
+          setOfficeOutsideRecords(listOfficeOutsideSentToAccounts(remoteRecords))
           if (ledgerRes) {
             const ledger = pickLedgerMapFromApi(ledgerRes)
             const merged = { ...readSubvendorLedger(), ...ledger }
@@ -2669,11 +2662,13 @@ export default function AccountManagementPage() {
           }
         } catch {
           if (!cancelled) {
+            setOfficeOutsideRecords([])
             setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
           }
         }
+      } else if (!cancelled) {
+        setOfficeOutsideRecords([])
       }
-      if (!cancelled) setOfficeOutsideVersion((n) => n + 1)
     }
     void loadOfficeOutside()
     return () => {
@@ -2886,21 +2881,26 @@ export default function AccountManagementPage() {
         }
       })
       const vendorsById = new Map(officeOutsideVendors.map((vendor) => [vendor.id, vendor]))
-      const storedPlans = getStoredPaymentPlans()
       const ledgerMap = subvendorLedgerMap
       const seenIds = new Set(payments.map((payment) => payment.quotationId).filter(Boolean))
-      const officeOutsidePayments = listOfficeOutsideSentToAccounts()
+      const officeOutsidePayments = listOfficeOutsideSentToAccounts(officeOutsideRecords)
         .filter((row) => row.id && !seenIds.has(row.id))
         .map((row) =>
           officeOutsideRecordToCustomerPayment(
             row,
             getLedgerAmounts(ledgerMap, row.id),
-            storedPlans[row.id],
+            row.installments
+              ? {
+                  phases: row.installments,
+                  paymentMode: row.paymentMode,
+                  paymentStatus: row.paymentStatus,
+                }
+              : null,
             vendorsById.get(row.outsideVendorId) || null,
           ),
         )
       setCustomerPayments([...payments, ...officeOutsidePayments])
-  }, [permissionVisibleQuotations, useApi, officeOutsideVersion, officeOutsideVendors, subvendorLedgerMap])
+  }, [permissionVisibleQuotations, useApi, officeOutsideRecords, officeOutsideVendors, subvendorLedgerMap])
 
   const paymentDealerOptions = useMemo(() => {
     const byId = new Map<string, string>()
@@ -4270,43 +4270,42 @@ export default function AccountManagementPage() {
     patch: { outsideVendorId?: string; fileType?: OfficeOutsideFileType },
   ) => {
     try {
-      let next = getOfficeOutsideRecord(payment.quotationId)
-      if (!next) throw new Error("Office Outside record not found")
-      if (patch.outsideVendorId) {
-        const vendor = officeOutsideVendors.find((row) => row.id === patch.outsideVendorId)
-        next = setOutsideVendorForRecord(payment.quotationId, patch.outsideVendorId, vendor?.name)
-      }
-      if (patch.fileType) {
-        next = setOfficeOutsideFileType(payment.quotationId, patch.fileType)
-      }
-      const vendor = officeOutsideVendors.find((row) => row.id === next.outsideVendorId)
-      const updatedRecord = next
+      const current =
+        officeOutsideRecords.find((row) => row.id === payment.quotationId) ||
+        null
+      if (!current) throw new Error("Office Outside record not found")
+      const vendor = patch.outsideVendorId
+        ? officeOutsideVendors.find((row) => row.id === patch.outsideVendorId)
+        : officeOutsideVendors.find((row) => row.id === current.outsideVendorId)
+      const res = await api.admin.officeOutside.update(current.id, {
+        outsideVendorId: patch.outsideVendorId ?? current.outsideVendorId,
+        outsideVendorName: vendor?.name || current.outsideVendorName,
+        fileType: patch.fileType ?? current.fileType,
+      })
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (!remote) throw new Error("Office Outside save did not return a record from the API")
+      const latest = await fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => null)
+      setOfficeOutsideRecords((prev) =>
+        latest
+          ? listOfficeOutsideSentToAccounts(latest)
+          : upsertOfficeOutsideRecordInList(prev, remote),
+      )
+      const nextVendor = officeOutsideVendors.find((row) => row.id === remote.outsideVendorId)
       setCustomerPayments((prev) =>
         prev.map((row) =>
           row.quotationId === payment.quotationId
             ? {
                 ...row,
-                dealerId: updatedRecord.outsideVendorId || undefined,
-                dealerName: vendor?.name || updatedRecord.outsideVendorName || row.dealerName,
-                dealerMobile: String(vendor?.mobile || "").trim() || row.dealerMobile,
-                paymentType: updatedRecord.fileType || row.paymentType,
-                paymentMode: updatedRecord.fileType || row.paymentMode,
-                quotation: quotationFromOfficeOutsideRecord(updatedRecord),
+                dealerId: remote.outsideVendorId || undefined,
+                dealerName: nextVendor?.name || remote.outsideVendorName || row.dealerName,
+                dealerMobile: String(nextVendor?.mobile || "").trim() || row.dealerMobile,
+                paymentType: remote.fileType || row.paymentType,
+                paymentMode: remote.fileType || row.paymentMode,
+                quotation: quotationFromOfficeOutsideRecord(remote),
               }
             : row,
         ),
       )
-      try {
-        const res = await api.admin.officeOutside.update(updatedRecord.id, {
-          outsideVendorId: updatedRecord.outsideVendorId,
-          outsideVendorName: updatedRecord.outsideVendorName,
-          fileType: updatedRecord.fileType,
-        })
-        const remote = pickOfficeOutsideRecordFromApi(res)
-        if (remote) mergeOfficeOutsideRecordsFromApi([remote])
-      } catch {
-        // Local record already updated; Accounts / Admin / slip read the same store.
-      }
     } catch (error) {
       toast({
         title: "Could not update Office Outside",
@@ -4567,16 +4566,30 @@ export default function AccountManagementPage() {
     try {
       let phasesToApply = payload.phases as PaymentPhase[]
 
-      if (!useApi || isOfficeOutsidePayment(activePayment)) {
+      if (isOfficeOutsidePayment(activePayment)) {
+        persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
+        await api.admin.officeOutside.paymentDetails(activePayment.quotationId, payload)
+        const latest = await fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => null)
+        if (latest) {
+          setOfficeOutsideRecords(listOfficeOutsideSentToAccounts(latest))
+        } else {
+          setOfficeOutsideRecords((prev) =>
+            prev.map((row) =>
+              row.id === activePayment.quotationId
+                ? {
+                    ...row,
+                    installments: payload.phases,
+                    paymentStatus: payload.paymentStatus,
+                    paymentMode: payload.paymentMode,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : row,
+            ),
+          )
+        }
+      } else if (!useApi) {
         saveStoredPaymentPlan(activePayment.quotationId, payload)
         persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
-        if (useApi && isOfficeOutsidePayment(activePayment)) {
-          try {
-            await api.admin.officeOutside.paymentDetails(activePayment.quotationId, payload)
-          } catch {
-            // Ledger/installments already saved on this device.
-          }
-        }
       } else {
         const response = await api.quotations.updatePaymentDetails(activePayment.quotationId, payload)
         const phasesFromResponse = extractPhasesFromPaymentUpdateResponse(response)

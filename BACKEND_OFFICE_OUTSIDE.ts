@@ -4,6 +4,12 @@
  * BACKEND REFERENCE — Office Outside records (not All quotations)
  * =============================================================================
  *
+ * CHANGELOG Oct 21 2026 — database is the only source of truth
+ *   SPA no longer writes officeOutsideRecordsById localStorage.
+ *   Lists are GET /admin/office-outside (re-GET after every mutation).
+ *   One customer (10-digit mobile) = one live Office Outside quotation.
+ *   POST upserts that row. GET ?mobile= is the lookup. Unique index required.
+ *
  * Frontend (Oct 2026):
  *   Admin → Quotations → All Outside   (`components/office-outside-admin-panel.tsx`)
  *   Accounts → Accounts list (sent rows mixed with quotations)
@@ -22,11 +28,19 @@
  * This is a SEPARATE dataset from `quotations`.
  * Do NOT insert into quotations. Do NOT show these rows on All quotations.
  * Do NOT inject OO-* ids into GET /quotations (approved / accounts).
- * Accounts SPA GETs `/admin/office-outside?status=sent` and merges into the payments table.
+ * Accounts SPA GETs `/admin/office-outside?status=sent` and renders from that response.
  * Create uses the same customer + product form, but POST lands here only.
+ *
+ * Source of truth is this table. The SPA does NOT persist OO records in localStorage / cache.
+ * After every mutation the client re-GETs. Empty GET must return [] (do not 204).
+ *
+ * One customer = one Office Outside quotation.
+ * Unique current row per 10-digit mobile. Create for an existing mobile UPDATES that row
+ * (same id). Never insert a second OO-* for the same mobile.
  *
  * Flow:
  *   1. POST record (customer + products + subtotal + fileType)
+ *      If mobile already exists → upsert that row (do not create a second quotation)
  *   2. PATCH outsideVendorId (subvendors.kind must be office_outside)
  *   3. POST send-to-accounts  → sets sentToAccountsAt
  *   4. Accounts list = rows where sentToAccountsAt IS NOT NULL
@@ -51,6 +65,8 @@
  *   - Persist installments on the OO record (not quotations)
  *   - Accept office_outside vendor ids on PUT /admin/subvendors/:id/leaser
  *   - Accept OO-* ids in leaser customer_ids
+ *   - Enforce UNIQUE 10-digit mobile (one live quotation per customer)
+ *   - POST duplicate mobile → upsert existing row (preferred) or 409 OO_DUPLICATE_CUSTOMER
  *
  * Do not:
  *   - Insert OO rows into quotations
@@ -59,6 +75,8 @@
  *   - Apply profit_ratio to Vendor Outside profit
  *   - Post Office Outside collect-other onto office_inside vendors
  *   - 404 leaser because vendor.kind is office_outside
+ *   - Insert a second office_outside_records row for the same 10-digit mobile
+ *   - Rely on the SPA localStorage key officeOutsideRecordsById
  *
  * -----------------------------------------------------------------------------
  * SQL
@@ -98,10 +116,28 @@
  *   WHERE sent_to_accounts_at IS NOT NULL;
  * CREATE INDEX IF NOT EXISTS office_outside_vendor_idx
  *   ON office_outside_records (outside_vendor_id);
- * CREATE INDEX IF NOT EXISTS office_outside_mobile_idx
- *   ON office_outside_records (mobile);
  * CREATE INDEX IF NOT EXISTS office_outside_file_type_idx
  *   ON office_outside_records (file_type);
+ *
+ * -- Drop the old non-unique mobile index if it exists, then enforce one row per customer.
+ * DROP INDEX IF EXISTS office_outside_mobile_idx;
+ *
+ * -- Dedupe first (keep newest updated_at per 10-digit mobile):
+ * DELETE FROM office_outside_records a
+ *  USING office_outside_records b
+ *  WHERE regexp_replace(coalesce(a.mobile, ''), '\D', '', 'g')
+ *      = regexp_replace(coalesce(b.mobile, ''), '\D', '', 'g')
+ *    AND length(regexp_replace(coalesce(a.mobile, ''), '\D', '', 'g')) = 10
+ *    AND a.id <> b.id
+ *    AND a.updated_at < b.updated_at;
+ *
+ * UPDATE office_outside_records
+ *    SET mobile = right(regexp_replace(coalesce(mobile, ''), '\D', '', 'g'), 10)
+ *  WHERE length(regexp_replace(coalesce(mobile, ''), '\D', '', 'g')) >= 10;
+ *
+ * CREATE UNIQUE INDEX IF NOT EXISTS office_outside_mobile_unique
+ *   ON office_outside_records (mobile)
+ *   WHERE length(mobile) = 10;
  *
  * -- Ledger keyed by office_outside id (NOT quotations.id)
  * CREATE TABLE IF NOT EXISTS office_outside_ledger (
@@ -131,6 +167,10 @@
  *   ADD COLUMN IF NOT EXISTS installments_json JSONB NOT NULL DEFAULT '[]'::jsonb,
  *   ADD COLUMN IF NOT EXISTS payment_status VARCHAR(16) NOT NULL DEFAULT 'pending',
  *   ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(16) NULL;
+ *
+ * -- After dedupe (see DELETE above):
+ * -- CREATE UNIQUE INDEX IF NOT EXISTS office_outside_mobile_unique
+ * --   ON office_outside_records (mobile) WHERE length(mobile) = 10;
  *
  * ALTER TABLE office_outside_ledger
  *   ADD COLUMN IF NOT EXISTS loan_amount INTEGER NOT NULL DEFAULT 0,
@@ -167,7 +207,14 @@
  *   paymentMode: { type: DataTypes.STRING(16), allowNull: true, field: 'payment_mode' },
  *   createdBy: { type: DataTypes.STRING(64), allowNull: true, field: 'created_by' },
  *   updatedBy: { type: DataTypes.STRING(64), allowNull: true, field: 'updated_by' },
- * }, { tableName: 'office_outside_records', underscored: true, timestamps: true })
+ * }, {
+ *   tableName: 'office_outside_records',
+ *   underscored: true,
+ *   timestamps: true,
+ *   indexes: [
+ *     { unique: true, fields: ['mobile'], name: 'office_outside_mobile_unique' },
+ *   ],
+ * })
  *
  * OfficeOutsideLedger.init({
  *   id: { type: DataTypes.UUID, primaryKey: true, defaultValue: DataTypes.UUIDV4 },
@@ -190,16 +237,18 @@
  * Endpoints
  * -----------------------------------------------------------------------------
  *
+ * Mount /ledger BEFORE /:id so "ledger" is not parsed as an id.
+ *
  * GET    /admin/office-outside
- * POST   /admin/office-outside
+ * GET    /admin/office-outside/ledger
+ * PATCH  /admin/office-outside/ledger/:id
+ * GET    /admin/office-outside/:id
+ * POST   /admin/office-outside          // upsert by 10-digit mobile (same id if exists)
  * PATCH  /admin/office-outside/:id
  * DELETE /admin/office-outside/:id
  * POST   /admin/office-outside/:id/send-to-accounts
  * PATCH  /admin/office-outside/:id/slip
  * PATCH  /admin/office-outside/:id/payment-details   ← installments (same shape as quotations)
- *
- * GET    /admin/office-outside/ledger
- * PATCH  /admin/office-outside/ledger/:id
  *
  * Existing leaser (no new route):
  *   GET/PUT /admin/subvendors/:id/leaser   where subvendors.kind = office_outside
@@ -208,6 +257,7 @@
  * Query on GET /admin/office-outside:
  *   status = all | pending | sent     (pending = sentToAccountsAt is null)
  *   search = name / mobile / id / vendor
+ *   mobile = exact 10-digit match (one customer lookup)
  *   vendorId = outside vendor uuid
  *   fileType = loan | cash | mix
  *
@@ -238,12 +288,22 @@
  *
  * Validation:
  *   customerName or customer.firstName required
- *   mobile 10 digits when sent
+ *   mobile 10 digits required on create (normalize to last 10 digits)
  *   subtotal integer ≥ 0 (this is the list + slip amount)
  *   amount if sent → round INR; if omitted set amount = subtotal
  *   fileType if sent must be loan | cash | mix
  *     aliases: "cash+loan" / "cash + loan" / "cash_loan" → mix
  *   outsideVendorId if sent must exist AND subvendors.kind = 'office_outside'
+ *
+ * Unique customer (required):
+ *   Normalize mobile to last 10 digits before every write and lookup.
+ *   POST: if a row with that mobile exists, UPDATE it in place and return the SAME id.
+ *         Do NOT insert a second quotation. SPA Create for Aman Rajak / 8920094209
+ *         must keep OO-1402E036 (example), not mint OO-xxxxxxxx.
+ *   If you cannot upsert, return 409 OO_DUPLICATE_CUSTOMER (SPA then PATCH existingId).
+ *   PATCH: if the new mobile belongs to a different row → 409 OO_DUPLICATE_CUSTOMER
+ *   GET ?mobile=8920094209 returns that single row (array of 0..1).
+ *   GET with no rows → 200 { records: [] }  (never 204, never omit data).
  *
  * PATCH /admin/office-outside/:id  (partial — omitted keys stay)
  * {
@@ -311,7 +371,26 @@
  *   "success": true,
  *   "data": {
  *     "records": [ publicOfficeOutside(row) ],
+ *     "items":   [ publicOfficeOutside(row) ],   // alias — SPA accepts either
  *     "counts": { "all": 1, "pending": 1, "sent": 0 }
+ *   }
+ * }
+ *
+ * GET /admin/office-outside/:id 200:
+ * { "success": true, "data": { "record": publicOfficeOutside(row) } }
+ *
+ * POST / PATCH / send-to-accounts / slip / payment-details 200:
+ * { "success": true, "data": { "record": publicOfficeOutside(row) } }
+ * POST may also set "upserted": true when an existing mobile was updated.
+ *
+ * 409 OO_DUPLICATE_CUSTOMER:
+ * {
+ *   "success": false,
+ *   "error": {
+ *     "code": "OO_DUPLICATE_CUSTOMER",
+ *     "message": "This customer already has an Office Outside quotation",
+ *     "existingId": "OO-1402E036",
+ *     "details": [{ "field": "existingId", "message": "OO-1402E036" }]
  *   }
  * }
  *
@@ -351,6 +430,20 @@ function roundInr(value) {
   return Number.isFinite(n) && n >= 0 ? n : 0
 }
 
+function normalizeMobile(value) {
+  return String(value || "").replace(/\D/g, "").slice(-10)
+}
+
+function duplicateCustomerError(existingId) {
+  const id = String(existingId || "").trim()
+  const err = new Error("This customer already has an Office Outside quotation")
+  err.status = 409
+  err.code = "OO_DUPLICATE_CUSTOMER"
+  err.existingId = id
+  err.details = [{ field: "existingId", message: id }]
+  return err
+}
+
 function newOfficeOutsideId() {
   const hex = (typeof crypto !== "undefined" && crypto.randomUUID)
     ? crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase()
@@ -377,7 +470,7 @@ function publicOfficeOutside(row, vendor) {
     id: row.id,
     customerName: row.customerName || row.customer_name || "",
     customer_name: row.customerName || row.customer_name || "",
-    mobile: row.mobile || "",
+    mobile: normalizeMobile(row.mobile),
     email: row.email || "",
     address: row.address || "",
     notes: row.notes || "",
@@ -464,6 +557,209 @@ function officeOutsideCompleteProfit(subtotal, ledger) {
 }
 
 /**
+ * Copy-paste handlers (Express-style). Persist ONLY in office_outside_records.
+ * Do not write quotations. Do not 204 empty lists.
+ *
+ * SPA calls:
+ *   GET    /admin/office-outside                         Admin All Outside
+ *   GET    /admin/office-outside?mobile=8920094209       uniqueness lookup
+ *   GET    /admin/office-outside?status=sent             Accounts + Vendor Outside
+ *   POST   /admin/office-outside                         create OR upsert by mobile
+ *   PATCH  /admin/office-outside/:id                     edit / vendor / fileType
+ *   GET    /admin/office-outside/:id
+ */
+
+async function findByMobile(OfficeOutsideRecord, mobile) {
+  const key = normalizeMobile(mobile)
+  if (key.length !== 10) return null
+  return OfficeOutsideRecord.findOne({ where: { mobile: key } })
+}
+
+function applyRecordPatch(row, body) {
+  const customer = body.customer || body.customer_json
+  const products = body.products || body.products_json
+  if (body.customerName != null || body.customer_name != null) {
+    row.customerName = String(body.customerName || body.customer_name || "").trim()
+  }
+  if (body.mobile != null) row.mobile = normalizeMobile(body.mobile)
+  if (body.email != null) row.email = String(body.email || "").trim()
+  if (body.address != null) row.address = String(body.address || "").trim()
+  if (body.notes != null) row.notes = String(body.notes || "").trim()
+  if (customer) row.customerJson = customer
+  if (products) row.productsJson = products
+  if (body.discount != null) row.discount = roundInr(body.discount)
+  if (body.subtotal != null || body.amount != null) {
+    const subtotal = roundInr(body.subtotal != null ? body.subtotal : body.amount)
+    row.subtotal = subtotal
+    row.amount = subtotal
+  }
+  if (body.fileType != null || body.file_type != null) {
+    const fileType = normalizeFileType(body.fileType || body.file_type)
+    if (body.fileType || body.file_type) {
+      if (!fileType) {
+        const err = new Error("fileType must be loan, cash, or mix")
+        err.status = 400
+        err.code = "OO_VAL_FILE_TYPE"
+        throw err
+      }
+      row.fileType = fileType
+    }
+  }
+  if (body.outsideVendorId !== undefined || body.outside_vendor_id !== undefined) {
+    row.outsideVendorId = body.outsideVendorId || body.outside_vendor_id || null
+  }
+  return row
+}
+
+async function listOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor }) {
+  const status = String(req.query.status || "all").toLowerCase()
+  const search = String(req.query.search || "").trim().toLowerCase()
+  const mobile = normalizeMobile(req.query.mobile)
+  const vendorId = String(req.query.vendorId || req.query.vendor_id || "").trim()
+  const fileType = normalizeFileType(req.query.fileType || req.query.file_type)
+  const where = {}
+  if (status === "pending") where.sentToAccountsAt = null
+  if (status === "sent") where.sentToAccountsAt = { [Op.ne]: null }
+  if (mobile.length === 10) where.mobile = mobile
+  if (vendorId) where.outsideVendorId = vendorId
+  if (fileType) where.fileType = fileType
+  const rows = await OfficeOutsideRecord.findAll({
+    where,
+    order: [["updatedAt", "DESC"]],
+  })
+  const vendors = await Subvendor.findAll({ where: { kind: "office_outside" } })
+  const vendorById = Object.fromEntries(vendors.map((v) => [v.id, v]))
+  let records = rows.map((row) => publicOfficeOutside(row, vendorById[row.outsideVendorId]))
+  if (search && mobile.length !== 10) {
+    records = records.filter((row) =>
+      [row.id, row.customerName, row.mobile, row.email, row.outsideVendorName]
+        .join(" ")
+        .toLowerCase()
+        .includes(search),
+    )
+  }
+  const all = await OfficeOutsideRecord.count()
+  const sent = await OfficeOutsideRecord.count({ where: { sentToAccountsAt: { [Op.ne]: null } } })
+  return res.json({
+    success: true,
+    data: {
+      records,
+      items: records,
+      counts: { all, pending: all - sent, sent },
+    },
+  })
+}
+
+async function getOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor }) {
+  const row = await OfficeOutsideRecord.findByPk(req.params.id)
+  if (!row) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "OO_404", message: "Office Outside record not found" },
+    })
+  }
+  const vendor = row.outsideVendorId
+    ? await Subvendor.findByPk(row.outsideVendorId)
+    : null
+  return res.json({ success: true, data: { record: publicOfficeOutside(row, vendor) } })
+}
+
+async function createOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor }) {
+  const body = req.body || {}
+  const mobile = normalizeMobile(body.mobile || body.customer?.mobile)
+  if (mobile.length !== 10) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "OO_VAL_MOBILE", message: "mobile must be 10 digits" },
+    })
+  }
+  const existing = await findByMobile(OfficeOutsideRecord, mobile)
+  if (existing) {
+    applyRecordPatch(existing, { ...body, mobile })
+    await existing.save()
+    const vendor = existing.outsideVendorId
+      ? await Subvendor.findByPk(existing.outsideVendorId)
+      : null
+    return res.json({
+      success: true,
+      data: { record: publicOfficeOutside(existing, vendor), upserted: true },
+    })
+  }
+  const customer = body.customer || body.customer_json || {}
+  const customerName = String(
+    body.customerName || body.customer_name || customer.firstName || "",
+  ).trim()
+  if (!customerName) {
+    return res.status(400).json({
+      success: false,
+      error: { code: "OO_VAL_CUSTOMER", message: "customerName required" },
+    })
+  }
+  const subtotal = roundInr(body.subtotal != null ? body.subtotal : body.amount)
+  const row = await OfficeOutsideRecord.create({
+    id: String(body.id || "").trim() || newOfficeOutsideId(),
+    customerName,
+    mobile,
+    email: String(body.email || customer.email || "").trim(),
+    address: String(body.address || "").trim(),
+    notes: String(body.notes || customer.remarks || "").trim(),
+    customerJson: customer,
+    productsJson: body.products || body.products_json || {},
+    discount: roundInr(body.discount),
+    subtotal,
+    amount: subtotal,
+    fileType: normalizeFileType(body.fileType || body.file_type),
+    outsideVendorId: body.outsideVendorId || body.outside_vendor_id || null,
+    createdBy: req.user?.id || null,
+    updatedBy: req.user?.id || null,
+  })
+  return res.status(201).json({
+    success: true,
+    data: { record: publicOfficeOutside(row, null), upserted: false },
+  })
+}
+
+async function updateOfficeOutside(req, res, { OfficeOutsideRecord, Subvendor, OfficeOutsideLedger }) {
+  const row = await OfficeOutsideRecord.findByPk(req.params.id)
+  if (!row) {
+    return res.status(404).json({
+      success: false,
+      error: { code: "OO_404", message: "Office Outside record not found" },
+    })
+  }
+  const body = req.body || {}
+  const nextMobile = body.mobile != null ? normalizeMobile(body.mobile) : row.mobile
+  if (nextMobile && nextMobile !== row.mobile) {
+    const other = await findByMobile(OfficeOutsideRecord, nextMobile)
+    if (other && other.id !== row.id) {
+      const err = duplicateCustomerError(other.id)
+      return res.status(409).json({
+        success: false,
+        error: {
+          code: err.code,
+          message: err.message,
+          existingId: err.existingId,
+          details: err.details,
+        },
+      })
+    }
+  }
+  applyRecordPatch(row, body)
+  row.updatedBy = req.user?.id || row.updatedBy
+  await row.save()
+  if (row.outsideVendorId) {
+    await OfficeOutsideLedger?.update?.(
+      { vendorId: row.outsideVendorId },
+      { where: { recordId: row.id } },
+    )
+  }
+  const vendor = row.outsideVendorId
+    ? await Subvendor.findByPk(row.outsideVendorId)
+    : null
+  return res.json({ success: true, data: { record: publicOfficeOutside(row, vendor) } })
+}
+
+/**
  * Error codes:
  *   AUTH_004             — not admin / not accounts
  *   OO_VAL_CUSTOMER      — missing customer name
@@ -474,6 +770,8 @@ function officeOutsideCompleteProfit(subtotal, ledger) {
  *   OO_VENDOR_KIND       — vendor is not office_outside
  *   OO_VENDOR_404        — vendor id not found
  *   OO_404               — record not found
+ *   OO_DUPLICATE_CUSTOMER — this 10-digit mobile already has an Office Outside quotation
+ *                           Include existingId (OO-*) so the SPA can PATCH it.
  *
  * Do not 400 if fileType is omitted on create (frontend may set it later on the row).
  * Do not 400 OO_ALREADY_SENT for vendor / fileType PATCH on a sent row.
@@ -488,16 +786,24 @@ export const OFFICE_OUTSIDE_ERROR_CODES = {
   OO_VENDOR_KIND: "OO_VENDOR_KIND",
   OO_VENDOR_404: "OO_VENDOR_404",
   OO_404: "OO_404",
+  OO_DUPLICATE_CUSTOMER: "OO_DUPLICATE_CUSTOMER",
 }
 
 export {
   publicOfficeOutside,
   publicOutsideLedger,
   normalizeFileType,
+  normalizeMobile,
   newOfficeOutsideId,
   roundInr,
   officeOutsideGstCharges,
   officeOutsideVendorCost,
   officeOutsideCompleteProfit,
+  listOfficeOutside,
+  getOfficeOutside,
+  createOfficeOutside,
+  updateOfficeOutside,
+  findByMobile,
+  duplicateCustomerError,
   OFFICE_INSIDE_GST_RATE,
 }

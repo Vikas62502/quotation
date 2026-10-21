@@ -66,10 +66,9 @@ import {
 import { cn } from "@/lib/utils"
 import {
   customerFromOfficeOutsideRecord,
+  fetchOfficeOutsideRecordsFromApi,
   listOfficeOutsideSentToAccounts,
-  mergeOfficeOutsideRecordsFromApi,
   officeOutsideSubtotalAmount,
-  pickOfficeOutsideListFromApi,
   quotationFromOfficeOutsideRecord,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
@@ -280,21 +279,21 @@ export function AdminSubvendorPanel({
   const [form, setForm] = useState(emptyForm)
   const [savingVendor, setSavingVendor] = useState(false)
   const [leaserPayments, setLeaserPayments] = useState<SubvendorLeaserPayment[]>(() => readLeaserPayments())
-  const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>(() =>
-    listOfficeOutsideSentToAccounts(),
-  )
+  const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>([])
 
   useEffect(() => {
     let cancelled = false
     const loadRemote = async () => {
-      setOutsideRecords(listOfficeOutsideSentToAccounts())
-      if (!useApi) return
+      if (!useApi) {
+        setOutsideRecords([])
+        return
+      }
       try {
-        const [vendorsRes, ledgerRes, leaserRes, outsideRes, outsideLedgerRes] = await Promise.all([
+        const [vendorsRes, ledgerRes, leaserRes, remoteOutside, outsideLedgerRes] = await Promise.all([
           api.admin.subvendors.getAll(),
           api.admin.subvendors.ledger.getAll(),
           api.admin.subvendors.leaser.getAll().catch(() => null),
-          api.admin.officeOutside.getAll({ status: "sent" }).catch(() => null),
+          fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
           api.admin.officeOutside.ledger.getAll().catch(() => null),
         ])
         if (cancelled) return
@@ -311,13 +310,9 @@ export function AdminSubvendorPanel({
           writeLeaserPayments(payments)
           setLeaserPayments(payments)
         }
-        if (outsideRes) {
-          const remote = pickOfficeOutsideListFromApi(outsideRes)
-          if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
-          setOutsideRecords(listOfficeOutsideSentToAccounts())
-        }
+        setOutsideRecords(listOfficeOutsideSentToAccounts(remoteOutside))
       } catch {
-        // Keep local cache when the subvendor API is not live yet.
+        if (!cancelled) setOutsideRecords([])
       }
     }
     void loadRemote()

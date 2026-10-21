@@ -37,17 +37,13 @@ import {
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
 import {
-  getOfficeOutsideRecord,
+  fetchOfficeOutsideRecordsFromApi,
   listOfficeOutsideSentToAccounts,
-  mergeOfficeOutsideRecordsFromApi,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideFileTypeLabel,
-  pickOfficeOutsideListFromApi,
   pickOfficeOutsideRecordFromApi,
   officeOutsideSubtotalAmount,
-  saveOfficeOutsideRequirementSlip,
-  setOfficeOutsideFileType,
-  setOutsideVendorForRecord,
+  upsertOfficeOutsideRecordInList,
   type OfficeOutsideFileType,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
@@ -59,7 +55,7 @@ import {
   writeAdminSubvendors,
   type AdminSubvendorRecord,
 } from "@/lib/admin-subvendors"
-import { api, ApiError, apiErrorToUserMessage } from "@/lib/api"
+import { api, apiErrorToUserMessage } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 type Props = {
@@ -86,7 +82,7 @@ function formatInr(value: number | undefined | null) {
  */
 export function OfficeOutsideAccountsLedger({ className }: Props) {
   const { toast } = useToast()
-  const [tick, setTick] = useState(0)
+  const [records, setRecords] = useState<OfficeOutsideRecord[]>([])
   const [vendorFilter, setVendorFilter] = useState("all")
   const [search, setSearch] = useState("")
   const [vendors, setVendors] = useState<AdminSubvendorRecord[]>(() =>
@@ -106,17 +102,13 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
   const [saving, setSaving] = useState(false)
 
   const refresh = useCallback(async () => {
-    setTick((n) => n + 1)
     try {
-      const [vendorsRes, recordsRes, ledgerRes] = await Promise.all([
+      const [vendorsRes, remoteRecords, ledgerRes] = await Promise.all([
         api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
-        api.admin.officeOutside.getAll({ status: "sent" }).catch(() => null),
+        fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
         api.admin.officeOutside.ledger.getAll().catch(() => null),
       ])
-      if (recordsRes) {
-        const remote = pickOfficeOutsideListFromApi(recordsRes)
-        if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
-      }
+      setRecords(listOfficeOutsideSentToAccounts(remoteRecords))
       if (vendorsRes) {
         const remote = pickSubvendorListFromApi(vendorsRes).filter((row) => row.kind === "office_outside")
         if (remote.length > 0) {
@@ -140,6 +132,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
         setLedgerMap(readSubvendorLedger())
       }
     } catch {
+      setRecords([])
       setVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
       setLedgerMap(readSubvendorLedger())
     }
@@ -156,8 +149,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
   }, [vendors])
 
   const rows = useMemo(() => {
-    void tick
-    const sent = listOfficeOutsideSentToAccounts()
+    const sent = listOfficeOutsideSentToAccounts(records)
     const q = search.trim().toLowerCase()
     return sent
       .filter((row) => (vendorFilter === "all" ? true : row.outsideVendorId === vendorFilter))
@@ -183,7 +175,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
             .includes(q)
         )
       })
-  }, [ledgerMap, search, tick, vendorFilter, vendorsById])
+  }, [ledgerMap, records, search, vendorFilter, vendorsById])
 
   const openEdit = (row: OfficeOutsideRecord) => {
     setActive(row)
@@ -205,7 +197,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
   }
 
   const openSlip = (row: OfficeOutsideRecord) => {
-    const current = getOfficeOutsideRecord(row.id) || row
+    const current = records.find((item) => item.id === row.id) || row
     setActive(current)
     setSlipNotes(current.requirementSlip?.notes || "")
     setSlipOpen(true)
@@ -216,85 +208,71 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
     setSaving(true)
     try {
       const amounts = applyOfficeInsideGstToAmounts(amountsFromLedgerDrafts(draft))
+      await api.admin.officeOutside.ledger.update(active.id, ledgerPatchToApiBody(amounts))
       const nextMap = { ...ledgerMap, [active.id]: { ...getLedgerAmounts(ledgerMap, active.id), ...amounts } }
       writeSubvendorLedger(nextMap)
       setLedgerMap(nextMap)
-      try {
-        await api.admin.officeOutside.ledger.update(active.id, ledgerPatchToApiBody(amounts))
-      } catch (error) {
-        toast({
-          title: "Ledger saved on this device",
-          description:
-            error instanceof ApiError
-              ? apiErrorToUserMessage(error)
-              : "Backend ledger route is not live yet.",
-          variant: "destructive",
-        })
-      }
       setEditOpen(false)
-      setTick((n) => n + 1)
+      await refresh()
       toast({ title: "Office Outside ledger updated" })
+    } catch (error) {
+      toast({
+        title: "Could not save ledger",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
     } finally {
       setSaving(false)
     }
   }
 
-  const saveSlip = () => {
+  const saveSlip = async () => {
     if (!active) return
+    const overview = active.products
+      ? buildSpecRows(active.products)
+          .map((item) => `${item.component}: ${item.brandModel} (${item.qty})`)
+          .join("\n")
+      : "product-overview"
     try {
-      const overview = active.products
-        ? buildSpecRows(active.products)
-            .map((item) => `${item.component}: ${item.brandModel} (${item.qty})`)
-            .join("\n")
-        : "product-overview"
-      saveOfficeOutsideRequirementSlip(active.id, { items: overview, notes: slipNotes })
-      void api.admin.officeOutside
-        .saveSlip(active.id, { items: overview, notes: slipNotes })
-        .catch(() => undefined)
-      setTick((n) => n + 1)
+      const res = await api.admin.officeOutside.saveSlip(active.id, { items: overview, notes: slipNotes })
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refresh()
       setSlipOpen(false)
       toast({ title: "Requirement slip saved" })
     } catch (error) {
       toast({
         title: "Could not save slip",
-        description: error instanceof Error ? error.message : "Try again.",
+        description: apiErrorToUserMessage(error),
         variant: "destructive",
       })
     }
   }
 
-  const persistVendorOrFileType = (row: OfficeOutsideRecord, patch: { vendorId?: string; fileType?: string }) => {
+  const persistVendorOrFileType = async (
+    row: OfficeOutsideRecord,
+    patch: { vendorId?: string; fileType?: string },
+  ) => {
+    const vendor = patch.vendorId ? vendors.find((item) => item.id === patch.vendorId) : undefined
     try {
-      let next = row
-      if (patch.vendorId) {
-        const vendor = vendors.find((item) => item.id === patch.vendorId)
-        next = setOutsideVendorForRecord(row.id, patch.vendorId, vendor?.name)
-      }
-      if (patch.fileType) {
-        next = setOfficeOutsideFileType(row.id, patch.fileType as OfficeOutsideFileType)
-      }
-      setTick((n) => n + 1)
-      void api.admin.officeOutside
-        .update(next.id, {
-          outsideVendorId: next.outsideVendorId,
-          outsideVendorName: next.outsideVendorName,
-          fileType: next.fileType,
-        })
-        .then((res) => {
-          const remote = pickOfficeOutsideRecordFromApi(res)
-          if (remote) mergeOfficeOutsideRecordsFromApi([remote])
-        })
-        .catch(() => undefined)
+      const res = await api.admin.officeOutside.update(row.id, {
+        outsideVendorId: patch.vendorId ?? row.outsideVendorId,
+        outsideVendorName: vendor?.name ?? row.outsideVendorName,
+        fileType: (patch.fileType as OfficeOutsideFileType | undefined) ?? row.fileType,
+      })
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refresh()
     } catch (error) {
       toast({
         title: "Could not update",
-        description: error instanceof Error ? error.message : "Try again.",
+        description: apiErrorToUserMessage(error),
         variant: "destructive",
       })
     }
   }
 
-  const sentCount = listOfficeOutsideSentToAccounts().length
+  const sentCount = records.length
   const activeAmounts = active ? getLedgerAmounts(ledgerMap, active.id) : null
 
   return (
@@ -378,7 +356,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <Select
                   value={row.outsideVendorId || undefined}
-                  onValueChange={(value) => persistVendorOrFileType(row, { vendorId: value })}
+                  onValueChange={(value) => void persistVendorOrFileType(row, { vendorId: value })}
                 >
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="Outside vendor" />
@@ -393,7 +371,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
                 </Select>
                 <Select
                   value={row.fileType || undefined}
-                  onValueChange={(value) => persistVendorOrFileType(row, { fileType: value })}
+                  onValueChange={(value) => void persistVendorOrFileType(row, { fileType: value })}
                 >
                   <SelectTrigger className="h-8 text-xs">
                     <SelectValue placeholder="File type" />
@@ -556,7 +534,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
         vendor={active ? vendors.find((v) => v.id === active.outsideVendorId) || null : null}
         notes={slipNotes}
         onNotesChange={setSlipNotes}
-        onSave={saveSlip}
+        onSave={() => void saveSlip()}
       />
     </div>
   )

@@ -4813,14 +4813,22 @@ export const api = {
         search?: string
         vendorId?: string
         fileType?: "loan" | "cash" | "mix"
+        mobile?: string
       }) => {
         const queryParams = new URLSearchParams()
         if (params?.status) queryParams.append("status", params.status)
         if (params?.search) queryParams.append("search", params.search)
         if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
         if (params?.fileType) queryParams.append("fileType", params.fileType)
+        if (params?.mobile) queryParams.append("mobile", params.mobile)
         const query = queryParams.toString()
         return apiRequest(`/admin/office-outside${query ? `?${query}` : ""}`, {
+          suppressErrorLog: true,
+        })
+      },
+
+      get: async (id: string) => {
+        return apiRequest(`/admin/office-outside/${id}`, {
           suppressErrorLog: true,
         })
       },

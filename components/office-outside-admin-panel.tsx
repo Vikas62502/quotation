@@ -40,21 +40,15 @@ import {
   type AdminSubvendorRecord,
 } from "@/lib/admin-subvendors"
 import {
-  deleteOfficeOutsideRecord,
-  getOfficeOutsideRecord,
+  fetchOfficeOutsideRecordsFromApi,
   listOfficeOutsidePending,
   listOfficeOutsideSentToAccounts,
-  markOfficeOutsideSentToAccounts,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideFileTypeLabel,
-  mergeOfficeOutsideRecordsFromApi,
   officeOutsideSubtotalAmount,
-  pickOfficeOutsideListFromApi,
   pickOfficeOutsideRecordFromApi,
-  readOfficeOutsideRecords,
-  saveOfficeOutsideRequirementSlip,
-  setOfficeOutsideFileType,
-  setOutsideVendorForRecord,
+  removeOfficeOutsideRecordFromList,
+  upsertOfficeOutsideRecordInList,
   type OfficeOutsideFileType,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
@@ -75,9 +69,16 @@ type ListFilter = "all" | "pending" | "sent"
  * Admin → Quotations → All Outside
  * Separate Office Outside data (create / vendor / send to Accounts) — not All quotations.
  */
-export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
+export function OfficeOutsideAdminPanel({
+  className,
+  onCountChange,
+}: {
+  className?: string
+  onCountChange?: (count: number) => void
+}) {
   const { toast } = useToast()
-  const [tick, setTick] = useState(0)
+  const [records, setRecords] = useState<OfficeOutsideRecord[]>([])
+  const [loading, setLoading] = useState(true)
   const [listFilter, setListFilter] = useState<ListFilter>("all")
   const [search, setSearch] = useState("")
   const [vendors, setVendors] = useState<AdminSubvendorRecord[]>(() =>
@@ -89,6 +90,7 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
   const [vendorCreateOpen, setVendorCreateOpen] = useState(false)
   const [active, setActive] = useState<OfficeOutsideRecord | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
+  const [mutatingId, setMutatingId] = useState<string | null>(null)
 
   const [slipNotes, setSlipNotes] = useState("")
   const [newVendorName, setNewVendorName] = useState("")
@@ -116,33 +118,41 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
     }
   }, [])
 
-  const refreshRecords = useCallback(async () => {
+  const refreshRecords = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
     try {
-      const res = await api.admin.officeOutside.getAll()
-      const remote = pickOfficeOutsideListFromApi(res)
-      if (remote.length > 0) mergeOfficeOutsideRecordsFromApi(remote)
-    } catch {
-      // keep local
+      const remote = await fetchOfficeOutsideRecordsFromApi()
+      setRecords(remote)
+      onCountChange?.(remote.length)
+    } catch (error) {
+      setRecords([])
+      onCountChange?.(0)
+      toast({
+        title: "Could not load Office Outside",
+        description: apiErrorToUserMessage(error) || "The database API did not return records.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
     }
-    setTick((n) => n + 1)
-  }, [])
+    // toast is stable enough for this refresh; omit from deps to avoid reload loops.
+  }, [onCountChange])
 
   useEffect(() => {
     void refreshVendors()
     void refreshRecords()
   }, [refreshVendors, refreshRecords])
 
-  const records = useMemo(() => {
-    void tick
-    if (listFilter === "pending") return listOfficeOutsidePending()
-    if (listFilter === "sent") return listOfficeOutsideSentToAccounts()
-    return readOfficeOutsideRecords()
-  }, [tick, listFilter])
+  const visibleRecords = useMemo(() => {
+    if (listFilter === "pending") return listOfficeOutsidePending(records)
+    if (listFilter === "sent") return listOfficeOutsideSentToAccounts(records)
+    return records
+  }, [listFilter, records])
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
-    if (!q) return records
-    return records.filter((row) =>
+    if (!q) return visibleRecords
+    return visibleRecords.filter((row) =>
       [
         row.id,
         row.customerName,
@@ -157,17 +167,15 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
         .toLowerCase()
         .includes(q),
     )
-  }, [records, search])
+  }, [visibleRecords, search])
 
   const counts = useMemo(() => {
-    void tick
-    const all = readOfficeOutsideRecords()
     return {
-      all: all.length,
-      pending: all.filter((r) => !r.sentToAccountsAt).length,
-      sent: all.filter((r) => Boolean(r.sentToAccountsAt)).length,
+      all: records.length,
+      pending: records.filter((r) => !r.sentToAccountsAt).length,
+      sent: records.filter((r) => Boolean(r.sentToAccountsAt)).length,
     }
-  }, [tick])
+  }, [records])
 
   const openCreate = () => {
     setEditingRecord(null)
@@ -182,40 +190,54 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
   const closeForm = () => {
     setFormOpen(false)
     setEditingRecord(null)
-    setTick((n) => n + 1)
+    void refreshRecords({ silent: true })
   }
 
-  const onVendorChange = (row: OfficeOutsideRecord, value: string) => {
+  const onVendorChange = async (row: OfficeOutsideRecord, value: string) => {
     if (value === CREATE_NEW_VALUE) {
       setActive(row)
       setVendorCreateOpen(true)
       return
     }
     const vendor = vendors.find((v) => v.id === value)
-    const next = setOutsideVendorForRecord(row.id, value, vendor?.name)
-    setTick((n) => n + 1)
-    void api.admin.officeOutside
-      .update(next.id, {
-        outsideVendorId: next.outsideVendorId,
-        outsideVendorName: next.outsideVendorName,
+    setMutatingId(row.id)
+    try {
+      const res = await api.admin.officeOutside.update(row.id, {
+        outsideVendorId: value,
+        outsideVendorName: vendor?.name,
       })
-      .then((res) => {
-        const remote = pickOfficeOutsideRecordFromApi(res)
-        if (remote) mergeOfficeOutsideRecordsFromApi([remote])
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refreshRecords({ silent: true })
+    } catch (error) {
+      toast({
+        title: "Could not update vendor",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
       })
-      .catch(() => undefined)
+    } finally {
+      setMutatingId(null)
+    }
   }
 
-  const onFileTypeChange = (row: OfficeOutsideRecord, value: string) => {
-    const next = setOfficeOutsideFileType(row.id, value as OfficeOutsideFileType)
-    setTick((n) => n + 1)
-    void api.admin.officeOutside
-      .update(next.id, { fileType: next.fileType })
-      .then((res) => {
-        const remote = pickOfficeOutsideRecordFromApi(res)
-        if (remote) mergeOfficeOutsideRecordsFromApi([remote])
+  const onFileTypeChange = async (row: OfficeOutsideRecord, value: string) => {
+    setMutatingId(row.id)
+    try {
+      const res = await api.admin.officeOutside.update(row.id, {
+        fileType: value as OfficeOutsideFileType,
       })
-      .catch(() => undefined)
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refreshRecords({ silent: true })
+    } catch (error) {
+      toast({
+        title: "Could not update file type",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setMutatingId(null)
+    }
   }
 
   const createVendor = async () => {
@@ -265,13 +287,26 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
       }
       await refreshVendors()
       if (active) {
-        setOutsideVendorForRecord(active.id, created.id, created.name)
+        try {
+          const res = await api.admin.officeOutside.update(active.id, {
+            outsideVendorId: created.id,
+            outsideVendorName: created.name,
+          })
+          const remote = pickOfficeOutsideRecordFromApi(res)
+          if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+          await refreshRecords({ silent: true })
+        } catch (assignError) {
+          toast({
+            title: "Vendor created, record not updated",
+            description: apiErrorToUserMessage(assignError),
+            variant: "destructive",
+          })
+        }
       }
       setVendorCreateOpen(false)
       setNewVendorName("")
       setNewVendorMobile("")
       setNewVendorContact("")
-      setTick((n) => n + 1)
       toast({ title: "Outside vendor created", description: created.name })
     } finally {
       setSaving(false)
@@ -279,25 +314,28 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
   }
 
   const sendToAccounts = async (row: OfficeOutsideRecord) => {
+    if (!row.outsideVendorId) {
+      toast({
+        title: "Select outside vendor",
+        description: "Choose a vendor first.",
+        variant: "destructive",
+      })
+      return
+    }
     setSendingId(row.id)
     try {
-      const next = markOfficeOutsideSentToAccounts(row.id)
-      try {
-        const res = await api.admin.officeOutside.sendToAccounts(next.id)
-        const remote = pickOfficeOutsideRecordFromApi(res)
-        if (remote) mergeOfficeOutsideRecordsFromApi([remote])
-      } catch {
-        // local send already saved
-      }
-      setTick((n) => n + 1)
+      const res = await api.admin.officeOutside.sendToAccounts(row.id)
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refreshRecords({ silent: true })
       toast({
         title: "Sent to Accounts",
         description: `${row.customerName} is now in Accounts → Office Outside.`,
       })
     } catch (error) {
       toast({
-        title: "Select outside vendor",
-        description: error instanceof Error ? error.message : "Choose a vendor first.",
+        title: "Could not send to Accounts",
+        description: apiErrorToUserMessage(error),
         variant: "destructive",
       })
     } finally {
@@ -314,46 +352,55 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
       })
       return
     }
-    const current = getOfficeOutsideRecord(row.id) || row
+    const current = records.find((item) => item.id === row.id) || row
     setActive(current)
     setSlipNotes(current.requirementSlip?.notes || "")
     setSlipOpen(true)
   }
 
-  const saveSlip = () => {
+  const saveSlip = async () => {
     if (!active) return
+    const overview = active.products
+      ? buildSpecRows(active.products)
+          .map((item) => `${item.component}: ${item.brandModel} (${item.qty})`)
+          .join("\n")
+      : "product-overview"
+    setSaving(true)
     try {
-      const overview = active.products
-        ? buildSpecRows(active.products)
-            .map((item) => `${item.component}: ${item.brandModel} (${item.qty})`)
-            .join("\n")
-        : "product-overview"
-      const saved = saveOfficeOutsideRequirementSlip(active.id, { items: overview, notes: slipNotes })
-      void api.admin.officeOutside
-        .saveSlip(saved.id, { items: overview, notes: slipNotes })
-        .then((res) => {
-          const remote = pickOfficeOutsideRecordFromApi(res)
-          if (remote) mergeOfficeOutsideRecordsFromApi([remote])
-        })
-        .catch(() => undefined)
+      const res = await api.admin.officeOutside.saveSlip(active.id, { items: overview, notes: slipNotes })
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      if (remote) setRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      await refreshRecords({ silent: true })
       setSlipOpen(false)
-      setTick((n) => n + 1)
       toast({ title: "Requirement slip saved" })
     } catch (error) {
       toast({
         title: "Could not save slip",
-        description: error instanceof Error ? error.message : "Try again.",
+        description: apiErrorToUserMessage(error),
         variant: "destructive",
       })
+    } finally {
+      setSaving(false)
     }
   }
 
-  const removeRow = (row: OfficeOutsideRecord) => {
+  const removeRow = async (row: OfficeOutsideRecord) => {
     if (!window.confirm(`Delete Office Outside record ${row.customerName}?`)) return
-    deleteOfficeOutsideRecord(row.id)
-    void api.admin.officeOutside.delete(row.id).catch(() => undefined)
-    setTick((n) => n + 1)
-    toast({ title: "Record deleted" })
+    setMutatingId(row.id)
+    try {
+      await api.admin.officeOutside.delete(row.id)
+      setRecords((prev) => removeOfficeOutsideRecordFromList(prev, row.id))
+      await refreshRecords({ silent: true })
+      toast({ title: "Record deleted" })
+    } catch (error) {
+      toast({
+        title: "Could not delete",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setMutatingId(null)
+    }
   }
 
   const vendorOptions = useMemo(
@@ -369,7 +416,7 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
         onSaved={() => {
           toast({
             title: editingRecord ? "Office Outside updated" : "Office Outside saved",
-            description: "This stays in All Outside — not All quotations.",
+            description: "Saved in the database. One quotation per customer. Not in All quotations.",
           })
           closeForm()
         }}
@@ -383,8 +430,8 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
         <div>
           <h3 className="text-sm font-semibold text-violet-950">Office Outside</h3>
           <p className="text-xs text-muted-foreground">
-            Separate from All quotations. Create uses the same quotation form, then pick an outside
-            vendor and Send to Accounts — Accounts manages the ledger there.
+            Separate from All quotations. Saved in the database in real time — one quotation per
+            customer. Pick an outside vendor, then Send to Accounts.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -437,7 +484,11 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
         className="h-9 max-w-md"
       />
 
-      {filtered.length === 0 ? (
+      {loading && records.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/40 px-4 py-10 text-center text-sm text-muted-foreground">
+          Loading Office Outside from the database…
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="rounded-xl border border-dashed border-violet-200 bg-violet-50/40 px-4 py-10 text-center text-sm text-muted-foreground">
           No Office Outside records yet. Tap <span className="font-medium text-foreground">Create Outside</span>{" "}
           and fill the quotation form (customer + products). It stays here, not in All quotations.
@@ -493,7 +544,8 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
                 <div className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(8.5rem,10rem)_auto] gap-2 items-center">
                   <Select
                     value={row.outsideVendorId || undefined}
-                    onValueChange={(value) => onVendorChange(row, value)}
+                    onValueChange={(value) => void onVendorChange(row, value)}
+                    disabled={mutatingId === row.id}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="Select outside vendor" />
@@ -514,7 +566,8 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
                   </Select>
                   <Select
                     value={row.fileType || undefined}
-                    onValueChange={(value) => onFileTypeChange(row, value)}
+                    onValueChange={(value) => void onFileTypeChange(row, value)}
+                    disabled={mutatingId === row.id}
                   >
                     <SelectTrigger className="h-8 text-xs">
                       <SelectValue placeholder="File type" />
@@ -557,7 +610,8 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8 text-rose-700"
-                      onClick={() => removeRow(row)}
+                      onClick={() => void removeRow(row)}
+                      disabled={mutatingId === row.id}
                       title="Delete"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -604,7 +658,7 @@ export function OfficeOutsideAdminPanel({ className }: { className?: string }) {
         vendor={vendors.find((v) => v.id === active?.outsideVendorId) || null}
         notes={slipNotes}
         onNotesChange={setSlipNotes}
-        onSave={saveSlip}
+        onSave={() => void saveSlip()}
       />
     </div>
   )
