@@ -37,10 +37,11 @@ import {
   type SubvendorLedgerAmounts,
 } from "@/lib/admin-subvendor-ledger"
 import {
-  fetchOfficeOutsideSentRecordsFromApi,
-  listOfficeOutsideSentToAccounts,
+  fetchOfficeOutsideVendorOutsideRecordsFromApi,
+  isOfficeOutsideOnAccounts,
   OFFICE_OUTSIDE_FILE_TYPES,
   officeOutsideFileTypeLabel,
+  officeOutsideLoanCashAmounts,
   pickOfficeOutsideRecordFromApi,
   officeOutsideSubtotalAmount,
   upsertOfficeOutsideRecordInList,
@@ -69,6 +70,8 @@ const OUTSIDE_LEDGER_FIELDS = [
   "gstCharges",
   "others",
   "receivedAmount",
+  "loanAmount",
+  "cashAmount",
 ] as const satisfies readonly LedgerAmountField[]
 
 function formatInr(value: number | undefined | null) {
@@ -78,7 +81,7 @@ function formatInr(value: number | undefined | null) {
 
 /**
  * Accounts → Vendor Outside / Office Outside:
- * records sent from Admin → All Outside (Send to Accounts). Show / edit ledger + requirement slip.
+ * records sent from Accounts (Send to Outside). Show / edit ledger + requirement slip.
  */
 export function OfficeOutsideAccountsLedger({ className }: Props) {
   const { toast } = useToast()
@@ -105,7 +108,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
     try {
       const [vendorsRes, remoteRecords, ledgerRes] = await Promise.all([
         api.admin.subvendors.getAll({ kind: "office_outside" }).catch(() => null),
-        fetchOfficeOutsideSentRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
+        fetchOfficeOutsideVendorOutsideRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
         api.admin.officeOutside.ledger.getAll().catch(() => null),
       ])
       setRecords(remoteRecords)
@@ -149,19 +152,24 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
   }, [vendors])
 
   const rows = useMemo(() => {
-    const sent = listOfficeOutsideSentToAccounts(records)
     const q = search.trim().toLowerCase()
-    return sent
+    return records
       .filter((row) => (vendorFilter === "all" ? true : row.outsideVendorId === vendorFilter))
       .map((row) => {
         const vendor = vendorsById.get(row.outsideVendorId)
         const amounts = getLedgerAmounts(ledgerMap, row.id)
         const proposalFallback =
           amounts.proposal && amounts.proposal > 0 ? amounts.proposal : officeOutsideSubtotalAmount(row)
+        const loanCash = officeOutsideLoanCashAmounts(row, amounts)
         return {
           row,
           vendor,
-          amounts: { ...amounts, proposal: proposalFallback },
+          amounts: {
+            ...amounts,
+            proposal: proposalFallback,
+            loanAmount: loanCash.loanAmount,
+            cashAmount: loanCash.cashAmount,
+          },
         }
       })
       .filter(({ row, vendor }) => {
@@ -180,11 +188,14 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
   const openEdit = (row: OfficeOutsideRecord) => {
     setActive(row)
     const amounts = getLedgerAmounts(ledgerMap, row.id)
+    const loanCash = officeOutsideLoanCashAmounts(row, amounts)
     setDraft(
       applyOfficeInsideGstToDrafts(
         draftsFromLedgerAmounts({
           ...amounts,
           proposal: amounts.proposal > 0 ? amounts.proposal : officeOutsideSubtotalAmount(row),
+          loanAmount: loanCash.loanAmount,
+          cashAmount: loanCash.cashAmount,
         }),
       ),
     )
@@ -318,8 +329,7 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
 
       {rows.length === 0 ? (
         <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 px-4 py-8 text-center text-sm text-muted-foreground">
-          No Office Outside records in Accounts yet. On Admin → All Outside, create data, select an
-          outside vendor, then tap Send to Accounts.
+          No Office Outside files on Vendor Outside yet. On Accounts, tap Send to Outside.
         </div>
       ) : (
         <div className="space-y-2 max-h-[520px] overflow-auto pr-1">
@@ -343,9 +353,15 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-1">
-                  <Badge variant="outline" className="h-5 text-[10px] border-emerald-200 bg-emerald-50 text-emerald-800">
-                    In Accounts
-                  </Badge>
+                  {isOfficeOutsideOnAccounts(row) ? (
+                    <Badge variant="outline" className="h-5 text-[10px] border-emerald-200 bg-emerald-50 text-emerald-800">
+                      In Accounts
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="h-5 text-[10px] border-violet-200 bg-violet-50 text-violet-800">
+                      Vendor Outside
+                    </Badge>
+                  )}
                   {row.requirementSlip?.items ? (
                     <Badge variant="outline" className="h-5 text-[10px] border-sky-200 bg-sky-50 text-sky-800">
                       Slip
@@ -397,6 +413,12 @@ export function OfficeOutsideAccountsLedger({ className }: Props) {
                 </p>
                 <p>
                   <span className="text-muted-foreground">GST:</span> {formatInr(amounts.gstCharges)}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Loan:</span> {formatInr(amounts.loanAmount)}
+                </p>
+                <p>
+                  <span className="text-muted-foreground">Cash:</span> {formatInr(amounts.cashAmount)}
                 </p>
                 <p>
                   <span className="text-muted-foreground">Received:</span> {formatInr(amounts.receivedAmount)}

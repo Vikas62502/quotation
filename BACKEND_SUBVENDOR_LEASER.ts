@@ -16,6 +16,12 @@
  * Account-management JWT may PUT leaser for both office_inside and office_outside vendors.
  * 403 for dealer / visitor unless they have admin or accounts access.
  *
+ * CHANGELOG Oct 23 2026 — Vendor leaser bills are a separate route
+ *   Do NOT put bill rows on PUT /admin/subvendors/:id/leaser.
+ *   Bills (date, basic, payment mode, customer, upload) live on:
+ *     GET/PUT /admin/subvendors/bills  and  /admin/subvendors/:id/bills
+ *   Copy-paste: BACKEND_SUBVENDOR_BILLS.ts
+ *
  * Why:
  *   Dealer leaser payments are still localStorage-only. Refresh / other devices lose rows.
  *   Current balance must start at 0 and equal SUM(payment.amount) — never file-charges.

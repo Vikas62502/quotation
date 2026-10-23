@@ -12,6 +12,7 @@ import {
   isLeadNotAssignedToDealerError,
   leadHasExplicitCallingAssigneeId,
   normalizeCallingAssigneeToken,
+  normalizeCallingLeadWorkflowStatus,
   resolveCallingAssigneeId,
 } from "@/lib/calling-lead-assignee"
 import {
@@ -1227,7 +1228,7 @@ export default function CallingDataPage() {
       createdAt: source?.createdAt || source?.created_at || source?.assignedAt || source?.assigned_at || new Date().toISOString(),
       assignedAt: source?.assignedAt || source?.assigned_at,
       queuedAt: source?.queuedAt || source?.queued_at,
-      status: source?.status || source?.leadStatus || source?.lead_status || "assigned",
+      status: normalizeCallingLeadWorkflowStatus(source),
       action: source?.action,
       actionAt: source?.actionAt || source?.action_at,
       nextFollowUpAt: source?.nextFollowUpAt || source?.next_follow_up_at,
@@ -1264,13 +1265,14 @@ export default function CallingDataPage() {
       adName: String(source?.adName || source?.ad_name || "").trim() || undefined,
       sheetLeadStatus: (() => {
         const explicit = String(
-          source?.sheetLeadStatus || source?.sheet_lead_status || source?.metaLeadStatus || "",
+          source?.sheetLeadStatus ||
+            source?.sheet_lead_status ||
+            source?.metaLeadStatus ||
+            source?.lead_status ||
+            source?.leadStatus ||
+            "",
         ).trim()
-        if (explicit) return explicit
-        const platform = String(source?.platform || "").trim()
-        const leadStatusRaw = String(source?.lead_status || source?.leadStatus || "").trim()
-        if (platform && leadStatusRaw) return leadStatusRaw
-        return undefined
+        return explicit || undefined
       })(),
       remarks: String(source?.remarks || "").trim() || undefined,
       remarks2: String(source?.remarks2 || source?.remarks_2 || "").trim() || undefined,
@@ -2498,7 +2500,7 @@ export default function CallingDataPage() {
     const nextMs = lead.nextFollowUpAt ? new Date(lead.nextFollowUpAt).getTime() : NaN
     const isDueReschedule = status === "rescheduled" && Number.isFinite(nextMs) && nextMs <= Date.now()
     if (isDueReschedule) return true
-    if (["completed", "closed"].includes(status)) return false
+    if (["completed", "closed", "done"].includes(status)) return false
     if (status === "rescheduled") return false
     return true
   }
@@ -5248,7 +5250,9 @@ export default function CallingDataPage() {
                 </CurrentLeadField>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {currentLead.status === "assigned" || currentLead.status === "queued" ? (
+                {currentLead.status === "assigned" ||
+                currentLead.status === "queued" ||
+                String(currentLead.sheetLeadStatus || "").toUpperCase() === "CREATED" ? (
                   <Button
                     onClick={() => handleStartCall(currentLead)}
                     className="h-8 gap-1.5 bg-orange-500 hover:bg-orange-600 text-white"

@@ -9880,7 +9880,7 @@ export default function AdminPanelPage() {
                     {operationalProgressTab === "outside_all" ? (
                       <p className="text-[11px] text-muted-foreground px-1">
                         Separate Office Outside data (not All quotations). Create uses the same quotation form.
-                        Pick an outside vendor, then Send to Accounts — Accounts manages it under Vendor Outside.
+                        Pick an outside vendor, then Send to Accounts. Accounts can then Send to Outside.
                       </p>
                     ) : null}
                   </div>

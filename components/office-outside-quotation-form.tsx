@@ -82,6 +82,8 @@ export function OfficeOutsideQuotationForm({ record, onCancel, onSaved }: Props)
         body: officeOutsideRecordToApiBody({
           ...snapshot,
           id: record?.id,
+          loanAmount: record?.loanAmount,
+          cashAmount: record?.cashAmount,
           outsideVendorId: record?.outsideVendorId || "",
           outsideVendorName: record?.outsideVendorName,
           sentToAccountsAt: record?.sentToAccountsAt,

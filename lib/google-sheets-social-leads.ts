@@ -11,6 +11,8 @@ export const DEFAULT_SOCIAL_SHEET_TAB_NAMES = [
   "Ajmer Leads",
   "Crompton Leads",
   "Ajmer Solar Lead Form New",
+  "Chairbord - Ajme Leads",
+  "Ajmer Solar Lead New - Recovered",
 ]
 
 export const HR_SHEET_SOURCES_STORAGE_KEY = "hrSheetSourcesConfig"
@@ -662,7 +664,10 @@ export function defaultSheetSourcesForSpreadsheet(spreadsheetId: string): Social
     spreadsheetId: base,
     sheetTabName: tab,
     displayName: tab.replace(/_/g, " "),
-    enabled: tab === "Ajmer Leads" || tab === "Ajmer_Leads",
+    enabled:
+      tab === "Ajmer Leads" ||
+      tab === "Ajmer_Leads" ||
+      tab === "Chairbord - Ajme Leads",
     dealerIds: [],
     activeLimitPerDealer: 1,
   }))

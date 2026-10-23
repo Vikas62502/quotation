@@ -212,8 +212,18 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
   if (paymentType === "mix") {
     if (loanAmountRaw > 0) loanAmount = Math.min(loanAmountRaw, cap)
     if (cashAmountRaw > 0) cashAmount = Math.min(cashAmountRaw, cap)
-    if (loanAmount <= 0 && cashAmount > 0 && cashAmount < cap) loanAmount = Math.max(0, cap - cashAmount)
-    if (cashAmount <= 0 && loanAmount > 0 && loanAmount < cap) cashAmount = Math.max(0, cap - loanAmount)
+    if (loanAmount >= cap) {
+      cashAmount = 0
+    } else if (cashAmount >= cap && loanAmount <= 0) {
+      loanAmount = 0
+      cashAmount = cap
+    } else if (loanAmount > 0 && cashAmount > 0 && loanAmount + cashAmount !== cap) {
+      cashAmount = Math.max(0, cap - loanAmount)
+    } else if (loanAmount <= 0 && cashAmount > 0 && cashAmount < cap) {
+      loanAmount = Math.max(0, cap - cashAmount)
+    } else if (cashAmount <= 0 && loanAmount > 0) {
+      cashAmount = Math.max(0, cap - loanAmount)
+    }
   } else if (paymentType === "loan") {
     loanAmount = loanAmountRaw > 0 ? Math.min(loanAmountRaw, cap) : cap
   } else if (paymentType === "cash") {

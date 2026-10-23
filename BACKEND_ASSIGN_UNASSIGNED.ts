@@ -147,7 +147,7 @@ function isUnassignedLead(lead) {
     .trim()
     .toLowerCase()
   if (!assignee || UNASSIGNED_SENTINELS.has(assignee)) return true
-  if (status === "queued" || status === "pending" || status === "open") {
+  if (status === "queued" || status === "pending" || status === "open" || status === "created") {
     // Has assignee already → not unassigned for badge purposes
     return !assignee || UNASSIGNED_SENTINELS.has(assignee)
   }

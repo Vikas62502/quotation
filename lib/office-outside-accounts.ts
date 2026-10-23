@@ -1,7 +1,8 @@
 /**
  * Admin → Quotations → All Outside: separate Office Outside records (not All quotations).
  * Source of truth is GET/POST/PATCH `/admin/office-outside` (database), not localStorage.
- * Create → assign outside vendor → Send to Accounts → Accounts Office Outside ledger.
+ * Create → assign outside vendor → Send to Accounts → Accounts list.
+ * Accounts can then Send to Outside → Vendor Outside.
  * One customer (10-digit mobile) = one live Office Outside quotation.
  */
 
@@ -58,9 +59,14 @@ export type OfficeOutsideRecord = {
   subtotal?: number
   /** Loan / Cash / Cash + loan */
   fileType?: OfficeOutsideFileType
+  loanAmount?: number
+  cashAmount?: number
   /** Admin subvendor id where kind === office_outside */
   outsideVendorId: string
   outsideVendorName?: string
+  /** Accounts → Vendor Outside */
+  sentToOutsideAt?: string
+  /** All Outside → Accounts list */
   sentToAccountsAt?: string
   requirementSlip?: RequirementSlipData
   installments?: unknown
@@ -91,6 +97,98 @@ export function officeOutsideSubtotalAmount(row?: OfficeOutsideRecord | null): n
   const systemPrice = Math.round(Number(row.products?.systemPrice) || 0)
   if (systemPrice > 0) return systemPrice
   return Math.round(Number(row.amount) || 0)
+}
+
+/**
+ * Loan / cash for Vendor Outside + Accounts.
+ * Loan file → loan amount = subtotal (unless a stored loan amount is already set).
+ * Cash file → cash amount = subtotal. Mix uses stored split, else loan = subtotal.
+ */
+export function officeOutsideLoanCashAmounts(
+  row?: OfficeOutsideRecord | null,
+  stored?: { loanAmount?: number; cashAmount?: number } | null,
+): { loanAmount: number; cashAmount: number } {
+  const subtotal = officeOutsideSubtotalAmount(row)
+  const type = normalizeOfficeOutsideFileType(row?.fileType)
+  const pickPositive = (...values: unknown[]) => {
+    for (const value of values) {
+      const n = Math.max(0, Math.round(Number(value) || 0))
+      if (n > 0) return n
+    }
+    return 0
+  }
+  const productExtras = row?.products as Record<string, unknown> | undefined
+  const storedLoan = pickPositive(
+    stored?.loanAmount,
+    row?.loanAmount,
+    productExtras?.officeOutsideLoanAmount,
+  )
+  const storedCash = pickPositive(
+    stored?.cashAmount,
+    row?.cashAmount,
+    productExtras?.officeOutsideCashAmount,
+  )
+  if (type === "loan") {
+    return { loanAmount: storedLoan > 0 ? storedLoan : subtotal, cashAmount: 0 }
+  }
+  if (type === "cash") {
+    return { loanAmount: 0, cashAmount: storedCash > 0 ? storedCash : subtotal }
+  }
+  if (type === "mix") {
+    return reconcileMixLoanCash(subtotal, storedLoan, storedCash)
+  }
+  return { loanAmount: storedLoan, cashAmount: storedCash }
+}
+
+/** Cash + loan must sum to subtotal. If loan is the full amount, cash is 0. */
+export function reconcileMixLoanCash(
+  subtotalRaw: number,
+  loanRaw: number,
+  cashRaw: number,
+): { loanAmount: number; cashAmount: number } {
+  const cap = Math.max(0, Math.round(Number(subtotalRaw) || 0))
+  let loanAmount = Math.max(0, Math.round(Number(loanRaw) || 0))
+  let cashAmount = Math.max(0, Math.round(Number(cashRaw) || 0))
+  if (loanAmount > cap) loanAmount = cap
+  if (cashAmount > cap) cashAmount = cap
+  if (loanAmount >= cap) return { loanAmount: cap, cashAmount: 0 }
+  if (cashAmount >= cap && loanAmount <= 0) return { loanAmount: 0, cashAmount: cap }
+  if (loanAmount > 0 && cashAmount > 0 && loanAmount + cashAmount !== cap) {
+    cashAmount = Math.max(0, cap - loanAmount)
+  } else if (loanAmount > 0 && cashAmount <= 0) {
+    cashAmount = Math.max(0, cap - loanAmount)
+  } else if (cashAmount > 0 && loanAmount <= 0) {
+    loanAmount = Math.max(0, cap - cashAmount)
+  } else if (loanAmount <= 0 && cashAmount <= 0) {
+    loanAmount = cap
+    cashAmount = 0
+  }
+  return { loanAmount, cashAmount }
+}
+
+/** Persist amount + loan/cash from All Outside. Loan file uses loan amount; cash uses cash = amount. */
+export function officeOutsideAmountsToSave(
+  row: Pick<OfficeOutsideRecord, "fileType">,
+  amountRaw: number,
+  loanRaw: number,
+  cashRaw = 0,
+): { subtotal: number; amount: number; loanAmount: number; cashAmount: number } {
+  const subtotal = Math.max(0, Math.round(Number(amountRaw) || 0))
+  const type = normalizeOfficeOutsideFileType(row.fileType)
+  let loanAmount = Math.max(0, Math.round(Number(loanRaw) || 0))
+  let cashAmount = Math.max(0, Math.round(Number(cashRaw) || 0))
+  if (type === "cash") {
+    loanAmount = 0
+    cashAmount = cashAmount > 0 ? Math.min(cashAmount, subtotal) : subtotal
+  } else if (type === "mix") {
+    const mix = reconcileMixLoanCash(subtotal, loanAmount, cashAmount)
+    loanAmount = mix.loanAmount
+    cashAmount = mix.cashAmount
+  } else {
+    cashAmount = 0
+    if (loanAmount <= 0) loanAmount = subtotal
+  }
+  return { subtotal, amount: subtotal, loanAmount, cashAmount }
 }
 
 export function customerFromOfficeOutsideRecord(row?: OfficeOutsideRecord | null): Customer | undefined {
@@ -412,12 +510,35 @@ export function saveOfficeOutsideRequirementSlip(
   })
 }
 
+function parseOfficeOutsideTime(raw: unknown): string | undefined {
+  if (raw == null || raw === false || raw === "") return undefined
+  const direct = String(raw).trim()
+  if (!direct || direct === "null" || direct === "undefined") return undefined
+  return direct
+}
+
+/** Vendor Outside queue: after Accounts taps Send to Outside. */
+export function isOfficeOutsideOnVendorOutside(row?: OfficeOutsideRecord | null): boolean {
+  if (!row) return false
+  return Boolean(row.sentToOutsideAt)
+}
+
+/** Accounts list: after All Outside taps Send to Accounts. */
+export function isOfficeOutsideOnAccounts(row?: OfficeOutsideRecord | null): boolean {
+  if (!row) return false
+  return Boolean(row.sentToAccountsAt)
+}
+
 export function listOfficeOutsidePending(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
-  return records.filter((row) => !row.sentToAccountsAt)
+  return records.filter((row) => !isOfficeOutsideOnAccounts(row))
+}
+
+export function listOfficeOutsideSentToOutside(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
+  return records.filter((row) => isOfficeOutsideOnVendorOutside(row))
 }
 
 export function listOfficeOutsideSentToAccounts(records: OfficeOutsideRecord[] = []): OfficeOutsideRecord[] {
-  return records.filter((row) => Boolean(row.sentToAccountsAt))
+  return records.filter((row) => isOfficeOutsideOnAccounts(row))
 }
 
 export function isOfficeOutsideRecordId(id?: string | null): boolean {
@@ -440,6 +561,7 @@ export function quotationFromOfficeOutsideRecord(row: OfficeOutsideRecord): Quot
     remarks: row.notes || "",
   }
   const subtotal = officeOutsideSubtotalAmount(row)
+  const loanCash = officeOutsideLoanCashAmounts(row)
   const vendorName = String(row.outsideVendorName || "").trim()
   const [vendorFirst, ...vendorRest] = vendorName.split(/\s+/).filter(Boolean)
   return {
@@ -468,6 +590,8 @@ export function quotationFromOfficeOutsideRecord(row: OfficeOutsideRecord): Quot
     isCurrent: true,
     paymentMode: row.fileType,
     filePaymentType: row.fileType,
+    loanAmount: loanCash.loanAmount > 0 ? loanCash.loanAmount : undefined,
+    cashAmount: loanCash.cashAmount > 0 ? loanCash.cashAmount : undefined,
   }
 }
 
@@ -489,8 +613,11 @@ export function officeOutsideRecordToApiBody(row: Partial<OfficeOutsideRecord>):
     subtotal: officeOutsideSubtotalAmount(row as OfficeOutsideRecord),
     amount: officeOutsideSubtotalAmount(row as OfficeOutsideRecord),
     fileType: row.fileType || undefined,
+    ...(row.loanAmount != null ? { loanAmount: row.loanAmount } : {}),
+    ...(row.cashAmount != null ? { cashAmount: row.cashAmount } : {}),
     outsideVendorId: row.outsideVendorId || undefined,
     outsideVendorName: row.outsideVendorName || undefined,
+    sentToOutsideAt: row.sentToOutsideAt || undefined,
     sentToAccountsAt: row.sentToAccountsAt || undefined,
     requirementSlip: row.requirementSlip || undefined,
   }
@@ -531,6 +658,30 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
     subtotal,
     amount: subtotal,
     fileType: normalizeOfficeOutsideFileType(String(row.fileType || row.file_type || "")),
+    loanAmount:
+      Math.max(
+        0,
+        Math.round(
+          Number(
+            row.loanAmount ??
+              row.loan_amount ??
+              asRecord(products)?.officeOutsideLoanAmount ??
+              asRecord(products)?.loanAmount,
+          ) || 0,
+        ),
+      ) || undefined,
+    cashAmount:
+      Math.max(
+        0,
+        Math.round(
+          Number(
+            row.cashAmount ??
+              row.cash_amount ??
+              asRecord(products)?.officeOutsideCashAmount ??
+              asRecord(products)?.cashAmount,
+          ) || 0,
+        ),
+      ) || undefined,
     outsideVendorId: String(
       row.outsideVendorId ||
         row.outside_vendor_id ||
@@ -552,14 +703,19 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
           asRecord(row.outside_vendor)?.name ||
           "",
       ).trim() || undefined,
+    sentToOutsideAt: (() => {
+      const fromRow = parseOfficeOutsideTime(row.sentToOutsideAt ?? row.sent_to_outside_at)
+      if (fromRow) return fromRow
+      return parseOfficeOutsideTime(asRecord(products)?.officeOutsideSentToOutsideAt)
+    })(),
     sentToAccountsAt: (() => {
-      const raw = row.sentToAccountsAt ?? row.sent_to_accounts_at
-      if (raw == null || raw === false || raw === "") return undefined
-      const direct = String(raw).trim()
-      if (!direct || direct === "null" || direct === "undefined") return undefined
+      const hasAccountsKey = row.sentToAccountsAt !== undefined || row.sent_to_accounts_at !== undefined
+      const fromRow = parseOfficeOutsideTime(row.sentToAccountsAt ?? row.sent_to_accounts_at)
+      if (fromRow) return fromRow
+      if (hasAccountsKey) return undefined
       const status = String(row.status || row.accountsStatus || row.accounts_status || "").trim().toLowerCase()
       if (status === "pending" || status === "reverted") return undefined
-      return direct
+      return parseOfficeOutsideTime(asRecord(products)?.officeOutsideSentToAccountsAt)
     })(),
     requirementSlip: slip
       ? {
@@ -613,11 +769,25 @@ export function mergeOfficeOutsideRecordsFromApi(remote: OfficeOutsideRecord[]) 
 }
 
 export type OfficeOutsideListParams = {
-  status?: "all" | "pending" | "sent"
+  status?: "all" | "pending" | "outside" | "sent"
   search?: string
   vendorId?: string
   fileType?: "loan" | "cash" | "mix"
   mobile?: string
+}
+
+function stampOutsideProducts(
+  row: OfficeOutsideRecord,
+  patch: { sentToOutsideAt?: string | null; sentToAccountsAt?: string | null },
+): Record<string, unknown> {
+  const products = { ...((row.products || {}) as Record<string, unknown>) }
+  if (patch.sentToOutsideAt !== undefined) {
+    products.officeOutsideSentToOutsideAt = patch.sentToOutsideAt || null
+  }
+  if (patch.sentToAccountsAt !== undefined) {
+    products.officeOutsideSentToAccountsAt = patch.sentToAccountsAt || null
+  }
+  return products
 }
 
 export async function fetchOfficeOutsideRecordsFromApi(
@@ -629,33 +799,152 @@ export async function fetchOfficeOutsideRecordsFromApi(
 
 export async function retrieveOfficeOutsideFromAccountsApi(
   id: string,
+  current?: OfficeOutsideRecord | null,
 ): Promise<OfficeOutsideRecord | null> {
   const key = String(id || "").trim()
   if (!key) throw new Error("Office Outside record id required")
   try {
-    const res = await api.admin.officeOutside.retrieveFromAccounts(key)
-    const remote = pickOfficeOutsideRecordFromApi(res)
-    if (remote) return { ...remote, sentToAccountsAt: undefined }
+    await api.admin.officeOutside.retrieveFromAccounts(key)
   } catch {
-    // Fall through to PATCH clear if retrieve route is not live yet.
+    // PATCH below still returns the file to All Outside pending.
   }
   const res = await api.admin.officeOutside.update(key, {
     sentToAccountsAt: null,
     sent_to_accounts_at: null,
+    sentToOutsideAt: null,
+    sent_to_outside_at: null,
+    products: current
+      ? stampOutsideProducts(current, { sentToAccountsAt: null, sentToOutsideAt: null })
+      : undefined,
   })
   const remote = pickOfficeOutsideRecordFromApi(res)
-  return remote ? { ...remote, sentToAccountsAt: undefined } : null
+  return remote
+    ? { ...remote, sentToAccountsAt: undefined, sentToOutsideAt: undefined }
+    : current
+      ? { ...current, sentToAccountsAt: undefined, sentToOutsideAt: undefined }
+      : null
 }
 
-/** Accounts / Vendor Outside: only rows already sent to Accounts. */
-export async function fetchOfficeOutsideSentRecordsFromApi(): Promise<OfficeOutsideRecord[]> {
-  const [fromSent, all] = await Promise.all([
+/** Accounts → Vendor Outside. File stays on the Accounts list. */
+export async function sendOfficeOutsideToOutsideApi(row: OfficeOutsideRecord): Promise<OfficeOutsideRecord> {
+  const iso = new Date().toISOString()
+  const accountsAt = row.sentToAccountsAt || iso
+  try {
+    await api.admin.officeOutside.sendToOutside(row.id)
+  } catch {
+    // PATCH below still marks Vendor Outside.
+  }
+  const res = await api.admin.officeOutside.update(row.id, {
+    sentToOutsideAt: iso,
+    sent_to_outside_at: iso,
+    sentToAccountsAt: accountsAt,
+    sent_to_accounts_at: accountsAt,
+    products: stampOutsideProducts(row, { sentToOutsideAt: iso, sentToAccountsAt: accountsAt }),
+  })
+  const remote = pickOfficeOutsideRecordFromApi(res)
+  return {
+    ...(remote || row),
+    sentToOutsideAt: remote?.sentToOutsideAt || iso,
+    sentToAccountsAt: remote?.sentToAccountsAt || accountsAt,
+  }
+}
+
+/** Undo Send to Outside. File stays on Accounts. */
+export async function retrieveOfficeOutsideFromOutsideApi(
+  row: OfficeOutsideRecord,
+): Promise<OfficeOutsideRecord> {
+  const accountsAt = row.sentToAccountsAt || new Date().toISOString()
+  const res = await api.admin.officeOutside.update(row.id, {
+    sentToOutsideAt: null,
+    sent_to_outside_at: null,
+    sentToAccountsAt: accountsAt,
+    sent_to_accounts_at: accountsAt,
+    products: stampOutsideProducts(row, { sentToOutsideAt: null, sentToAccountsAt: accountsAt }),
+  })
+  const remote = pickOfficeOutsideRecordFromApi(res)
+  return {
+    ...(remote || row),
+    sentToOutsideAt: undefined,
+    sentToAccountsAt: remote?.sentToAccountsAt || accountsAt,
+  }
+}
+
+/** All Outside → Accounts list. Does not put the file on Vendor Outside. */
+export async function sendOfficeOutsideToAccountsApi(row: OfficeOutsideRecord): Promise<OfficeOutsideRecord> {
+  const iso = new Date().toISOString()
+  const keepOutside = row.sentToOutsideAt || undefined
+  try {
+    await api.admin.officeOutside.sendToAccounts(row.id)
+  } catch {
+    // PATCH below still marks Accounts.
+  }
+  const loanCash = officeOutsideLoanCashAmounts(row)
+  await api.admin.officeOutside.ledger
+    .update(row.id, {
+      proposal: officeOutsideSubtotalAmount(row),
+      loanAmount: loanCash.loanAmount,
+      cashAmount: loanCash.cashAmount,
+    })
+    .catch(() => null)
+  const products = stampOutsideProducts(row, {
+    sentToAccountsAt: iso,
+    sentToOutsideAt: keepOutside || null,
+  })
+  let remote: OfficeOutsideRecord | null = null
+  try {
+    const res = await api.admin.officeOutside.update(row.id, {
+      sentToAccountsAt: iso,
+      sent_to_accounts_at: iso,
+      sentToOutsideAt: keepOutside || null,
+      sent_to_outside_at: keepOutside || null,
+      products,
+    })
+    remote = pickOfficeOutsideRecordFromApi(res)
+  } catch {
+    const res = await api.admin.officeOutside.update(row.id, {
+      sentToAccountsAt: iso,
+      sent_to_accounts_at: iso,
+      products,
+    })
+    remote = pickOfficeOutsideRecordFromApi(res)
+  }
+  return {
+    ...(remote || row),
+    sentToAccountsAt: remote?.sentToAccountsAt || iso,
+    sentToOutsideAt: keepOutside,
+  }
+}
+
+export async function sendOfficeOutsideToAccountsFromVendorApi(
+  row: OfficeOutsideRecord,
+): Promise<OfficeOutsideRecord> {
+  return sendOfficeOutsideToAccountsApi(row)
+}
+
+/** Vendor Outside queue: files Accounts sent to Outside. */
+export async function fetchOfficeOutsideVendorOutsideRecordsFromApi(): Promise<OfficeOutsideRecord[]> {
+  const [fromOutside, fromSent, all] = await Promise.all([
+    fetchOfficeOutsideRecordsFromApi({ status: "outside" }).catch(() => [] as OfficeOutsideRecord[]),
     fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
-    fetchOfficeOutsideRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
+    fetchOfficeOutsideRecordsFromApi({ status: "all" }).catch(() => [] as OfficeOutsideRecord[]),
   ])
   const byId = new Map<string, OfficeOutsideRecord>()
-  for (const row of [...fromSent, ...all]) {
-    if (row.sentToAccountsAt) byId.set(row.id, row)
+  for (const row of [...fromOutside, ...fromSent, ...all]) {
+    if (isOfficeOutsideOnVendorOutside(row)) byId.set(row.id, row)
+  }
+  return sortOfficeOutsideRecords([...byId.values()])
+}
+
+/** Accounts list: after All Outside Send to Accounts. */
+export async function fetchOfficeOutsideSentRecordsFromApi(): Promise<OfficeOutsideRecord[]> {
+  const [fromSent, fromOutside, all] = await Promise.all([
+    fetchOfficeOutsideRecordsFromApi({ status: "sent" }).catch(() => [] as OfficeOutsideRecord[]),
+    fetchOfficeOutsideRecordsFromApi({ status: "outside" }).catch(() => [] as OfficeOutsideRecord[]),
+    fetchOfficeOutsideRecordsFromApi({ status: "all" }).catch(() => [] as OfficeOutsideRecord[]),
+  ])
+  const byId = new Map<string, OfficeOutsideRecord>()
+  for (const row of [...fromSent, ...fromOutside, ...all]) {
+    if (isOfficeOutsideOnAccounts(row)) byId.set(row.id, row)
   }
   return sortOfficeOutsideRecords([...byId.values()])
 }

@@ -26,7 +26,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
-import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown, Download } from "lucide-react"
+import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown, Download, Landmark, Loader2, Upload, FileText, X } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import { summarizeQuotationPayment } from "@/lib/dealer-payment-summary"
@@ -55,6 +55,13 @@ import {
   leaserPaymentsToApiBody,
   newLeaserPaymentId,
   LEASER_PAYMENT_TYPES,
+  readVendorBills,
+  writeVendorBills,
+  pickVendorBillList,
+  vendorBillsToApiBody,
+  newVendorBillId,
+  vendorBillSum,
+  type SubvendorVendorBill,
   snapshotFromDealer,
   subvendorToApiBody,
   updateAdminSubvendor,
@@ -67,9 +74,13 @@ import {
 import { cn } from "@/lib/utils"
 import {
   customerFromOfficeOutsideRecord,
-  fetchOfficeOutsideSentRecordsFromApi,
+  fetchOfficeOutsideVendorOutsideRecordsFromApi,
+  isOfficeOutsideOnAccounts,
+  officeOutsideFileTypeLabel,
+  officeOutsideLoanCashAmounts,
   officeOutsideSubtotalAmount,
   quotationFromOfficeOutsideRecord,
+  sendOfficeOutsideToAccountsFromVendorApi,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
 import { formatPersonName } from "@/lib/name-display"
@@ -86,6 +97,9 @@ import {
   officeInsideGstCharges,
   officeInsideDeductedTotal,
   officeInsideProfitFromAmounts,
+  officeOutsideLeaserCharges,
+  officeOutsideLeaserGst,
+  officeOutsideLeaserProfit,
   parseLedgerAmountInput,
   paymentTypeLabelForLedger,
   pickLedgerMapFromApi,
@@ -184,6 +198,7 @@ function officeOutsideToLedgerRow(
   const paymentType = (row.fileType === "loan" || row.fileType === "mix" || row.fileType === "cash"
     ? row.fileType
     : "cash") as LedgerPaymentType
+  const loanCash = officeOutsideLoanCashAmounts(row, stored)
   return {
     quotationId: row.id,
     dealerId: row.outsideVendorId,
@@ -198,8 +213,8 @@ function officeOutsideToLedgerRow(
     paymentType,
     paymentTypeLabel: paymentTypeLabelForLedger(paymentType),
     subtotal,
-    loanAmount: stored.loanAmount ?? (paymentType === "loan" || paymentType === "mix" ? subtotal : 0),
-    cashAmount: stored.cashAmount ?? (paymentType === "cash" || paymentType === "mix" ? subtotal : 0),
+    loanAmount: loanCash.loanAmount,
+    cashAmount: loanCash.cashAmount,
     receivedAmount,
     remaining: stored.remaining ?? Math.max(0, subtotal - receivedAmount),
     proposal,
@@ -257,6 +272,7 @@ export function AdminSubvendorPanel({
   search: searchProp,
   onSearchChange,
   hideSearch = false,
+  onOfficeOutsideSentToAccounts,
 }: {
   dealers?: SubvendorDealerOption[]
   quotations?: Quotation[]
@@ -265,6 +281,7 @@ export function AdminSubvendorPanel({
   search?: string
   onSearchChange?: (value: string) => void
   hideSearch?: boolean
+  onOfficeOutsideSentToAccounts?: (row: OfficeOutsideRecord) => void
 }) {
   const { toast } = useToast()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -287,7 +304,9 @@ export function AdminSubvendorPanel({
   const [form, setForm] = useState(emptyForm)
   const [savingVendor, setSavingVendor] = useState(false)
   const [leaserPayments, setLeaserPayments] = useState<SubvendorLeaserPayment[]>(() => readLeaserPayments())
+  const [vendorBills, setVendorBills] = useState<SubvendorVendorBill[]>(() => readVendorBills())
   const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>([])
+  const [sendingToAccountsId, setSendingToAccountsId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -297,11 +316,12 @@ export function AdminSubvendorPanel({
         return
       }
       try {
-        const [vendorsRes, ledgerRes, leaserRes, remoteOutside, outsideLedgerRes] = await Promise.all([
+        const [vendorsRes, ledgerRes, leaserRes, billsRes, remoteOutside, outsideLedgerRes] = await Promise.all([
           api.admin.subvendors.getAll(),
           api.admin.subvendors.ledger.getAll(),
           api.admin.subvendors.leaser.getAll().catch(() => null),
-          fetchOfficeOutsideSentRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
+          api.admin.subvendors.bills.getAll().catch(() => null),
+          fetchOfficeOutsideVendorOutsideRecordsFromApi().catch(() => [] as OfficeOutsideRecord[]),
           api.admin.officeOutside.ledger.getAll().catch(() => null),
         ])
         if (cancelled) return
@@ -317,6 +337,11 @@ export function AdminSubvendorPanel({
           const payments = pickLeaserPaymentList(leaserRes)
           writeLeaserPayments(payments)
           setLeaserPayments(payments)
+        }
+        if (billsRes) {
+          const bills = pickVendorBillList(billsRes)
+          writeVendorBills(bills)
+          setVendorBills(bills)
         }
         setOutsideRecords(remoteOutside)
       } catch {
@@ -545,6 +570,12 @@ export function AdminSubvendorPanel({
         fileAmount: 0,
         totalKw: 0,
         subtotal: 0,
+        totalAmount: 0,
+        loanAmount: 0,
+        cashAmount: 0,
+        billSum: 0,
+        charges: 0,
+        gstAmount: 0,
         costOfSite: 0,
         profitVendor: 0,
         paid: paidByVendor[vendor.id] ?? 0,
@@ -598,6 +629,12 @@ export function AdminSubvendorPanel({
         fileAmount: 0,
         totalKw: 0,
         subtotal: 0,
+        totalAmount: 0,
+        loanAmount: 0,
+        cashAmount: 0,
+        billSum: 0,
+        charges: 0,
+        gstAmount: 0,
         costOfSite: 0,
         profitVendor: 0,
         paid: paidByVendor[vendor.id] ?? 0,
@@ -609,20 +646,34 @@ export function AdminSubvendorPanel({
       const vendor = outsideRows.find((row) => row.id === record.outsideVendorId)
       if (!vendor || !stats[vendor.id]) continue
       const ledgerRow = officeOutsideToLedgerRow(record, vendor, ledgerMap)
+      const totalAmount = ledgerRow.loanAmount + ledgerRow.cashAmount
+      const charges = officeOutsideLeaserCharges(ledgerRow.fileCharges, ledgerRow.others)
       stats[vendor.id].totalFile += 1
       stats[vendor.id].fileAmount += ledgerRow.fileCharges
       stats[vendor.id].totalKw += ledgerRow.systemKw || 0
       stats[vendor.id].subtotal += ledgerRow.subtotal
+      stats[vendor.id].totalAmount += totalAmount
+      stats[vendor.id].loanAmount += ledgerRow.loanAmount
+      stats[vendor.id].cashAmount += ledgerRow.cashAmount
+      stats[vendor.id].charges += charges
       stats[vendor.id].costOfSite += ledgerRow.costOfSite
-      stats[vendor.id].profitVendor += ledgerRow.profitVendor
     }
     for (const vendor of outsideRows) {
       const item = stats[vendor.id]
+      item.billSum = vendorBillSum(vendorBills, vendor.id)
+      item.gstAmount = officeOutsideLeaserGst(item.subtotal, item.billSum)
+      item.profitVendor = officeOutsideLeaserProfit({
+        loanAmount: item.loanAmount,
+        totalAmount: item.totalAmount,
+        billAmount: item.billSum,
+        charges: item.charges,
+        gst: item.gstAmount,
+      })
       item.currentBalance = item.paid
       item.totalRemaining = Math.round(item.profitVendor - item.paid)
     }
     return stats
-  }, [insideRows, ledgerMap, leaserPayments, outsideRecords, outsideRows, quotations, vendorsByDealerId])
+  }, [insideRows, ledgerMap, leaserPayments, outsideRecords, outsideRows, quotations, vendorBills, vendorsByDealerId])
 
   const customersByVendorId = useMemo(() => {
     const out: Record<string, { quotationId: string; name: string; mobile: string; kw: string }[]> = {}
@@ -954,7 +1005,17 @@ export function AdminSubvendorPanel({
     setLeaserPayments(all)
     const paid = nextPayments.reduce((sum, row) => sum + row.amount, 0)
     const stats = vendorLeaserStats[vendorId]
-    const remainingBase = stats?.profitVendor ?? 0
+    const vendor = rows.find((row) => row.id === vendorId)
+    const remainingBase =
+      vendor?.kind === "office_outside"
+        ? officeOutsideLeaserProfit({
+            loanAmount: stats?.loanAmount ?? 0,
+            totalAmount: stats?.totalAmount ?? 0,
+            billAmount: vendorBillSum(readVendorBills(), vendorId),
+            charges: stats?.charges ?? 0,
+            gst: officeOutsideLeaserGst(stats?.subtotal ?? 0, vendorBillSum(readVendorBills(), vendorId)),
+          })
+        : stats?.profitVendor ?? 0
     const remaining = Math.max(0, remainingBase - paid)
     await saveLeaser(vendorId, String(paid), String(remaining))
     if (!useApi) return
@@ -978,8 +1039,59 @@ export function AdminSubvendorPanel({
     }
   }
 
+  const saveVendorBillsForVendor = async (vendorId: string, nextBills: SubvendorVendorBill[]) => {
+    const all = [
+      ...vendorBills.filter((row) => row.vendorId !== vendorId),
+      ...nextBills.filter((row) => row.vendorId === vendorId),
+    ]
+    const saved = writeVendorBills(all)
+    if (!saved) {
+      toast({
+        title: "Bill file too large to save",
+        description: "Keep the bill PDF or image under 2.5 MB and try Save payments again.",
+        variant: "destructive",
+      })
+      return
+    }
+    setVendorBills(all)
+    if (!useApi) return
+    try {
+      await api.admin.subvendors.bills.replace(vendorId, vendorBillsToApiBody(vendorId, nextBills))
+    } catch (error) {
+      toast({
+        title: "Bills saved on this device",
+        description:
+          error instanceof ApiError
+            ? apiErrorToUserMessage(error)
+            : "Backend vendor bills route is not live yet.",
+        variant: "destructive",
+      })
+    }
+  }
+
   const canSave =
     kind === "office_inside" ? Boolean(form.dealerId) : Boolean(form.name.trim())
+
+  const sendOutsideFileToAccounts = async (record: OfficeOutsideRecord) => {
+    setSendingToAccountsId(record.id)
+    try {
+      const remote = await sendOfficeOutsideToAccountsFromVendorApi(record)
+      setOutsideRecords((prev) => prev.filter((row) => row.id !== record.id))
+      onOfficeOutsideSentToAccounts?.(remote)
+      toast({
+        title: "Sent to Accounts",
+        description: `${record.customerName} now appears on the Accounts list as Office Outside.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Could not send to Accounts",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setSendingToAccountsId(null)
+    }
+  }
 
   const outsideVendorBody = (
     <>
@@ -1009,6 +1121,73 @@ export function AdminSubvendorPanel({
         profitById={vendorProfitById}
         profitHint="complete"
       />
+      {outsideRecords.length > 0 ? (
+        <div className="space-y-2 rounded-xl border border-amber-200/80 bg-gradient-to-b from-white to-amber-50/50 p-3">
+          <div>
+            <h4 className="text-sm font-semibold text-amber-950">Office Outside files</h4>
+            <p className="text-xs text-muted-foreground">
+              Sent from Accounts. These files stay on the Accounts list.
+            </p>
+          </div>
+          <div className="space-y-2 max-h-[min(50vh,420px)] overflow-auto pr-1">
+            {outsideRecords
+              .slice()
+              .sort((a, b) => a.customerName.localeCompare(b.customerName, "en-IN"))
+              .map((record) => {
+                const onAccounts = isOfficeOutsideOnAccounts(record)
+                const loanCash = officeOutsideLoanCashAmounts(record)
+                return (
+                  <div
+                    key={record.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200/70 bg-white/80 px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate">{record.customerName}</p>
+                      <p className="text-xs text-muted-foreground tabular-nums">
+                        {record.mobile || record.id}
+                        {record.outsideVendorName ? ` · ${record.outsideVendorName}` : ""}
+                        {` · ${formatLedgerInr(officeOutsideSubtotalAmount(record))}`}
+                        {loanCash.loanAmount > 0 ? ` · Loan ${formatLedgerInr(loanCash.loanAmount)}` : ""}
+                        {officeOutsideFileTypeLabel(record.fileType)
+                          ? ` · ${officeOutsideFileTypeLabel(record.fileType)}`
+                          : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {onAccounts ? (
+                        <Badge
+                          variant="outline"
+                          className="h-6 text-[10px] border-emerald-200 bg-emerald-50 text-emerald-800"
+                        >
+                          In Accounts
+                        </Badge>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-8 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white"
+                          disabled={sendingToAccountsId === record.id}
+                          onClick={() => void sendOutsideFileToAccounts(record)}
+                        >
+                          {sendingToAccountsId === record.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Landmark className="w-3.5 h-3.5" />
+                          )}
+                          Send to Accounts
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 px-4 py-6 text-center text-sm text-muted-foreground">
+          No Office Outside files yet. On Accounts, tap Send to Outside.
+        </div>
+      )}
       {filtered.length > 0 ? (
         <DealerLeaserManager
           vendors={filtered}
@@ -1016,9 +1195,12 @@ export function AdminSubvendorPanel({
           customersByVendorId={customersByVendorId}
           filesByVendorId={filesByVendorId}
           payments={leaserPayments}
+          bills={vendorBills}
           quotations={outsideRecords.map(quotationFromOfficeOutsideRecord)}
           onSave={saveLeaserPayments}
+          onSaveBills={saveVendorBillsForVendor}
           heading="Vendor leaser"
+          variant="office_outside"
         />
       ) : null}
     </>
@@ -1340,6 +1522,12 @@ type VendorLeaserStats = {
   fileAmount: number
   totalKw: number
   subtotal: number
+  totalAmount: number
+  loanAmount: number
+  cashAmount: number
+  billSum: number
+  charges: number
+  gstAmount: number
   costOfSite: number
   profitVendor: number
   paid: number
@@ -1352,6 +1540,12 @@ const emptyVendorLeaserStats: VendorLeaserStats = {
   fileAmount: 0,
   totalKw: 0,
   subtotal: 0,
+  totalAmount: 0,
+  loanAmount: 0,
+  cashAmount: 0,
+  billSum: 0,
+  charges: 0,
+  gstAmount: 0,
   costOfSite: 0,
   profitVendor: 0,
   paid: 0,
@@ -1374,6 +1568,18 @@ type LeaserPaymentDraft = {
   paymentType: string
   remark: string
   customerIds: string[]
+}
+
+type VendorBillDraft = {
+  key: string
+  date: string
+  basicAmount: string
+  remark: string
+  paymentMode: string
+  customerIds: string[]
+  billFileName: string
+  billFileDataUrl: string
+  editing: boolean
 }
 
 function todayInputDate() {
@@ -1472,7 +1678,7 @@ function leaserRemarkFromAccounts(
   return storedRemark.trim() ? `${storedRemark.trim()} · Txn ${txn}` : `Txn ${txn}`
 }
 
-function emptyLeaserDraft(paymentNumber = 1): LeaserPaymentDraft {
+function emptyLeaserDraft(paymentNumber = 1, customerId?: string): LeaserPaymentDraft {
   return {
     key: newLeaserPaymentId(),
     paymentNumber,
@@ -1480,29 +1686,94 @@ function emptyLeaserDraft(paymentNumber = 1): LeaserPaymentDraft {
     amount: "",
     paymentType: "Cash",
     remark: "",
-    customerIds: [],
+    customerIds: customerId ? [customerId] : [],
   }
+}
+
+function emptyBillDraft(customerId?: string): VendorBillDraft {
+  return {
+    key: newVendorBillId(),
+    date: todayInputDate(),
+    basicAmount: "",
+    remark: "",
+    paymentMode: "Cash",
+    customerIds: customerId ? [customerId] : [],
+    billFileName: "",
+    billFileDataUrl: "",
+    editing: true,
+  }
+}
+
+function readVendorBillFile(file: File): Promise<{ name: string; dataUrl: string }> {
+  return new Promise((resolve, reject) => {
+    if (file.size > 2.5 * 1024 * 1024) {
+      reject(new Error("Bill file must be under 2.5 MB"))
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => resolve({ name: file.name, dataUrl: String(reader.result || "") })
+    reader.onerror = () => reject(new Error("Could not read bill file"))
+    reader.readAsDataURL(file)
+  })
+}
+
+function looksLikeRecordId(value: string) {
+  const text = value.trim()
+  return /^OO-/i.test(text) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)
+}
+
+function soleVendorCustomerId(files: InsideLedgerRow[], customers: LeaserCustomerOption[]) {
+  if (files.length === 1) return files[0].quotationId
+  if (customers.length === 1) return customers[0].quotationId
+  return undefined
+}
+
+function remapLeaserCustomerIds(ids: string[], files: InsideLedgerRow[], fallbackId?: string) {
+  if (!ids.length) return fallbackId ? [fallbackId] : []
+  return ids.map((id) => {
+    if (files.some((file) => file.quotationId === id)) return id
+    if (fallbackId && looksLikeRecordId(id)) return fallbackId
+    return id
+  })
+}
+
+function formatLeaserCustomerName(row: Pick<LeaserCustomerOption, "name" | "mobile">) {
+  return row.mobile ? `${row.name} (${row.mobile})` : row.name
 }
 
 function LeaserCustomerPicker({
   customers,
   selectedIds,
   onChange,
+  label = "Customers",
+  emptyLabel = "All customers",
+  searchPlaceholder = "Search all customers...",
+  singleSelect = false,
 }: {
   customers: LeaserCustomerOption[]
   selectedIds: string[]
   onChange: (ids: string[]) => void
+  label?: string
+  emptyLabel?: string
+  searchPlaceholder?: string
+  singleSelect?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const selected = customers.filter((row) => selectedIds.includes(row.quotationId))
+  const unresolved = selectedIds.filter((id) => !selected.some((row) => row.quotationId === id))
+  const names = [
+    ...selected.map((row) => formatLeaserCustomerName(row)),
+    ...unresolved,
+  ]
   const triggerLabel =
-    selected.length === 0
-      ? "All customers"
-      : selected.length === 1
-        ? selected[0].name
-        : `${selected[0].name} +${selected.length - 1}`
+    names.length === 0 ? emptyLabel : names.length === 1 ? names[0] : `${names[0]} +${names.length - 1}`
 
   const toggleCustomer = (quotationId: string) => {
+    if (singleSelect) {
+      onChange(selectedIds.includes(quotationId) ? [] : [quotationId])
+      setOpen(false)
+      return
+    }
     onChange(
       selectedIds.includes(quotationId)
         ? selectedIds.filter((id) => id !== quotationId)
@@ -1512,7 +1783,7 @@ function LeaserCustomerPicker({
 
   return (
     <div className="min-w-0">
-      <Label>Customers</Label>
+      <Label>{label}</Label>
       {customers.length === 0 ? (
         <p className="text-xs text-muted-foreground mt-1">No customers yet.</p>
       ) : (
@@ -1523,7 +1794,7 @@ function LeaserCustomerPicker({
               variant="outline"
               className="mt-1 h-9 w-full justify-between px-3 font-normal"
             >
-              <span className={cn("truncate text-left", selected.length === 0 && "text-muted-foreground")}>
+              <span className={cn("truncate text-left", names.length === 0 && "text-muted-foreground")}>
                 {triggerLabel}
               </span>
               <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
@@ -1531,7 +1802,7 @@ function LeaserCustomerPicker({
           </PopoverTrigger>
           <PopoverContent className="w-[min(22rem,calc(100vw-2rem))] p-0" align="start">
             <Command>
-              <CommandInput placeholder="Search all customers..." />
+              <CommandInput placeholder={searchPlaceholder} />
               <CommandList className="max-h-80">
                 <CommandEmpty>No customer found.</CommandEmpty>
                 <CommandGroup heading={`${customers.length} customer${customers.length === 1 ? "" : "s"}`}>
@@ -1569,44 +1840,76 @@ function DealerLeaserManager({
   customersByVendorId,
   filesByVendorId,
   payments,
+  bills = [],
   quotations,
   onSave,
+  onSaveBills,
   heading = "Dealer leaser",
+  variant = "office_inside",
 }: {
   vendors: AdminSubvendorRecord[]
   statsById: Record<string, VendorLeaserStats>
   customersByVendorId: Record<string, LeaserCustomerOption[]>
   filesByVendorId: Record<string, InsideLedgerRow[]>
   payments: SubvendorLeaserPayment[]
+  bills?: SubvendorVendorBill[]
   quotations: Quotation[]
   onSave: (vendorId: string, nextPayments: SubvendorLeaserPayment[]) => Promise<void> | void
+  onSaveBills?: (vendorId: string, nextBills: SubvendorVendorBill[]) => Promise<void> | void
   heading?: string
+  variant?: "office_inside" | "office_outside"
 }) {
   const { toast } = useToast()
   const [manageVendorId, setManageVendorId] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
+  const [billDrafts, setBillDrafts] = useState<VendorBillDraft[]>([])
   const [saving, setSaving] = useState(false)
+  const isOutside = variant === "office_outside"
   const manageVendor = vendors.find((row) => row.id === manageVendorId) ?? null
   const customers = useMemo(() => {
     const base = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
     if (!manageVendorId) return base
     const byId = new Map(base.map((row) => [row.quotationId, row]))
-    for (const draft of drafts) {
-      for (const quotationId of draft.customerIds) {
-        if (byId.has(quotationId)) continue
-        const quotation = quotations.find((row) => row.id === quotationId)
-        const payment = quotation ? summarizeQuotationPayment(quotation) : null
-        byId.set(quotationId, {
-          quotationId,
-          name: payment?.customerName || quotationId,
-          mobile: payment?.customerMobile === "—" ? "" : payment?.customerMobile || "",
-          kw: quotation ? formatLedgerSystemSize(getQuotationSystemKw(quotation)) : "",
-        })
-      }
+    const files = filesByVendorId[manageVendorId] || []
+    for (const file of files) {
+      if (byId.has(file.quotationId)) continue
+      byId.set(file.quotationId, {
+        quotationId: file.quotationId,
+        name: file.customerName,
+        mobile: file.customerMobile === "—" ? "" : file.customerMobile || "",
+        kw: file.systemSize,
+      })
+    }
+    const extraIds = [
+      ...drafts.flatMap((row) => row.customerIds),
+      ...billDrafts.flatMap((row) => row.customerIds),
+    ]
+    for (const quotationId of extraIds) {
+      if (byId.has(quotationId)) continue
+      const quotation = quotations.find((row) => row.id === quotationId)
+      const payment = quotation ? summarizeQuotationPayment(quotation) : null
+      const file =
+        files.find((row) => row.quotationId === quotationId) ||
+        (files.length === 1 && looksLikeRecordId(quotationId) ? files[0] : undefined)
+      const quotedName = payment?.customerName && payment.customerName !== "—" ? payment.customerName : ""
+      byId.set(quotationId, {
+        quotationId,
+        name: quotedName || file?.customerName || quotationId,
+        mobile:
+          payment?.customerMobile && payment.customerMobile !== "—"
+            ? payment.customerMobile
+            : file?.customerMobile === "—"
+              ? ""
+              : file?.customerMobile || "",
+        kw: quotation
+          ? formatLedgerSystemSize(getQuotationSystemKw(quotation))
+          : file?.systemSize || "",
+      })
     }
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "en-IN"))
-  }, [customersByVendorId, drafts, manageVendorId, quotations])
+  }, [billDrafts, customersByVendorId, drafts, filesByVendorId, manageVendorId, quotations])
   const fileRows = manageVendorId ? filesByVendorId[manageVendorId] || [] : []
+  const soleCustomerId = soleVendorCustomerId(fileRows, customers)
   const manageStats = manageVendorId ? statsById[manageVendorId] ?? emptyVendorLeaserStats : null
 
   const enteredTransactions = () =>
@@ -1661,7 +1964,16 @@ function DealerLeaserManager({
       ["Total file", manageStats.totalFile],
       ["kW", formatLedgerSystemSize(manageStats.totalKw)],
       ["Subtotal", manageStats.subtotal],
-      ["Cost of site vendor", manageStats.costOfSite],
+      ...(isOutside
+        ? [
+            ["Total amount", manageStats.totalAmount],
+            ["Loan amount", manageStats.loanAmount],
+            ["Cash amount", manageStats.cashAmount],
+            ["Bill", manageStats.billSum],
+            ["Charges", manageStats.charges],
+            ["GST", manageStats.gstAmount],
+          ]
+        : [["Cost of site vendor", manageStats.costOfSite]]),
       ["Profit vendor", manageStats.profitVendor],
       ["Total payment", manageStats.currentBalance],
       ["Total remaining", manageStats.totalRemaining],
@@ -1719,6 +2031,9 @@ function DealerLeaserManager({
   }
 
   const openManage = (vendorId: string) => {
+    const vendorFiles = filesByVendorId[vendorId] || []
+    const vendorCustomers = customersByVendorId[vendorId] || []
+    const fallbackCustomerId = soleVendorCustomerId(vendorFiles, vendorCustomers)
     const existing = payments
       .filter((row) => row.vendorId === vendorId)
       .slice()
@@ -1730,33 +2045,79 @@ function DealerLeaserManager({
         amount: row.amount ? formatInrAmountInput(row.amount) : "",
         paymentType: row.paymentType || "Cash",
         remark: leaserRemarkFromAccounts(row.id, row.remark, quotations),
-        customerIds: row.customerIds.slice(),
+        customerIds: remapLeaserCustomerIds(row.customerIds.slice(), vendorFiles, fallbackCustomerId),
       }))
     setManageVendorId(vendorId)
-    setDrafts(existing.length ? [...existing].reverse() : [emptyLeaserDraft(1)])
+    setDrafts(existing.length ? [...existing].reverse() : [emptyLeaserDraft(1, fallbackCustomerId)])
+    const existingBills = bills
+      .filter((row) => row.vendorId === vendorId)
+      .slice()
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+      .map((row) => ({
+        key: row.id,
+        date: row.date || todayInputDate(),
+        basicAmount: row.basicAmount ? formatInrAmountInput(row.basicAmount) : "",
+        remark: row.remark || "",
+        paymentMode: row.paymentMode || "Cash",
+        customerIds: remapLeaserCustomerIds(row.customerIds.slice(), vendorFiles, fallbackCustomerId),
+        billFileName: row.billFileName || "",
+        billFileDataUrl: row.billFileDataUrl || "",
+        editing: !(row.basicAmount > 0 || row.billFileName),
+      }))
+    setBillDrafts(existingBills.length ? existingBills : [emptyBillDraft(fallbackCustomerId)])
   }
 
   const closeManage = () => {
     setManageVendorId(null)
     setDrafts([])
+    setBillDrafts([])
   }
 
   const addPayment = () => {
     setDrafts((prev) => {
       const nextNumber = prev.reduce((max, row) => Math.max(max, row.paymentNumber), 0) + 1
-      return [emptyLeaserDraft(nextNumber), ...prev]
+      return [emptyLeaserDraft(nextNumber, soleCustomerId), ...prev]
     })
   }
 
   const removePayment = (key: string) => {
     setDrafts((prev) => {
       const next = prev.filter((row) => row.key !== key)
-      return next.length ? next : [emptyLeaserDraft(1)]
+      return next.length ? next : [emptyLeaserDraft(1, soleCustomerId)]
     })
   }
 
   const patchDraft = (key: string, patch: Partial<LeaserPaymentDraft>) => {
     setDrafts((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)))
+  }
+
+  const patchBillDraft = (key: string, patch: Partial<VendorBillDraft>) => {
+    setBillDrafts((prev) => prev.map((row) => (row.key === key ? { ...row, ...patch } : row)))
+  }
+
+  const addBillDraft = () => {
+    setBillDrafts((prev) => [emptyBillDraft(soleCustomerId), ...prev])
+  }
+
+  const removeBillDraft = (key: string) => {
+    setBillDrafts((prev) => {
+      const next = prev.filter((row) => row.key !== key)
+      return next.length ? next : [emptyBillDraft(soleCustomerId)]
+    })
+  }
+
+  const attachBillFile = async (key: string, file: File | undefined) => {
+    if (!file) return
+    try {
+      const next = await readVendorBillFile(file)
+      patchBillDraft(key, { billFileName: next.name, billFileDataUrl: next.dataUrl })
+    } catch (error) {
+      toast({
+        title: "Could not attach bill",
+        description: error instanceof Error ? error.message : "Try a smaller PDF or image.",
+        variant: "destructive",
+      })
+    }
   }
 
   const saveManage = async () => {
@@ -1775,8 +2136,29 @@ function DealerLeaserManager({
         sortOrder: draft.paymentNumber,
       }))
       .filter((row) => row.amount > 0 || row.remark || row.customerIds.length > 0)
+    const nextBills = billDrafts
+      .map((draft, index) => ({
+        id: draft.key,
+        vendorId: manageVendorId,
+        date: draft.date.trim(),
+        basicAmount: parseInrAmount(draft.basicAmount),
+        remark: draft.remark.trim(),
+        paymentMode: draft.paymentMode || "Cash",
+        customerIds: draft.customerIds,
+        billFileName: draft.billFileName.trim(),
+        billFileDataUrl: draft.billFileDataUrl.trim(),
+        sortOrder: index + 1,
+      }))
+      .filter(
+        (row) =>
+          row.basicAmount > 0 ||
+          row.remark ||
+          row.customerIds.length > 0 ||
+          row.billFileName,
+      )
     setSaving(true)
     try {
+      if (isOutside) await onSaveBills?.(manageVendorId, nextBills)
       await onSave(manageVendorId, next)
       closeManage()
     } finally {
@@ -1789,7 +2171,9 @@ function DealerLeaserManager({
       <div>
         <p className="text-sm font-semibold">Dealer leaser</p>
         <p className="text-xs text-muted-foreground mt-0.5">
-          Total file, kW, subtotal, cost of site vendor, profit vendor, payment, and remaining for each office vendor.
+          {isOutside
+            ? "Subtotal and total amount from Accounts. Add bills (basic). Charges = file + others. GST = (subtotal − bill) × 9.8%. Profit vendor = loan − bill − charges − GST."
+            : "Total file, kW, subtotal, cost of site vendor, profit vendor, payment, and remaining for each office vendor."}
         </p>
       </div>
       <div className="space-y-2">
@@ -1798,7 +2182,12 @@ function DealerLeaserManager({
           return (
             <div
               key={vendor.id}
-              className="grid grid-cols-2 lg:grid-cols-[minmax(0,1.15fr)_repeat(7,minmax(4.5rem,0.55fr))_auto] gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5"
+              className={cn(
+                "grid grid-cols-2 gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5",
+                isOutside
+                  ? "lg:grid-cols-[minmax(0,1.05fr)_repeat(10,minmax(3.6rem,0.46fr))_auto]"
+                  : "lg:grid-cols-[minmax(0,1.15fr)_repeat(7,minmax(4.5rem,0.55fr))_auto]",
+              )}
             >
               <div className="col-span-2 lg:col-span-1 min-w-0">
                 <p className="text-sm font-medium truncate">{vendor.name}</p>
@@ -1818,10 +2207,36 @@ function DealerLeaserManager({
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
                 <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.subtotal)}</p>
               </div>
+              {isOutside ? (
+                <>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total amount</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.totalAmount)}</p>
+                    <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
+                      L {formatLedgerInr(stats.loanAmount)} · C {formatLedgerInr(stats.cashAmount)}
+                    </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bill</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.billSum)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Charges</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.charges)}</p>
+                    <p className="text-[10px] text-muted-foreground">File + others</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">GST</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.gstAmount)}</p>
+                    <p className="text-[10px] text-muted-foreground">(Subtotal − bill) × 9.8%</p>
+                  </div>
+                </>
+              ) : (
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
                 <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.costOfSite)}</p>
               </div>
+              )}
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
                 <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
@@ -1831,7 +2246,9 @@ function DealerLeaserManager({
                   <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
                     {formatProfitRatioLabel(vendor.profitRatio)} of profit
                   </p>
-                ) : null}
+                ) : (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Loan − bill − charges − GST</p>
+                )}
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
@@ -1892,6 +2309,18 @@ function DealerLeaserManager({
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                {isOutside ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9"
+                    onClick={addBillDraft}
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Add bill
+                  </Button>
+                ) : null}
                 <Button type="button" variant="outline" size="sm" className="h-9" onClick={addPayment}>
                   <Plus className="w-3.5 h-3.5 mr-1" />
                   Add payment
@@ -1929,12 +2358,44 @@ function DealerLeaserManager({
                         {formatLedgerInr(manageStats.subtotal)}
                       </p>
                     </div>
+                    {isOutside ? (
+                      <>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.totalAmount)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
+                            L {formatLedgerInr(manageStats.loanAmount)} · C {formatLedgerInr(manageStats.cashAmount)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bill</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.billSum)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Charges</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.charges)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">GST</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.gstAmount)}
+                          </p>
+                        </div>
+                      </>
+                    ) : (
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
                       <p className="text-sm font-semibold tabular-nums">
                         {formatLedgerInr(manageStats.costOfSite)}
                       </p>
                     </div>
+                    )}
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
                       <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
@@ -1944,7 +2405,9 @@ function DealerLeaserManager({
                         <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
                           {formatProfitRatioLabel(manageVendor.profitRatio)} of profit
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Loan − bill − charges − GST</p>
+                      )}
                     </div>
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total payment</p>
@@ -1966,6 +2429,219 @@ function DealerLeaserManager({
                   </div>
                 ) : null}
               </div>
+              {isOutside ? (
+                <div className="space-y-2 rounded-lg border border-sky-200/80 bg-sky-50/40 p-3">
+                  <div>
+                    <p className="text-sm font-semibold">Bills</p>
+                    <p className="text-xs text-muted-foreground">
+                      Add date, basic, payment mode, customer, remark, and bill upload. Use edit and delete on each row.
+                    </p>
+                  </div>
+                  {billDrafts.map((draft) => {
+                    const namedCustomer = customerLabel(draft.customerIds)
+                    return (
+                    <div
+                      key={draft.key}
+                      className="rounded-lg border border-sky-200/70 bg-white/80 px-3 py-2.5 space-y-2"
+                    >
+                      {draft.editing ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[8.5rem_7.5rem_8.5rem_minmax(8rem,1fr)_minmax(12rem,1.3fr)_minmax(10rem,1fr)_auto] gap-2 items-end">
+                          <div>
+                            <Label>Date</Label>
+                            <Input
+                              type="date"
+                              className="h-9"
+                              value={draft.date}
+                              onChange={(e) => patchBillDraft(draft.key, { date: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label>Basic</Label>
+                            <Input
+                              inputMode="numeric"
+                              className="h-9 tabular-nums"
+                              placeholder="0"
+                              value={draft.basicAmount}
+                              onChange={(e) => patchBillDraft(draft.key, { basicAmount: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <Label>Payment mode</Label>
+                            <Select
+                              value={draft.paymentMode}
+                              onValueChange={(value) => patchBillDraft(draft.key, { paymentMode: value })}
+                            >
+                              <SelectTrigger className="h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {LEASER_PAYMENT_TYPES.map((type) => (
+                                  <SelectItem key={type} value={type}>
+                                    {type}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label>Remark</Label>
+                            <Input
+                              className="h-9"
+                              value={draft.remark}
+                              onChange={(e) => patchBillDraft(draft.key, { remark: e.target.value })}
+                            />
+                          </div>
+                          <LeaserCustomerPicker
+                            customers={customers}
+                            selectedIds={draft.customerIds}
+                            onChange={(customerIds) => patchBillDraft(draft.key, { customerIds })}
+                            label="Customer"
+                            emptyLabel="Select customer"
+                            searchPlaceholder="Search customer..."
+                            singleSelect
+                          />
+                          <div className="min-w-0">
+                            <Label>Bill upload</Label>
+                            {draft.billFileName ? (
+                              <div className="mt-1 flex h-9 items-center gap-1 rounded-md border border-input bg-background px-2">
+                                {draft.billFileDataUrl ? (
+                                  <a
+                                    href={draft.billFileDataUrl}
+                                    download={draft.billFileName}
+                                    className="flex min-w-0 flex-1 items-center gap-1 text-xs text-sky-800 hover:underline"
+                                  >
+                                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{draft.billFileName}</span>
+                                  </a>
+                                ) : (
+                                  <span className="flex min-w-0 flex-1 items-center gap-1 text-xs">
+                                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{draft.billFileName}</span>
+                                  </span>
+                                )}
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 shrink-0"
+                                  onClick={() =>
+                                    patchBillDraft(draft.key, { billFileName: "", billFileDataUrl: "" })
+                                  }
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                  <span className="sr-only">Remove bill file</span>
+                                </Button>
+                              </div>
+                            ) : (
+                              <label
+                                htmlFor={`bill-upload-${draft.key}`}
+                                className="mt-1 flex h-9 cursor-pointer items-center justify-center gap-1 rounded-md border border-dashed border-input bg-background px-2 text-xs text-muted-foreground hover:bg-muted/40"
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                                Upload bill
+                                <input
+                                  id={`bill-upload-${draft.key}`}
+                                  type="file"
+                                  accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
+                                  className="sr-only"
+                                  onChange={(event) => {
+                                    const file = event.target.files?.[0]
+                                    event.target.value = ""
+                                    void attachBillFile(draft.key, file)
+                                  }}
+                                />
+                              </label>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9"
+                              onClick={() => patchBillDraft(draft.key, { editing: false })}
+                            >
+                              <Check className="h-4 w-4" />
+                              <span className="sr-only">Done editing bill</span>
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-destructive"
+                              onClick={() => removeBillDraft(draft.key)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete bill</span>
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[7.5rem_7rem_minmax(11rem,1.4fr)_7rem_minmax(8rem,1fr)_auto] items-center">
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Date</p>
+                            <p className="text-sm tabular-nums">{draft.date || "—"}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Basic</p>
+                            <p className="text-sm font-semibold tabular-nums">
+                              {draft.basicAmount ? formatLedgerInr(parseInrAmount(draft.basicAmount)) : "—"}
+                            </p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Customer</p>
+                            <p className="text-sm truncate">{namedCustomer || "Select customer"}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Payment mode</p>
+                            <p className="text-sm">{draft.paymentMode || "Cash"}</p>
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bill</p>
+                            {draft.billFileDataUrl ? (
+                              <a
+                                href={draft.billFileDataUrl}
+                                download={draft.billFileName}
+                                className="flex items-center gap-1 text-sm text-sky-800 hover:underline"
+                              >
+                                <FileText className="h-3.5 w-3.5 shrink-0" />
+                                <span className="truncate">{draft.billFileName}</span>
+                              </a>
+                            ) : (
+                              <p className="text-sm text-muted-foreground truncate">
+                                {draft.billFileName || "No file"}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9"
+                              onClick={() => patchBillDraft(draft.key, { editing: true })}
+                            >
+                              <Pencil className="h-4 w-4" />
+                              <span className="sr-only">Edit bill</span>
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-destructive"
+                              onClick={() => removeBillDraft(draft.key)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              <span className="sr-only">Delete bill</span>
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    )
+                  })}
+                </div>
+              ) : null}
               <div className="space-y-2">
                 {drafts.map((draft) => (
                   <div
@@ -2028,19 +2704,16 @@ function DealerLeaserManager({
                       selectedIds={draft.customerIds}
                       onChange={(customerIds) => patchDraft(draft.key, { customerIds })}
                     />
-                    {drafts.length > 1 ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-9 text-destructive"
-                        onClick={() => removePayment(draft.key)}
-                      >
-                        Remove
-                      </Button>
-                    ) : (
-                      <span />
-                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 text-destructive"
+                      onClick={() => removePayment(draft.key)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      <span className="sr-only">Delete payment</span>
+                    </Button>
                   </div>
                 ))}
               </div>

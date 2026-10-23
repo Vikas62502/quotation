@@ -383,6 +383,135 @@ export function pickLeaserPaymentList(response: unknown): SubvendorLeaserPayment
     .filter((row): row is SubvendorLeaserPayment => Boolean(row))
 }
 
+export const ADMIN_VENDOR_BILLS_STORAGE_KEY = "adminSubvendorVendorBills"
+
+export type SubvendorVendorBill = {
+  id: string
+  vendorId: string
+  date: string
+  basicAmount: number
+  remark: string
+  paymentMode: string
+  customerIds: string[]
+  billFileName: string
+  billFileDataUrl: string
+  sortOrder: number
+}
+
+function normalizeVendorBill(raw: unknown): SubvendorVendorBill | null {
+  if (!raw || typeof raw !== "object") return null
+  const row = raw as Record<string, unknown>
+  const id = asText(row.id).trim()
+  const vendorId = asText(row.vendorId ?? row.vendor_id).trim()
+  if (!id || !vendorId) return null
+  const customerIds = Array.isArray(row.customerIds)
+    ? row.customerIds.map((value) => asText(value).trim()).filter(Boolean)
+    : Array.isArray(row.customer_ids)
+      ? row.customer_ids.map((value) => asText(value).trim()).filter(Boolean)
+      : asText(row.customerId ?? row.customer_id).trim()
+        ? [asText(row.customerId ?? row.customer_id).trim()]
+        : []
+  return {
+    id,
+    vendorId,
+    date: asText(row.date ?? row.bill_date).trim(),
+    basicAmount: parseInrAmount(row.basicAmount ?? row.basic_amount ?? row.amount),
+    remark: asText(row.remark ?? row.remarks).trim(),
+    paymentMode: asText(row.paymentMode ?? row.payment_mode ?? row.paymentType).trim() || "Cash",
+    customerIds,
+    billFileName: asText(row.billFileName ?? row.bill_file_name).trim(),
+    billFileDataUrl: asText(row.billFileDataUrl ?? row.bill_file_data_url ?? row.billFileUrl).trim(),
+    sortOrder: parseInrAmount(row.sortOrder ?? row.sort_order),
+  }
+}
+
+export function readVendorBills(): SubvendorVendorBill[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = JSON.parse(localStorage.getItem(ADMIN_VENDOR_BILLS_STORAGE_KEY) || "[]")
+    if (!Array.isArray(raw)) return []
+    return raw.map(normalizeVendorBill).filter((row): row is SubvendorVendorBill => Boolean(row))
+  } catch {
+    return []
+  }
+}
+
+export function writeVendorBills(rows: SubvendorVendorBill[]) {
+  if (typeof window === "undefined") return false
+  try {
+    localStorage.setItem(ADMIN_VENDOR_BILLS_STORAGE_KEY, JSON.stringify(rows))
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function newVendorBillId() {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `vb-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+export function vendorBillSum(rows: SubvendorVendorBill[], vendorId: string): number {
+  return rows
+    .filter((row) => row.vendorId === vendorId)
+    .reduce((sum, row) => sum + Math.max(0, Math.round(Number(row.basicAmount) || 0)), 0)
+}
+
+export function pickVendorBillList(response: unknown): SubvendorVendorBill[] {
+  if (!response || typeof response !== "object") return []
+  const root = response as Record<string, unknown>
+  const nested =
+    root.data && typeof root.data === "object" && !Array.isArray(root.data)
+      ? (root.data as Record<string, unknown>)
+      : null
+  const raw = [
+    nested?.bills,
+    nested?.items,
+    nested?.vendorBills,
+    nested?.vendor_bills,
+    root.bills,
+    root.items,
+    Array.isArray(root.data) ? root.data : null,
+    Array.isArray(response) ? response : null,
+  ].find((value) => Array.isArray(value))
+  if (!Array.isArray(raw)) return []
+  return raw.map(normalizeVendorBill).filter((row): row is SubvendorVendorBill => Boolean(row))
+}
+
+export function vendorBillsToApiBody(vendorId: string, rows: SubvendorVendorBill[]): Record<string, unknown> {
+  const bills = rows
+    .filter((row) => row.vendorId === vendorId)
+    .map((row, index) => {
+      const href = (row.billFileDataUrl || "").trim()
+      const isDataUrl = href.startsWith("data:")
+      const isHttpUrl = /^https?:\/\//i.test(href)
+      return {
+        id: row.id,
+        vendorId,
+        vendor_id: vendorId,
+        date: row.date,
+        bill_date: row.date,
+        basicAmount: row.basicAmount,
+        basic_amount: row.basicAmount,
+        remark: row.remark,
+        paymentMode: row.paymentMode || "Cash",
+        payment_mode: row.paymentMode || "Cash",
+        customerIds: row.customerIds,
+        customer_ids: row.customerIds,
+        billFileName: row.billFileName,
+        bill_file_name: row.billFileName,
+        billFileDataUrl: isDataUrl ? href : "",
+        bill_file_data_url: isDataUrl ? href : "",
+        billFileUrl: isHttpUrl ? href : "",
+        bill_file_url: isHttpUrl ? href : "",
+        sortOrder: row.sortOrder > 0 ? row.sortOrder : index + 1,
+        sort_order: row.sortOrder > 0 ? row.sortOrder : index + 1,
+      }
+    })
+  return { bills }
+}
+
 export function leaserPaymentsToApiBody(
   vendorId: string,
   rows: SubvendorLeaserPayment[],

@@ -7,8 +7,17 @@
  * Spreadsheet (production):
  *   https://docs.google.com/spreadsheets/d/18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
  *
- * Each tab (e.g. Ajmer_Leads, Jaipur_Leads) becomes an HR panel sub-tab when enabled.
- * Sync reads new rows, stores in DB, runs same round-robin allocator as CSV upload.
+ * Each tab (e.g. Ajmer_Leads, Jaipur_Leads, Chairbord - Ajme Leads) becomes an HR
+ * panel sub-tab when enabled. Sync reads new rows, stores in DB, round-robin assigns.
+ *
+ * Oct 2026 — CREATED rows MUST reach dealer Calling Data:
+ *   Meta `lead_status=CREATED` is NOT a calling-queue status.
+ *   Persist calling `status` = queued (no dealer) or assigned (has dealer).
+ *   Never store or echo status="CREATED". Echo lead_status / sheetLeadStatus separately.
+ *   Unassigned CREATED / blank-Final rows are round-robin assigned to the tab dealer
+ *   pool (or another enabled tab on the same spreadsheet if this tab has no pool).
+ *   GET /dealers/me/calling-queue/* must return those assigned rows (see
+ *   BACKEND_CALLING_QUEUE_CURRENT.ts).
  *
  * Frontend:
  *   - HR → Social Media tab
@@ -133,6 +142,14 @@ CREATE INDEX IF NOT EXISTS idx_hr_leads_upload_mobile ON hr_leads(upload_id, mob
 CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_leads_sheet_external
   ON hr_leads(sheet_source_id, external_id)
   WHERE external_id IS NOT NULL AND external_id <> '';
+
+-- One-shot: Meta CREATED leaked into calling status — dealer portal hid the row.
+UPDATE hr_leads
+SET status = CASE
+  WHEN assigned_dealer_id IS NULL OR btrim(assigned_dealer_id::text) = '' THEN 'queued'
+  ELSE 'assigned'
+END
+WHERE lower(btrim(coalesce(status, ''))) = 'created';
 */
 
 // -----------------------------------------------------------------------------
@@ -196,9 +213,25 @@ function extractFormAnswersFromRaw(raw) {
   return out
 }
 
+function callingStatusForApi(r, assignedDealerId) {
+  const raw = String(r.status || "").trim().toLowerCase()
+  if (raw === "in_progress") return "in_progress"
+  if (raw === "rescheduled") return "rescheduled"
+  if (["completed", "done", "closed"].includes(raw)) return "completed"
+  if (raw === "assigned") return "assigned"
+  if (raw === "queued" || raw === "pending" || raw === "open") {
+    return assignedDealerId ? "assigned" : "queued"
+  }
+  // Meta lead_status CREATED must not leak into calling `status` or the dealer portal hides the row.
+  if (!raw || raw === "created" || isMetaCreatedLeadStatus(r.lead_status || r.leadStatus)) {
+    return assignedDealerId ? "assigned" : "queued"
+  }
+  return assignedDealerId ? "assigned" : "queued"
+}
+
 function mapSocialLeadForApi(r, dealerNameById) {
   const assignedDealerId = normalizeAssigneeId(r.assigned_dealer_id) || null
-  const status = r.status || "queued"
+  const status = callingStatusForApi(r, assignedDealerId)
   const raw = r.raw_json || r.raw || {}
   const formAnswers =
     (Array.isArray(r.form_answers) && r.form_answers.length > 0
@@ -219,6 +252,13 @@ function mapSocialLeadForApi(r, dealerNameById) {
     campaignName: r.campaign_name,
     adName: r.ad_name,
     leadStatus: r.lead_status,
+    lead_status: r.lead_status,
+    sheetLeadStatus: r.lead_status,
+    sheet_lead_status: r.lead_status,
+    sourceType: r.source_type || "google_sheet",
+    source_type: r.source_type || "google_sheet",
+    sheetSourceId: r.sheet_source_id,
+    sheet_source_id: r.sheet_source_id,
     remarks: r.remarks,
     remarks2: r.remarks_2,
     kw: r.kw,
@@ -600,6 +640,8 @@ function sheetsColumnLetter(index0) {
  *   imported + assigned to the dealer pool on sync. Do not leave Assignment Status
  *   blank on the sheet while other rows show assigned/completed (e.g. 14 rows → 14).
  *   Use assignOpenSheetLeadsWithoutFinalDecision after active_cap top-up.
+ *   CREATED is Meta lead_status only — calling `status` must be queued/assigned so
+ *   dealer Calling Data shows the lead. Never persist or echo status=CREATED.
  */
 export const SOCIAL_SHEET_COLUMN_MAP = {
   externalId: ["id"],
@@ -695,12 +737,21 @@ function rowToLeadObject(headers, values) {
 // Sync one tab
 // -----------------------------------------------------------------------------
 
-/** Open Meta lead = no Final Decision yet (CREATED / blank). These MUST be assigned. */
+function isCallingCompletedStatus(status) {
+  return ["completed", "done", "closed"].includes(String(status || "").trim().toLowerCase())
+}
+
+function isMetaCreatedLeadStatus(value) {
+  const s = String(value || "").trim().toUpperCase()
+  return !s || s === "CREATED"
+}
+
+/** Open Meta lead = CREATED / blank Final Decision. These MUST be assigned to a dealer. */
 export function isOpenSheetLeadWithoutFinalDecision(lead) {
-  const status = String(lead?.status || "").trim().toLowerCase()
-  if (["completed", "done", "closed", "complete"].includes(status)) return false
+  if (isCallingCompletedStatus(lead?.status)) return false
+  const leadStatus = lead?.lead_status || lead?.leadStatus || ""
+  if (isMetaCreatedLeadStatus(leadStatus)) return true
   const final = String(lead?.final_decision || lead?.finalDecision || "").trim()
-  // Tagged CRM outcomes in Final Decision count as closed for assign purposes.
   if (final) return false
   return true
 }
@@ -802,7 +853,10 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
 
     if (exists) {
       // Refresh Meta fields for open leads (no Final Decision yet). Never wipe CRM calling fields.
-      if (isOpenSheetLeadWithoutFinalDecision(exists)) {
+      // CREATED rows must stay in the assign pool even if they were imported earlier as queued.
+      const sheetCreated = isMetaCreatedLeadStatus(lead.leadStatus)
+      if (isOpenSheetLeadWithoutFinalDecision(exists) || sheetCreated) {
+        const assignee = normalizeAssigneeId(exists.assigned_dealer_id || exists.assignedDealerId)
         await exists.update({
           external_id: lead.externalId || exists.external_id,
           sheet_row_index: lead.sheetRowIndex,
@@ -817,6 +871,9 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
           lead_status: lead.leadStatus || exists.lead_status || "CREATED",
           created_time: lead.createdTime || exists.created_time,
           raw_json: lead.raw || exists.raw_json,
+          ...(sheetCreated && !assignee && !isCallingCompletedStatus(exists.status)
+            ? { status: "queued" }
+            : {}),
         })
         updated += 1
       } else {
@@ -850,6 +907,7 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
       final_decision_reason: lead.finalDecisionReason || null,
       created_time: lead.createdTime,
       raw_json: lead.raw,
+      source_type: "google_sheet",
       status: "queued",
     })
     imported += 1
@@ -864,16 +922,33 @@ export async function syncSheetTabSource(sourceRow, { assignLeads = true, db } =
   })
 
   let assignedOpen = 0
-  if (assignLeads && sourceRow.enabled && sourceRow.dealer_ids?.length) {
+  const dealerPool = asArray(sourceRow.dealer_ids).filter(Boolean)
+  if (dealerPool.length === 0) {
+    try {
+      const siblings = await HrSheetSource.findAll({
+        where: { spreadsheet_id: sourceRow.spreadsheet_id || DEFAULT_SPREADSHEET_ID, enabled: true },
+      })
+      for (const sibling of siblings || []) {
+        const ids = asArray(sibling.dealer_ids).filter(Boolean)
+        if (ids.length) {
+          dealerPool.push(...ids)
+          break
+        }
+      }
+    } catch (e) {
+      console.error("sheet sibling dealer pool lookup failed", e)
+    }
+  }
+  if (assignLeads && dealerPool.length) {
     // 1) Keep FIFO active_cap top-up for calling queue.
     await assignUnassignedWithActiveCap(upload.id, {
-      dealerIds: sourceRow.dealer_ids,
+      dealerIds: dealerPool,
       activeLimitPerDealer: sourceRow.active_limit_per_dealer || 1,
     })
     // 2) Then force-assign every remaining open lead (empty Final Decision / CREATED)
     //    so Assignment Status is not left blank on the sheet (e.g. 14 rows → all 14 assigned).
     const openResult = await assignOpenSheetLeadsWithoutFinalDecision(upload.id, {
-      dealerIds: asArray(sourceRow.dealer_ids),
+      dealerIds: dealerPool,
     })
     assignedOpen = openResult.assigned || 0
   }
@@ -1095,6 +1170,53 @@ export async function postHrSheetSourcesSyncAll(req, res) {
  */
 
 /**
+ * POST /api/hr/sheet-sources/:id/assign-created
+ * One-shot: assign every unassigned CREATED / blank-Final lead on this tab.
+ * Use after enabling Chairbord - Ajme Leads (or any tab) so existing CREATED
+ * rows appear in dealer Calling Data without waiting for a full resync.
+ */
+export async function postHrSheetSourceAssignCreated(req, res) {
+  const row = await HrSheetSource.findByPk(req.params.id)
+  if (!row) return res.status(404).json({ success: false, error: { code: "RES_001" } })
+  const dealerPool = asArray(row.dealer_ids).filter(Boolean)
+  if (dealerPool.length === 0) {
+    const siblings = await HrSheetSource.findAll({
+      where: { spreadsheet_id: row.spreadsheet_id || DEFAULT_SPREADSHEET_ID, enabled: true },
+    })
+    for (const sibling of siblings || []) {
+      const ids = asArray(sibling.dealer_ids).filter(Boolean)
+      if (ids.length) {
+        dealerPool.push(...ids)
+        break
+      }
+    }
+  }
+  if (!row.upload_id || dealerPool.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: {
+        code: "VAL_POOL",
+        message: "Enable this tab, save a dealer pool, and Sync once before assign-created.",
+      },
+    })
+  }
+  const dealers = await Dealer.findAll({ where: { id: dealerPool } }).catch(() => [])
+  const dealerNameById = Object.fromEntries(
+    (dealers || []).map((d) => [String(d.id), d.name || d.full_name || d.username || ""]),
+  )
+  const result = await assignOpenSheetLeadsWithoutFinalDecision(row.upload_id, {
+    dealerIds: dealerPool,
+    dealerNameById,
+  })
+  emitSocket("calling:uploads-updated", {
+    reason: "assign_created",
+    sourceId: row.id,
+    assigned: result.assigned,
+  })
+  return res.json({ success: true, data: result })
+}
+
+/**
  * GET /api/hr/sheet-sources/:id/leads?page&limit
  * Paginated leads for HR Social Media tab table (same shape as upload batch rows).
  */
@@ -1130,6 +1252,7 @@ router.post("/hr/sheet-sources/discover", authHr, discoverHrSheetTabs)
 router.post("/hr/sheet-sources/sync-all", authHrOrCron, postHrSheetSourcesSyncAll) // BEFORE :id routes
 router.patch("/hr/sheet-sources/:id", authHr, patchHrSheetSource)
 router.post("/hr/sheet-sources/:id/sync", authHr, postHrSheetSourceSync)
+router.post("/hr/sheet-sources/:id/assign-created", authHr, postHrSheetSourceAssignCreated)
 router.get("/hr/sheet-sources/:id/leads", authHr, getHrSheetSourceLeads)
 
 Cron (required for auto-sync — Google Sheets cannot push via socket):
@@ -1153,4 +1276,10 @@ Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLe
 7. Re-sync full-scans all rows; upserts missing CREATED leads (empty Final Decision).
 8. Open leads (no Final Decision) that are still unassigned get round-robin assigned
    so sheet Assignment Status is not left blank (e.g. 14 sheet rows → 14 assigned).
+9. Chairbord - Ajme Leads CREATED rows (no assignee on the sheet) still import and
+   assign to that tab's dealer pool (or another enabled tab's pool) and appear in
+   dealer Calling Data. GET calling-queue/current|next returns status assigned/queued
+   (never CREATED) plus lead_status="CREATED".
+10. POST /hr/sheet-sources/:id/assign-created → assigned > 0 for the leftover CREATED rows.
+11. One-shot SQL above clears status='created' on existing hr_leads.
 */

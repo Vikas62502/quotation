@@ -59,9 +59,11 @@ import {
   fetchOfficeOutsideSentRecordsFromApi,
   isOfficeOutsideRecordId,
   listOfficeOutsideSentToAccounts,
-  retrieveOfficeOutsideFromAccountsApi,
+  retrieveOfficeOutsideFromOutsideApi,
+  sendOfficeOutsideToOutsideApi,
   normalizeOfficeOutsideFileType,
   OFFICE_OUTSIDE_FILE_TYPES,
+  officeOutsideLoanCashAmounts,
   officeOutsideSubtotalAmount,
   pickOfficeOutsideRecordFromApi,
   quotationFromOfficeOutsideRecord,
@@ -778,13 +780,43 @@ function getMixCashCap(payment: CustomerPayment): number {
   const cap = getPaymentEffectiveCap(payment)
   const type = paymentTypeOf(payment)
   if (type === "loan") return 0
-  const cash = Math.max(0, Math.round(Number(payment.cashAmount) || 0))
-  if (cash > 0) return Math.min(cash, cap)
-  if (type === "cash") return cap
   const loan = Math.max(0, Math.round(Number(payment.loanAmount) || 0))
-  if (loan > 0 && loan < cap) return Math.max(0, cap - loan)
-  // Mix with both amounts missing — do not treat full subtotal as cash.
+  const loanCap = loan > 0 ? Math.min(loan, cap) : type === "mix" ? 0 : 0
+  if (type === "mix" && loanCap >= cap) return 0
+  const cash = Math.max(0, Math.round(Number(payment.cashAmount) || 0))
+  if (type === "cash") return cash > 0 ? Math.min(cash, cap) : cap
+  if (cash > 0) return Math.min(cash, Math.max(0, cap - loanCap))
+  if (loanCap > 0) return Math.max(0, cap - loanCap)
   return 0
+}
+
+/** Amount = subtotal. Total amount = loan + cash. */
+function getPaymentLoanCashSplit(payment: CustomerPayment): {
+  amount: number
+  loanAmount: number
+  cashAmount: number
+  totalAmount: number
+} {
+  const amount = getPaymentOriginalSubtotal(payment)
+  const type = paymentTypeOf(payment)
+  let loanAmount = Math.max(0, Math.round(Number(payment.loanAmount) || 0))
+  let cashAmount = Math.max(0, Math.round(Number(payment.cashAmount) || 0))
+  if (type === "loan") {
+    loanAmount = loanAmount > 0 ? Math.min(loanAmount, amount) : amount
+    cashAmount = 0
+  } else if (type === "cash") {
+    cashAmount = cashAmount > 0 ? Math.min(cashAmount, amount) : amount
+    loanAmount = 0
+  } else if (type === "mix") {
+    loanAmount = getMixLoanCap(payment)
+    cashAmount = getMixCashCap(payment)
+  }
+  return {
+    amount,
+    loanAmount,
+    cashAmount,
+    totalAmount: loanAmount + cashAmount,
+  }
 }
 
 function getTotalPaidForSide(phases: PaymentPhase[], side: "loan" | "cash"): number {
@@ -1917,6 +1949,8 @@ function officeOutsideRecordToCustomerPayment(
     finalAmount: subtotal,
     paymentType: row.fileType,
     paymentMode: row.fileType || storedPlan?.paymentMode,
+    loanAmount: officeOutsideLoanCashAmounts(row, ledger).loanAmount || undefined,
+    cashAmount: officeOutsideLoanCashAmounts(row, ledger).cashAmount || undefined,
     siteCost: siteCostRaw > 0 ? siteCostRaw : undefined,
     paymentStatus: storedPlan?.paymentStatus as CustomerPayment["paymentStatus"] | undefined,
     phases,
@@ -2105,6 +2139,8 @@ export default function AccountManagementPage() {
   const [releasingInstallationId, setReleasingInstallationId] = useState<string | null>(null)
   const [retrievingInstallationId, setRetrievingInstallationId] = useState<string | null>(null)
   const [retrievingOfficeOutsideId, setRetrievingOfficeOutsideId] = useState<string | null>(null)
+  const [sendingOfficeOutsideToOutsideId, setSendingOfficeOutsideToOutsideId] = useState<string | null>(null)
+  const [vendorOutsideRefreshKey, setVendorOutsideRefreshKey] = useState(0)
   /** Draft Cost of site values while typing; flushed to backend on blur. */
   const [siteCostDrafts, setSiteCostDrafts] = useState<Record<string, string>>({})
   const [savingSiteCostId, setSavingSiteCostId] = useState<string | null>(null)
@@ -2637,6 +2673,7 @@ export default function AccountManagementPage() {
   }, [activeTab])
 
   useEffect(() => {
+    if (activeTab !== "payments") return
     let cancelled = false
     const loadOfficeOutside = async () => {
       setOfficeOutsideVendors(readAdminSubvendors().filter((row) => row.kind === "office_outside"))
@@ -2683,7 +2720,7 @@ export default function AccountManagementPage() {
     return () => {
       cancelled = true
     }
-  }, [useApi])
+  }, [useApi, activeTab])
 
   const officeInsideDealerIds = useMemo(
     () => new Set(officeInsideVendors.map((row) => row.dealerId).filter(Boolean)),
@@ -3638,8 +3675,8 @@ export default function AccountManagementPage() {
       const isMix = paymentTypeValue === "mix"
       const isLoan = paymentTypeValue === "loan"
       const isCash = paymentTypeValue === "cash"
-      const loanAmt = isMix || isLoan ? getMixLoanCap(payment) || payment.loanAmount || "" : ""
-      const cashAmt = isMix || isCash ? getMixCashCap(payment) || payment.cashAmount || "" : ""
+      const loanAmt = isMix || isLoan ? getMixLoanCap(payment) : ""
+      const cashAmt = isMix || isCash ? getMixCashCap(payment) : ""
       const loanPaid = isMix || isLoan ? getTotalPaidForSide(payment.phases, "loan") : ""
       const cashPaid = isMix || isCash ? getTotalPaidForSide(payment.phases, "cash") : ""
       let loanRem: number | "" = isLoan
@@ -4332,8 +4369,8 @@ export default function AccountManagementPage() {
     setSubvendorLedgerDrafts(
       applyOfficeInsideGstToDrafts(
         draftsFromLedgerAmounts({
-          loanAmount: stored.loanAmount ?? loanCash.loanAmount,
-          cashAmount: stored.cashAmount ?? loanCash.cashAmount,
+          loanAmount: stored.loanAmount && stored.loanAmount > 0 ? stored.loanAmount : loanCash.loanAmount,
+          cashAmount: stored.cashAmount && stored.cashAmount > 0 ? stored.cashAmount : loanCash.cashAmount,
           receivedAmount: stored.receivedAmount ?? paid,
           remaining,
           proposal,
@@ -4984,23 +5021,56 @@ export default function AccountManagementPage() {
     }
   }
 
-  const handleRetrieveOfficeOutsideFromAccounts = async (payment: CustomerPayment) => {
+  const handleSendOfficeOutsideToOutside = async (payment: CustomerPayment) => {
+    if (!payment?.quotationId) return
+    const current = officeOutsideRecords.find((row) => row.id === payment.quotationId)
+    if (!current) {
+      toast({
+        title: "Could not send to Outside",
+        description: "Office Outside record not found.",
+        variant: "destructive",
+      })
+      return
+    }
+    setSendingOfficeOutsideToOutsideId(payment.quotationId)
+    try {
+      const remote = await sendOfficeOutsideToOutsideApi(current)
+      setOfficeOutsideRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      setVendorOutsideRefreshKey((n) => n + 1)
+      toast({
+        title: "Sent to Outside",
+        description: `${payment.customerName} now appears on Vendor Outside.`,
+      })
+    } catch (error) {
+      toast({
+        title: "Could not send to Outside",
+        description: error instanceof Error ? error.message : "Try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setSendingOfficeOutsideToOutsideId(null)
+    }
+  }
+
+  const handleRetrieveOfficeOutsideFromOutside = async (payment: CustomerPayment) => {
     if (!payment?.quotationId) return
     if (
       !confirmSave(
-        `Revert ${payment.customerName} from Accounts?\n\nThis returns the file to All Outside and enables Send to Accounts again.`,
+        `Revert ${payment.customerName} from Vendor Outside?\n\nIt stays on the Accounts list.`,
       )
     ) {
       return
     }
+    const current = officeOutsideRecords.find((row) => row.id === payment.quotationId)
+    if (!current) return
     setRetrievingOfficeOutsideId(payment.quotationId)
     try {
-      await retrieveOfficeOutsideFromAccountsApi(payment.quotationId)
-      setOfficeOutsideRecords((prev) => prev.filter((row) => row.id !== payment.quotationId))
-      setCustomerPayments((prev) => prev.filter((row) => row.quotationId !== payment.quotationId))
+      const remote = await retrieveOfficeOutsideFromOutsideApi(current)
+      setOfficeOutsideRecords((prev) => upsertOfficeOutsideRecordInList(prev, remote))
+      setVendorOutsideRefreshKey((n) => n + 1)
       toast({
-        title: "Reverted from Accounts",
-        description: `${payment.customerName} is back on All Outside. Send to Accounts is enabled.`,
+        title: "Reverted from Vendor Outside",
+        description: `${payment.customerName} stays on Accounts. Send to Outside is enabled again.`,
       })
     } catch (error) {
       toast({
@@ -5220,15 +5290,19 @@ export default function AccountManagementPage() {
             <Card className="border-border/50 shadow-sm py-0">
               <CardContent className="p-3 sm:p-4">
                 <AdminSubvendorPanel
+                  key={`vendor-outside-${vendorOutsideRefreshKey}`}
                   lockKind="office_outside"
                   embedded
                   hideSearch
                   search={paymentSearchTerm}
                   onSearchChange={setPaymentSearchTerm}
+                  onOfficeOutsideSentToAccounts={(row) => {
+                    setOfficeOutsideRecords((prev) => upsertOfficeOutsideRecordInList(prev, row))
+                  }}
                 />
               </CardContent>
             </Card>
-            <OfficeOutsideAccountsLedger />
+            <OfficeOutsideAccountsLedger key={`vendor-outside-ledger-${vendorOutsideRefreshKey}`} />
           </TabsContent>
 
           <TabsContent value="subvendors" className="mt-0 space-y-0">
@@ -5531,6 +5605,10 @@ export default function AccountManagementPage() {
                           payment.quotation as unknown as Record<string, unknown>,
                           readInstallerReleaseMap(),
                         )
+                        const officeOutsideRow = officeOutsideRecords.find(
+                          (row) => row.id === payment.quotationId,
+                        )
+                        const sentToOutside = Boolean(officeOutsideRow?.sentToOutsideAt)
 
                         return (
                           <Card
@@ -5732,10 +5810,10 @@ export default function AccountManagementPage() {
                                 {paymentType === "mix" ? (
                                   <p className="text-[10px] text-muted-foreground mt-0.5 leading-snug">
                                     L ₹
-                                    {(getMixLoanCap(payment) || payment.loanAmount || 0).toLocaleString("en-IN")}
+                                    {getMixLoanCap(payment).toLocaleString("en-IN")}
                                     {" · "}
                                     C ₹
-                                    {(getMixCashCap(payment) || payment.cashAmount || 0).toLocaleString("en-IN")}
+                                    {getMixCashCap(payment).toLocaleString("en-IN")}
                                   </p>
                                 ) : paymentType === "loan" &&
                                   (payment.loanAmount || getMixLoanCap(payment)) ? (
@@ -5847,25 +5925,26 @@ export default function AccountManagementPage() {
                               <AccountsCol className={cn("col-span-2 sm:col-span-3 xl:col-span-1 min-w-0 flex xl:justify-end", ACCOUNTS_STICKY_ACTIONS)}>
                                 <div className="flex flex-col items-stretch gap-1 w-full max-w-[8.5rem] min-w-0">
                                   {isOfficeOutsidePayment(payment) ? (
+                                    sentToOutside ? (
                                     <div className="flex items-center gap-1 min-w-0">
                                       <Badge
                                         variant="outline"
-                                        className="min-w-0 flex-1 justify-center text-[9px] px-1.5 h-6 border-sky-400/80 text-sky-800 bg-sky-50 whitespace-nowrap truncate"
+                                        className="min-w-0 flex-1 justify-center text-[9px] px-1.5 h-6 border-violet-400/80 text-violet-800 bg-violet-50 whitespace-nowrap truncate"
                                       >
-                                        Office Outside
+                                        Sent to outside
                                       </Badge>
                                       <Button
                                         type="button"
                                         variant="outline"
                                         size="sm"
                                         className="h-6 w-6 p-0 shrink-0 border-amber-800/40 text-amber-950"
-                                        onClick={() => void handleRetrieveOfficeOutsideFromAccounts(payment)}
+                                        onClick={() => void handleRetrieveOfficeOutsideFromOutside(payment)}
                                         disabled={
                                           accountsReadOnly ||
                                           !canWriteAccounts ||
                                           retrievingOfficeOutsideId === payment.quotationId
                                         }
-                                        title="Revert to All Outside (enable Send to Accounts)"
+                                        title="Revert from Vendor Outside"
                                       >
                                         {retrievingOfficeOutsideId === payment.quotationId ? (
                                           <Loader2 className="w-3 h-3 animate-spin" />
@@ -5879,6 +5958,28 @@ export default function AccountManagementPage() {
                                         </span>
                                       </Button>
                                     </div>
+                                    ) : (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-6 px-1.5 text-[10px] leading-none w-full font-medium"
+                                      onClick={() => void handleSendOfficeOutsideToOutside(payment)}
+                                      disabled={
+                                        accountsReadOnly ||
+                                        !canWriteAccounts ||
+                                        sendingOfficeOutsideToOutsideId === payment.quotationId
+                                      }
+                                      title="Send this Office Outside file to Vendor Outside"
+                                    >
+                                      <Send className="w-3 h-3 mr-1 shrink-0" />
+                                      <span className="truncate">
+                                        {sendingOfficeOutsideToOutsideId === payment.quotationId
+                                          ? "Sending..."
+                                          : "Send to Outside"}
+                                      </span>
+                                    </Button>
+                                    )
                                   ) : sentToInstaller ? (
                                     <div className="flex items-center gap-1 min-w-0">
                                       <Badge
@@ -6382,30 +6483,44 @@ export default function AccountManagementPage() {
                   ) : null}
                 </div>
                 <div className="sm:text-right shrink-0 space-y-0.5">
+                  {(() => {
+                    const split = getPaymentLoanCashSplit(activePayment)
+                    return (
+                      <>
                   <div className="flex items-baseline justify-start sm:justify-end gap-2">
-                    <span className="text-[11px] text-muted-foreground">Subtotal</span>
+                    <span className="text-[11px] text-muted-foreground">Amount</span>
                   {isFinalSettlementApplied(activePayment) ||
                   getPaymentDiscountAmount(activePayment) > 0 ? (
                     <>
                         <span className="text-xs line-through text-muted-foreground tabular-nums">
-                        ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                        ₹{split.amount.toLocaleString("en-IN")}
                         </span>
                         <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                        ₹{getPaymentEffectiveCap(activePayment).toLocaleString()}
+                        ₹{getPaymentEffectiveCap(activePayment).toLocaleString("en-IN")}
                         </span>
                         <span className="text-[11px] text-amber-700 dark:text-amber-400">
-                          − ₹{getPaymentDiscountAmount(activePayment).toLocaleString()}
+                          − ₹{getPaymentDiscountAmount(activePayment).toLocaleString("en-IN")}
                         {getSettlementDiscountAmount(activePayment) > 0
-                          ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString()})`
+                          ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString("en-IN")})`
                           : ""}
                         </span>
                     </>
                   ) : (
                       <span className="text-sm font-semibold tabular-nums">
-                      ₹{getPaymentOriginalSubtotal(activePayment).toLocaleString()}
+                      ₹{split.amount.toLocaleString("en-IN")}
                       </span>
                   )}
                   </div>
+                  <p className="text-[11px] leading-tight text-muted-foreground">
+                    Total amount:{" "}
+                    <span className="font-semibold tabular-nums text-foreground">
+                      ₹{split.totalAmount.toLocaleString("en-IN")}
+                    </span>
+                    <span className="ml-1 text-[10px]">(loan + cash)</span>
+                  </p>
+                      </>
+                    )
+                  })()}
                   <p className="text-[11px] leading-tight">
                     <span
                     className={cn(
@@ -6436,33 +6551,30 @@ export default function AccountManagementPage() {
                   </p>
                 </div>
               </div>
-              {["loan", "mix"].includes(getPaymentTypeValue(activePayment)) && (
+              {["loan", "cash", "mix"].includes(getPaymentTypeValue(activePayment)) && (
                 <div className="rounded-md border border-border/50 bg-muted/30 px-4 py-2 text-xs leading-snug">
+                  {(() => {
+                    const split = getPaymentLoanCashSplit(activePayment)
+                    const showBank = ["loan", "mix"].includes(getPaymentTypeValue(activePayment))
+                    return (
+                      <>
                   <p className="truncate">
+                    {showBank ? (
+                      <>
                     <span className="text-muted-foreground">Bank · IFSC </span>
                     <span className="font-medium">{getFinancingBankDisplay(activePayment)}</span>
                     <span className="mx-2 text-border">·</span>
-                      <span className="text-muted-foreground">Loan amount: </span>
-                      <span className="font-medium">
-                        {getMixLoanCap(activePayment) > 0
-                          ? `₹${getMixLoanCap(activePayment).toLocaleString("en-IN")}`
-                          : activePayment.loanAmount != null && activePayment.loanAmount > 0
-                            ? `₹${activePayment.loanAmount.toLocaleString("en-IN")}`
-                            : "—"}
-                      </span>
-                    {getPaymentTypeValue(activePayment) === "mix" ? (
-                      <>
-                        <span className="mx-2 text-border">·</span>
-                          <span className="text-muted-foreground">Cash amount: </span>
-                          <span className="font-medium">
-                            {getMixCashCap(activePayment) > 0
-                              ? `₹${getMixCashCap(activePayment).toLocaleString("en-IN")}`
-                              : activePayment.cashAmount != null && activePayment.cashAmount > 0
-                                ? `₹${activePayment.cashAmount.toLocaleString("en-IN")}`
-                                : "—"}
-                          </span>
                       </>
                     ) : null}
+                      <span className="text-muted-foreground">Loan amount: </span>
+                      <span className="font-medium tabular-nums">
+                        ₹{split.loanAmount.toLocaleString("en-IN")}
+                      </span>
+                        <span className="mx-2 text-border">·</span>
+                          <span className="text-muted-foreground">Cash amount: </span>
+                          <span className="font-medium tabular-nums">
+                            ₹{split.cashAmount.toLocaleString("en-IN")}
+                          </span>
                   </p>
                   {getPaymentTypeValue(activePayment) === "mix" ? (
                     <p className="mt-0.5">
@@ -6477,6 +6589,9 @@ export default function AccountManagementPage() {
                           </span>
                     </p>
                   ) : null}
+                      </>
+                    )
+                  })()}
                 </div>
               )}
 
@@ -7475,6 +7590,39 @@ export default function AccountManagementPage() {
                       })()}
                     </div>
                   ) : null}
+                  {(() => {
+                    const split = getPaymentLoanCashSplit(activePayment)
+                    return (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 rounded-md border border-sky-100 bg-sky-50/50 px-2.5 py-2">
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-muted-foreground">Amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            ₹{split.amount.toLocaleString("en-IN")}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Subtotal</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-muted-foreground">Total amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            ₹{split.totalAmount.toLocaleString("en-IN")}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">Loan + cash</p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-muted-foreground">Loan amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            ₹{split.loanAmount.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-medium text-muted-foreground">Cash amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            ₹{split.cashAmount.toLocaleString("en-IN")}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })()}
                   {(() => {
                     const piUrls = getActivePaymentPiUrls(activePayment)
                     if (piUrls.length === 0) {

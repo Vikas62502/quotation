@@ -32,6 +32,38 @@ export type OfficeInsideAmountField = (typeof OFFICE_INSIDE_AMOUNT_FIELDS)[numbe
 /** GST = (proposal − PI) × 8.9%. Hidden / zero when PI is 0. */
 export const OFFICE_INSIDE_GST_RATE = 0.089
 
+/** Vendor Outside leaser GST = (subtotal − bill) × 9.8%. */
+export const OFFICE_OUTSIDE_LEASER_GST_RATE = 0.098
+
+export function officeOutsideLeaserGst(subtotal: number, billAmount: number): number {
+  const sub = Math.max(0, Math.round(Number(subtotal) || 0))
+  const bill = Math.max(0, Math.round(Number(billAmount) || 0))
+  return Math.round(Math.max(0, sub - bill) * OFFICE_OUTSIDE_LEASER_GST_RATE)
+}
+
+export function officeOutsideLeaserCharges(fileCharges: number, others: number): number {
+  return Math.max(0, Math.round(Number(fileCharges) || 0)) + Math.max(0, Math.round(Number(others) || 0))
+}
+
+/** Profit vendor = loan amount (or total amount if loan is 0) − bill − charges − GST. */
+export function officeOutsideLeaserProfit(opts: {
+  loanAmount: number
+  totalAmount: number
+  billAmount: number
+  charges: number
+  gst: number
+}): number {
+  const loan = Math.max(0, Math.round(Number(opts.loanAmount) || 0))
+  const total = Math.max(0, Math.round(Number(opts.totalAmount) || 0))
+  const base = loan > 0 ? loan : total
+  return Math.round(
+    base -
+      Math.max(0, Math.round(Number(opts.billAmount) || 0)) -
+      Math.max(0, Math.round(Number(opts.charges) || 0)) -
+      Math.max(0, Math.round(Number(opts.gst) || 0)),
+  )
+}
+
 export const LEDGER_FIELD_LABELS: Record<LedgerAmountField, string> = {
   loanAmount: "Loan amount",
   cashAmount: "Cash amount",
@@ -332,8 +364,17 @@ export function quotationLoanCashAmountsForLedger(
   if (type === "mix") {
     let loanAmount = loanRaw
     let cashAmount = cashRaw
-    if (loanAmount <= 0 && cashAmount > 0 && cashAmount < proposal) loanAmount = Math.max(0, proposal - cashAmount)
-    if (cashAmount <= 0 && loanAmount > 0 && loanAmount < proposal) cashAmount = Math.max(0, proposal - loanAmount)
+    if (loanAmount > proposal) loanAmount = proposal
+    if (cashAmount > proposal) cashAmount = proposal
+    if (loanAmount >= proposal) return { loanAmount: proposal, cashAmount: 0 }
+    if (cashAmount >= proposal && loanAmount <= 0) return { loanAmount: 0, cashAmount: proposal }
+    if (loanAmount > 0 && cashAmount > 0 && loanAmount + cashAmount !== proposal) {
+      cashAmount = Math.max(0, proposal - loanAmount)
+    } else if (loanAmount <= 0 && cashAmount > 0 && cashAmount < proposal) {
+      loanAmount = Math.max(0, proposal - cashAmount)
+    } else if (cashAmount <= 0 && loanAmount > 0) {
+      cashAmount = Math.max(0, proposal - loanAmount)
+    }
     return { loanAmount, cashAmount }
   }
   return { loanAmount: loanRaw, cashAmount: cashRaw }

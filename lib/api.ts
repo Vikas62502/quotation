@@ -3873,6 +3873,28 @@ export const api = {
       throw lastError
     },
 
+    /** Assign leftover Meta CREATED / blank-Final leads on this tab to the dealer pool. */
+    assignCreated: async (sourceId: string) => {
+      const id = encodeURIComponent(sourceId)
+      const endpoints = [
+        `/hr/sheet-sources/${id}/assign-created`,
+        `/hr/social-sheet-sources/${id}/assign-created`,
+      ]
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest(endpoint, { method: "POST", body: {} })
+        } catch (error) {
+          lastError = error
+          const missing =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!missing) throw error
+        }
+      }
+      throw lastError
+    },
+
     /** Backend cron target — sync every enabled sheet tab (every ~30 min). */
     syncAll: async (spreadsheetId?: string) => {
       const body = spreadsheetId
@@ -4805,11 +4827,29 @@ export const api = {
           })
         },
       },
+
+      bills: {
+        getAll: async (params?: { vendorId?: string }) => {
+          const queryParams = new URLSearchParams()
+          if (params?.vendorId) queryParams.append("vendorId", params.vendorId)
+          const query = queryParams.toString()
+          return apiRequest(`/admin/subvendors/bills${query ? `?${query}` : ""}`, {
+            suppressErrorLog: true,
+          })
+        },
+
+        replace: async (vendorId: string, body: Record<string, unknown>) => {
+          return apiRequest(`/admin/subvendors/${vendorId}/bills`, {
+            method: "PUT",
+            body,
+          })
+        },
+      },
     },
 
     officeOutside: {
       getAll: async (params?: {
-        status?: "all" | "pending" | "sent"
+        status?: "all" | "pending" | "outside" | "sent"
         search?: string
         vendorId?: string
         fileType?: "loan" | "cash" | "mix"
@@ -4850,6 +4890,13 @@ export const api = {
       delete: async (id: string) => {
         return apiRequest(`/admin/office-outside/${id}`, {
           method: "DELETE",
+        })
+      },
+
+      sendToOutside: async (id: string) => {
+        return apiRequest(`/admin/office-outside/${id}/send-to-outside`, {
+          method: "POST",
+          body: {},
         })
       },
 

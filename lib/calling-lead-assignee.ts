@@ -106,6 +106,60 @@ export function callingLeadIsPoolUnassigned(lead: CallingLeadAssigneeRow & Recor
   return !leadHasExplicitCallingAssigneeId(lead as Record<string, unknown>)
 }
 
+const CALLING_WORKFLOW_STATUSES = new Set([
+  "assigned",
+  "in_progress",
+  "queued",
+  "rescheduled",
+  "completed",
+])
+
+/** Meta sheet `lead_status=CREATED` is not a calling-queue status. */
+export function isMetaCreatedLeadStatus(value: unknown): boolean {
+  const s = String(value ?? "").trim().toUpperCase()
+  return !s || s === "CREATED"
+}
+
+/**
+ * Calling Data / queue status. Never keep Meta CREATED as `status` or the
+ * dealer portal hides the lead (Start Call only treats assigned/queued).
+ */
+export function normalizeCallingLeadWorkflowStatus(
+  source: Record<string, unknown> | null | undefined,
+): "queued" | "assigned" | "in_progress" | "rescheduled" | "completed" {
+  const assigned = Boolean(resolveCallingAssigneeId(source))
+  const workflow = String(source?.status || source?.assignmentStatus || source?.assignment_status || "")
+    .trim()
+    .toLowerCase()
+  const meta = String(
+    source?.sheetLeadStatus ||
+      source?.sheet_lead_status ||
+      source?.leadStatus ||
+      source?.lead_status ||
+      "",
+  )
+    .trim()
+    .toLowerCase()
+
+  if (workflow === "in_progress") return "in_progress"
+  if (workflow === "rescheduled") return "rescheduled"
+  if (workflow === "completed" || workflow === "done" || workflow === "closed") return "completed"
+  if (workflow === "assigned") return "assigned"
+  if (workflow === "queued" || workflow === "pending" || workflow === "open") {
+    return assigned ? "assigned" : "queued"
+  }
+  if (!workflow || workflow === "created" || workflow === meta) {
+    return assigned ? "assigned" : "queued"
+  }
+  if (CALLING_WORKFLOW_STATUSES.has(workflow)) {
+    return workflow as "queued" | "assigned" | "in_progress" | "rescheduled" | "completed"
+  }
+  if (isMetaCreatedLeadStatus(meta) || isMetaCreatedLeadStatus(workflow)) {
+    return assigned ? "assigned" : "queued"
+  }
+  return assigned ? "assigned" : "queued"
+}
+
 export function isLeadNotAssignedToDealerError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
   const apiErr = error as { code?: string; message?: string; details?: Array<{ message?: string }> }

@@ -51,7 +51,7 @@
  *   - reading lead.customer.name when customer is null
  */
 
-const OPEN_STATUSES = new Set(["assigned", "in_progress", "queued", "pending", "open"])
+const OPEN_STATUSES = new Set(["assigned", "in_progress", "queued", "pending", "open", "created"])
 const DONE_STATUSES = new Set(["completed", "done", "closed", "complete"])
 
 function isUnassignedAssignee(value) {
@@ -70,7 +70,27 @@ function serializeLead(row) {
     address: row.address || "",
     city: row.city || "",
     state: row.state || "",
-    status: row.status || "queued",
+    status: (() => {
+      const raw = String(row.status || "queued").trim().toLowerCase()
+      if (raw === "created") {
+        return isUnassignedAssignee(row.assigned_dealer_id) ? "queued" : "assigned"
+      }
+      return row.status || "queued"
+    })(),
+    leadStatus: row.lead_status || row.leadStatus || null,
+    lead_status: row.lead_status || row.leadStatus || null,
+    sheetLeadStatus: row.lead_status || row.leadStatus || row.sheetLeadStatus || null,
+    sheet_lead_status: row.lead_status || row.leadStatus || row.sheet_lead_status || null,
+    sourceType: row.source_type || (row.sheet_source_id ? "google_sheet" : null),
+    source_type: row.source_type || (row.sheet_source_id ? "google_sheet" : null),
+    sheetSourceId: row.sheet_source_id || row.sheetSourceId || null,
+    sheet_source_id: row.sheet_source_id || row.sheetSourceId || null,
+    email: row.email || null,
+    customerNote: row.customer_note || row.customerNote || null,
+    formAnswers: row.form_answers || row.formAnswers || [],
+    form_answers: row.form_answers || row.formAnswers || [],
+    platform: row.platform || null,
+    campaignName: row.campaign_name || row.campaignName || null,
     assignedDealerId: isUnassignedAssignee(row.assigned_dealer_id) ? null : row.assigned_dealer_id,
     assignedDealerName: row.assigned_dealer_name || null,
     uploadBatchId: row.upload_id || row.uploadBatchId || null,
@@ -93,7 +113,8 @@ async function findOldestUnassignedForDealer(db, dealerId) {
   // SELECT l.*
   // FROM hr_leads l
   // JOIN hr_lead_uploads u ON u.id = l.upload_id
-  // WHERE LOWER(l.status) NOT IN ('completed','done','closed','complete')
+  // WHERE LOWER(l.status) NOT IN ('completed','done','closed')
+  //   -- include Meta leftover status=created; never treat CREATED as closed
   //   AND (l.assigned_dealer_id IS NULL OR TRIM(l.assigned_dealer_id) = ''
   //        OR LOWER(TRIM(l.assigned_dealer_id)) IN ('unassigned','null','none','-','na','n/a','pool','open'))
   //   AND (
@@ -125,7 +146,7 @@ async function findOpenAssignedToDealer(db, dealerId) {
   //
   // SELECT * FROM hr_leads
   // WHERE assigned_dealer_id = dealerId
-  //   AND LOWER(status) IN ('assigned','in_progress','queued','pending')
+  //   AND LOWER(status) IN ('assigned','in_progress','queued','pending','created')
   // ORDER BY
   //   CASE WHEN LOWER(status) = 'in_progress' THEN 0 ELSE 1 END,
   //   CASE
@@ -149,7 +170,7 @@ async function claimLeadForDealer(db, lead, dealerId, dealerName) {
   //   assigned_dealer_id = dealerId,
   //   assigned_dealer_name = dealerName,
   //   assigned_at = NOW(),
-  //   status = CASE WHEN status IN ('queued','pending') THEN 'assigned' ELSE status END
+  //   status = CASE WHEN status IN ('queued','pending','created','open') THEN 'assigned' ELSE status END
   // WHERE id = lead.id
   //   AND (assigned_dealer_id IS NULL OR unassigned OR assigned_dealer_id = dealerId)
   // RETURNING *;
@@ -273,6 +294,8 @@ export async function getCallingQueueNext(req, res, { db, getDealerFromJwt }) {
  * 5. Complete call → nextLead returned until pool drains (Unassigned/Assigned → 0)
  * 6. POST /hr/leads/uploads/:id/assign-unassigned → Unassigned badge 0 for that upload
  * 7. Upload with assignmentMode=round_robin_all → queuedAtUpload 0
+ * 8. Sheet lead_status=CREATED assigned to dealer → /current returns status=assigned
+ *    (not CREATED) and lead_status=CREATED. Dealer Calling Data shows Start Call.
  */
 
 export default {

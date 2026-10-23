@@ -21,12 +21,13 @@ import {
 } from "@/components/ui/select"
 import {
   ClipboardList,
-  Landmark,
   Loader2,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
+  Save,
+  Share2,
   Trash2,
 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
@@ -42,11 +43,16 @@ import {
 } from "@/lib/admin-subvendors"
 import {
   fetchOfficeOutsideRecordsFromApi,
+  isOfficeOutsideOnAccounts,
+  isOfficeOutsideOnVendorOutside,
   listOfficeOutsidePending,
   listOfficeOutsideSentToAccounts,
   retrieveOfficeOutsideFromAccountsApi,
+  sendOfficeOutsideToAccountsApi,
   OFFICE_OUTSIDE_FILE_TYPES,
+  officeOutsideAmountsToSave,
   officeOutsideFileTypeLabel,
+  officeOutsideLoanCashAmounts,
   officeOutsideSubtotalAmount,
   pickOfficeOutsideRecordFromApi,
   removeOfficeOutsideRecordFromList,
@@ -57,7 +63,10 @@ import {
 import { OfficeOutsideQuotationForm } from "@/components/office-outside-quotation-form"
 import { OfficeOutsideSlipDialog } from "@/components/office-outside-slip-dialog"
 import { buildSpecRows } from "@/lib/quotation-proposal-document"
+import { parseLedgerAmountInput } from "@/lib/admin-subvendor-ledger"
 import { cn } from "@/lib/utils"
+
+type AmountDraft = { amount: string; loanAmount: string }
 
 const CREATE_NEW_VALUE = "__create_new_outside_vendor__"
 
@@ -94,6 +103,8 @@ export function OfficeOutsideAdminPanel({
   const [sendingId, setSendingId] = useState<string | null>(null)
   const [revertingId, setRevertingId] = useState<string | null>(null)
   const [mutatingId, setMutatingId] = useState<string | null>(null)
+  const [amountDrafts, setAmountDrafts] = useState<Record<string, AmountDraft>>({})
+  const [savingAmountsId, setSavingAmountsId] = useState<string | null>(null)
 
   const [slipNotes, setSlipNotes] = useState("")
   const [newVendorName, setNewVendorName] = useState("")
@@ -127,7 +138,7 @@ export function OfficeOutsideAdminPanel({
   const refreshRecords = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setLoading(true)
     try {
-      const remote = await fetchOfficeOutsideRecordsFromApi()
+      const remote = await fetchOfficeOutsideRecordsFromApi({ status: "all" })
       setRecords(remote)
       onCountChange?.(remote.length)
     } catch (error) {
@@ -178,8 +189,8 @@ export function OfficeOutsideAdminPanel({
   const counts = useMemo(() => {
     return {
       all: records.length,
-      pending: records.filter((r) => !r.sentToAccountsAt).length,
-      sent: records.filter((r) => Boolean(r.sentToAccountsAt)).length,
+      pending: listOfficeOutsidePending(records).length,
+      sent: listOfficeOutsideSentToAccounts(records).length,
     }
   }, [records])
 
@@ -258,6 +269,93 @@ export function OfficeOutsideAdminPanel({
     }
   }
 
+  const amountDraftFor = (row: OfficeOutsideRecord): AmountDraft => {
+    const saved = amountDrafts[row.id]
+    if (saved) return saved
+    const loanCash = officeOutsideLoanCashAmounts(row)
+    const amount = officeOutsideSubtotalAmount(row)
+    return {
+      amount: amount > 0 ? String(amount) : "",
+      loanAmount: loanCash.loanAmount > 0 ? String(loanCash.loanAmount) : "",
+    }
+  }
+
+  const setAmountDraftField = (row: OfficeOutsideRecord, field: keyof AmountDraft, value: string) => {
+    const current = amountDraftFor(row)
+    setAmountDrafts((prev) => ({ ...prev, [row.id]: { ...current, [field]: value } }))
+  }
+
+  const saveRowAmounts = async (row: OfficeOutsideRecord) => {
+    const draft = amountDraftFor(row)
+    const parsed = officeOutsideAmountsToSave(
+      row,
+      parseLedgerAmountInput(draft.amount),
+      parseLedgerAmountInput(draft.loanAmount),
+    )
+    if (parsed.subtotal <= 0) {
+      toast({
+        title: "Amount required",
+        description: "Enter the quotation amount, then Save.",
+        variant: "destructive",
+      })
+      return
+    }
+    setSavingAmountsId(row.id)
+    try {
+      const products = {
+        ...(row.products || {}),
+        systemPrice: parsed.subtotal,
+        officeOutsideLoanAmount: parsed.loanAmount,
+        officeOutsideCashAmount: parsed.cashAmount,
+      }
+      const res = await api.admin.officeOutside.update(row.id, {
+        subtotal: parsed.subtotal,
+        amount: parsed.amount,
+        loanAmount: parsed.loanAmount,
+        cashAmount: parsed.cashAmount,
+        products,
+      })
+      const remote = pickOfficeOutsideRecordFromApi(res)
+      await api.admin.officeOutside.ledger
+        .update(row.id, {
+          proposal: parsed.subtotal,
+          loanAmount: parsed.loanAmount,
+          cashAmount: parsed.cashAmount,
+        })
+        .catch(() => null)
+      const next: OfficeOutsideRecord = {
+        ...(remote || row),
+        subtotal: parsed.subtotal,
+        amount: parsed.amount,
+        loanAmount: parsed.loanAmount,
+        cashAmount: parsed.cashAmount,
+        products: products || remote?.products || row.products,
+      }
+      setRecords((prev) => upsertOfficeOutsideRecordInList(prev, next))
+      setAmountDrafts((prev) => ({
+        ...prev,
+        [row.id]: {
+          amount: String(parsed.subtotal),
+          loanAmount: parsed.loanAmount > 0 ? String(parsed.loanAmount) : "",
+        },
+      }))
+      toast({
+        title: "Amount saved",
+        description: `${row.customerName}: ${formatInr(parsed.subtotal)}${
+          parsed.loanAmount > 0 ? ` · Loan ${formatInr(parsed.loanAmount)}` : ""
+        }`,
+      })
+    } catch (error) {
+      toast({
+        title: "Could not save amount",
+        description: apiErrorToUserMessage(error),
+        variant: "destructive",
+      })
+    } finally {
+      setSavingAmountsId(null)
+    }
+  }
+
   const createVendor = async () => {
     const name = newVendorName.trim()
     if (!name) {
@@ -332,22 +430,56 @@ export function OfficeOutsideAdminPanel({
   }
 
   const revertFromAccounts = async (row: OfficeOutsideRecord) => {
-    if (!window.confirm(`Revert ${row.customerName} from Accounts?\n\nSend to Accounts will be enabled again on All Outside.`)) {
+    const onAccounts = isOfficeOutsideOnAccounts(row)
+    if (
+      !window.confirm(
+        onAccounts
+          ? `Revert ${row.customerName} from Accounts?\n\nIt returns to Pending on All Outside.`
+          : `Revert ${row.customerName}?\n\nSend to Accounts will be enabled again.`,
+      )
+    ) {
       return
     }
     setRevertingId(row.id)
     try {
-      const remote = await retrieveOfficeOutsideFromAccountsApi(row.id)
-      setRecords((prev) =>
-        upsertOfficeOutsideRecordInList(prev, {
-          ...(remote || row),
-          sentToAccountsAt: undefined,
-        }),
-      )
-      toast({
-        title: "Reverted from Accounts",
-        description: `${row.customerName} is pending on All Outside. Send to Accounts is enabled.`,
-      })
+      if (onAccounts) {
+        const remote = await retrieveOfficeOutsideFromAccountsApi(row.id, row)
+        setRecords((prev) =>
+          upsertOfficeOutsideRecordInList(prev, {
+            ...(remote || row),
+            sentToAccountsAt: undefined,
+            sentToOutsideAt: undefined,
+          }),
+        )
+        toast({
+          title: "Reverted from Accounts",
+          description: `${row.customerName} is pending on All Outside. Send to Accounts is enabled.`,
+        })
+      } else {
+        const res = await api.admin.officeOutside.update(row.id, {
+          sentToOutsideAt: null,
+          sent_to_outside_at: null,
+          sentToAccountsAt: null,
+          sent_to_accounts_at: null,
+          products: {
+            ...(row.products || {}),
+            officeOutsideSentToOutsideAt: null,
+            officeOutsideSentToAccountsAt: null,
+          },
+        })
+        const remote = pickOfficeOutsideRecordFromApi(res)
+        setRecords((prev) =>
+          upsertOfficeOutsideRecordInList(prev, {
+            ...(remote || row),
+            sentToOutsideAt: undefined,
+            sentToAccountsAt: undefined,
+          }),
+        )
+        toast({
+          title: "Reverted",
+          description: `${row.customerName} is pending on All Outside. Send to Accounts is enabled.`,
+        })
+      }
     } catch (error) {
       toast({
         title: "Could not revert",
@@ -371,20 +503,18 @@ export function OfficeOutsideAdminPanel({
     }
     setSendingId(current.id)
     try {
-      const res = await api.admin.officeOutside.sendToAccounts(current.id)
-      const remote = pickOfficeOutsideRecordFromApi(res)
-      const sentAt = remote?.sentToAccountsAt || new Date().toISOString()
+      const remote = await sendOfficeOutsideToAccountsApi(current)
+      const loanCash = officeOutsideLoanCashAmounts(remote)
       setRecords((prev) =>
         upsertOfficeOutsideRecordInList(prev, {
-          ...(remote || current),
-          outsideVendorId: remote?.outsideVendorId || current.outsideVendorId,
-          outsideVendorName: remote?.outsideVendorName || current.outsideVendorName,
-          sentToAccountsAt: sentAt,
+          ...remote,
+          loanAmount: loanCash.loanAmount,
+          cashAmount: loanCash.cashAmount,
         }),
       )
       toast({
         title: "Sent to Accounts",
-        description: `${current.customerName} is now in Accounts → Vendor Outside.`,
+        description: `${current.customerName} is on Sent to Accounts and the Accounts list. Send to Outside from Accounts.`,
       })
     } catch (error) {
       toast({
@@ -485,7 +615,7 @@ export function OfficeOutsideAdminPanel({
           <h3 className="text-sm font-semibold text-violet-950">Office Outside</h3>
           <p className="text-xs text-muted-foreground">
             Separate from All quotations. Saved in the database in real time — one quotation per
-            customer. Pick an outside vendor, then Send to Accounts.
+            customer. Pick an outside vendor, then Send to Accounts. Accounts can then Send to Outside.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -509,7 +639,7 @@ export function OfficeOutsideAdminPanel({
         {(
           [
             { key: "all" as const, label: `All (${counts.all})` },
-            { key: "pending" as const, label: `Pending Accounts (${counts.pending})` },
+            { key: "pending" as const, label: `Pending (${counts.pending})` },
             { key: "sent" as const, label: `Sent to Accounts (${counts.sent})` },
           ] as const
         ).map((tab) => (
@@ -550,7 +680,11 @@ export function OfficeOutsideAdminPanel({
       ) : (
         <div className="space-y-2 max-h-[min(70vh,820px)] overflow-auto pr-1">
           {filtered.map((row) => {
-            const sent = Boolean(row.sentToAccountsAt)
+            const onAccounts = isOfficeOutsideOnAccounts(row)
+            const onOutside = isOfficeOutsideOnVendorOutside(row)
+            const loanCash = officeOutsideLoanCashAmounts(row)
+            const draft = amountDraftFor(row)
+            const showLoanField = row.fileType !== "cash"
             return (
               <div
                 key={row.id}
@@ -565,6 +699,10 @@ export function OfficeOutsideAdminPanel({
                     </p>
                     <p className="text-xs text-violet-900 mt-0.5">
                       {formatInr(officeOutsideSubtotalAmount(row))}
+                      {loanCash.loanAmount > 0 ? ` · Loan ${formatInr(loanCash.loanAmount)}` : ""}
+                      {loanCash.cashAmount > 0 && row.fileType !== "loan"
+                        ? ` · Cash ${formatInr(loanCash.cashAmount)}`
+                        : ""}
                       {row.products?.systemType
                         ? ` · ${String(row.products.systemType).toUpperCase()}${
                             row.products.inverterSize ? ` ${row.products.inverterSize}` : ""
@@ -573,15 +711,20 @@ export function OfficeOutsideAdminPanel({
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    {sent ? (
+                    {onAccounts ? (
                       <Badge variant="outline" className="h-5 text-[10px] border-emerald-200 bg-emerald-50 text-emerald-800">
                         In Accounts
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="h-5 text-[10px] border-amber-200 bg-amber-50 text-amber-900">
-                        Pending Accounts
+                        Pending
                       </Badge>
                     )}
+                    {onOutside ? (
+                      <Badge variant="outline" className="h-5 text-[10px] border-violet-200 bg-violet-50 text-violet-800">
+                        Sent to Outside
+                      </Badge>
+                    ) : null}
                     {officeOutsideFileTypeLabel(row.fileType) ? (
                       <Badge variant="outline" className="h-5 text-[10px] border-violet-200 bg-violet-50 text-violet-800">
                         {officeOutsideFileTypeLabel(row.fileType)}
@@ -633,7 +776,7 @@ export function OfficeOutsideAdminPanel({
                     </SelectContent>
                   </Select>
                   <div className="flex flex-wrap gap-1.5">
-                    {sent ? (
+                    {onAccounts ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -641,7 +784,7 @@ export function OfficeOutsideAdminPanel({
                         className="h-8 text-[11px] gap-1 border-amber-800/40 text-amber-950"
                         disabled={revertingId === row.id}
                         onClick={() => void revertFromAccounts(row)}
-                        title="Revert from Accounts — Send to Accounts will be enabled again"
+                        title="Revert from Accounts — file returns to Pending"
                       >
                         {revertingId === row.id ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -654,14 +797,14 @@ export function OfficeOutsideAdminPanel({
                       <Button
                         type="button"
                         size="sm"
-                        className="h-8 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white"
+                        className="h-8 text-[11px] gap-1 bg-violet-600 hover:bg-violet-700 text-white"
                         disabled={sendingId === row.id}
                         onClick={() => void sendToAccounts(row)}
                       >
                         {sendingId === row.id ? (
                           <Loader2 className="w-3.5 h-3.5 animate-spin" />
                         ) : (
-                          <Landmark className="w-3.5 h-3.5" />
+                          <Share2 className="w-3.5 h-3.5" />
                         )}
                         Send to Accounts
                       </Button>
@@ -686,6 +829,54 @@ export function OfficeOutsideAdminPanel({
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
                   </div>
+                </div>
+
+                <div
+                  className={cn(
+                    "grid gap-2 items-end",
+                    showLoanField
+                      ? "grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+                      : "grid-cols-[minmax(0,1fr)_auto]",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Amount</Label>
+                    <Input
+                      value={draft.amount}
+                      onChange={(e) => setAmountDraftField(row, "amount", e.target.value)}
+                      inputMode="numeric"
+                      placeholder="0"
+                      className="h-8 text-xs tabular-nums"
+                    />
+                  </div>
+                  {showLoanField ? (
+                    <div className="min-w-0">
+                      <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Loan amount
+                      </Label>
+                      <Input
+                        value={draft.loanAmount}
+                        onChange={(e) => setAmountDraftField(row, "loanAmount", e.target.value)}
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="h-8 text-xs tabular-nums"
+                      />
+                    </div>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 text-[11px] gap-1 bg-violet-600 hover:bg-violet-700 text-white col-span-2 sm:col-span-1"
+                    disabled={savingAmountsId === row.id}
+                    onClick={() => void saveRowAmounts(row)}
+                  >
+                    {savingAmountsId === row.id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5" />
+                    )}
+                    Save
+                  </Button>
                 </div>
               </div>
             )
