@@ -4,6 +4,11 @@
  * BACKEND — Vendor leaser bills (Account Management → Vendor Outside)
  * =============================================================================
  *
+ * CHANGELOG Oct 24 2026 — Profit uses Accounts paid amount
+ *   Profit vendor on Vendor Outside is paid amount − bill − charges − GST.
+ *   Paid amount comes from OO installments (BACKEND_OFFICE_OUTSIDE.ts), not from this table.
+ *   Still persist bills on GET/PUT /admin/subvendors/:id/bills.
+ *
  * CHANGELOG Oct 23 2026 — APPLY THIS
  *   Vendor Outside → Vendor leaser → Manage → Bills is no longer localStorage-only.
  *   Persist each bill row: date, basic, payment mode, customer, remark, uploaded file.
@@ -38,8 +43,8 @@
  *   Bill              = SUM(bills.basicAmount) for that vendor
  *   Charges           = file charges + others (Accounts ledger)
  *   GST               = (subtotal − bill) × 9.8%   (FE; do not persist GST)
- *   Profit vendor     = loanAmount − bill − charges − GST
- *                       (if loan is 0, use total amount)
+ *   Paid amount       = SUM(Accounts paid / installment paidAmounts) for that vendor
+ *   Profit vendor     = paid amount − bill − charges − GST
  *   Total payment     = SUM(leaser payment amounts)
  *   Total remaining   = Profit vendor − Total payment
  *

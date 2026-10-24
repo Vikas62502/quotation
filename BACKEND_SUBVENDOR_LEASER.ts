@@ -16,6 +16,18 @@
  * Account-management JWT may PUT leaser for both office_inside and office_outside vendors.
  * 403 for dealer / visitor unless they have admin or accounts access.
  *
+ * CHANGELOG Oct 24 2026 — Paid amount on Vendor Office + Vendor Outside  ← APPLY THIS
+ *   No new leaser field. Paid amount is FE-derived from Accounts installments:
+ *     office_inside  → SUM(quotation installment paidAmount) for that dealer
+ *     office_outside → SUM(office_outside_records installments.paidAmount)
+ *   GET quotations (approved) must echo paidAmount on each phase.
+ *   GET /admin/office-outside must echo installments + paidAmount (see BACKEND_OFFICE_OUTSIDE.ts).
+ *   PUT /admin/subvendors/:id/leaser still only stores leaser payment rows.
+ *   body.leaserRemaining is FE:
+ *     office_inside  = profit vendor − leaser_paid
+ *     office_outside = (paid amount − bill − charges − GST) − leaser_paid
+ *   Persist leaserRemaining as sent. Do not recompute from loan amount.
+ *
  * CHANGELOG Oct 23 2026 — Vendor leaser bills are a separate route
  *   Do NOT put bill rows on PUT /admin/subvendors/:id/leaser.
  *   Bills (date, basic, payment mode, customer, upload) live on:
@@ -37,6 +49,7 @@
  *   Total file        = count of that dealer's current approved customers
  *   kW                = sum of those customers' system kW
  *   Subtotal          = sum of file subtotals
+ *   Paid amount       = SUM of Accounts Paid (installment paidAmounts) for that dealer
  *   Cost of site vendor = sum of office-inside ledger cost of site (PI + file charges + GST + others)
  *                       If PI is 0 for a file, that file's cost of site vendor is 0.
  *   Profit vendor     = sum of (file subtotal − cost of site vendor) × (profitRatio / 100)
@@ -48,11 +61,10 @@
  *
  * Per office_outside vendor (Vendor Outside — same leaser table / routes):
  *   Customers in the dropdown = sent Office Outside records for that vendor (ids OO-*)
- *   Profit is COMPLETE (ignore profit_ratio):
- *     sum of (file subtotal − (PI + fileCharges + GST + others))
- *     If PI is 0, that file's cost of site vendor and profit vendor are 0.
- *   Total remaining stored on PUT = complete profit − leaser_paid
- *   Do NOT compute remaining from file charges or profit_ratio for this kind.
+ *   Paid amount = SUM of Accounts Paid (installment paidAmounts) for that vendor's files
+ *   Profit vendor (FE) = paid amount − bill − charges − GST  (ignore profit_ratio)
+ *   Total remaining stored on PUT = that profit − leaser_paid
+ *   Do NOT compute remaining from loan amount, file charges, or profit_ratio for this kind.
  *
  * Download Mini / Full statement is **client CSV**. No download endpoint.
  *

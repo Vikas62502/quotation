@@ -4,6 +4,27 @@
  * BACKEND REFERENCE — Office Outside records (not All quotations)
  * =============================================================================
  *
+ * CHANGELOG Oct 24 2026 — Paid amount on Vendor Outside  ← APPLY THIS
+ *   Vendor Outside dealer leaser now shows Paid amount (same number as Accounts Paid)
+ *   and Profit vendor = paid amount − bill − charges − GST.
+ *   Paid amount is NOT a new table. It is SUM(installment.paidAmount) on the OO record.
+ *   APPLY:
+ *     1. GET /admin/office-outside (list AND by id, including ?status=outside and ?status=sent)
+ *        MUST echo installments / paymentPhases with paidAmount on every row.
+ *        Also echo scalar paidAmount / paid_amount = SUM(phases.paidAmount).
+ *        If the list omits installments, Vendor Outside Paid stays ₹0.
+ *     2. PATCH /admin/office-outside/:id/payment-details
+ *        REPLACE installments_json with body.phases / body.installments.
+ *        Persist each phase paidAmount (INR int ≥ 0). Empty [] is valid.
+ *        Also upsert office_outside_ledger.received_amount = SUM(paidAmount)
+ *        and remaining = max(0, subtotal − that sum). Do not wipe other ledger keys.
+ *     3. Do NOT invent a “pay full in 1 installment” row. The SPA hid that button.
+ *        Only persist the phases the Accounts dialog submits.
+ *     4. Bills stay on GET/PUT /admin/subvendors/:id/bills (BACKEND_SUBVENDOR_BILLS.ts).
+ *        Leaser payments stay on PUT /admin/subvendors/:id/leaser.
+ *        leaserRemaining on that PUT is FE: (paid − bill − charges − GST) − leaser_paid.
+ *   No new HTTP route for paid amount.
+ *
  * CHANGELOG Oct 21 2026 — database is the only source of truth
  *   SPA no longer writes officeOutsideRecordsById localStorage.
  *   Lists are GET /admin/office-outside (re-GET after every mutation).
@@ -30,7 +51,7 @@
  *   billFileName + billFileDataUrl / billFileUrl.
  *   Bill sum = SUM(basicAmount). GST / profit stay FE:
  *     GST = (subtotal − bill) × 9.8%
- *     Profit vendor = loan − bill − charges − GST
+ *     Profit vendor = paid amount − bill − charges − GST
  *   Do not fold bills into PUT /admin/subvendors/:id/leaser.
  *
  * CHANGELOG Oct 23 2026 — Vendor Outside loan amount
@@ -176,6 +197,9 @@
  *   - Treat loan_amount / cash_amount 0 as unset; a saved amount > 0 must stick
  *   - Persist Vendor Outside bills on GET/PUT /admin/subvendors/:id/bills
  *     (date, basic, paymentMode, customerIds OO-* or UUID, uploaded file)
+ *   - Echo installments + paidAmount on GET list (status=outside / sent) so Vendor
+ *     Outside Paid amount matches Accounts Paid
+ *   - On payment-details, persist paidAmount and set ledger received_amount to that sum
  *
  * Do not:
  *   - Insert OO rows into quotations
@@ -191,6 +215,8 @@
  *   - Reset loan_amount to 0 because the SPA omitted the key on a partial ledger PATCH
  *   - Ignore PATCH loanAmount on the record (Vendor Outside then stays ₹0)
  *   - Put bill rows on PUT /admin/subvendors/:id/leaser (bills are a separate table)
+ *   - Strip installments from GET list (Vendor Outside Paid amount then stays ₹0)
+ *   - Auto-create a “pay full in 1 installment” phase (SPA removed that button)
  *   - Leave sent_to_accounts_at or sent_to_outside_at set after a 200 retrieve
  *   - Set sent_to_outside_at inside send-to-accounts (that dumps the file onto Vendor Outside)
  *   - Clear sent_to_accounts_at inside send-to-outside (Accounts list would go empty)
@@ -543,8 +569,13 @@
  * PATCH /admin/office-outside/:id/payment-details
  *   Same body as quotations payment-details (phases / installments / paymentStatus / paymentMode).
  *   Persist installments_json + payment_status + payment_mode on the OO record.
+ *   REPLACE the array (do not merge). Persist paidAmount on every phase.
+ *   Then set office_outside_ledger.received_amount = SUM(paidAmount) and
+ *   remaining = max(0, subtotal − received_amount). Keep other ledger keys.
  *   Do NOT call quotations installment replace. Do NOT require a quotations.id.
- *   Echo installments on GET record as installments + paymentPhases.
+ *   Do NOT auto-insert a full-paid single installment.
+ *   Echo installments on GET record AND GET list as installments + paymentPhases
+ *   plus scalar paidAmount / paid_amount.
  *
  * PATCH /admin/office-outside/:id/slip
  * {
@@ -676,6 +707,14 @@ function normalizeFileType(raw) {
   return null
 }
 
+function sumInstallmentPaid(raw) {
+  if (!Array.isArray(raw)) return 0
+  return raw.reduce((sum, phase) => {
+    if (!phase || typeof phase !== "object") return sum
+    return sum + roundInr(phase.paidAmount ?? phase.paid_amount ?? phase.amountPaid ?? phase.amount_paid)
+  }, 0)
+}
+
 function publicOfficeOutside(row, vendor) {
   const customer = row.customerJson || row.customer_json || row.customer || {}
   const products = row.productsJson || row.products_json || row.products || {}
@@ -683,6 +722,8 @@ function publicOfficeOutside(row, vendor) {
   const amount = subtotal > 0 ? subtotal : roundInr(row.amount)
   const slipUpdated = row.slipUpdatedAt || row.slip_updated_at
   const vendorId = row.outsideVendorId || row.outside_vendor_id || ""
+  const installments = row.installmentsJson || row.installments_json || row.installments || []
+  const paidAmount = sumInstallmentPaid(installments)
   const loanCash = officeOutsideLoanCashAmounts({
     ...row,
     products,
@@ -718,8 +759,10 @@ function publicOfficeOutside(row, vendor) {
       notes: row.slipNotes || row.slip_notes || "",
       updatedAt: slipUpdated || null,
     },
-    installments: row.installmentsJson || row.installments_json || row.installments || [],
-    paymentPhases: row.installmentsJson || row.installments_json || row.paymentPhases || [],
+    installments,
+    paymentPhases: installments,
+    paidAmount,
+    paid_amount: paidAmount,
     paymentStatus: row.paymentStatus || row.payment_status || "pending",
     payment_status: row.paymentStatus || row.payment_status || "pending",
     paymentMode: row.paymentMode || row.payment_mode || row.fileType || row.file_type || null,

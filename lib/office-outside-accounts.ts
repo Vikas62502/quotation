@@ -70,6 +70,8 @@ export type OfficeOutsideRecord = {
   sentToAccountsAt?: string
   requirementSlip?: RequirementSlipData
   installments?: unknown
+  /** SUM of installment paidAmounts (Accounts Paid). Echoed by GET list. */
+  paidAmount?: number
   paymentStatus?: string
   paymentMode?: string
   createdAt: string
@@ -97,6 +99,43 @@ export function officeOutsideSubtotalAmount(row?: OfficeOutsideRecord | null): n
   const systemPrice = Math.round(Number(row.products?.systemPrice) || 0)
   if (systemPrice > 0) return systemPrice
   return Math.round(Number(row.amount) || 0)
+}
+
+/** Same Paid column as Accounts: sum of installment paidAmounts, else ledger received. */
+export function officeOutsidePaidAmount(
+  row?: OfficeOutsideRecord | null,
+  receivedAmount = 0,
+): number {
+  const products = row?.products as Record<string, unknown> | undefined
+  const plan = products?.officeOutsidePaymentPlan || products?.paymentPlan || products?.payment_plan
+  const planPhases =
+    plan && typeof plan === "object" && !Array.isArray(plan)
+      ? (plan as { phases?: unknown }).phases
+      : null
+  const phases = [
+    row?.installments,
+    planPhases,
+    products?.installments,
+    products?.paymentPhases,
+    products?.payment_phases,
+  ].find((value) => Array.isArray(value) && value.length > 0) as unknown[] | undefined
+  if (Array.isArray(phases) && phases.length > 0) {
+    const fromPhases = phases.reduce((sum, phase) => {
+      if (!phase || typeof phase !== "object") return sum
+      const rec = phase as Record<string, unknown>
+      return (
+        sum +
+        Math.max(
+          0,
+          Math.round(Number(rec.paidAmount ?? rec.paid_amount ?? rec.amountPaid ?? rec.amount_paid) || 0),
+        )
+      )
+    }, 0)
+    if (fromPhases > 0) return fromPhases
+  }
+  const fromRecord = Math.max(0, Math.round(Number(row?.paidAmount) || 0))
+  if (fromRecord > 0) return fromRecord
+  return Math.max(0, Math.round(Number(receivedAmount) || 0))
 }
 
 /**
@@ -592,6 +631,12 @@ export function quotationFromOfficeOutsideRecord(row: OfficeOutsideRecord): Quot
     filePaymentType: row.fileType,
     loanAmount: loanCash.loanAmount > 0 ? loanCash.loanAmount : undefined,
     cashAmount: loanCash.cashAmount > 0 ? loanCash.cashAmount : undefined,
+    installments: Array.isArray(row.installments)
+      ? (row.installments as Quotation["installments"])
+      : undefined,
+    paymentPhases: Array.isArray(row.installments)
+      ? (row.installments as Quotation["paymentPhases"])
+      : undefined,
   }
 }
 
@@ -733,6 +778,10 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
           : Array.isArray(row.payment_phases)
             ? row.payment_phases
             : undefined,
+    paidAmount: Math.max(
+      0,
+      Math.round(Number(row.paidAmount ?? row.paid_amount) || 0),
+    ) || undefined,
     paymentStatus: String(row.paymentStatus || row.payment_status || "").trim() || undefined,
     paymentMode: String(row.paymentMode || row.payment_mode || "").trim() || undefined,
     createdAt: String(row.createdAt || row.created_at || new Date().toISOString()),

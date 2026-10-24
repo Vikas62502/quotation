@@ -78,12 +78,14 @@ import {
   isOfficeOutsideOnAccounts,
   officeOutsideFileTypeLabel,
   officeOutsideLoanCashAmounts,
+  officeOutsidePaidAmount,
   officeOutsideSubtotalAmount,
   quotationFromOfficeOutsideRecord,
   sendOfficeOutsideToAccountsFromVendorApi,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
 import { formatPersonName } from "@/lib/name-display"
+import { OfficeOutsideAccountsLedger } from "@/components/office-outside-accounts-ledger"
 import {
   getLedgerAmounts,
   isApprovedQuotation,
@@ -307,6 +309,8 @@ export function AdminSubvendorPanel({
   const [vendorBills, setVendorBills] = useState<SubvendorVendorBill[]>(() => readVendorBills())
   const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>([])
   const [sendingToAccountsId, setSendingToAccountsId] = useState<string | null>(null)
+  const [outsideDetailsOpen, setOutsideDetailsOpen] = useState(false)
+  const [insideDetailsOpen, setInsideDetailsOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -573,6 +577,7 @@ export function AdminSubvendorPanel({
         totalAmount: 0,
         loanAmount: 0,
         cashAmount: 0,
+        paidAmount: 0,
         billSum: 0,
         charges: 0,
         gstAmount: 0,
@@ -611,6 +616,10 @@ export function AdminSubvendorPanel({
       stats[vendor.id].fileAmount += fileCharges
       stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
       stats[vendor.id].subtotal += Math.max(0, Math.round(payment.subtotal || 0))
+      stats[vendor.id].paidAmount += Math.max(
+        0,
+        Math.round(Number(payment.paidAmount || stored.receivedAmount) || 0),
+      )
       stats[vendor.id].costOfSite += costOfSite
       stats[vendor.id].profitVendor += officeInsideProfitShare(
         payment.subtotal,
@@ -632,6 +641,7 @@ export function AdminSubvendorPanel({
         totalAmount: 0,
         loanAmount: 0,
         cashAmount: 0,
+        paidAmount: 0,
         billSum: 0,
         charges: 0,
         gstAmount: 0,
@@ -655,6 +665,7 @@ export function AdminSubvendorPanel({
       stats[vendor.id].totalAmount += totalAmount
       stats[vendor.id].loanAmount += ledgerRow.loanAmount
       stats[vendor.id].cashAmount += ledgerRow.cashAmount
+      stats[vendor.id].paidAmount += officeOutsidePaidAmount(record, ledgerRow.receivedAmount)
       stats[vendor.id].charges += charges
       stats[vendor.id].costOfSite += ledgerRow.costOfSite
     }
@@ -663,8 +674,7 @@ export function AdminSubvendorPanel({
       item.billSum = vendorBillSum(vendorBills, vendor.id)
       item.gstAmount = officeOutsideLeaserGst(item.subtotal, item.billSum)
       item.profitVendor = officeOutsideLeaserProfit({
-        loanAmount: item.loanAmount,
-        totalAmount: item.totalAmount,
+        paidAmount: item.paidAmount,
         billAmount: item.billSum,
         charges: item.charges,
         gst: item.gstAmount,
@@ -843,12 +853,16 @@ export function AdminSubvendorPanel({
   )
 
   const openCreate = () => {
+    setOutsideDetailsOpen(false)
+    setInsideDetailsOpen(false)
     setEditingId(null)
     setForm(emptyForm)
     setDialogOpen(true)
   }
 
   const openEdit = (row: AdminSubvendorRecord) => {
+    setOutsideDetailsOpen(false)
+    setInsideDetailsOpen(false)
     setEditingId(row.id)
     setForm({
       dealerId: row.dealerId,
@@ -1009,8 +1023,7 @@ export function AdminSubvendorPanel({
     const remainingBase =
       vendor?.kind === "office_outside"
         ? officeOutsideLeaserProfit({
-            loanAmount: stats?.loanAmount ?? 0,
-            totalAmount: stats?.totalAmount ?? 0,
+            paidAmount: stats?.paidAmount ?? 0,
             billAmount: vendorBillSum(readVendorBills(), vendorId),
             charges: stats?.charges ?? 0,
             gst: officeOutsideLeaserGst(stats?.subtotal ?? 0, vendorBillSum(readVendorBills(), vendorId)),
@@ -1093,7 +1106,7 @@ export function AdminSubvendorPanel({
     }
   }
 
-  const outsideVendorBody = (
+  const outsideDetails = (
     <>
       <VendorToolbar
         search={search}
@@ -1188,6 +1201,33 @@ export function AdminSubvendorPanel({
           No Office Outside files yet. On Accounts, tap Send to Outside.
         </div>
       )}
+      <OfficeOutsideAccountsLedger />
+    </>
+  )
+
+  const outsideVendorBody = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setOutsideDetailsOpen(true)}>
+          <Truck className="w-3.5 h-3.5 mr-1.5" />
+          Vendors & files
+          <span className="ml-1.5 text-muted-foreground tabular-nums">
+            {outsideRows.length} vendor{outsideRows.length === 1 ? "" : "s"} · {outsideRecords.length} file
+            {outsideRecords.length === 1 ? "" : "s"}
+          </span>
+        </Button>
+        {hideSearch ? null : (
+          <div className="relative min-w-[12rem] flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search Vendor Outside..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-9"
+            />
+          </div>
+        )}
+      </div>
       {filtered.length > 0 ? (
         <DealerLeaserManager
           vendors={filtered}
@@ -1202,11 +1242,26 @@ export function AdminSubvendorPanel({
           heading="Vendor leaser"
           variant="office_outside"
         />
-      ) : null}
+      ) : (
+        <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
+          No vendors yet. Open <span className="font-medium text-foreground">Vendors & files</span> to register one.
+        </div>
+      )}
+      <Dialog open={outsideDetailsOpen} onOpenChange={setOutsideDetailsOpen}>
+        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Vendors & files</DialogTitle>
+            <DialogDescription>
+              Register vendors and view Office Outside files sent from Accounts.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">{outsideDetails}</div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 
-  const insideVendorBody = (
+  const insideDetails = (
     <>
       <VendorToolbar
         search={search}
@@ -1237,6 +1292,31 @@ export function AdminSubvendorPanel({
         showStats={false}
         profitById={vendorProfitById}
       />
+    </>
+  )
+
+  const insideVendorBody = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setInsideDetailsOpen(true)}>
+          <Building2 className="w-3.5 h-3.5 mr-1.5" />
+          Dealers
+          <span className="ml-1.5 text-muted-foreground tabular-nums">
+            {insideRows.length} dealer{insideRows.length === 1 ? "" : "s"}
+          </span>
+        </Button>
+        {hideSearch ? null : (
+          <div className="relative min-w-[12rem] flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input
+              placeholder="Search Vendor Office..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-9"
+            />
+          </div>
+        )}
+      </div>
       {filtered.length > 0 ? (
         <DealerLeaserManager
           vendors={filtered}
@@ -1247,7 +1327,20 @@ export function AdminSubvendorPanel({
           quotations={quotations}
           onSave={saveLeaserPayments}
         />
-      ) : null}
+      ) : (
+        <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
+          No dealers yet. Open <span className="font-medium text-foreground">Dealers</span> to select one.
+        </div>
+      )}
+      <Dialog open={insideDetailsOpen} onOpenChange={setInsideDetailsOpen}>
+        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Dealers</DialogTitle>
+            <DialogDescription>Select dealers for Vendor Office. Dealer leaser stays on the main list.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">{insideDetails}</div>
+        </DialogContent>
+      </Dialog>
     </>
   )
 
@@ -1525,6 +1618,7 @@ type VendorLeaserStats = {
   totalAmount: number
   loanAmount: number
   cashAmount: number
+  paidAmount: number
   billSum: number
   charges: number
   gstAmount: number
@@ -1543,6 +1637,7 @@ const emptyVendorLeaserStats: VendorLeaserStats = {
   totalAmount: 0,
   loanAmount: 0,
   cashAmount: 0,
+  paidAmount: 0,
   billSum: 0,
   charges: 0,
   gstAmount: 0,
@@ -1861,6 +1956,7 @@ function DealerLeaserManager({
 }) {
   const { toast } = useToast()
   const [manageVendorId, setManageVendorId] = useState<string | null>(null)
+  const [manageTab, setManageTab] = useState<"bills" | "payments">("payments")
   const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
   const [billDrafts, setBillDrafts] = useState<VendorBillDraft[]>([])
   const [saving, setSaving] = useState(false)
@@ -1969,11 +2065,15 @@ function DealerLeaserManager({
             ["Total amount", manageStats.totalAmount],
             ["Loan amount", manageStats.loanAmount],
             ["Cash amount", manageStats.cashAmount],
+            ["Paid amount", manageStats.paidAmount],
             ["Bill", manageStats.billSum],
             ["Charges", manageStats.charges],
             ["GST", manageStats.gstAmount],
           ]
-        : [["Cost of site vendor", manageStats.costOfSite]]),
+        : [
+            ["Paid amount", manageStats.paidAmount],
+            ["Cost of site vendor", manageStats.costOfSite],
+          ]),
       ["Profit vendor", manageStats.profitVendor],
       ["Total payment", manageStats.currentBalance],
       ["Total remaining", manageStats.totalRemaining],
@@ -2048,6 +2148,7 @@ function DealerLeaserManager({
         customerIds: remapLeaserCustomerIds(row.customerIds.slice(), vendorFiles, fallbackCustomerId),
       }))
     setManageVendorId(vendorId)
+    setManageTab("payments")
     setDrafts(existing.length ? [...existing].reverse() : [emptyLeaserDraft(1, fallbackCustomerId)])
     const existingBills = bills
       .filter((row) => row.vendorId === vendorId)
@@ -2069,6 +2170,7 @@ function DealerLeaserManager({
 
   const closeManage = () => {
     setManageVendorId(null)
+    setManageTab("payments")
     setDrafts([])
     setBillDrafts([])
   }
@@ -2166,14 +2268,92 @@ function DealerLeaserManager({
     }
   }
 
+  const paymentRows = (
+    <div className="space-y-2">
+      {drafts.map((draft) => (
+        <div
+          key={draft.key}
+          className="rounded-lg border border-border/60 px-3 py-2.5 grid grid-cols-1 md:grid-cols-[auto_8.5rem_7.5rem_8.5rem_minmax(8rem,1fr)_minmax(14rem,1.5fr)_auto] gap-2 items-end"
+        >
+          <div>
+            <Label className="opacity-0 select-none">Payment</Label>
+            <p className="h-9 flex items-center text-xs font-semibold text-muted-foreground whitespace-nowrap">
+              Payment {draft.paymentNumber}
+            </p>
+          </div>
+          <div>
+            <Label>Date</Label>
+            <Input
+              type="date"
+              className="h-9"
+              value={draft.date}
+              onChange={(e) => patchDraft(draft.key, { date: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Amount</Label>
+            <Input
+              inputMode="numeric"
+              className="h-9 tabular-nums"
+              placeholder="0"
+              value={draft.amount}
+              onChange={(e) => patchDraft(draft.key, { amount: e.target.value })}
+            />
+          </div>
+          <div>
+            <Label>Payment type</Label>
+            <Select
+              value={draft.paymentType}
+              onValueChange={(value) => patchDraft(draft.key, { paymentType: value })}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LEASER_PAYMENT_TYPES.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Remark</Label>
+            <Input
+              className="h-9"
+              value={draft.remark}
+              onChange={(e) => patchDraft(draft.key, { remark: e.target.value })}
+            />
+          </div>
+          <LeaserCustomerPicker
+            customers={customers}
+            selectedIds={draft.customerIds}
+            onChange={(customerIds) => patchDraft(draft.key, { customerIds })}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 text-destructive"
+            onClick={() => removePayment(draft.key)}
+          >
+            <Trash2 className="h-4 w-4" />
+            <span className="sr-only">Delete payment</span>
+          </Button>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3 sm:p-4 space-y-3">
       <div>
         <p className="text-sm font-semibold">Dealer leaser</p>
         <p className="text-xs text-muted-foreground mt-0.5">
           {isOutside
-            ? "Subtotal and total amount from Accounts. Add bills (basic). Charges = file + others. GST = (subtotal − bill) × 9.8%. Profit vendor = loan − bill − charges − GST."
-            : "Total file, kW, subtotal, cost of site vendor, profit vendor, payment, and remaining for each office vendor."}
+            ? "Subtotal, total amount, and paid amount from Accounts. Add bills (basic). Charges = file + others. GST = (subtotal − bill) × 9.8%. Profit vendor = paid amount − bill − charges − GST."
+            : "Paid amount from Accounts. Cost of site vendor, profit vendor, payment, and remaining for each office vendor."}
         </p>
       </div>
       <div className="space-y-2">
@@ -2196,12 +2376,11 @@ function DealerLeaserManager({
                 </p>
               </div>
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total file</p>
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File / kW</p>
                 <p className="text-sm font-semibold tabular-nums">{stats.totalFile}</p>
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">kW</p>
-                <p className="text-sm font-semibold tabular-nums">{formatLedgerSystemSize(stats.totalKw)}</p>
+                <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
+                  {formatLedgerSystemSize(stats.totalKw)}
+                </p>
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
@@ -2215,6 +2394,10 @@ function DealerLeaserManager({
                     <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
                       L {formatLedgerInr(stats.loanAmount)} · C {formatLedgerInr(stats.cashAmount)}
                     </p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid amount</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.paidAmount)}</p>
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Bill</p>
@@ -2232,10 +2415,16 @@ function DealerLeaserManager({
                   </div>
                 </>
               ) : (
-              <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
-                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.costOfSite)}</p>
-              </div>
+                <>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid amount</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.paidAmount)}</p>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
+                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.costOfSite)}</p>
+                  </div>
+                </>
               )}
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
@@ -2247,7 +2436,7 @@ function DealerLeaserManager({
                     {formatProfitRatioLabel(vendor.profitRatio)} of profit
                   </p>
                 ) : (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Loan − bill − charges − GST</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Paid − bill − charges − GST</p>
                 )}
               </div>
               <div className="min-w-0">
@@ -2289,7 +2478,9 @@ function DealerLeaserManager({
               <div className="space-y-1">
                 <DialogTitle>{heading}</DialogTitle>
                 <DialogDescription>
-                  Add date, amount, payment type, remark, and customers. Each payment stays in one row.
+                  {isOutside
+                    ? "Bills and payments stay on separate tabs. Save keeps both."
+                    : "Add date, amount, payment type, remark, and customers. Each payment stays in one row."}
                 </DialogDescription>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -2309,7 +2500,7 @@ function DealerLeaserManager({
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-                {isOutside ? (
+                {isOutside && manageTab === "bills" ? (
                   <Button
                     type="button"
                     variant="outline"
@@ -2321,12 +2512,14 @@ function DealerLeaserManager({
                     Add bill
                   </Button>
                 ) : null}
-                <Button type="button" variant="outline" size="sm" className="h-9" onClick={addPayment}>
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  Add payment
-                </Button>
+                {!isOutside || manageTab === "payments" ? (
+                  <Button type="button" variant="outline" size="sm" className="h-9" onClick={addPayment}>
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    Add payment
+                  </Button>
+                ) : null}
                 <Button size="sm" className="h-9" onClick={() => void saveManage()} disabled={saving}>
-                  {saving ? "Saving..." : "Save payments"}
+                  {saving ? "Saving..." : isOutside ? "Save" : "Save payments"}
                 </Button>
               </div>
             </div>
@@ -2343,12 +2536,9 @@ function DealerLeaserManager({
                 {manageStats ? (
                   <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
                     <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Total file</p>
+                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File / kW</p>
                       <p className="text-sm font-semibold tabular-nums">{manageStats.totalFile}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">kW</p>
-                      <p className="text-sm font-semibold tabular-nums">
+                      <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
                         {formatLedgerSystemSize(manageStats.totalKw)}
                       </p>
                     </div>
@@ -2367,6 +2557,12 @@ function DealerLeaserManager({
                           </p>
                           <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
                             L {formatLedgerInr(manageStats.loanAmount)} · C {formatLedgerInr(manageStats.cashAmount)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.paidAmount)}
                           </p>
                         </div>
                         <div>
@@ -2389,12 +2585,20 @@ function DealerLeaserManager({
                         </div>
                       </>
                     ) : (
-                    <div>
-                      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
-                      <p className="text-sm font-semibold tabular-nums">
-                        {formatLedgerInr(manageStats.costOfSite)}
-                      </p>
-                    </div>
+                      <>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid amount</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.paidAmount)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
+                          <p className="text-sm font-semibold tabular-nums">
+                            {formatLedgerInr(manageStats.costOfSite)}
+                          </p>
+                        </div>
+                      </>
                     )}
                     <div>
                       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
@@ -2406,7 +2610,7 @@ function DealerLeaserManager({
                           {formatProfitRatioLabel(manageVendor.profitRatio)} of profit
                         </p>
                       ) : (
-                        <p className="text-[10px] text-muted-foreground mt-0.5">Loan − bill − charges − GST</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">Paid − bill − charges − GST</p>
                       )}
                     </div>
                     <div>
@@ -2430,11 +2634,21 @@ function DealerLeaserManager({
                 ) : null}
               </div>
               {isOutside ? (
+                <Tabs
+                  value={manageTab}
+                  onValueChange={(value) => setManageTab(value === "bills" ? "bills" : "payments")}
+                  className="space-y-3"
+                >
+                  <TabsList className="grid h-9 w-full grid-cols-2 sm:w-[20rem]">
+                    <TabsTrigger value="bills">Bills</TabsTrigger>
+                    <TabsTrigger value="payments">Payments</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="bills" className="mt-0">
                 <div className="space-y-2 rounded-lg border border-sky-200/80 bg-sky-50/40 p-3">
                   <div>
                     <p className="text-sm font-semibold">Bills</p>
                     <p className="text-xs text-muted-foreground">
-                      Add date, basic, payment mode, customer, remark, and bill upload. Use edit and delete on each row.
+                      Add date, basic, payment mode, customer, remark, and bill upload.
                     </p>
                   </div>
                   {billDrafts.map((draft) => {
@@ -2641,82 +2855,14 @@ function DealerLeaserManager({
                     )
                   })}
                 </div>
-              ) : null}
-              <div className="space-y-2">
-                {drafts.map((draft) => (
-                  <div
-                    key={draft.key}
-                    className="rounded-lg border border-border/60 px-3 py-2.5 grid grid-cols-1 md:grid-cols-[auto_8.5rem_7.5rem_8.5rem_minmax(8rem,1fr)_minmax(14rem,1.5fr)_auto] gap-2 items-end"
-                  >
-                    <div>
-                      <Label className="opacity-0 select-none">Payment</Label>
-                      <p className="h-9 flex items-center text-xs font-semibold text-muted-foreground whitespace-nowrap">
-                        Payment {draft.paymentNumber}
-                      </p>
-                    </div>
-                    <div>
-                      <Label>Date</Label>
-                      <Input
-                        type="date"
-                        className="h-9"
-                        value={draft.date}
-                        onChange={(e) => patchDraft(draft.key, { date: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label>Amount</Label>
-                      <Input
-                        inputMode="numeric"
-                        className="h-9 tabular-nums"
-                        placeholder="0"
-                        value={draft.amount}
-                        onChange={(e) => patchDraft(draft.key, { amount: e.target.value })}
-                      />
-                    </div>
-                    <div>
-                      <Label>Payment type</Label>
-                      <Select
-                        value={draft.paymentType}
-                        onValueChange={(value) => patchDraft(draft.key, { paymentType: value })}
-                      >
-                        <SelectTrigger className="h-9">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {LEASER_PAYMENT_TYPES.map((type) => (
-                            <SelectItem key={type} value={type}>
-                              {type}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label>Remark</Label>
-                      <Input
-                        className="h-9"
-                        value={draft.remark}
-                        onChange={(e) => patchDraft(draft.key, { remark: e.target.value })}
-                      />
-                    </div>
-                    <LeaserCustomerPicker
-                      customers={customers}
-                      selectedIds={draft.customerIds}
-                      onChange={(customerIds) => patchDraft(draft.key, { customerIds })}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 text-destructive"
-                      onClick={() => removePayment(draft.key)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      <span className="sr-only">Delete payment</span>
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                  </TabsContent>
+                  <TabsContent value="payments" className="mt-0">
+                    {paymentRows}
+                  </TabsContent>
+                </Tabs>
+              ) : (
+                paymentRows
+              )}
             </div>
           ) : null}
         </DialogContent>

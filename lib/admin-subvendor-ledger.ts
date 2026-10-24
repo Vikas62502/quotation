@@ -45,19 +45,16 @@ export function officeOutsideLeaserCharges(fileCharges: number, others: number):
   return Math.max(0, Math.round(Number(fileCharges) || 0)) + Math.max(0, Math.round(Number(others) || 0))
 }
 
-/** Profit vendor = loan amount (or total amount if loan is 0) − bill − charges − GST. */
+/** Profit vendor = Accounts paid amount − bill − charges − GST. */
 export function officeOutsideLeaserProfit(opts: {
-  loanAmount: number
-  totalAmount: number
+  paidAmount: number
   billAmount: number
   charges: number
   gst: number
 }): number {
-  const loan = Math.max(0, Math.round(Number(opts.loanAmount) || 0))
-  const total = Math.max(0, Math.round(Number(opts.totalAmount) || 0))
-  const base = loan > 0 ? loan : total
+  const paid = Math.max(0, Math.round(Number(opts.paidAmount) || 0))
   return Math.round(
-    base -
+    paid -
       Math.max(0, Math.round(Number(opts.billAmount) || 0)) -
       Math.max(0, Math.round(Number(opts.charges) || 0)) -
       Math.max(0, Math.round(Number(opts.gst) || 0)),

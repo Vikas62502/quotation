@@ -53,7 +53,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
-import { OfficeOutsideAccountsLedger } from "@/components/office-outside-accounts-ledger"
 import {
   customerFromOfficeOutsideRecord,
   fetchOfficeOutsideSentRecordsFromApi,
@@ -5264,13 +5263,13 @@ export default function AccountManagementPage() {
                 <Landmark className="w-4 h-4" />
                 Accounts
               </TabsTrigger>
-              <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
-                <UserPlus className="w-4 h-4" />
-                Vendor Outside
-              </TabsTrigger>
               <TabsTrigger value="subvendors" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
                 <Truck className="w-4 h-4" />
                 Vendor Office
+              </TabsTrigger>
+              <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
+                <UserPlus className="w-4 h-4" />
+                Vendor Outside
               </TabsTrigger>
             </TabsList>
             {activeTab === "subvendors" ? null : (
@@ -5302,7 +5301,6 @@ export default function AccountManagementPage() {
                 />
               </CardContent>
             </Card>
-            <OfficeOutsideAccountsLedger key={`vendor-outside-ledger-${vendorOutsideRefreshKey}`} />
           </TabsContent>
 
           <TabsContent value="subvendors" className="mt-0 space-y-0">
@@ -6598,33 +6596,10 @@ export default function AccountManagementPage() {
               {activePayment.phases.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-muted/10 py-8">
                   <p className="text-sm text-muted-foreground">No installments created yet.</p>
-                  {getPaymentTypeValue(activePayment) === "mix" ? (
-                    <p className="text-xs text-muted-foreground text-center max-w-md px-4">
-                      Add one installment at a time, or record the{" "}
-                      <strong>full payment in 1 installment</strong> when the customer pays everything upfront.
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground text-center max-w-md px-4">
-                      Use <strong>Pay full in 1 installment</strong> when the customer pays the complete amount in the
-                      first installment.
-                    </p>
-                  )}
+                  <p className="text-xs text-muted-foreground text-center max-w-md px-4">
+                    Add one installment at a time and enter the paid amount.
+                  </p>
                   <div className="flex flex-wrap items-center justify-center gap-2">
-                    <Button
-                      type="button"
-                      onClick={() => applyFullPaymentSingleInstallment(activePayment.quotationId)}
-                      disabled={isSavingInstallments || isSavingFinalSettlement}
-                    >
-                      Pay full in 1 installment
-                    </Button>
-                    {/* <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => applySingleInstallmentPlan(activePayment.quotationId)}
-                      disabled={isSavingInstallments || isSavingFinalSettlement}
-                    >
-                      1 installment (enter paid later)
-                    </Button> */}
                     <Button
                       type="button"
                       variant="outline"
@@ -6655,16 +6630,6 @@ export default function AccountManagementPage() {
                       <p className="text-sm font-medium">Installments</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {getDisplayRemaining(activePayment) > 0 ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => applyFullPaymentSingleInstallment(activePayment.quotationId)}
-                          disabled={isSavingInstallments || isSavingFinalSettlement}
-                        >
-                          Pay full in 1 installment
-                        </Button>
-                      ) : null}
                       <Button
                         type="button"
                         variant="outline"

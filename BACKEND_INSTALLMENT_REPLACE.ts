@@ -4,6 +4,13 @@
  * BACKEND REFERENCE — Account Management installment replace (remove + submit)
  * =============================================================================
  *
+ * CHANGELOG Oct 24 2026 — No “pay full in 1 installment”
+ *   Accounts Manage hid that button. Submit only the phases the user added.
+ *   Do NOT auto-insert a single phase with paidAmount = subtotal.
+ *   REPLACE with body.phases / body.installments as sent (empty [] is valid).
+ *   Echo paidAmount on every GET (approved list + quotation detail + installment save)
+ *   so Vendor Office Paid amount can sum them.
+ *
  * Frontend (Jul 2026):
  *   - `app/dashboard/account-management/page.tsx` → Manage → Remove installment → Submit
  *   - `lib/api.ts` → `api.quotations.updatePaymentDetails`
