@@ -680,7 +680,7 @@ export function AdminSubvendorPanel({
         gst: item.gstAmount,
       })
       item.currentBalance = item.paid
-      item.totalRemaining = Math.round(item.profitVendor - item.paid)
+      item.totalRemaining = item.billSum <= 0 ? 0 : Math.round(item.profitVendor - item.paid)
     }
     return stats
   }, [insideRows, ledgerMap, leaserPayments, outsideRecords, outsideRows, quotations, vendorBills, vendorsByDealerId])
@@ -1020,16 +1020,18 @@ export function AdminSubvendorPanel({
     const paid = nextPayments.reduce((sum, row) => sum + row.amount, 0)
     const stats = vendorLeaserStats[vendorId]
     const vendor = rows.find((row) => row.id === vendorId)
+    const billAmount = vendor?.kind === "office_outside" ? vendorBillSum(readVendorBills(), vendorId) : 0
     const remainingBase =
       vendor?.kind === "office_outside"
         ? officeOutsideLeaserProfit({
             paidAmount: stats?.paidAmount ?? 0,
-            billAmount: vendorBillSum(readVendorBills(), vendorId),
+            billAmount,
             charges: stats?.charges ?? 0,
-            gst: officeOutsideLeaserGst(stats?.subtotal ?? 0, vendorBillSum(readVendorBills(), vendorId)),
+            gst: officeOutsideLeaserGst(stats?.subtotal ?? 0, billAmount),
           })
         : stats?.profitVendor ?? 0
-    const remaining = Math.max(0, remainingBase - paid)
+    const remaining =
+      vendor?.kind === "office_outside" && billAmount <= 0 ? 0 : Math.max(0, remainingBase - paid)
     await saveLeaser(vendorId, String(paid), String(remaining))
     if (!useApi) return
     try {
@@ -2352,7 +2354,7 @@ function DealerLeaserManager({
         <p className="text-sm font-semibold">Dealer leaser</p>
         <p className="text-xs text-muted-foreground mt-0.5">
           {isOutside
-            ? "Subtotal, total amount, and paid amount from Accounts. Add bills (basic). Charges = file + others. GST = (subtotal − bill) × 9.8%. Profit vendor = paid amount − bill − charges − GST."
+            ? "Subtotal, total amount, and paid amount from Accounts. Add bills (basic). Charges = file + others. GST = (subtotal − bill) × 9.8%. If bill is ₹0, GST, profit vendor, and remaining are ₹0. Profit vendor = paid amount − bill − charges − GST."
             : "Paid amount from Accounts. Cost of site vendor, profit vendor, payment, and remaining for each office vendor."}
         </p>
       </div>
@@ -2411,7 +2413,9 @@ function DealerLeaserManager({
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">GST</p>
                     <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.gstAmount)}</p>
-                    <p className="text-[10px] text-muted-foreground">(Subtotal − bill) × 9.8%</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {stats.billSum <= 0 ? "₹0 when bill is ₹0" : "(Subtotal − bill) × 9.8%"}
+                    </p>
                   </div>
                 </>
               ) : (
@@ -2436,7 +2440,9 @@ function DealerLeaserManager({
                     {formatProfitRatioLabel(vendor.profitRatio)} of profit
                   </p>
                 ) : (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Paid − bill − charges − GST</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {stats.billSum <= 0 ? "₹0 when bill is ₹0" : "Paid − bill − charges − GST"}
+                  </p>
                 )}
               </div>
               <div className="min-w-0">
@@ -2455,6 +2461,9 @@ function DealerLeaserManager({
                 >
                   {formatLedgerInr(stats.totalRemaining)}
                 </p>
+                {vendor.kind === "office_outside" && stats.billSum <= 0 ? (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">₹0 when bill is ₹0</p>
+                ) : null}
               </div>
               <div className="col-span-2 lg:col-span-1 flex justify-end">
                 <Button size="sm" className="h-8" onClick={() => openManage(vendor.id)}>
@@ -2479,7 +2488,7 @@ function DealerLeaserManager({
                 <DialogTitle>{heading}</DialogTitle>
                 <DialogDescription>
                   {isOutside
-                    ? "Bills and payments stay on separate tabs. Save keeps both."
+                    ? "Payments first, then bills. Save keeps both."
                     : "Add date, amount, payment type, remark, and customers. Each payment stays in one row."}
                 </DialogDescription>
               </div>
@@ -2582,6 +2591,9 @@ function DealerLeaserManager({
                           <p className="text-sm font-semibold tabular-nums">
                             {formatLedgerInr(manageStats.gstAmount)}
                           </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            {manageStats.billSum <= 0 ? "₹0 when bill is ₹0" : "(Subtotal − bill) × 9.8%"}
+                          </p>
                         </div>
                       </>
                     ) : (
@@ -2610,7 +2622,9 @@ function DealerLeaserManager({
                           {formatProfitRatioLabel(manageVendor.profitRatio)} of profit
                         </p>
                       ) : (
-                        <p className="text-[10px] text-muted-foreground mt-0.5">Paid − bill − charges − GST</p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          {manageStats.billSum <= 0 ? "₹0 when bill is ₹0" : "Paid − bill − charges − GST"}
+                        </p>
                       )}
                     </div>
                     <div>
@@ -2629,6 +2643,9 @@ function DealerLeaserManager({
                       >
                         {formatLedgerInr(manageStats.totalRemaining)}
                       </p>
+                      {isOutside && manageStats.billSum <= 0 ? (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">₹0 when bill is ₹0</p>
+                      ) : null}
                     </div>
                   </div>
                 ) : null}
@@ -2640,9 +2657,12 @@ function DealerLeaserManager({
                   className="space-y-3"
                 >
                   <TabsList className="grid h-9 w-full grid-cols-2 sm:w-[20rem]">
-                    <TabsTrigger value="bills">Bills</TabsTrigger>
                     <TabsTrigger value="payments">Payments</TabsTrigger>
+                    <TabsTrigger value="bills">Bills</TabsTrigger>
                   </TabsList>
+                  <TabsContent value="payments" className="mt-0">
+                    {paymentRows}
+                  </TabsContent>
                   <TabsContent value="bills" className="mt-0">
                 <div className="space-y-2 rounded-lg border border-sky-200/80 bg-sky-50/40 p-3">
                   <div>
@@ -2855,9 +2875,6 @@ function DealerLeaserManager({
                     )
                   })}
                 </div>
-                  </TabsContent>
-                  <TabsContent value="payments" className="mt-0">
-                    {paymentRows}
                   </TabsContent>
                 </Tabs>
               ) : (

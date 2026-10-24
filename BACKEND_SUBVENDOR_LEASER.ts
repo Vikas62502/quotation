@@ -16,6 +16,27 @@
  * Account-management JWT may PUT leaser for both office_inside and office_outside vendors.
  * 403 for dealer / visitor unless they have admin or accounts access.
  *
+ * CHANGELOG Oct 24 2026 — Bill ₹0 zeros GST / profit / remaining  ← APPLY THIS
+ *   Vendor Outside leaser (office_outside vendors only):
+ *     If SUM(bills.basicAmount) is 0 (or no bill rows):
+ *       GST = 0, Profit vendor = 0, Total remaining = 0
+ *     even when Accounts Paid amount / subtotal / charges are > 0.
+ *   APPLY on PUT /admin/subvendors/:id/leaser:
+ *     1. Persist body.leaserRemaining / leaser_remaining AS SENT.
+ *        The SPA now sends 0 when bill is 0. Do not overwrite with
+ *        (paid − bill − charges − GST) − leaser_paid if that would be > 0
+ *        while billSum is 0.
+ *     2. If leaserRemaining is omitted AND you recompute for office_outside:
+ *          billSum = SUM(subvendor_vendor_bills.basic_amount) for that vendor
+ *          if billSum <= 0 → leaser_remaining = 0
+ *          else remaining = max(0, profit − leaser_paid)
+ *        Use officeOutsideLeaserGst / officeOutsideLeaserProfit /
+ *        officeOutsideLeaserRemaining below. Do not use loan, file charges,
+ *        or profit_ratio.
+ *     3. No new HTTP route. GST / profit stay FE unless you already echo them.
+ *        Payments-first then Bills is UI-only — do not change GET payment order.
+ *   office_inside leaser is unchanged (profit_ratio of complete profit).
+ *
  * CHANGELOG Oct 24 2026 — Paid amount on Vendor Office + Vendor Outside  ← APPLY THIS
  *   No new leaser field. Paid amount is FE-derived from Accounts installments:
  *     office_inside  → SUM(quotation installment paidAmount) for that dealer
@@ -25,7 +46,7 @@
  *   PUT /admin/subvendors/:id/leaser still only stores leaser payment rows.
  *   body.leaserRemaining is FE:
  *     office_inside  = profit vendor − leaser_paid
- *     office_outside = (paid amount − bill − charges − GST) − leaser_paid
+ *     office_outside = 0 when bill is 0, else (paid − bill − charges − GST) − leaser_paid
  *   Persist leaserRemaining as sent. Do not recompute from loan amount.
  *
  * CHANGELOG Oct 23 2026 — Vendor leaser bills are a separate route
@@ -62,8 +83,11 @@
  * Per office_outside vendor (Vendor Outside — same leaser table / routes):
  *   Customers in the dropdown = sent Office Outside records for that vendor (ids OO-*)
  *   Paid amount = SUM of Accounts Paid (installment paidAmounts) for that vendor's files
- *   Profit vendor (FE) = paid amount − bill − charges − GST  (ignore profit_ratio)
- *   Total remaining stored on PUT = that profit − leaser_paid
+ *   GST (FE) = (subtotal − bill) × 9.8%  — 0 when bill is 0
+ *   Profit vendor (FE) = paid amount − bill − charges − GST  — 0 when bill is 0
+ *   Total remaining stored on PUT = that profit − leaser_paid  — 0 when bill is 0
+ *   Example: paid ₹1,70,000, bill ₹0, charges ₹4,000 → GST ₹0, profit ₹0, remaining ₹0
+ *            (not GST ₹24,500 / profit ₹1,41,500).
  *   Do NOT compute remaining from loan amount, file charges, or profit_ratio for this kind.
  *
  * Download Mini / Full statement is **client CSV**. No download endpoint.
@@ -90,8 +114,9 @@
  *   - store dealer-leaser remaining from proposal × profit_ratio
  *   - add a stats/download endpoint — remaining is FE: Profit vendor − SUM(leaser)
  *
- * If `subvendors.leaser_remaining` is written on leaser PUT, set it to
- *   Profit vendor − leaser_paid, **or** leave 0 and let the SPA compute.
+ * If `subvendors.leaser_remaining` is written on leaser PUT, persist body as sent.
+ * office_inside: Profit vendor − leaser_paid, **or** leave 0 and let the SPA compute.
+ * office_outside: 0 when bill is 0, else Profit vendor − leaser_paid.
  * office_inside Profit vendor uses profit_ratio as a percent of complete profit
  * (subtotal − cost), not proposal × %. office_outside still ignores profit_ratio.
  *
@@ -175,7 +200,9 @@
  *     (UUID **or** `lp-self-{quotationId}-{phaseNumber}` from Collect self).
  *     Only generate a UUID when id is missing/blank.
  *   - Set subvendors.leaser_paid = SUM(amount)
- *   - Set subvendors.leaser_remaining from body.leaserRemaining if sent, else leave column
+ *   - Set subvendors.leaser_remaining from body.leaserRemaining if sent
+ *     (SPA sends 0 for office_outside when bill is 0). Else if office_outside
+ *     and billSum <= 0, set leaser_remaining = 0. Else leave the column.
  *   - Do NOT compute current balance from file charges / kW / customer count
  *
  * GET /admin/subvendors (and GET by id) must echo:
@@ -277,6 +304,68 @@
 
 const LEASER_TYPES = ["Cash", "Bank", "UPI", "Cheque", "Other"]
 
+/** Vendor Outside leaser GST = (subtotal − bill) × 9.8%. 0 when bill is 0. */
+const OFFICE_OUTSIDE_LEASER_GST_RATE = 0.098
+
+function officeOutsideLeaserGst(subtotal, billAmount) {
+  const sub = Math.max(0, Math.round(Number(subtotal) || 0))
+  const bill = Math.max(0, Math.round(Number(billAmount) || 0))
+  if (bill <= 0) return 0
+  return Math.round(Math.max(0, sub - bill) * OFFICE_OUTSIDE_LEASER_GST_RATE)
+}
+
+function officeOutsideLeaserProfit(opts) {
+  const bill = Math.max(0, Math.round(Number(opts?.billAmount) || 0))
+  if (bill <= 0) return 0
+  const paid = Math.max(0, Math.round(Number(opts?.paidAmount) || 0))
+  return Math.round(
+    paid -
+      bill -
+      Math.max(0, Math.round(Number(opts?.charges) || 0)) -
+      Math.max(0, Math.round(Number(opts?.gst) || 0)),
+  )
+}
+
+function officeOutsideLeaserRemaining(opts) {
+  const bill = Math.max(0, Math.round(Number(opts?.billAmount) || 0))
+  if (bill <= 0) return 0
+  return Math.max(
+    0,
+    Math.round(Number(opts?.profitVendor) || 0) - Math.max(0, Math.round(Number(opts?.leaserPaid) || 0)),
+  )
+}
+
+/**
+ * PUT /admin/subvendors/:id/leaser — persist remaining as the SPA sent it.
+ * office_outside + no bill → remaining 0 even if paid amount is large.
+ *
+ *   const paid = next.reduce((sum, row) => sum + row.amount, 0)
+ *   const sentRemaining = req.body?.leaserRemaining ?? req.body?.leaser_remaining
+ *   let remaining
+ *   if (sentRemaining != null && sentRemaining !== "") {
+ *     remaining = roundInr(sentRemaining)
+ *   } else if (vendor.kind === "office_outside") {
+ *     const billSum = roundInr(
+ *       await SubvendorVendorBill.sum("basicAmount", { where: { vendorId: vendor.id } }),
+ *     )
+ *     remaining = billSum <= 0
+ *       ? 0
+ *       : officeOutsideLeaserRemaining({
+ *           profitVendor: officeOutsideLeaserProfit({
+ *             paidAmount: paidFromAccounts,
+ *             billAmount: billSum,
+ *             charges: fileChargesPlusOthers,
+ *             gst: officeOutsideLeaserGst(subtotal, billSum),
+ *           }),
+ *           leaserPaid: paid,
+ *           billAmount: billSum,
+ *         })
+ *   } else {
+ *     remaining = vendor.leaserRemaining
+ *   }
+ *   await vendor.update({ leaserPaid: paid, leaserRemaining: remaining })
+ */
+
 function roundInr(value) {
   const n = Math.round(Number(value) || 0)
   return Number.isFinite(n) && n >= 0 ? n : 0
@@ -340,4 +429,13 @@ export const SUBVENDOR_LEASER_ERROR_CODES = {
   VAL_AMOUNT: "VAL_AMOUNT",
 }
 
-export { publicLeaserPayment, roundInr, asCustomerIds, LEASER_TYPES }
+export {
+  publicLeaserPayment,
+  roundInr,
+  asCustomerIds,
+  LEASER_TYPES,
+  OFFICE_OUTSIDE_LEASER_GST_RATE,
+  officeOutsideLeaserGst,
+  officeOutsideLeaserProfit,
+  officeOutsideLeaserRemaining,
+}

@@ -7372,5 +7372,41 @@ Still **§AX**: `calling_reports` access (or admin/hr) may GET these routes. Do 
 
 ---
 
+## §BT — Vendor Outside: bill ₹0 → GST 0, profit 0, remaining 0 — Oct 2026
+
+Account Management → Vendor Outside → Dealer leaser. Bill is `SUM(subvendor_vendor_bills.basic_amount)` for that vendor.
+
+| Field | When bill > 0 | When bill is 0 (or no bill rows) |
+|-------|----------------|----------------------------------|
+| GST | `(subtotal − bill) × 9.8%` | **0** |
+| Profit vendor | `paid amount − bill − charges − GST` | **0** |
+| Total remaining | `profit − leaser_paid` | **0** |
+
+Paid amount is still SUM of Accounts installment `paidAmount` (see `BACKEND_OFFICE_OUTSIDE.ts`). Charges = file + others. SPA already zeros these in the UI.
+
+### Must
+
+1. `PUT /admin/subvendors/:id/leaser` persist `body.leaserRemaining` as sent (SPA sends 0 when bill is 0).
+2. If remaining is omitted and you recompute for `kind = office_outside`: `billSum <= 0` → `leaser_remaining = 0`. Copy-paste: `officeOutsideLeaserGst` / `officeOutsideLeaserProfit` / `officeOutsideLeaserRemaining` in `BACKEND_SUBVENDOR_LEASER.ts`.
+3. `GET /admin/subvendors/:id/bills` echo `billSum: 0` when `bills` is `[]`.
+4. Empty `PUT` bills `[]` remains valid (clears bills → billSum 0).
+
+### Do not
+
+- Recompute office_outside remaining from loan, file charges, `profit_ratio`, or `(subtotal − PI − file − GST − others)`
+- Invent a GST/profit persist column (SPA derives them)
+- Reorder GET leaser / GET bills because Manage now shows Payments first
+- Change office_inside leaser remaining (still Profit vendor − payment)
+
+### QA
+
+1. Vendor with Paid ₹1,70,000, Bill ₹0 → GST ₹0, Profit vendor ₹0, Total remaining ₹0.
+2. Same vendor after adding a bill with basic > 0 → GST / profit / remaining follow the bill > 0 formulas.
+3. `PUT` leaser with `leaserRemaining: 0` while billSum is 0 → GET vendor `leaserRemaining` stays 0 after refresh.
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · `BACKEND_SUBVENDOR_BILLS.ts` · `BACKEND_OFFICE_OUTSIDE.ts` · HANDOFF **§66**
+
+---
+
 
 

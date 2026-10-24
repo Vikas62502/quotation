@@ -4,6 +4,12 @@
  * BACKEND REFERENCE — Office Outside records (not All quotations)
  * =============================================================================
  *
+ * CHANGELOG Oct 24 2026 — Bill ₹0 zeros GST / profit / remaining  ← APPLY THIS
+ *   Vendor Outside leaser: if bill is 0, GST = 0, Profit vendor = 0, remaining = 0.
+ *   Persist PUT /admin/subvendors/:id/leaser body.leaserRemaining as sent (SPA sends 0).
+ *   If you recompute remaining, billSum <= 0 → remaining 0. Helpers in BACKEND_SUBVENDOR_LEASER.ts.
+ *   Paid amount still comes from OO installments. No new route.
+ *
  * CHANGELOG Oct 24 2026 — Paid amount on Vendor Outside  ← APPLY THIS
  *   Vendor Outside dealer leaser now shows Paid amount (same number as Accounts Paid)
  *   and Profit vendor = paid amount − bill − charges − GST.
@@ -22,7 +28,8 @@
  *        Only persist the phases the Accounts dialog submits.
  *     4. Bills stay on GET/PUT /admin/subvendors/:id/bills (BACKEND_SUBVENDOR_BILLS.ts).
  *        Leaser payments stay on PUT /admin/subvendors/:id/leaser.
- *        leaserRemaining on that PUT is FE: (paid − bill − charges − GST) − leaser_paid.
+ *        leaserRemaining on that PUT is FE: 0 when bill is 0, else
+ *        (paid − bill − charges − GST) − leaser_paid. Persist as sent.
  *   No new HTTP route for paid amount.
  *
  * CHANGELOG Oct 21 2026 — database is the only source of truth
@@ -50,8 +57,8 @@
  *   Fields: date, basicAmount, paymentMode, remark, customerIds (OO-* or UUID),
  *   billFileName + billFileDataUrl / billFileUrl.
  *   Bill sum = SUM(basicAmount). GST / profit stay FE:
- *     GST = (subtotal − bill) × 9.8%
- *     Profit vendor = paid amount − bill − charges − GST
+ *     GST = (subtotal − bill) × 9.8%  (0 when bill is 0)
+ *     Profit vendor = paid amount − bill − charges − GST  (0 when bill is 0; remaining also 0)
  *   Do not fold bills into PUT /admin/subvendors/:id/leaser.
  *
  * CHANGELOG Oct 23 2026 — Vendor Outside loan amount
@@ -609,9 +616,14 @@
  *   costOfSite vendor = pi + fileCharges + gstCharges + others
  *   Do NOT copy this onto quotations.site_cost.
  *
- * Profit (Vendor Outside card, COMPLETE — not profit_ratio):
- *   profit = record.subtotal − (pi + fileCharges + gstCharges + others)
- *   leaser_remaining on office_outside vendor = max(0, sum(profit of that vendor's sent files) − leaser_paid)
+ * Profit vendor (Vendor Outside leaser — not profit_ratio, not loan − bill):
+ *   billSum = SUM(subvendor_vendor_bills.basic_amount) for that vendor
+ *   if billSum <= 0 → GST 0, profit 0, leaser_remaining 0
+ *   else GST = (subtotal − bill) × 9.8%
+ *        profit = paid amount − bill − charges − GST
+ *        leaser_remaining = max(0, profit − leaser_paid)
+ *   Persist PUT leaserRemaining as sent. Do not keep the old
+ *   (subtotal − PI − file − GST − others) remaining for office_outside.
  *
  * GET /admin/office-outside 200:
  * {

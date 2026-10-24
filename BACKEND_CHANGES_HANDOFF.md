@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4590,6 +4590,23 @@ Existing: `range`, `startDate`, `endDate`, `fromDate`, `toDate`, `dealerId`, `pa
 4. CSV Source column from echoed fields, not SPA sheet-lead cache.
 
 **Copy-paste:** `BACKEND_CALLING_SOCIAL_SOURCE.ts` · `BACKEND_CALLING_REPORTS_COUNTS.ts` · REQUIRED **§BS**
+
+---
+
+## 66. Vendor Outside — bill ₹0 zeros GST / profit / remaining (**§BT**) — Oct 2026
+
+**Frontend (shipped):** Account Management → Vendor Outside → Dealer leaser. When **Bill is ₹0** (no bills, or all basics 0): **GST ₹0**, **Profit vendor ₹0**, **Total remaining ₹0**, even if Paid amount / subtotal / charges are not 0. Example: KULDEEP paid ₹1,70,000, bill ₹0 → GST / profit / remaining all ₹0 (not GST ₹24,500). Manage tabs are Payments then Bills (UI only).
+
+**Apply on live API (no new route):**
+
+1. `PUT /admin/subvendors/:id/leaser` — persist `leaserRemaining` / `leaser_remaining` **as sent**. SPA sends `0` when bill is 0. Do not overwrite with `(paid − bill − charges − GST) − leaser_paid` if that would stay > 0 while `billSum` is 0.
+2. If remaining is omitted and you recompute for `office_outside`: `billSum = SUM(subvendor_vendor_bills.basic_amount)`; `billSum <= 0` → `leaser_remaining = 0`. Use `officeOutsideLeaserGst` / `officeOutsideLeaserProfit` / `officeOutsideLeaserRemaining` in `BACKEND_SUBVENDOR_LEASER.ts`.
+3. `GET/PUT /admin/subvendors/:id/bills` still echo `billSum` / `bill_sum` (`0` when no rows). Do not compute GST / profit on the bills route.
+4. Do not reorder GET leaser / GET bills. Payments-first is SPA tabs only.
+
+**Do not** keep the old office_outside remaining `sum(subtotal − PI − file − GST − others) − leaser_paid`. **office_inside** leaser is unchanged.
+
+**Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · `BACKEND_SUBVENDOR_BILLS.ts` · `BACKEND_OFFICE_OUTSIDE.ts` · REQUIRED **§BT**
 
 ---
 

@@ -4,6 +4,18 @@
  * BACKEND — Vendor leaser bills (Account Management → Vendor Outside)
  * =============================================================================
  *
+ * CHANGELOG Oct 24 2026 — Bill ₹0 zeros GST / profit / remaining  ← APPLY THIS
+ *   Empty bills [] is already valid (Bill column → ₹0).
+ *   When billSum is 0 the SPA now also zeros GST, Profit vendor, and Total remaining.
+ *   APPLY:
+ *     1. Keep GET/PUT /admin/subvendors/:id/bills. Echo billSum / bill_sum = SUM(basicAmount).
+ *        0 when there are no rows.
+ *     2. Do not compute GST / profit on this route. If any other handler writes
+ *        subvendors.leaser_remaining from bills, set remaining = 0 when billSum <= 0.
+ *        Copy-paste helpers: BACKEND_SUBVENDOR_LEASER.ts officeOutsideLeaserRemaining.
+ *     3. Persist body.leaserRemaining as sent on PUT leaser (SPA sends 0).
+ *   Payments-first then Bills is UI-only. Do not reorder GET bills / GET leaser.
+ *
  * CHANGELOG Oct 24 2026 — Profit uses Accounts paid amount
  *   Profit vendor on Vendor Outside is paid amount − bill − charges − GST.
  *   Paid amount comes from OO installments (BACKEND_OFFICE_OUTSIDE.ts), not from this table.
@@ -42,11 +54,11 @@
  *   Total amount      = loan + cash (from Accounts)
  *   Bill              = SUM(bills.basicAmount) for that vendor
  *   Charges           = file charges + others (Accounts ledger)
- *   GST               = (subtotal − bill) × 9.8%   (FE; do not persist GST)
+ *   GST               = (subtotal − bill) × 9.8%   (FE; 0 when bill is 0)
  *   Paid amount       = SUM(Accounts paid / installment paidAmounts) for that vendor
- *   Profit vendor     = paid amount − bill − charges − GST
+ *   Profit vendor     = paid amount − bill − charges − GST  (0 when bill is 0)
  *   Total payment     = SUM(leaser payment amounts)
- *   Total remaining   = Profit vendor − Total payment
+ *   Total remaining   = Profit vendor − Total payment  (0 when bill is 0)
  *
  * Each bill row (Manage → Bills):
  *   date            YYYY-MM-DD as sent

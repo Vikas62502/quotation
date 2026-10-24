@@ -32,12 +32,13 @@ export type OfficeInsideAmountField = (typeof OFFICE_INSIDE_AMOUNT_FIELDS)[numbe
 /** GST = (proposal − PI) × 8.9%. Hidden / zero when PI is 0. */
 export const OFFICE_INSIDE_GST_RATE = 0.089
 
-/** Vendor Outside leaser GST = (subtotal − bill) × 9.8%. */
+/** Vendor Outside leaser GST = (subtotal − bill) × 9.8%. 0 when bill is 0. */
 export const OFFICE_OUTSIDE_LEASER_GST_RATE = 0.098
 
 export function officeOutsideLeaserGst(subtotal: number, billAmount: number): number {
   const sub = Math.max(0, Math.round(Number(subtotal) || 0))
   const bill = Math.max(0, Math.round(Number(billAmount) || 0))
+  if (bill <= 0) return 0
   return Math.round(Math.max(0, sub - bill) * OFFICE_OUTSIDE_LEASER_GST_RATE)
 }
 
@@ -45,17 +46,19 @@ export function officeOutsideLeaserCharges(fileCharges: number, others: number):
   return Math.max(0, Math.round(Number(fileCharges) || 0)) + Math.max(0, Math.round(Number(others) || 0))
 }
 
-/** Profit vendor = Accounts paid amount − bill − charges − GST. */
+/** Profit vendor = Accounts paid amount − bill − charges − GST. 0 when bill is 0. */
 export function officeOutsideLeaserProfit(opts: {
   paidAmount: number
   billAmount: number
   charges: number
   gst: number
 }): number {
+  const bill = Math.max(0, Math.round(Number(opts.billAmount) || 0))
+  if (bill <= 0) return 0
   const paid = Math.max(0, Math.round(Number(opts.paidAmount) || 0))
   return Math.round(
     paid -
-      Math.max(0, Math.round(Number(opts.billAmount) || 0)) -
+      bill -
       Math.max(0, Math.round(Number(opts.charges) || 0)) -
       Math.max(0, Math.round(Number(opts.gst) || 0)),
   )
