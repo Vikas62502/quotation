@@ -130,6 +130,29 @@ function filesWithPi(files: InsideLedgerRow[]) {
   return files.filter((row) => Math.round(Number(row.pi) || 0) > 0)
 }
 
+function filePaidAmount(row: InsideLedgerRow) {
+  return Math.max(0, Math.round(Number(row.receivedAmount) || 0))
+}
+
+function fileProposalAmount(row: InsideLedgerRow) {
+  const proposal = Math.max(0, Math.round(Number(row.proposal) || 0))
+  if (proposal > 0) return proposal
+  return Math.max(0, Math.round(Number(row.subtotal) || 0))
+}
+
+function officeInsideProposalForFile(opts: {
+  paymentType: string
+  storedProposal: number
+  quotationProposal: number
+  subtotal: number
+}) {
+  const subtotal = Math.max(0, Math.round(Number(opts.subtotal) || 0))
+  if (opts.paymentType === "cash") return subtotal
+  if (opts.storedProposal > 0) return opts.storedProposal
+  if (opts.quotationProposal > 0) return opts.quotationProposal
+  return subtotal
+}
+
 function slugForFilename(name: string) {
   return (
     name
@@ -461,9 +484,14 @@ export function AdminSubvendorPanel({
         const vendor = vendorsByDealerId.get(dealerId)
         const payment = summarizeQuotationPayment(quotation)
         const stored = getLedgerAmounts(ledgerMap, quotation.id)
-        const proposal = stored.proposal ?? 0
-        const pi = stored.pi ?? 0
         const paymentType = quotationPaymentTypeForLedger(quotation)
+        const proposal = officeInsideProposalForFile({
+          paymentType,
+          storedProposal: Math.round(Number(stored.proposal) || 0),
+          quotationProposal: Math.round(Number(quotation.proposal) || 0),
+          subtotal: payment.subtotal,
+        })
+        const pi = stored.pi ?? 0
         const loanCash = quotationLoanCashAmountsForLedger(
           quotation,
           proposal > 0 ? proposal : payment.subtotal,
@@ -497,7 +525,10 @@ export function AdminSubvendorPanel({
           subtotal: payment.subtotal,
           loanAmount: stored.loanAmount ?? loanCash.loanAmount,
           cashAmount: stored.cashAmount ?? loanCash.cashAmount,
-          receivedAmount: stored.receivedAmount ?? payment.paidAmount,
+          receivedAmount: Math.max(
+            0,
+            Math.round(Number(payment.paidAmount || stored.receivedAmount) || 0),
+          ),
           remaining: stored.remaining ?? payment.remainingAmount,
           proposal,
           costOfSite: officeInsideDeductedTotal({
@@ -572,6 +603,7 @@ export function AdminSubvendorPanel({
         fileAmount: 0,
         totalKw: 0,
         subtotal: 0,
+        proposal: 0,
         totalAmount: 0,
         loanAmount: 0,
         cashAmount: 0,
@@ -614,6 +646,12 @@ export function AdminSubvendorPanel({
       stats[vendor.id].fileAmount += fileCharges
       stats[vendor.id].totalKw += getQuotationSystemKw(quotation) || 0
       stats[vendor.id].subtotal += Math.max(0, Math.round(payment.subtotal || 0))
+      stats[vendor.id].proposal += officeInsideProposalForFile({
+        paymentType: quotationPaymentTypeForLedger(quotation),
+        storedProposal: Math.round(Number(stored.proposal) || 0),
+        quotationProposal: Math.round(Number(quotation.proposal) || 0),
+        subtotal: payment.subtotal,
+      })
       stats[vendor.id].paidAmount += Math.max(
         0,
         Math.round(Number(payment.paidAmount || stored.receivedAmount) || 0),
@@ -636,6 +674,7 @@ export function AdminSubvendorPanel({
         fileAmount: 0,
         totalKw: 0,
         subtotal: 0,
+        proposal: 0,
         totalAmount: 0,
         loanAmount: 0,
         cashAmount: 0,
@@ -660,6 +699,7 @@ export function AdminSubvendorPanel({
       stats[vendor.id].fileAmount += ledgerRow.fileCharges
       stats[vendor.id].totalKw += ledgerRow.systemKw || 0
       stats[vendor.id].subtotal += ledgerRow.subtotal
+      stats[vendor.id].proposal += ledgerRow.proposal
       stats[vendor.id].totalAmount += totalAmount
       stats[vendor.id].loanAmount += ledgerRow.loanAmount
       stats[vendor.id].cashAmount += ledgerRow.cashAmount
@@ -748,9 +788,14 @@ export function AdminSubvendorPanel({
       if (!vendor) continue
       const payment = summarizeQuotationPayment(quotation)
       const stored = getLedgerAmounts(ledgerMap, quotation.id)
-      const proposal = stored.proposal ?? 0
-      const pi = stored.pi ?? 0
       const paymentType = quotationPaymentTypeForLedger(quotation)
+      const proposal = officeInsideProposalForFile({
+        paymentType,
+        storedProposal: Math.round(Number(stored.proposal) || 0),
+        quotationProposal: Math.round(Number(quotation.proposal) || 0),
+        subtotal: payment.subtotal,
+      })
+      const pi = stored.pi ?? 0
       const loanCash = quotationLoanCashAmountsForLedger(
         quotation,
         proposal > 0 ? proposal : payment.subtotal,
@@ -775,7 +820,10 @@ export function AdminSubvendorPanel({
         subtotal: payment.subtotal,
         loanAmount: stored.loanAmount ?? loanCash.loanAmount,
         cashAmount: stored.cashAmount ?? loanCash.cashAmount,
-        receivedAmount: stored.receivedAmount ?? payment.paidAmount,
+        receivedAmount: Math.max(
+          0,
+          Math.round(Number(payment.paidAmount || stored.receivedAmount) || 0),
+        ),
         remaining: stored.remaining ?? payment.remainingAmount,
         proposal,
         costOfSite: officeInsideDeductedTotal({
@@ -1177,7 +1225,7 @@ export function AdminSubvendorPanel({
       <VendorToolbar
         search={search}
         onSearch={setSearch}
-        searchPlaceholder="Search Vendor Office..."
+        searchPlaceholder="Search Dealer Office..."
         addLabel="Select dealer"
         onAdd={openCreate}
         addDisabled={availableDealers.length === 0 && !editingId}
@@ -1185,15 +1233,15 @@ export function AdminSubvendorPanel({
       />
       <VendorGrid
         rows={filtered}
-        emptyLabel={insideRows.length === 0 ? "No Vendor Office records yet" : "No matching vendors"}
+        emptyLabel={insideRows.length === 0 ? "No Dealer Office records yet" : "No matching vendors"}
         emptyHint={
           insideRows.length === 0
             ? dealers.length === 0
               ? "Add dealers in Users first, then select them here."
-              : "Select a dealer to add them to Vendor Office."
+              : "Select a dealer to add them to Dealer Office."
             : undefined
         }
-        kindLabel="Vendor Office"
+        kindLabel="Dealer Office"
         onEdit={openEdit}
         onRemove={remove}
         onAdd={openCreate}
@@ -1220,7 +1268,7 @@ export function AdminSubvendorPanel({
           <div className="relative min-w-[12rem] flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search Vendor Office..."
+              placeholder="Search Dealer Office..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9 h-9"
@@ -1247,7 +1295,7 @@ export function AdminSubvendorPanel({
         <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-4xl w-full max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Dealers</DialogTitle>
-            <DialogDescription>Select dealers for Vendor Office. Dealer leaser stays on the main list.</DialogDescription>
+            <DialogDescription>Select dealers for Dealer Office. Dealer leaser stays on the main list.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">{insideDetails}</div>
         </DialogContent>
@@ -1268,7 +1316,7 @@ export function AdminSubvendorPanel({
         <div>
           <CardTitle>Subvendors</CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              Vendor Office records are selected from dealers, then maintained in the customer ledger.
+              Dealer Office records are selected from dealers, then maintained in the customer ledger.
               Vendor Outside records use basic registration.
             </p>
         </div>
@@ -1292,7 +1340,7 @@ export function AdminSubvendorPanel({
               <Building2 className="mt-0.5 h-4 w-4 shrink-0" />
               <span className="min-w-0">
                 <span className="block text-sm font-semibold text-foreground">
-                  Vendor Office ({insideRows.length})
+                  Dealer Office ({insideRows.length})
                 </span>
                 <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
                   Select dealers, then maintain the customer ledger
@@ -1319,22 +1367,22 @@ export function AdminSubvendorPanel({
             <VendorToolbar
               search={search}
               onSearch={setSearch}
-              searchPlaceholder="Search Vendor Office..."
+              searchPlaceholder="Search Dealer Office..."
               addLabel="Select dealer"
               onAdd={openCreate}
               addDisabled={availableDealers.length === 0 && !editingId}
             />
             <VendorGrid
               rows={filtered}
-              emptyLabel={insideRows.length === 0 ? "No Vendor Office records yet" : "No matching vendors"}
+              emptyLabel={insideRows.length === 0 ? "No Dealer Office records yet" : "No matching vendors"}
               emptyHint={
                 insideRows.length === 0
                   ? dealers.length === 0
                     ? "Add dealers in Users first, then select them here."
-                    : "Select a dealer to add them to Vendor Office."
+                    : "Select a dealer to add them to Dealer Office."
                   : undefined
               }
-              kindLabel="Vendor Office"
+              kindLabel="Dealer Office"
               onEdit={openEdit}
               onRemove={remove}
               onAdd={openCreate}
@@ -1371,7 +1419,7 @@ export function AdminSubvendorPanel({
             <DialogTitle>
               {kind === "office_inside"
                 ? editingId
-                  ? "Edit Vendor Office"
+                  ? "Edit Dealer Office"
                   : "Select dealer"
                 : editingId
                   ? "Edit Vendor Outside"
@@ -1526,6 +1574,7 @@ type VendorLeaserStats = {
   fileAmount: number
   totalKw: number
   subtotal: number
+  proposal: number
   totalAmount: number
   loanAmount: number
   cashAmount: number
@@ -1545,6 +1594,7 @@ const emptyVendorLeaserStats: VendorLeaserStats = {
   fileAmount: 0,
   totalKw: 0,
   subtotal: 0,
+  proposal: 0,
   totalAmount: 0,
   loanAmount: 0,
   cashAmount: 0,
@@ -1884,6 +1934,67 @@ function DealerLeaserManager({
   const profitFilesSubtotal = profitFiles.reduce((sum, row) => sum + row.subtotal, 0)
   const profitFilesKw = profitFiles.reduce((sum, row) => sum + row.systemKw, 0)
   const profitFilesProfit = profitFiles.reduce((sum, row) => sum + row.profitVendor, 0)
+  const profitFilesPaid = profitFiles.reduce((sum, row) => sum + filePaidAmount(row), 0)
+  const profitFilesProposal = profitFiles.reduce((sum, row) => sum + fileProposalAmount(row), 0)
+
+  const downloadProfitFilesExcel = async () => {
+    if (!profitFilesVendor) return
+    if (profitFiles.length === 0) {
+      toast({
+        title: "No files to download",
+        description: "This dealer has no files with PI yet.",
+        variant: "destructive",
+      })
+      return
+    }
+    const XLSX = await import("xlsx")
+    const stamp = new Date().toISOString().slice(0, 10)
+    const table: Array<Array<string | number>> = [
+      ["Files with PI"],
+      ["Dealer", profitFilesVendor.name],
+      ["Mobile", profitFilesVendor.mobile || profitFilesVendor.contactName || ""],
+      [],
+      ["File / kW", profitFiles.length],
+      ["kW", formatLedgerSystemSize(profitFilesKw)],
+      ["Subtotal", profitFilesSubtotal],
+      ["Paid amount", profitFilesPaid],
+      ["Proposal", profitFilesProposal],
+      ["Profit vendor", profitFilesProfit],
+      [],
+      [
+        "Customer",
+        "Mobile",
+        "kW",
+        "Subtotal",
+        "Paid amount",
+        "Proposal",
+        "PI",
+        "Profit vendor",
+        "Payment type",
+        "File ID",
+      ],
+      ...profitFiles.map((row) => [
+        row.customerName,
+        row.customerMobile && row.customerMobile !== "—" ? row.customerMobile : "",
+        row.systemSize && row.systemSize !== "—" ? row.systemSize : "",
+        row.subtotal,
+        filePaidAmount(row),
+        fileProposalAmount(row),
+        row.pi,
+        row.profitVendor,
+        row.paymentTypeLabel || row.paymentType,
+        row.quotationId,
+      ]),
+    ]
+    const workbook = XLSX.utils.book_new()
+    const sheet = XLSX.utils.aoa_to_sheet(table)
+    XLSX.utils.book_append_sheet(workbook, sheet, "Files with PI")
+    XLSX.writeFile(
+      workbook,
+      `files-with-pi-${slugForFilename(profitFilesVendor.name)}-${stamp}.xlsx`,
+      { compression: true },
+    )
+  }
   const customers = useMemo(() => {
     const base = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
     if (!manageVendorId) return base
@@ -2286,6 +2397,8 @@ function DealerLeaserManager({
           const fileCount = showingProfitFiles ? vendorProfitFiles.length : stats.totalFile
           const fileKw = showingProfitFiles ? profitFilesKw : stats.totalKw
           const fileSubtotal = showingProfitFiles ? profitFilesSubtotal : stats.subtotal
+          const filePaid = showingProfitFiles ? profitFilesPaid : stats.paidAmount
+          const fileProposal = showingProfitFiles ? profitFilesProposal : stats.proposal
           return (
             <div
               key={vendor.id}
@@ -2293,7 +2406,7 @@ function DealerLeaserManager({
                 "grid grid-cols-2 gap-2 items-center rounded-lg border border-border/50 px-3 py-2.5",
                 isOutside
                   ? "lg:grid-cols-[minmax(0,1.05fr)_repeat(10,minmax(3.6rem,0.46fr))_auto]"
-                  : "lg:grid-cols-[minmax(0,1.15fr)_repeat(7,minmax(4.5rem,0.55fr))_auto]",
+                  : "lg:grid-cols-[minmax(0,1.15fr)_repeat(8,minmax(4.5rem,0.55fr))_auto]",
               )}
             >
               <div className="col-span-2 lg:col-span-1 min-w-0">
@@ -2370,7 +2483,31 @@ function DealerLeaserManager({
                 <>
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Paid amount</p>
-                    <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.paidAmount)}</p>
+                    <p
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        showingProfitFiles ? "text-violet-700" : undefined,
+                      )}
+                    >
+                      {formatLedgerInr(filePaid)}
+                    </p>
+                    {showingProfitFiles ? (
+                      <p className="text-[10px] text-violet-600 leading-snug">PI files only</p>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Proposal</p>
+                    <p
+                      className={cn(
+                        "text-sm font-semibold tabular-nums",
+                        showingProfitFiles ? "text-violet-700" : undefined,
+                      )}
+                    >
+                      {formatLedgerInr(fileProposal)}
+                    </p>
+                    {showingProfitFiles ? (
+                      <p className="text-[10px] text-violet-600 leading-snug">PI files only</p>
+                    ) : null}
                   </div>
                   <div className="min-w-0">
                     <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Cost of site vendor</p>
@@ -2443,16 +2580,31 @@ function DealerLeaserManager({
           if (!open) setProfitFilesVendorId(null)
         }}
       >
-        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-3xl w-full max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Files with PI</DialogTitle>
-            <DialogDescription>
-              {profitFilesVendor
-                ? `${profitFilesVendor.name} — only files where PI is not ₹0.`
-                : "Only files where PI is not ₹0."}
-            </DialogDescription>
+            <div className="flex flex-col gap-3 pr-8 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <DialogTitle>Files with PI</DialogTitle>
+                <DialogDescription>
+                  {profitFilesVendor
+                    ? `${profitFilesVendor.name} — only files where PI is not ₹0.`
+                    : "Only files where PI is not ₹0."}
+                </DialogDescription>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => void downloadProfitFilesExcel()}
+                disabled={profitFiles.length === 0}
+              >
+                <Download className="w-3.5 h-3.5 mr-1" />
+                Download Excel
+              </Button>
+            </div>
           </DialogHeader>
-          <div className="grid grid-cols-3 gap-2 rounded-lg border border-violet-200/80 bg-violet-50/60 px-3 py-2.5">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 rounded-lg border border-violet-200/80 bg-violet-50/60 px-3 py-2.5">
             <div>
               <p className="text-[10px] uppercase tracking-wide text-violet-700/80">File / kW</p>
               <p className="text-sm font-semibold tabular-nums text-violet-800">{profitFiles.length}</p>
@@ -2467,6 +2619,18 @@ function DealerLeaserManager({
               </p>
             </div>
             <div>
+              <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Paid amount</p>
+              <p className="text-sm font-semibold tabular-nums text-violet-800">
+                {formatLedgerInr(profitFilesPaid)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Proposal</p>
+              <p className="text-sm font-semibold tabular-nums text-violet-800">
+                {formatLedgerInr(profitFilesProposal)}
+              </p>
+            </div>
+            <div>
               <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Profit vendor</p>
               <p className="text-sm font-semibold tabular-nums text-emerald-800">
                 {formatLedgerInr(profitFilesProfit)}
@@ -2475,29 +2639,46 @@ function DealerLeaserManager({
           </div>
           {profitFiles.length === 0 ? (
             <p className="rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-6 text-center text-sm text-muted-foreground">
-              No files with PI for this vendor. Profit vendor stays ₹0 until Accounts enters PI.
+              No files with PI for this dealer. Profit vendor stays ₹0 until Accounts enters PI.
             </p>
           ) : (
             <div className="space-y-1.5 max-h-[min(55vh,28rem)] overflow-auto pr-1">
               {profitFiles.map((row) => (
                 <div
                   key={row.quotationId}
-                  className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-violet-200/70 bg-white/80 px-3 py-2"
+                  className="rounded-lg border border-violet-200/70 bg-white/80 px-3 py-2 space-y-2"
                 >
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-violet-900 truncate">{row.customerName}</p>
-                    <p className="text-[11px] text-violet-700/80 tabular-nums truncate">
-                      {row.customerMobile && row.customerMobile !== "—" ? row.customerMobile : row.quotationId}
-                      {row.systemSize && row.systemSize !== "—" ? ` · ${row.systemSize}` : ""}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold tabular-nums text-violet-800">
-                      {formatLedgerInr(row.subtotal)}
-                    </p>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-violet-900 truncate">{row.customerName}</p>
+                      <p className="text-[11px] text-violet-700/80 tabular-nums truncate">
+                        {row.customerMobile && row.customerMobile !== "—" ? row.customerMobile : row.quotationId}
+                        {row.systemSize && row.systemSize !== "—" ? ` · ${row.systemSize}` : ""}
+                      </p>
+                    </div>
                     <p className="text-[10px] tabular-nums text-violet-700">
                       PI {formatLedgerInr(row.pi)} · profit {formatLedgerInr(row.profitVendor)}
                     </p>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Subtotal</p>
+                      <p className="text-sm font-semibold tabular-nums text-violet-800">
+                        {formatLedgerInr(row.subtotal)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Paid amount</p>
+                      <p className="text-sm font-semibold tabular-nums text-violet-800">
+                        {formatLedgerInr(filePaidAmount(row))}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Proposal</p>
+                      <p className="text-sm font-semibold tabular-nums text-violet-800">
+                        {formatLedgerInr(fileProposalAmount(row))}
+                      </p>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -3115,7 +3296,7 @@ function InsideVendorLedger({
     <div className="rounded-xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 border-b border-border/70 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p className="text-sm font-semibold">Vendor Office ledger</p>
+          <p className="text-sm font-semibold">Dealer Office ledger</p>
           <p className="text-xs text-muted-foreground mt-0.5">
             Same card layout as Accounts. Edit amounts from Manage.
           </p>
@@ -3148,7 +3329,7 @@ function InsideVendorLedger({
 
       {rows.length === 0 ? (
         <div className="text-center py-10 text-muted-foreground">
-          <p>No approved customer files for these Vendor Office records yet</p>
+          <p>No approved customer files for these Dealer Office records yet</p>
         </div>
       ) : (
         <div className="p-3 space-y-2">
@@ -3328,7 +3509,7 @@ function InsideVendorLedger({
           <DialogHeader className="flex flex-row items-start justify-between gap-3 space-y-0 pr-8">
             <div>
               <DialogTitle>Ledger management</DialogTitle>
-              <DialogDescription>Update amounts for this Vendor Office customer file.</DialogDescription>
+              <DialogDescription>Update amounts for this Dealer Office customer file.</DialogDescription>
             </div>
             <Button type="button" size="sm" className="shrink-0" onClick={() => void saveManage()} disabled={saving}>
               {saving ? "Saving..." : "Save"}

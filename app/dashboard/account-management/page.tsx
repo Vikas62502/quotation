@@ -2379,6 +2379,7 @@ export default function AccountManagementPage() {
               bankIfsc: (flat.bankIfsc ?? flat.bank_ifsc) as string | undefined,
               loanAmount: pickFirstFiniteNumber(flat.loanAmount, flat.loan_amount) || undefined,
               cashAmount: pickFirstFiniteNumber(flat.cashAmount, flat.cash_amount) || undefined,
+              proposal: pickFirstFiniteNumber(flat.proposal, flat.proposalAmount, flat.proposal_amount) || undefined,
               installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
               paymentPhases: Array.isArray(phasesFromApi) ? phasesFromApi : [],
               validUntil: flat.validUntil as string | undefined,
@@ -4347,7 +4348,15 @@ export default function AccountManagementPage() {
         return
       }
     const proposalFallback = Math.round(Number(payment.subtotal) || 0)
-    const proposal = stored.proposal && stored.proposal > 0 ? stored.proposal : proposalFallback
+    const fromQuotation = Math.round(Number(payment.quotation?.proposal) || 0)
+    const proposal =
+      paymentTypeOf(payment) === "cash"
+        ? proposalFallback
+        : stored.proposal && stored.proposal > 0
+          ? stored.proposal
+          : fromQuotation > 0
+            ? fromQuotation
+            : proposalFallback
     const loanCash = quotationLoanCashAmountsForLedger(
       payment.quotation,
       proposal > 0 ? proposal : proposalFallback,
@@ -5265,7 +5274,7 @@ export default function AccountManagementPage() {
               </TabsTrigger>
               <TabsTrigger value="subvendors" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
                 <Truck className="w-4 h-4" />
-                Vendor Office
+                Dealer Office
               </TabsTrigger>
               <TabsTrigger value="approved" className="gap-1.5 text-xs sm:text-sm px-3 py-1.5">
                 <UserPlus className="w-4 h-4" />
@@ -6271,7 +6280,7 @@ export default function AccountManagementPage() {
                 </SelectContent>
               </Select>
               <p className="text-[11px] text-muted-foreground">
-                Filter Accounts / Vendor Office files, then enter the same ledger amounts in Manage.
+                Filter Accounts / Dealer Office files, then enter the same ledger amounts in Manage.
               </p>
             </div>
             <div className="space-y-1">

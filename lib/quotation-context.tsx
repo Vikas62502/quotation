@@ -172,6 +172,8 @@ export interface Quotation {
   loanAmount?: number
   /** Cash portion when payment type is cash + loan */
   cashAmount?: number
+  /** Accounts proposal (loan / cash+loan entered on approve; cash uses subtotal) */
+  proposal?: number
   /** Payment installments (Account Management); used in metering for I2 amount. */
   paymentPhases?: Array<{
     phaseNumber: number

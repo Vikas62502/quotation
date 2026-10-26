@@ -19,6 +19,13 @@
  *   - For loan: persist loanAmount; clear cashAmount
  *   - For cash: clear loanAmount / cashAmount
  *   - Echo loanAmount / cashAmount / paymentType on GET list + detail
+ *
+ * CHANGELOG Oct 26 2026 — Proposal amount on approve  ← APPLY THIS
+ *   Dedicated copy-paste: BACKEND_APPROVE_PROPOSAL.ts
+ *   Loan / Cash + loan: body.proposal (or proposalAmount) required, INR > 0.
+ *   Cash: proposal = quotation subtotal (do not require body.proposal).
+ *   Persist quotations.proposal AND upsert subvendor_ledger.proposal (do not wipe PI / GST).
+ *   Echo proposal on GET list + detail. Accounts uses this as Proposal.
  *   - For "loan" or "mix", frontend requires bankName + bankIfsc (11-char IFSC)
  *   - Optional subsidyChequeDetails (text) when payment is "cash" or "mix"
  *
@@ -182,6 +189,8 @@ function normalizeFileLoginStatus(raw) {
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS loan_amount NUMERIC(14,2);
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS cash_amount NUMERIC(14,2);
  *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS site_cost NUMERIC(14,2);
+ *   ALTER TABLE quotations ADD COLUMN IF NOT EXISTS proposal NUMERIC(14,2);
+ *   -- proposal: loan / cash+loan amount entered on approve; cash = quotation subtotal
  *   -- Or compute `remaining` in API from subtotal − sum(phases.paidAmount) if you do not store it.
  *   -- payment_mode often already exists; ensure it can store loan|cash|mix
  *
@@ -202,6 +211,7 @@ function normalizeFileLoginStatus(raw) {
  *   ALTER TABLE quotations ADD COLUMN loan_amount DECIMAL(14,2) NULL;
  *   ALTER TABLE quotations ADD COLUMN cash_amount DECIMAL(14,2) NULL;
  *   ALTER TABLE quotations ADD COLUMN site_cost DECIMAL(14,2) NULL;
+ *   ALTER TABLE quotations ADD COLUMN proposal DECIMAL(14,2) NULL;
  *
  * Sequelize model (example):
  *   bankName: { type: DataTypes.STRING(255), allowNull: true, field: 'bank_name' },
@@ -210,6 +220,7 @@ function normalizeFileLoginStatus(raw) {
  *   loanAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'loan_amount' },
  *   cashAmount: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'cash_amount' },
  *   siteCost: { type: DataTypes.DECIMAL(14, 2), allowNull: true, field: 'site_cost' },
+ *   proposal: { type: DataTypes.DECIMAL(14, 2), allowNull: true },
  *   subsidyChequeDetails: { type: DataTypes.TEXT, allowNull: true, field: 'subsidy_cheque_details' },
  *   fileLoginStatus: { type: DataTypes.STRING(32), allowNull: true, field: 'file_login_status' },
  *   filePaymentType: { type: DataTypes.STRING(16), allowNull: true, field: 'file_payment_type' },
@@ -226,7 +237,7 @@ function normalizeFileLoginStatus(raw) {
 /**
  * PATCH /admin/quotations/:quotationId/status
  */
-export async function patchAdminQuotationStatus(req, res) {
+export async function patchAdminQuotationStatus(req, res, db) {
   try {
     const user = req.admin ?? req.user
     if (!user || user.role !== "admin") {
@@ -298,6 +309,18 @@ export async function patchAdminQuotationStatus(req, res) {
       }
       updates.loanAmount = amountResult.loanAmount
       updates.cashAmount = amountResult.cashAmount
+      const proposalRaw = parseApproveInrAmount(body.proposal ?? body.proposalAmount ?? body.proposal_amount)
+      if (paymentType === "cash") {
+        updates.proposal = quotationSubtotal
+      } else if (proposalRaw == null || proposalRaw <= 0) {
+        res.status(400).json({
+          success: false,
+          error: { code: "VAL_PROPOSAL", message: "proposal required for loan / cash + loan approval" },
+        })
+        return
+      } else {
+        updates.proposal = proposalRaw
+      }
       // Keep file-login type in sync so list UIs that still read filePaymentType stay correct.
       updates.filePaymentType = paymentType
 
@@ -343,11 +366,33 @@ export async function patchAdminQuotationStatus(req, res) {
       updates.paymentType = null
       updates.loanAmount = null
       updates.cashAmount = null
+      updates.proposal = null
       updates.subsidyChequeDetails = null
     }
 
     await quotation.update(updates)
     await quotation.reload()
+
+    if (statusRaw === "approved" && updates.proposal != null) {
+      try {
+        const Ledger =
+          (typeof SubvendorLedger !== "undefined" ? SubvendorLedger : null) ||
+          db?.SubvendorLedger ||
+          req.db?.SubvendorLedger
+        if (Ledger?.findOrCreate) {
+          const [ledgerRow] = await Ledger.findOrCreate({
+            where: { quotationId },
+            defaults: { quotationId, quotation_id: quotationId, proposal: updates.proposal },
+          })
+          const ledgerPatch = { proposal: updates.proposal }
+          if (updates.loanAmount != null) ledgerPatch.loanAmount = updates.loanAmount
+          if (updates.cashAmount != null) ledgerPatch.cashAmount = updates.cashAmount
+          await ledgerRow.update(ledgerPatch)
+        }
+      } catch (ledgerErr) {
+        console.error("approve proposal ledger upsert failed", ledgerErr)
+      }
+    }
 
     res.json({
       success: true,
@@ -358,6 +403,7 @@ export async function patchAdminQuotationStatus(req, res) {
         paymentType: quotation.paymentType ?? quotation.paymentMode,
         loanAmount: quotation.loanAmount ?? quotation.loan_amount ?? null,
         cashAmount: quotation.cashAmount ?? quotation.cash_amount ?? null,
+        proposal: quotation.proposal ?? null,
         bankName: quotation.bankName,
         bankIfsc: quotation.bankIfsc,
         subsidyChequeDetails: quotation.subsidyChequeDetails ?? quotation.subsidy_cheque_details ?? null,
@@ -555,6 +601,7 @@ export function quotationToApiJson(row) {
     cashAmount: q.cashAmount ?? q.cash_amount ?? null,
     loan_amount: q.loanAmount ?? q.loan_amount ?? null,
     cash_amount: q.cashAmount ?? q.cash_amount ?? null,
+    proposal: q.proposal ?? q.proposalAmount ?? q.proposal_amount ?? null,
     siteCost: q.siteCost ?? q.site_cost ?? null,
     site_cost: q.siteCost ?? q.site_cost ?? null,
     bankName: q.bankName ?? q.bank_name ?? null,
@@ -1602,6 +1649,12 @@ export function callingActionToApiJson(row) {
  * values through by parsing during GET responses (parse on the fly).
  */
 /**
+ * CHANGELOG Oct 26 2026 — sheet write-back uses plain status_text  ← APPLY THIS
+ *   first_call_response / second_call_response = parsed.status ("Call Unanswered")
+ *   NEVER store or send call_remark tagged string ("[call_connectivity] …") to the sheet.
+ *   Immediate writeBackHrLeadToSheet after PATCH; 2-hour write-back-all is fallback.
+ *   See BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts.
+ *
  * Map tagged Connected / transfer status_text → sheet Final Decision.
  * SPA also sends finalDecision / final_decision via enrichCallingActionPayload.
  */
@@ -1679,14 +1732,15 @@ export async function patchDealerCallingQueueAction(req, res, db) {
         updates.second_call_response =
           body.secondCallResponse ||
           body.second_call_response ||
-          updates.call_remark
+          parsed.status
       }
 
       // First Not Connected reason → keep as 1st call if column empty (optional).
+      // Sheet write-back uses this plain status_text, never [call_connectivity] …
       const isNotConnectedTag = normalizedCategory === "call_connectivity"
       if (isNotConnectedTag) {
         updates.first_call_response =
-          body.firstCallResponse || body.first_call_response || updates.call_remark
+          body.firstCallResponse || body.first_call_response || parsed.status
       }
     }
 
@@ -1699,7 +1753,7 @@ export async function patchDealerCallingQueueAction(req, res, db) {
     const updatedRow = await db.dealerCallingLeads.findById(leadId)
 
     // P0: push Final Decision / 2nd Call / Remarks back to Google Sheet for sheet leads.
-    // Prefer immediate write-back; cron sync-all (every 30 min) is the fallback ≤ ~1 hour.
+    // Prefer immediate write-back; 2-hour write-back-all is the bulk fallback.
     // Import writeBackHrLeadToSheet from BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts (or your sheets module).
     if (updatedRow?.sheet_source_id || updatedRow?.sheetSourceId) {
       try {

@@ -115,6 +115,7 @@ import { HrWorkspace } from "@/app/dashboard/hr/page"
 import { AdminSubvendorPanel } from "@/components/admin-subvendor-panel"
 import { OfficeOutsideAdminPanel } from "@/components/office-outside-admin-panel"
 import { fetchOfficeOutsideRecordsFromApi } from "@/lib/office-outside-accounts"
+import { ledgerPatchToApiBody, upsertLedgerAmounts } from "@/lib/admin-subvendor-ledger"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1824,6 +1825,7 @@ export default function AdminPanelPage() {
   const [approvalSubsidyCheque, setApprovalSubsidyCheque] = useState("")
   const [approvalLoanAmount, setApprovalLoanAmount] = useState("")
   const [approvalCashAmount, setApprovalCashAmount] = useState("")
+  const [approvalProposalAmount, setApprovalProposalAmount] = useState("")
   const [approvalAtInput, setApprovalAtInput] = useState("")
   /** Keeps approve-time loan/cash split when GET list omits or overwrites with full subtotal. */
   const approvalLoanCashOverlayRef = useRef<
@@ -1833,6 +1835,7 @@ export default function AdminPanelPage() {
         paymentType: ApprovalPaymentType
         loanAmount?: number
         cashAmount?: number
+        proposal?: number
       }
     >
   >(
@@ -3306,6 +3309,12 @@ export default function AdminPanelPage() {
               const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
               if (overlay?.cashAmount != null && overlay.cashAmount > 0) return overlay.cashAmount
               const n = Number(q.cashAmount ?? q.cash_amount)
+              return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
+            })(),
+            proposal: (() => {
+              const overlay = approvalLoanCashOverlayRef.current[String(q.id || "").trim()]
+              if (overlay?.proposal != null && overlay.proposal > 0) return overlay.proposal
+              const n = Number(q.proposal ?? q.proposalAmount ?? q.proposal_amount)
               return Number.isFinite(n) && n > 0 ? Math.round(n) : undefined
             })(),
             paymentPhases,
@@ -5809,13 +5818,14 @@ export default function AdminPanelPage() {
       statusApprovedAt?: string
       loanAmount?: number
       cashAmount?: number
+      proposal?: number
     },
   ) => {
     try {
       if (useApi) {
         if (status === "approved" && approval) {
           await api.admin.quotations.updateStatus(quotationId, status, approval)
-          if (approval.loanAmount != null || approval.cashAmount != null || approval.paymentType) {
+          if (approval.loanAmount != null || approval.cashAmount != null || approval.paymentType || approval.proposal != null) {
             approvalLoanCashOverlayRef.current[quotationId] = {
               paymentType: approval.paymentType,
               ...(approval.loanAmount != null && approval.loanAmount > 0
@@ -5824,8 +5834,15 @@ export default function AdminPanelPage() {
               ...(approval.cashAmount != null && approval.cashAmount > 0
                 ? { cashAmount: approval.cashAmount }
                 : {}),
+              ...(approval.proposal != null && approval.proposal > 0 ? { proposal: approval.proposal } : {}),
             }
             persistApprovalLoanCashOverlay()
+          }
+          if (approval.proposal != null && approval.proposal > 0) {
+            upsertLedgerAmounts(quotationId, { proposal: approval.proposal })
+            void api.admin.subvendors.ledger
+              .update(quotationId, ledgerPatchToApiBody({ proposal: approval.proposal }))
+              .catch(() => {})
           }
         } else {
           await api.admin.quotations.updateStatus(quotationId, status)
@@ -5857,6 +5874,9 @@ export default function AdminPanelPage() {
                   ...(approval.cashAmount != null && approval.cashAmount > 0
                     ? { cashAmount: approval.cashAmount }
                     : { cashAmount: undefined }),
+                  ...(approval.proposal != null && approval.proposal > 0
+                    ? { proposal: approval.proposal }
+                    : {}),
                   ...(approval.subsidyChequeDetails?.trim()
                     ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
                     : {}),
@@ -5866,6 +5886,9 @@ export default function AdminPanelPage() {
         })
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
+        if (status === "approved" && approval?.proposal != null && approval.proposal > 0) {
+          upsertLedgerAmounts(quotationId, { proposal: approval.proposal })
+        }
       }
       
       // Note: Account Management has separate login, so we don't redirect automatically
@@ -5902,15 +5925,23 @@ export default function AdminPanelPage() {
       setApprovalSubsidyCheque(q?.fileSubsidyChequeDetails || q?.subsidyChequeDetails || "")
       const { loan, cash } = readQuotationLoanCashAmounts(q || {})
       const quotationTotal = q ? getQuotationSubtotalValue(q) : 0
+      const existingProposal = Math.round(Number((q as { proposal?: number })?.proposal) || 0)
       if (paymentType === "loan") {
         setApprovalLoanAmount(loan != null ? String(loan) : quotationTotal > 0 ? String(quotationTotal) : "")
         setApprovalCashAmount("")
+        setApprovalProposalAmount(
+          existingProposal > 0 ? String(existingProposal) : quotationTotal > 0 ? String(quotationTotal) : "",
+        )
       } else if (paymentType === "mix") {
         setApprovalLoanAmount(loan != null ? String(loan) : "")
         setApprovalCashAmount(cash != null ? String(cash) : "")
+        setApprovalProposalAmount(
+          existingProposal > 0 ? String(existingProposal) : quotationTotal > 0 ? String(quotationTotal) : "",
+        )
       } else {
         setApprovalLoanAmount("")
         setApprovalCashAmount("")
+        setApprovalProposalAmount("")
       }
       setApprovalAtInput(toDateTimeLocalValue(q?.statusApprovedAt || new Date().toISOString()))
       setApprovalDialogOpen(true)
@@ -8104,8 +8135,25 @@ export default function AdminPanelPage() {
       (approvalPaymentType === "cash" || approvalPaymentType === "mix") && subsidyTrim
         ? { subsidyChequeDetails: subsidyTrim }
         : {}
+    let proposal: number | undefined
+    if (approvalPaymentType === "cash") {
+      proposal = quotationTotal > 0 ? quotationTotal : undefined
+    } else {
+      const parsedProposal = parseInrAmountInput(approvalProposalAmount)
+      if (parsedProposal == null || parsedProposal <= 0) {
+        toast({
+          title: "Proposal amount required",
+          description: "Enter the proposal amount that Accounts should use for this file.",
+          variant: "destructive",
+        })
+        return
+      }
+      proposal = parsedProposal
+    }
     const amountPayload =
-      loanAmount != null || cashAmount != null ? { loanAmount, cashAmount } : {}
+      loanAmount != null || cashAmount != null || proposal != null
+        ? { loanAmount, cashAmount, ...(proposal != null ? { proposal } : {}) }
+        : {}
     if (needsBank) {
       const bankName = approvalBankName.trim()
       const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
@@ -8137,6 +8185,7 @@ export default function AdminPanelPage() {
       await updateQuotationStatus(approvingQuotationId, "approved", {
         paymentType: approvalPaymentType,
         ...subsidyPayload,
+        ...amountPayload,
         statusApprovedAt: approvedAtIso,
       })
     }
@@ -8147,6 +8196,7 @@ export default function AdminPanelPage() {
     setApprovalSubsidyCheque("")
     setApprovalLoanAmount("")
     setApprovalCashAmount("")
+    setApprovalProposalAmount("")
   }
 
   const resetFileLoginFormFields = () => {
@@ -16827,6 +16877,7 @@ export default function AdminPanelPage() {
               setApprovalSubsidyCheque("")
               setApprovalLoanAmount("")
               setApprovalCashAmount("")
+              setApprovalProposalAmount("")
               setApprovalAtInput("")
             }
           }}
@@ -16835,7 +16886,7 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>Select Payment Type</DialogTitle>
               <DialogDescription>
-                For Loan or Cash + loan, enter loan/cash amounts and the customer&apos;s bank and IFSC. For Cash or Cash + loan, you can record subsidy cheque details. The same details appear in Payment Management after approval.
+                For Loan or Cash + loan, enter proposal amount, loan/cash amounts, and the customer&apos;s bank and IFSC. For Cash, Accounts uses the quotation subtotal as proposal. For Cash or Cash + loan, you can record subsidy cheque details.
               </DialogDescription>
             </DialogHeader>
 
@@ -16856,15 +16907,22 @@ export default function AdminPanelPage() {
                       setApprovalBankIfsc("")
                       setApprovalLoanAmount("")
                       setApprovalCashAmount("")
+                      setApprovalProposalAmount("")
                     } else if (v === "loan") {
                       setApprovalCashAmount("")
                       if (!approvalLoanAmount.trim() && quotationTotal > 0) {
                         setApprovalLoanAmount(String(quotationTotal))
                       }
+                      if (!approvalProposalAmount.trim() && quotationTotal > 0) {
+                        setApprovalProposalAmount(String(quotationTotal))
+                      }
                     } else if (v === "mix") {
                       if (!approvalLoanAmount.trim() && !approvalCashAmount.trim() && quotationTotal > 0) {
                         setApprovalLoanAmount("")
                         setApprovalCashAmount("")
+                      }
+                      if (!approvalProposalAmount.trim() && quotationTotal > 0) {
+                        setApprovalProposalAmount(String(quotationTotal))
                       }
                     }
                   }}
@@ -16888,6 +16946,24 @@ export default function AdminPanelPage() {
                   onChange={(e) => setApprovalAtInput(e.target.value)}
                 />
               </div>
+
+              {(approvalPaymentType === "loan" || approvalPaymentType === "mix") && (
+                <div className="space-y-2">
+                  <Label htmlFor="approval-proposal-amount">Proposal amount (₹)</Label>
+                  <Input
+                    id="approval-proposal-amount"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={approvalProposalAmount}
+                    onChange={(e) => setApprovalProposalAmount(e.target.value)}
+                    placeholder="Accounts proposal"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    This is the Proposal field in Accounts. GST uses (proposal − PI) × 8.9%.
+                  </p>
+                </div>
+              )}
 
               {(approvalPaymentType === "loan" || approvalPaymentType === "mix") && (
                 <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
@@ -16990,6 +17066,7 @@ export default function AdminPanelPage() {
                   setApprovalSubsidyCheque("")
                   setApprovalLoanAmount("")
                   setApprovalCashAmount("")
+                  setApprovalProposalAmount("")
                   setApprovalAtInput("")
                 }}
               >

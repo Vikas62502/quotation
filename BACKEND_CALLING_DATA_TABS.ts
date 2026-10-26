@@ -25,6 +25,11 @@
  *   Not Connected tab can PATCH-transfer into Connected (tagged remark + "Transfer Reason:").
  *   SPA no longer sends Part 1–4 category pickers.
  *
+ * CHANGELOG Oct 26 2026 — sheet 2nd call is status_text, not tagged callRemark
+ *   applyConnectedOutcomePatch: second_call_response = statusText
+ *   ("Interested"), never "[customer_intent] Interested | …".
+ *   Google Sheet write-back reads that column as-is.
+ *
  * No new routes. Same:
  *   GET  /api/dealers/me/calling-queue/next
  *   GET  /api/dealers/me/calling-queue/current
@@ -276,7 +281,7 @@ export function applyConnectedOutcomePatch(lead, body) {
   lead.final_decision_reason =
     body.finalDecisionReason || body.final_decision_reason || remark || lead.final_decision_reason
   lead.second_call_response =
-    body.secondCallResponse || body.second_call_response || callRemark || lead.second_call_response
+    body.secondCallResponse || body.second_call_response || statusText || lead.second_call_response
 
   return lead
 }

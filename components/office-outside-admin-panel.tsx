@@ -294,8 +294,8 @@ export function OfficeOutsideAdminPanel({
     )
     if (parsed.subtotal <= 0) {
       toast({
-        title: "Amount required",
-        description: "Enter the quotation amount, then Save.",
+        title: "Proposal required",
+        description: "Enter the proposal amount, then Save.",
         variant: "destructive",
       })
       return
@@ -340,7 +340,7 @@ export function OfficeOutsideAdminPanel({
         },
       }))
       toast({
-        title: "Amount saved",
+        title: "Proposal saved",
         description: `${row.customerName}: ${formatInr(parsed.subtotal)}${
           parsed.loanAmount > 0 ? ` · Loan ${formatInr(parsed.loanAmount)}` : ""
         }`,
@@ -840,7 +840,7 @@ export function OfficeOutsideAdminPanel({
                   )}
                 >
                   <div className="min-w-0">
-                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Amount</Label>
+                    <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Proposal</Label>
                     <Input
                       value={draft.amount}
                       onChange={(e) => setAmountDraftField(row, "amount", e.target.value)}

@@ -3,17 +3,18 @@
  * Backend sync: BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts
  */
 
-export const DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID = "18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0"
+export const DEFAULT_SOCIAL_LEADS_SPREADSHEET_ID = "1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk"
 
-/** Default Meta sheet tabs — matches live spreadsheet until Discover returns the real list. */
-export const DEFAULT_SOCIAL_SHEET_TAB_NAMES = [
-  "Jaipur Leads",
-  "Ajmer Leads",
-  "Crompton Leads",
-  "Ajmer Solar Lead Form New",
-  "Chairbord - Ajme Leads",
-  "Ajmer Solar Lead New - Recovered",
-]
+/** Live spreadsheet tabs — Jaipur and Ajmer only. */
+export const DEFAULT_SOCIAL_SHEET_TAB_NAMES = ["Jaipur", "Ajmer"]
+
+export function isAllowedSocialSheetTab(name: string): boolean {
+  const key = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "")
+  return key === "jaipur" || key === "ajmer"
+}
 
 export const HR_SHEET_SOURCES_STORAGE_KEY = "hrSheetSourcesConfig"
 export const HR_SHEET_DISCOVERED_TABS_STORAGE_KEY = "hrSheetDiscoveredTabs"
@@ -664,10 +665,7 @@ export function defaultSheetSourcesForSpreadsheet(spreadsheetId: string): Social
     spreadsheetId: base,
     sheetTabName: tab,
     displayName: tab.replace(/_/g, " "),
-    enabled:
-      tab === "Ajmer Leads" ||
-      tab === "Ajmer_Leads" ||
-      tab === "Chairbord - Ajme Leads",
+    enabled: isAllowedSocialSheetTab(tab),
     dealerIds: [],
     activeLimitPerDealer: 1,
   }))
@@ -726,6 +724,7 @@ export function reconcileSheetSourcesWithDiscoveredTabs(
   return discoveredTabs
     .map((tab) => String(tab || "").trim())
     .filter(Boolean)
+    .filter((tab) => isAllowedSocialSheetTab(tab))
     .map((tab) => {
       const prev = existingByKey.get(normalizeSheetTabKey(tab))
       if (prev) {
@@ -741,7 +740,7 @@ export function reconcileSheetSourcesWithDiscoveredTabs(
         spreadsheetId,
         sheetTabName: tab,
         displayName: tab.replace(/_/g, " "),
-        enabled: false,
+        enabled: true,
         dealerIds: [],
         activeLimitPerDealer: 1,
       }
@@ -805,7 +804,7 @@ export function normalizeSheetSourceRow(raw: Record<string, unknown>): SocialMed
 export function normalizeSheetSourcesResponse(response: unknown): SocialMediaLeadSource[] {
   const fromArray = pickArray(response)
     .map((item) => normalizeSheetSourceRow(item as Record<string, unknown>))
-    .filter((s) => s.sheetTabName)
+    .filter((s) => s.sheetTabName && isAllowedSocialSheetTab(s.sheetTabName))
 
   if (fromArray.length > 0) return fromArray
 
@@ -814,11 +813,11 @@ export function normalizeSheetSourcesResponse(response: unknown): SocialMediaLea
     const single = obj.data ?? obj.source ?? obj.item
     if (single && typeof single === "object" && !Array.isArray(single)) {
       const row = normalizeSheetSourceRow(single as Record<string, unknown>)
-      if (row.sheetTabName) return [row]
+      if (row.sheetTabName && isAllowedSocialSheetTab(row.sheetTabName)) return [row]
     }
     if (obj.sheetTabName || obj.sheet_tab_name) {
       const row = normalizeSheetSourceRow(obj)
-      if (row.sheetTabName) return [row]
+      if (row.sheetTabName && isAllowedSocialSheetTab(row.sheetTabName)) return [row]
     }
   }
 

@@ -54,10 +54,10 @@ type HrSocialMediaSheetsPanelProps = {
 }
 
 const SPREADSHEET_URL =
-  "https://docs.google.com/spreadsheets/d/18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0/edit"
+  "https://docs.google.com/spreadsheets/d/1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk/edit"
 
-/** Pull from Google Sheet + reload UI (fallback when backend cron/socket missed). */
-const SHEET_AUTO_SYNC_MS = 30 * 60 * 1000
+/** Pull from Google Sheet + reload UI (fallback when backend 10-min cron/socket missed). */
+const SHEET_AUTO_SYNC_MS = 10 * 60 * 1000
 
 const isRealSheetSourceId = (id: string) => id && !id.startsWith("local-")
 
@@ -337,7 +337,7 @@ export function HrSocialMediaSheetsPanel({
     }
   }, [refreshSourcesAndLeads, runAutoSyncAll])
 
-  // Auto-sync every 30 min while HR page is open — same as clicking Sync now on all enabled tabs.
+  // Auto-sync every 10 min while HR page is open — same as clicking Sync now on all enabled tabs.
   useEffect(() => {
     if (typeof window === "undefined") return
     const timer = window.setInterval(() => {
@@ -628,7 +628,7 @@ export function HrSocialMediaSheetsPanel({
           </CardTitle>
           <CardDescription>
             Sub-tabs match the live spreadsheet. Enable a tab, pick dealers, then sync once — data refreshes
-            automatically every <span className="font-medium text-foreground">30 minutes</span> (same as Sync now)
+            automatically every <span className="font-medium text-foreground">10 minutes</span> (same as Sync now)
             and instantly when the backend emits{" "}
             <span className="font-medium text-foreground">calling:uploads-updated</span> over socket. Use{" "}
             <span className="font-medium text-foreground">Sync now</span> for an immediate pull.
@@ -658,7 +658,7 @@ export function HrSocialMediaSheetsPanel({
               ? "Auto-syncing from sheet…"
               : lastAutoSyncAt
                 ? `Auto-sync ${new Date(lastAutoSyncAt).toLocaleTimeString()}`
-                : "Auto-sync every 30 min + socket"}
+                : "Auto-sync every 10 min + socket"}
           </Badge>
           {googleCredentialsPending ? (
             <Badge variant="outline" className="text-sky-800 border-sky-200 bg-sky-50">
@@ -812,7 +812,7 @@ export function HrSocialMediaSheetsPanel({
                       <CardDescription>
                         Filter by status: New (sky), Pending (amber), Not interested (rose), Interested / Visit
                         (green). Sheet rows with empty Final Decision (CREATED) are imported and assigned on
-                        Sync — list updates every 30 minutes and on socket sync.
+                        Sync — list updates every 10 minutes and on socket sync.
                       </CardDescription>
                     </div>
                     {isAutoSyncing || isLoadingLeads ? (

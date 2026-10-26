@@ -4,11 +4,35 @@
  * BACKEND — Google Sheets → HR Social Media Leads (Meta / IG / FB exports)
  * =============================================================================
  *
- * Spreadsheet (production):
- *   https://docs.google.com/spreadsheets/d/18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
+ * Spreadsheet (production — Oct 26 2026):
+ *   https://docs.google.com/spreadsheets/d/1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
+ *   Tabs: **Jaipur** and **Ajmer** only. Ignore every other tab name.
+ *   Env: GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
  *
- * Each tab (e.g. Ajmer_Leads, Jaipur_Leads, Chairbord - Ajme Leads) becomes an HR
- * panel sub-tab when enabled. Sync reads new rows, stores in DB, round-robin assigns.
+ * CHANGELOG Oct 26 2026 — Jaipur / Ajmer sheet + 10-min pull + 2-hour write-back  ← APPLY THIS
+ *   APPLY (copy-paste this file + BACKEND_ADMIN_QUOTATION_STATUS.ts calling PATCH):
+ *   Env:
+ *     GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
+ *     Share the sheet with the service-account email as Editor.
+ *   SQL: run the Oct 26 UPDATE that sets enabled=false on the old spreadsheet_id.
+ *   Discover: upsert only tabs named exactly Jaipur and Ajmer.
+ *   Cron (x-cron-secret = CRON_SECRET):
+ *     */10 * * * *  POST /api/hr/sheet-sources/sync-all
+ *     0 */2 * * *   POST /api/hr/sheet-sources/write-back-all
+ *   1. Default spreadsheet is the new id (not 18zqPIpa…).
+ *   2. Sheet → DB every 10 min. Assigned CREATED leads land on Current Lead.
+ *   3. DB → sheet every 2 hours (plus immediate write-back after assign / call / revert).
+ *      Columns: Assigned Dealer, Assignment Status, lead_status, Remarks,
+ *      1st/2nd Call Response, Final Decision, Address.
+ *   4. Never write "[call_connectivity] Call Unanswered". Write status_text:
+ *      "Call Unanswered", "Interested", "Callback Later".
+ *   5. Stale fresh reassign on the 2-hour job: assigned + no action + dealer
+ *      not live in 24h → random other dealer in the same tab pool who WAS live.
+ *   6. Persist first_call_response / second_call_response as plain status_text
+ *      (BACKEND_ADMIN_QUOTATION_STATUS.ts patchDealerCallingQueueAction).
+ *
+ * Each allowed tab becomes an HR panel sub-tab when enabled. Sync reads new
+ * rows, stores in DB, round-robin assigns, Current Lead + revert-to-sheet work.
  *
  * Oct 2026 — CREATED rows MUST reach dealer Calling Data:
  *   Meta `lead_status=CREATED` is NOT a calling-queue status.
@@ -40,7 +64,37 @@
 
 import { google } from "googleapis"
 
-const DEFAULT_SPREADSHEET_ID = "18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0"
+const DEFAULT_SPREADSHEET_ID = "1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk"
+const ALLOWED_SOCIAL_SHEET_TABS = ["Jaipur", "Ajmer"]
+const STALE_DEALER_MS = 24 * 60 * 60 * 1000
+
+function isAllowedSocialSheetTab(name) {
+  const key = String(name || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, "")
+  return key === "jaipur" || key === "ajmer"
+}
+
+/** Strip `[call_connectivity] Call Unanswered | note` → `Call Unanswered`. */
+function parseTaggedCallRemarkForSheet(raw) {
+  const text = String(raw || "").trim()
+  if (!text) return { statusCategory: "", status: "", remark: "" }
+  const match = text.match(/^\[([^\]]+)\]\s*([^|]*?)\s*(?:\|\s*(.*))?$/)
+  if (!match) return { statusCategory: "", status: text, remark: "" }
+  return {
+    statusCategory: String(match[1] || "").trim(),
+    status: String(match[2] || "").trim(),
+    remark: String(match[3] || "").trim(),
+  }
+}
+
+function sheetPlainStatus(value, fallbackStatusText) {
+  const parsed = parseTaggedCallRemarkForSheet(value)
+  const text = String(fallbackStatusText || "").trim()
+  const raw = parsed.status || text || String(value || "").trim()
+  return raw.replace(/^\[[a-z0-9_]+\]\s*/i, "").split("|")[0].trim()
+}
 
 // -----------------------------------------------------------------------------
 // DB tables (suggested)
@@ -150,6 +204,11 @@ SET status = CASE
   ELSE 'assigned'
 END
 WHERE lower(btrim(coalesce(status, ''))) = 'created';
+
+-- Oct 26 2026 — switch to Jaipur / Ajmer spreadsheet. Disable the old sheet.
+UPDATE hr_sheet_sources
+SET enabled = false, updated_at = NOW()
+WHERE spreadsheet_id <> '1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk';
 */
 
 // -----------------------------------------------------------------------------
@@ -540,15 +599,22 @@ export async function writeBackHrLeadToSheet(lead, { dealerNameById } = {}) {
     : leadStatus || "CREATED"
 
   const addressText = formatLeadAddressForSheet(lead)
+  const statusText = String(lead.status_text || lead.statusText || "").trim()
+  const freeRemark = String(lead.remark || lead.remarks || "").trim()
+  const firstStored = sheetPlainStatus(lead.first_call_response || lead.firstCallResponse, "")
+  const secondStored = sheetPlainStatus(lead.second_call_response || lead.secondCallResponse, "")
+  const latestPlain = sheetPlainStatus("", statusText)
+  const firstPlain = firstStored || (!secondStored ? latestPlain : "")
+  const secondPlain = secondStored
 
   const updates = [
     { col: colAssigned, value: dealerName },
     { col: colAssignStatus, value: status || (dealerId ? "assigned" : "unassigned") },
     { col: colLeadStatus, value: sheetLeadStatus },
-    { col: colRemarks, value: lead.remarks || "" },
+    { col: colRemarks, value: freeRemark || lead.remarks || "" },
     { col: colRemarks2, value: lead.remarks_2 || lead.remarks2 || "" },
-    { col: colFirst, value: lead.first_call_response || lead.firstCallResponse || "" },
-    { col: colSecond, value: lead.second_call_response || lead.secondCallResponse || "" },
+    { col: colFirst, value: firstPlain },
+    { col: colSecond, value: secondPlain },
     { col: colFinal, value: lead.final_decision || lead.finalDecision || "" },
     {
       col: colReason,
@@ -596,7 +662,7 @@ function sheetsColumnLetter(index0) {
  *    — including Not Connected → Connected transfer. Persist final_decision +
  *      second_call_response from tagged callRemark (see applyConnectedOutcomePatch),
  *      then writeBack so sheet Final Decision matches Interested within the next
- *      cron cycle (every 30 min sync-all, i.e. within ~30–60 min / “1 hour”).
+ *      cron cycle (10-min pull; 2-hour write-back-all is the bulk fallback).
  * 3. After HR/admin PATCH that changes assignment or calling fields on sheet leads
  *
  * Pull sync (syncSheetTabSource) MUST NOT overwrite these DB fields from empty sheet cells
@@ -801,6 +867,107 @@ export async function assignOpenSheetLeadsWithoutFinalDecision(
   return { assigned }
 }
 
+function leadHasNoCallingAction(lead) {
+  const statusText = String(lead.status_text || lead.statusText || "").trim()
+  const first = String(lead.first_call_response || lead.firstCallResponse || "").trim()
+  const second = String(lead.second_call_response || lead.secondCallResponse || "").trim()
+  const final = String(lead.final_decision || lead.finalDecision || "").trim()
+  const action = String(lead.action || "").trim().toLowerCase()
+  if (statusText || first || second || final) return false
+  if (action && action !== "start" && action !== "assigned" && action !== "queued") return false
+  return true
+}
+
+async function dealerIdsActiveInLast24h(poolIds, db) {
+  const ids = (poolIds || []).map(String).filter(Boolean)
+  if (!ids.length) return new Set()
+  const since = new Date(Date.now() - STALE_DEALER_MS)
+  const Action =
+    db?.DealerCallingAction ||
+    db?.HrLeadAction ||
+    (typeof DealerCallingAction !== "undefined" ? DealerCallingAction : null)
+  if (!Action?.findAll) return new Set()
+  const rows = await Action.findAll({
+    where: { dealer_id: ids },
+    attributes: ["dealer_id", "action", "action_at"],
+  }).catch(() => [])
+  return new Set(
+    (rows || [])
+      .filter((row) => {
+        const at = new Date(row.action_at || row.actionAt || 0).getTime()
+        const action = String(row.action || "").trim().toLowerCase()
+        return at >= since.getTime() && action !== "start" && action !== "assigned"
+      })
+      .map((row) => String(row.dealer_id || row.dealerId || ""))
+      .filter(Boolean),
+  )
+}
+
+/**
+ * Fresh lead (no action) on a dealer who has not been live in 24h
+ * → randomly give it to a dealer in the same tab pool who HAS been live.
+ */
+export async function reassignStaleFreshSheetLeads({ spreadsheetId, dealerNameById, db } = {}) {
+  const sources = await HrSheetSource.findAll({
+    where: { spreadsheet_id: spreadsheetId || DEFAULT_SPREADSHEET_ID, enabled: true },
+  })
+  let reassigned = 0
+  for (const source of sources) {
+    const pool = asArray(source.dealer_ids).filter(Boolean)
+    if (pool.length < 2) continue
+    const active = [...(await dealerIdsActiveInLast24h(pool, db))]
+    if (!active.length) continue
+    const leads = await HrLead.findAll({ where: { sheet_source_id: source.id } })
+    for (const lead of leads || []) {
+      if (!isOpenSheetLeadWithoutFinalDecision(lead)) continue
+      if (!leadHasNoCallingAction(lead)) continue
+      const assignee = normalizeAssigneeId(lead.assigned_dealer_id || lead.assignedDealerId)
+      if (!assignee) continue
+      if (active.includes(assignee)) continue
+      const others = active.filter((id) => id !== assignee)
+      if (!others.length) continue
+      const next = others[Math.floor(Math.random() * others.length)]
+      await lead.update({
+        assigned_dealer_id: next,
+        status: "assigned",
+        assigned_at: new Date(),
+      })
+      reassigned += 1
+      try {
+        const fresh = typeof lead.reload === "function" ? await lead.reload() : lead
+        await writeBackHrLeadToSheet(fresh, { dealerNameById })
+      } catch (e) {
+        console.error("sheet write-back after stale reassign failed", e)
+      }
+    }
+  }
+  return { reassigned }
+}
+
+export async function writeBackAllSheetLeads({ spreadsheetId, dealerNameById, db } = {}) {
+  const sources = await HrSheetSource.findAll({
+    where: { spreadsheet_id: spreadsheetId || DEFAULT_SPREADSHEET_ID, enabled: true },
+  })
+  let written = 0
+  let failed = 0
+  for (const source of sources) {
+    const leads = await HrLead.findAll({ where: { sheet_source_id: source.id } })
+    for (const lead of leads || []) {
+      try {
+        lead.sheetSource = source
+        const result = await writeBackHrLeadToSheet(lead, { dealerNameById })
+        if (result?.ok) written += 1
+        else failed += 1
+      } catch (e) {
+        failed += 1
+        console.error("sheet write-back-all row failed", e)
+      }
+    }
+  }
+  const stale = await reassignStaleFreshSheetLeads({ spreadsheetId, dealerNameById, db })
+  return { written, failed, reassigned: stale.reassigned }
+}
+
 /**
  * Pull every sheet data row (full rescan — do not rely only on last_synced_row cursor).
  * Upsert by mobile: create missing CREATED leads; refresh open leads' Meta fields.
@@ -980,6 +1147,7 @@ export async function listHrSheetSources(req, res) {
   const rows = await HrSheetSource.findAll({ order: [["sheet_tab_name", "ASC"]] })
   const sources = []
   for (const row of rows) {
+    if (!isAllowedSocialSheetTab(row.sheet_tab_name)) continue
     const leads = await HrLead.findAll({
       where: { sheet_source_id: row.id },
       attributes: ["status", "assigned_dealer_id"],
@@ -1006,9 +1174,12 @@ export async function discoverHrSheetTabs(req, res) {
     return res.status(status).json({ success: false, error: { code, message: e.message } })
   }
   const meta = await sheets.spreadsheets.get({ spreadsheetId })
-  const tabs = (meta.data.sheets || []).map((s) => s.properties?.title).filter(Boolean)
+  const tabs = (meta.data.sheets || [])
+    .map((s) => s.properties?.title)
+    .filter(Boolean)
+    .filter((tab) => isAllowedSocialSheetTab(tab))
 
-  // Upsert only tabs that exist in the live spreadsheet.
+  // Upsert only Jaipur / Ajmer. Ignore Crompton / recovered / old city tabs.
   const created = []
   for (const tab of tabs) {
     const [row] = await HrSheetSource.findOrCreate({
@@ -1098,7 +1269,7 @@ export async function postHrSheetSourceSync(req, res) {
 /**
  * POST /api/hr/sheet-sources/sync-all
  * Cron / ops: sync every **enabled** sheet source for the default spreadsheet.
- * Recommended schedule: every 30 minutes.
+ * Recommended schedule: every 10 minutes (sheet → DB → Current Lead).
  * Emits `calling:uploads-updated` once at the end (and per syncSheetTabSource).
  *
  * Auth: HR JWT, or internal cron secret header `x-cron-secret` matching CRON_SECRET env.
@@ -1154,14 +1325,71 @@ export async function postHrSheetSourcesSyncAll(req, res) {
 }
 
 /**
+ * POST /api/hr/sheet-sources/write-back-all
+ * Cron: every 2 hours. Push DB calling fields onto Jaipur / Ajmer rows
+ * (plain status_text, never [call_connectivity] tags). Then reassign
+ * fresh leads sitting on dealers who have not been live in 24 hours.
+ *
+ * Auth: HR JWT or x-cron-secret.
+ */
+export async function postHrSheetSourcesWriteBackAll(req, res) {
+  const cronSecret = process.env.CRON_SECRET
+  const headerSecret = req.headers["x-cron-secret"]
+  const isCron = cronSecret && headerSecret && String(headerSecret) === String(cronSecret)
+  const isHr = Boolean(req.hr || req.user?.role === "hr" || req.user?.role === "admin")
+  if (!isCron && !isHr) {
+    return res.status(401).json({ success: false, error: { code: "AUTH_003", message: "HR or cron required" } })
+  }
+
+  const spreadsheetId =
+    req.body?.spreadsheetId || req.body?.spreadsheet_id || process.env.GOOGLE_SHEETS_SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID
+
+  const sources = await HrSheetSource.findAll({
+    where: { spreadsheet_id: spreadsheetId, enabled: true },
+  })
+  const poolIds = [...new Set(sources.flatMap((row) => asArray(row.dealer_ids)))]
+  const dealers = poolIds.length ? await Dealer.findAll({ where: { id: poolIds } }).catch(() => []) : []
+  const dealerNameById = Object.fromEntries(
+    (dealers || []).map((d) => [String(d.id), d.name || d.full_name || d.username || ""]),
+  )
+
+  const result = await writeBackAllSheetLeads({ spreadsheetId, dealerNameById, db: req.db })
+
+  emitSocket("calling:uploads-updated", {
+    reason: "sheet_write_back",
+    spreadsheetId,
+    syncedAt: new Date().toISOString(),
+    ...result,
+  })
+
+  return res.json({
+    success: true,
+    data: {
+      spreadsheetId,
+      syncedAt: new Date().toISOString(),
+      ...result,
+    },
+  })
+}
+
+/**
  * Cron entry (node-cron / agenda / system crontab):
  *
- *   // every 30 minutes
- *   cron.schedule("*/30 * * * *", async () => {
+ *   // every 10 minutes — sheet → DB
+ *   cron.schedule("*/10 * * * *", async () => {
  *     await fetch(`${API_BASE}/hr/sheet-sources/sync-all`, {
  *       method: "POST",
  *       headers: { "x-cron-secret": process.env.CRON_SECRET, "Content-Type": "application/json" },
- *       body: JSON.stringify({}),
+ *       body: JSON.stringify({ spreadsheetId: DEFAULT_SPREADSHEET_ID }),
+ *     })
+ *   })
+ *
+ *   // every 2 hours — DB → sheet + stale-dealer reassign
+ *   cron.schedule("0 */2 * * *", async () => {
+ *     await fetch(`${API_BASE}/hr/sheet-sources/write-back-all`, {
+ *       method: "POST",
+ *       headers: { "x-cron-secret": process.env.CRON_SECRET, "Content-Type": "application/json" },
+ *       body: JSON.stringify({ spreadsheetId: DEFAULT_SPREADSHEET_ID }),
  *     })
  *   })
  *
@@ -1250,17 +1478,23 @@ export async function getHrSheetSourceLeads(req, res) {
 router.get("/hr/sheet-sources", authHr, listHrSheetSources)
 router.post("/hr/sheet-sources/discover", authHr, discoverHrSheetTabs)
 router.post("/hr/sheet-sources/sync-all", authHrOrCron, postHrSheetSourcesSyncAll) // BEFORE :id routes
+router.post("/hr/sheet-sources/write-back-all", authHrOrCron, postHrSheetSourcesWriteBackAll)
 router.patch("/hr/sheet-sources/:id", authHr, patchHrSheetSource)
 router.post("/hr/sheet-sources/:id/sync", authHr, postHrSheetSourceSync)
 router.post("/hr/sheet-sources/:id/assign-created", authHr, postHrSheetSourceAssignCreated)
 router.get("/hr/sheet-sources/:id/leads", authHr, getHrSheetSourceLeads)
 
-Cron (required for auto-sync — Google Sheets cannot push via socket):
-  */30 * * * *  POST /hr/sheet-sources/sync-all  (header x-cron-secret)
-  After each run emit calling:uploads-updated so HR/dealer UIs refresh.
+Cron (required — Google Sheets cannot push via socket):
+  */10 * * * *  POST /hr/sheet-sources/sync-all         (sheet → DB → Current Lead)
+  0 */2 * * *   POST /hr/sheet-sources/write-back-all   (DB → sheet + stale reassign)
+  Header: x-cron-secret. After each run emit calling:uploads-updated.
 
-Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLeadToSheet
+Write-back (P0): after assign + calling actions + 2-hour cron → writeBackHrLeadToSheet
+  1st/2nd Call Response = status_text only (Call Unanswered), never [call_connectivity] …
   Sheets scope must be spreadsheets (read-write). Pull must not wipe CRM fields.
+
+Stale fresh reassign (2-hour job): assigned + no action + dealer not live 24h
+  → random dealer in the same tab pool who HAD a calling action in last 24h.
 */
 
 // -----------------------------------------------------------------------------
@@ -1268,7 +1502,7 @@ Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLe
 // -----------------------------------------------------------------------------
 /*
 1. Share spreadsheet with service account email (Editor).
-2. POST discover → tabs include Ajmer_Leads.
+2. POST discover → tabs are Jaipur and Ajmer only.
 3. PATCH source enabled=true, dealerIds=[…].
 4. POST sync → imported N rows; hr_leads created; assigned via active_cap.
 5. HR Social Media tab shows coloured status badges.
@@ -1276,10 +1510,11 @@ Write-back (P0): after assign + calling actions on sheet leads → writeBackHrLe
 7. Re-sync full-scans all rows; upserts missing CREATED leads (empty Final Decision).
 8. Open leads (no Final Decision) that are still unassigned get round-robin assigned
    so sheet Assignment Status is not left blank (e.g. 14 sheet rows → 14 assigned).
-9. Chairbord - Ajme Leads CREATED rows (no assignee on the sheet) still import and
-   assign to that tab's dealer pool (or another enabled tab's pool) and appear in
+9. CREATED rows still import and assign to that tab's dealer pool and appear in
    dealer Calling Data. GET calling-queue/current|next returns status assigned/queued
    (never CREATED) plus lead_status="CREATED".
-10. POST /hr/sheet-sources/:id/assign-created → assigned > 0 for the leftover CREATED rows.
-11. One-shot SQL above clears status='created' on existing hr_leads.
+10. POST /hr/sheet-sources/:id/assign-created → assigned > 0 for leftover CREATED rows.
+11. One-shot SQL above clears status='created' and disables the old spreadsheet.
+12. Sheet 1st Call Response is "Call Unanswered", not "[call_connectivity] Call Unanswered".
+13. Fresh lead on a dealer idle 24h is reassigned on the 2-hour write-back-all job.
 */

@@ -7408,5 +7408,110 @@ Paid amount is still SUM of Accounts installment `paidAmount` (see `BACKEND_OFFI
 
 ---
 
+## §BU — Jaipur / Ajmer sheet: 10-min pull, 2-hour write-back, plain status, stale reassign — Oct 2026
+
+Replace spreadsheet `18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0` with:
+
+`https://docs.google.com/spreadsheets/d/1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk`
+
+Tabs: **Jaipur**, **Ajmer** only. Current Lead + revert-to-sheet keep using `writeBackHrLeadToSheet`.
+
+### Env
+
+```
+GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
+```
+
+Disable old sources:
+
+```sql
+UPDATE hr_sheet_sources
+SET enabled = false
+WHERE spreadsheet_id <> '1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk';
+```
+
+### Crons (`x-cron-secret`)
+
+| Schedule | Route | Direction |
+|----------|-------|-----------|
+| `*/10 * * * *` | `POST /hr/sheet-sources/sync-all` | Sheet → DB → Current Lead |
+| `0 */2 * * *` | `POST /hr/sheet-sources/write-back-all` | DB → sheet + stale reassign |
+
+### Sheet cells (write-back)
+
+| Column | Value |
+|--------|--------|
+| Assigned Dealer | dealer name |
+| Assignment Status | `assigned` / calling status |
+| lead_status | CREATED / IN_PROGRESS / COMPLETED |
+| Remarks | free `remark` (not tagged) |
+| 1st / 2nd Call Response | `status_text` only, e.g. `Call Unanswered` — **never** `[call_connectivity] Call Unanswered` |
+| Final Decision | Interested / Not Interested / Pending |
+| Address | lead address |
+
+### Stale fresh reassign (2-hour job)
+
+Lead is assigned, **no** calling action (`status_text` / first / second / final empty), and the assignee has **no** calling action in the last 24 hours → pick a random dealer from the same tab `dealer_ids` pool who **did** have a calling action in the last 24 hours. Write-back the new Assigned Dealer.
+
+### Must
+
+1. Discover ignores tabs other than Jaipur / Ajmer.
+2. Persist `first_call_response` / `second_call_response` as plain `status_text`, not `call_remark`.
+3. Pull sync still must not wipe CRM calling fields from empty sheet cells.
+
+**Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` · HANDOFF **§67**
+
+---
+
+## §BV — Approve proposal amount (loan / cash+loan); cash = subtotal — Oct 2026
+
+Accounts **Proposal** is set at Admin approve. **No new HTTP path.**
+
+| Payment type | Approve UI | `quotations.proposal` | `subvendor_ledger.proposal` |
+|--------------|------------|-----------------------|-----------------------------|
+| Loan | required **Proposal amount** | entered INR | same |
+| Cash + loan (`mix`) | required **Proposal amount** | entered INR | same |
+| Cash | no field | quotation **subtotal** | same |
+
+### SQL
+
+```sql
+ALTER TABLE quotations ADD COLUMN IF NOT EXISTS proposal NUMERIC(14,2);
+```
+
+MySQL: `ALTER TABLE quotations ADD COLUMN proposal DECIMAL(14,2) NULL;`
+
+`subvendor_ledger.proposal` already exists — no ledger ALTER.
+
+### `PATCH /admin/quotations/:quotationId/status`
+
+Loan:
+
+```json
+{ "status": "approved", "paymentType": "loan", "proposal": 210000, "proposalAmount": 210000, "loanAmount": 210000, "bankName": "...", "bankIfsc": "SBIN0001234" }
+```
+
+Cash (proposal optional; server still stores subtotal):
+
+```json
+{ "status": "approved", "paymentType": "cash" }
+```
+
+Accept `proposal` / `proposalAmount` / `proposal_amount`.
+
+| Code | When |
+|------|------|
+| `VAL_PROPOSAL` | loan / mix and proposal missing or ≤ 0 |
+
+After `quotation.update` on approve: `findOrCreate` ledger by `quotation_id`, then update **only** `proposal` (+ loan/cash if set). Do **not** zero PI / GST / others. Ledger upsert failure must not 500 the approve.
+
+Reject: `quotations.proposal = null`. Do not delete the ledger row.
+
+Echo `proposal` on PATCH, GET list (`status=approved`), GET detail.
+
+**Copy-paste:** `BACKEND_APPROVE_PROPOSAL.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` · HANDOFF **§68**
+
+---
+
 
 

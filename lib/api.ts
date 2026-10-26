@@ -3895,12 +3895,36 @@ export const api = {
       throw lastError
     },
 
-    /** Backend cron target — sync every enabled sheet tab (every ~30 min). */
+    /** Backend cron target — sheet → DB every ~10 min. */
     syncAll: async (spreadsheetId?: string) => {
       const body = spreadsheetId
         ? { spreadsheetId, spreadsheet_id: spreadsheetId }
         : {}
       const endpoints = ["/hr/sheet-sources/sync-all", "/hr/social-sheet-sources/sync-all"]
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest(endpoint, { method: "POST", body })
+        } catch (error) {
+          lastError = error
+          const missing =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+          if (!missing) throw error
+        }
+      }
+      throw lastError
+    },
+
+    /** Backend cron target — DB → sheet every ~2 hours (status text + stale reassign). */
+    writeBackAll: async (spreadsheetId?: string) => {
+      const body = spreadsheetId
+        ? { spreadsheetId, spreadsheet_id: spreadsheetId }
+        : {}
+      const endpoints = [
+        "/hr/sheet-sources/write-back-all",
+        "/hr/social-sheet-sources/write-back-all",
+      ]
       let lastError: unknown = null
       for (const endpoint of endpoints) {
         try {
@@ -4054,6 +4078,7 @@ export const api = {
           statusApprovedAt?: string
           loanAmount?: number
           cashAmount?: number
+          proposal?: number
         },
       ) => {
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
@@ -4080,6 +4105,9 @@ export const api = {
                     : {}),
                   ...(approval.cashAmount != null && approval.cashAmount > 0
                     ? { cashAmount: approval.cashAmount, cash_amount: approval.cashAmount }
+                    : {}),
+                  ...(approval.proposal != null && approval.proposal > 0
+                    ? { proposal: approval.proposal, proposalAmount: approval.proposal }
                     : {}),
                 }
               : {}),

@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4607,6 +4607,55 @@ Existing: `range`, `startDate`, `endDate`, `fromDate`, `toDate`, `dealerId`, `pa
 **Do not** keep the old office_outside remaining `sum(subtotal − PI − file − GST − others) − leaser_paid`. **office_inside** leaser is unchanged.
 
 **Copy-paste:** `BACKEND_SUBVENDOR_LEASER.ts` · `BACKEND_SUBVENDOR_BILLS.ts` · `BACKEND_OFFICE_OUTSIDE.ts` · REQUIRED **§BT**
+
+---
+
+## 67. Jaipur / Ajmer Google Sheet — 10-min pull, 2-hour write-back, plain status, stale reassign (**§BU**) — Oct 2026
+
+**Frontend (shipped):** HR Social Media now points at spreadsheet `1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk`, tabs **Jaipur** and **Ajmer** only. SPA auto-sync every **10 minutes**. Current Lead and revert-to-sheet stay on the same write-back path.
+
+**Apply on live API:**
+
+1. Set `GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk`. Share the sheet with the service account as Editor. Disable `hr_sheet_sources` rows for the old spreadsheet id.
+2. Discover upserts **only** tab names `Jaipur` and `Ajmer`.
+3. Cron **every 10 min:** `POST /hr/sheet-sources/sync-all` (`x-cron-secret`) — sheet → DB → Current Lead (CREATED still assigned).
+4. Cron **every 2 hours:** `POST /hr/sheet-sources/write-back-all` — DB → sheet. Also run `writeBackHrLeadToSheet` immediately after assign / calling action / revert.
+5. Sheet **1st/2nd Call Response** = DB `status_text` (`Call Unanswered`, `Interested`). Never write `[call_connectivity] Call Unanswered`.
+6. Stale fresh reassign on the 2-hour job: assigned lead with **no calling action**, dealer **not live in last 24h** → random other dealer in that tab pool who **had** a calling action in last 24h.
+
+**Copy-paste:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` · REQUIRED **§BU**
+
+---
+
+## 68. Approve — Proposal amount for loan / cash+loan; cash uses subtotal (**§BV**) — Oct 2026
+
+**Frontend (shipped):** Admin All quotations → Approve. **Loan** and **Cash + loan** show a required **Proposal amount** field. **Cash** has no field; Accounts **Proposal** is the quotation **subtotal**. GST in Accounts stays `(proposal − PI) × 8.9%` (SPA).
+
+**No new route.** Extend `PATCH /admin/quotations/:quotationId/status`.
+
+**Apply on live API:**
+
+1. `ALTER TABLE quotations ADD COLUMN IF NOT EXISTS proposal NUMERIC(14,2);` (MySQL: `DECIMAL(14,2) NULL`). Sequelize: `proposal: { type: DataTypes.DECIMAL(14, 2), allowNull: true }`.
+2. On `status=approved`:
+   - `paymentType=cash` → `quotations.proposal = quotation subtotal` (do **not** require `body.proposal`; SPA may send it anyway).
+   - `loan` / `mix` → require `body.proposal` (or `proposalAmount` / `proposal_amount`) > 0; else **400 `VAL_PROPOSAL`**.
+   - After `quotation.update`, upsert `subvendor_ledger` for that `quotation_id`: set **only** `proposal` (and loan/cash if those were saved). Do **not** wipe PI / GST / others / file charges.
+   - Ledger upsert failure must **not** fail the approve (log it). SPA also PATCHes `/admin/subvendors/ledger/:id` as fallback.
+3. On `status=rejected` → `quotations.proposal = null`. Do not delete the ledger row.
+4. Echo `proposal` on PATCH response, GET list (`/quotations?status=approved`), GET detail, and `quotationToApiJson`.
+
+**Do not** use quotation total-with-GST as proposal for cash. Use the same subtotal Account Management shows.
+
+### QA
+
+1. Approve as **Loan** with proposal ₹2,10,000 → Accounts Proposal ₹2,10,000 (not subtotal, unless they match).
+2. Approve as **Cash + loan** with proposal ₹2,25,000 → Accounts Proposal ₹2,25,000.
+3. Approve as **Cash**, subtotal ₹1,80,000 → Accounts Proposal ₹1,80,000 with no proposal field on the dialog.
+4. Approve loan without proposal → 400 `VAL_PROPOSAL`.
+5. Reject after approve → quotation `proposal` is null on GET.
+6. GET ledger for that quotation returns `proposal` after approve.
+
+**Copy-paste:** `BACKEND_APPROVE_PROPOSAL.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchAdminQuotationStatus`) · REQUIRED **§BV**
 
 ---
 

@@ -1,6 +1,7 @@
 # Google Sheets — Social Media Leads (HR Panel)
 
-**Spreadsheet:** `https://docs.google.com/spreadsheets/d/18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0`
+**Spreadsheet:** `https://docs.google.com/spreadsheets/d/1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk`  
+**Tabs:** `Jaipur` and `Ajmer` only.
 
 **Reference implementation:** `BACKEND_GOOGLE_SHEETS_SOCIAL_LEADS.ts`  
 **Frontend:** `lib/google-sheets-social-leads.ts`, `components/hr-social-media-sheets-panel.tsx`, HR → **Social Media** tab
@@ -22,7 +23,7 @@
 
 | Feature | Detail |
 |---------|--------|
-| Sheet tabs | **Exactly** the Google Sheet bottom tabs (e.g. `Jaipur Leads`, `Ajmer Leads`, `Crompton Leads`, `Ajmer Solar Lead Form New`). Discover replaces stale tabs — does not keep old names like `302012 Leads`. |
+| Sheet tabs | **Jaipur** and **Ajmer** only. Discover ignores every other tab. |
 | Toggle | When **ON**, dealer checkbox pool appears (same as CSV Assignment) |
 | Sync | Pulls new rows from Google Sheet → database → round-robin assign (`active_cap`, default 1/dealer) |
 | Colours | Lead cards use `lead_status`, remarks, final decision (sky=new, amber=pending, rose=not interested, green=visit/interested). SPA also has filter chips for these 4 buckets (client-side). |
@@ -235,7 +236,7 @@ ELSE:
 |--------|------|------|
 | `POST` | `/hr/sheet-sources/sync-all` | HR JWT **or** header `x-cron-secret: $CRON_SECRET` |
 
-Body (optional): `{ "spreadsheetId": "18zqPIpa…" }`
+Body (optional): `{ "spreadsheetId": "1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk" }`
 
 Behaviour: sync every `hr_sheet_sources` row with `enabled=true` for that spreadsheet → assign with active_cap → emit socket once.
 
@@ -252,7 +253,7 @@ Or node-cron — see `postHrSheetSourcesSyncAll` in `BACKEND_GOOGLE_SHEETS_SOCIA
 
 ```env
 CRON_SECRET=long-random-string
-GOOGLE_SHEETS_SPREADSHEET_ID=18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
+GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
 ```
 
 ### Do not
@@ -271,7 +272,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID=18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
   "sources": [
     {
       "id": "uuid",
-      "spreadsheetId": "18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0",
+      "spreadsheetId": "1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk",
       "sheetTabName": "Ajmer_Leads",
       "displayName": "Ajmer Leads",
       "enabled": true,
@@ -297,7 +298,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID=18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
   "tabs": ["Jaipur Leads", "Ajmer Leads", "Crompton Leads", "Ajmer Solar Lead Form New"],
   "sources": [ /* same tabs as upserted rows */ ],
   "data": {
-    "spreadsheetId": "18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0",
+    "spreadsheetId": "1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk",
     "tabs": ["Jaipur Leads", "Ajmer Leads", "Crompton Leads", "Ajmer Solar Lead Form New"],
     "sources": []
   }
@@ -437,7 +438,7 @@ Restart Node after adding `.env`. Copy-paste: `getSheetsClient` in `BACKEND_GOOG
 ## Environment variables (backend)
 
 ```env
-GOOGLE_SHEETS_SPREADSHEET_ID=18zqPIpa3fcjRvfNqdm3FPC10bszPIPHbv5F3-TMk0A0
+GOOGLE_SHEETS_SPREADSHEET_ID=1XOBfLVkqJ6NHe8s1t-FAZXhwWUFwGfp3WwSYdHBriqk
 GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 # OR
 GOOGLE_APPLICATION_CREDENTIALS=/secure/path/service-account.json
