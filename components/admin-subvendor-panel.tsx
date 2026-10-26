@@ -26,7 +26,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command"
-import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown, Download, Landmark, Loader2, Upload, FileText, X } from "lucide-react"
+import { Search, Plus, Pencil, Trash2, Building2, UserPlus, Truck, Check, ChevronsUpDown, Download, Upload, FileText, X } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { keepCurrentQuotationsOnly } from "@/lib/quotation-current"
 import { summarizeQuotationPayment } from "@/lib/dealer-payment-summary"
@@ -75,13 +75,10 @@ import { cn } from "@/lib/utils"
 import {
   customerFromOfficeOutsideRecord,
   fetchOfficeOutsideVendorOutsideRecordsFromApi,
-  isOfficeOutsideOnAccounts,
-  officeOutsideFileTypeLabel,
   officeOutsideLoanCashAmounts,
   officeOutsidePaidAmount,
   officeOutsideSubtotalAmount,
   quotationFromOfficeOutsideRecord,
-  sendOfficeOutsideToAccountsFromVendorApi,
   type OfficeOutsideRecord,
 } from "@/lib/office-outside-accounts"
 import { formatPersonName } from "@/lib/name-display"
@@ -127,6 +124,10 @@ function formatLedgerSystemSize(kw: number) {
       ? String(Math.round(rounded))
       : String(rounded).replace(/\.?0+$/, "")
   return `${label}kW`
+}
+
+function filesWithPi(files: InsideLedgerRow[]) {
+  return files.filter((row) => Math.round(Number(row.pi) || 0) > 0)
 }
 
 function slugForFilename(name: string) {
@@ -274,7 +275,6 @@ export function AdminSubvendorPanel({
   search: searchProp,
   onSearchChange,
   hideSearch = false,
-  onOfficeOutsideSentToAccounts,
 }: {
   dealers?: SubvendorDealerOption[]
   quotations?: Quotation[]
@@ -283,7 +283,6 @@ export function AdminSubvendorPanel({
   search?: string
   onSearchChange?: (value: string) => void
   hideSearch?: boolean
-  onOfficeOutsideSentToAccounts?: (row: OfficeOutsideRecord) => void
 }) {
   const { toast } = useToast()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
@@ -308,7 +307,6 @@ export function AdminSubvendorPanel({
   const [leaserPayments, setLeaserPayments] = useState<SubvendorLeaserPayment[]>(() => readLeaserPayments())
   const [vendorBills, setVendorBills] = useState<SubvendorVendorBill[]>(() => readVendorBills())
   const [outsideRecords, setOutsideRecords] = useState<OfficeOutsideRecord[]>([])
-  const [sendingToAccountsId, setSendingToAccountsId] = useState<string | null>(null)
   const [outsideDetailsOpen, setOutsideDetailsOpen] = useState(false)
   const [insideDetailsOpen, setInsideDetailsOpen] = useState(false)
 
@@ -1087,27 +1085,6 @@ export function AdminSubvendorPanel({
   const canSave =
     kind === "office_inside" ? Boolean(form.dealerId) : Boolean(form.name.trim())
 
-  const sendOutsideFileToAccounts = async (record: OfficeOutsideRecord) => {
-    setSendingToAccountsId(record.id)
-    try {
-      const remote = await sendOfficeOutsideToAccountsFromVendorApi(record)
-      setOutsideRecords((prev) => prev.filter((row) => row.id !== record.id))
-      onOfficeOutsideSentToAccounts?.(remote)
-      toast({
-        title: "Sent to Accounts",
-        description: `${record.customerName} now appears on the Accounts list as Office Outside.`,
-      })
-    } catch (error) {
-      toast({
-        title: "Could not send to Accounts",
-        description: apiErrorToUserMessage(error),
-        variant: "destructive",
-      })
-    } finally {
-      setSendingToAccountsId(null)
-    }
-  }
-
   const outsideDetails = (
     <>
       <VendorToolbar
@@ -1136,73 +1113,6 @@ export function AdminSubvendorPanel({
         profitById={vendorProfitById}
         profitHint="complete"
       />
-      {outsideRecords.length > 0 ? (
-        <div className="space-y-2 rounded-xl border border-amber-200/80 bg-gradient-to-b from-white to-amber-50/50 p-3">
-          <div>
-            <h4 className="text-sm font-semibold text-amber-950">Office Outside files</h4>
-            <p className="text-xs text-muted-foreground">
-              Sent from Accounts. These files stay on the Accounts list.
-            </p>
-          </div>
-          <div className="space-y-2 max-h-[min(50vh,420px)] overflow-auto pr-1">
-            {outsideRecords
-              .slice()
-              .sort((a, b) => a.customerName.localeCompare(b.customerName, "en-IN"))
-              .map((record) => {
-                const onAccounts = isOfficeOutsideOnAccounts(record)
-                const loanCash = officeOutsideLoanCashAmounts(record)
-                return (
-                  <div
-                    key={record.id}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200/70 bg-white/80 px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold truncate">{record.customerName}</p>
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        {record.mobile || record.id}
-                        {record.outsideVendorName ? ` · ${record.outsideVendorName}` : ""}
-                        {` · ${formatLedgerInr(officeOutsideSubtotalAmount(record))}`}
-                        {loanCash.loanAmount > 0 ? ` · Loan ${formatLedgerInr(loanCash.loanAmount)}` : ""}
-                        {officeOutsideFileTypeLabel(record.fileType)
-                          ? ` · ${officeOutsideFileTypeLabel(record.fileType)}`
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      {onAccounts ? (
-                        <Badge
-                          variant="outline"
-                          className="h-6 text-[10px] border-emerald-200 bg-emerald-50 text-emerald-800"
-                        >
-                          In Accounts
-                        </Badge>
-                      ) : (
-                        <Button
-                          type="button"
-                          size="sm"
-                          className="h-8 text-[11px] gap-1 bg-amber-600 hover:bg-amber-700 text-white"
-                          disabled={sendingToAccountsId === record.id}
-                          onClick={() => void sendOutsideFileToAccounts(record)}
-                        >
-                          {sendingToAccountsId === record.id ? (
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Landmark className="w-3.5 h-3.5" />
-                          )}
-                          Send to Accounts
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/40 px-4 py-6 text-center text-sm text-muted-foreground">
-          No Office Outside files yet. On Accounts, tap Send to Outside.
-        </div>
-      )}
       <OfficeOutsideAccountsLedger />
     </>
   )
@@ -1212,10 +1122,9 @@ export function AdminSubvendorPanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => setOutsideDetailsOpen(true)}>
           <Truck className="w-3.5 h-3.5 mr-1.5" />
-          Vendors & files
+          Vendors
           <span className="ml-1.5 text-muted-foreground tabular-nums">
-            {outsideRows.length} vendor{outsideRows.length === 1 ? "" : "s"} · {outsideRecords.length} file
-            {outsideRecords.length === 1 ? "" : "s"}
+            {outsideRows.length} vendor{outsideRows.length === 1 ? "" : "s"}
           </span>
         </Button>
         {hideSearch ? null : (
@@ -1246,15 +1155,15 @@ export function AdminSubvendorPanel({
         />
       ) : (
         <div className="rounded-xl border border-dashed border-border/70 bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
-          No vendors yet. Open <span className="font-medium text-foreground">Vendors & files</span> to register one.
+          No vendors yet. Open <span className="font-medium text-foreground">Vendors</span> to register one.
         </div>
       )}
       <Dialog open={outsideDetailsOpen} onOpenChange={setOutsideDetailsOpen}>
         <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-4xl w-full max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Vendors & files</DialogTitle>
+            <DialogTitle>Vendors</DialogTitle>
             <DialogDescription>
-              Register vendors and view Office Outside files sent from Accounts.
+              Register vendors. Ledger amounts stay on this screen.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">{outsideDetails}</div>
@@ -1962,8 +1871,19 @@ function DealerLeaserManager({
   const [drafts, setDrafts] = useState<LeaserPaymentDraft[]>([])
   const [billDrafts, setBillDrafts] = useState<VendorBillDraft[]>([])
   const [saving, setSaving] = useState(false)
+  const [profitFilesVendorId, setProfitFilesVendorId] = useState<string | null>(null)
   const isOutside = variant === "office_outside"
   const manageVendor = vendors.find((row) => row.id === manageVendorId) ?? null
+  const profitFilesVendor = vendors.find((row) => row.id === profitFilesVendorId) ?? null
+  const profitFiles = useMemo(() => {
+    if (!profitFilesVendorId) return []
+    return filesWithPi(filesByVendorId[profitFilesVendorId] || []).sort((a, b) =>
+      a.customerName.localeCompare(b.customerName, "en-IN"),
+    )
+  }, [filesByVendorId, profitFilesVendorId])
+  const profitFilesSubtotal = profitFiles.reduce((sum, row) => sum + row.subtotal, 0)
+  const profitFilesKw = profitFiles.reduce((sum, row) => sum + row.systemKw, 0)
+  const profitFilesProfit = profitFiles.reduce((sum, row) => sum + row.profitVendor, 0)
   const customers = useMemo(() => {
     const base = manageVendorId ? customersByVendorId[manageVendorId] || [] : []
     if (!manageVendorId) return base
@@ -2361,6 +2281,11 @@ function DealerLeaserManager({
       <div className="space-y-2">
         {vendors.map((vendor) => {
           const stats = statsById[vendor.id] ?? emptyVendorLeaserStats
+          const showingProfitFiles = !isOutside && profitFilesVendorId === vendor.id
+          const vendorProfitFiles = showingProfitFiles ? profitFiles : []
+          const fileCount = showingProfitFiles ? vendorProfitFiles.length : stats.totalFile
+          const fileKw = showingProfitFiles ? profitFilesKw : stats.totalKw
+          const fileSubtotal = showingProfitFiles ? profitFilesSubtotal : stats.subtotal
           return (
             <div
               key={vendor.id}
@@ -2379,14 +2304,37 @@ function DealerLeaserManager({
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">File / kW</p>
-                <p className="text-sm font-semibold tabular-nums">{stats.totalFile}</p>
-                <p className="text-[10px] text-muted-foreground tabular-nums leading-snug">
-                  {formatLedgerSystemSize(stats.totalKw)}
+                <p
+                  className={cn(
+                    "text-sm font-semibold tabular-nums",
+                    showingProfitFiles ? "text-violet-700" : undefined,
+                  )}
+                >
+                  {fileCount}
+                </p>
+                <p
+                  className={cn(
+                    "text-[10px] tabular-nums leading-snug",
+                    showingProfitFiles ? "text-violet-600" : "text-muted-foreground",
+                  )}
+                >
+                  {formatLedgerSystemSize(fileKw)}
+                  {showingProfitFiles ? " · PI files" : ""}
                 </p>
               </div>
               <div className="min-w-0">
                 <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Subtotal</p>
-                <p className="text-sm font-semibold tabular-nums">{formatLedgerInr(stats.subtotal)}</p>
+                <p
+                  className={cn(
+                    "text-sm font-semibold tabular-nums",
+                    showingProfitFiles ? "text-violet-700" : undefined,
+                  )}
+                >
+                  {formatLedgerInr(fileSubtotal)}
+                </p>
+                {showingProfitFiles ? (
+                  <p className="text-[10px] text-violet-600 leading-snug">PI files only</p>
+                ) : null}
               </div>
               {isOutside ? (
                 <>
@@ -2431,18 +2379,32 @@ function DealerLeaserManager({
                 </>
               )}
               <div className="min-w-0">
-                <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
-                <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
-                  {formatLedgerInr(stats.profitVendor)}
-                </p>
-                {vendor.kind === "office_inside" ? (
-                  <p className="text-[10px] text-muted-foreground tabular-nums mt-0.5">
-                    {formatProfitRatioLabel(vendor.profitRatio)} of profit
-                  </p>
+                {isOutside ? (
+                  <>
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
+                    <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                      {formatLedgerInr(stats.profitVendor)}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {stats.billSum <= 0 ? "₹0 when bill is ₹0" : "Paid − bill − charges − GST"}
+                    </p>
+                  </>
                 ) : (
-                  <p className="text-[10px] text-muted-foreground mt-0.5">
-                    {stats.billSum <= 0 ? "₹0 when bill is ₹0" : "Paid − bill − charges − GST"}
-                  </p>
+                  <button
+                    type="button"
+                    className="min-w-0 w-full text-left rounded-md -mx-1 px-1 py-0.5 hover:bg-violet-50/90"
+                    onClick={() =>
+                      setProfitFilesVendorId((current) => (current === vendor.id ? null : vendor.id))
+                    }
+                  >
+                    <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Profit vendor</p>
+                    <p className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
+                      {formatLedgerInr(stats.profitVendor)}
+                    </p>
+                    <p className="text-[10px] text-violet-700 tabular-nums mt-0.5">
+                      {formatProfitRatioLabel(vendor.profitRatio)} of profit · files with PI
+                    </p>
+                  </button>
                 )}
               </div>
               <div className="min-w-0">
@@ -2474,6 +2436,75 @@ function DealerLeaserManager({
           )
         })}
       </div>
+
+      <Dialog
+        open={Boolean(profitFilesVendorId) && !isOutside}
+        onOpenChange={(open) => {
+          if (!open) setProfitFilesVendorId(null)
+        }}
+      >
+        <DialogContent className="max-w-[calc(100%-1rem)] sm:max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Files with PI</DialogTitle>
+            <DialogDescription>
+              {profitFilesVendor
+                ? `${profitFilesVendor.name} — only files where PI is not ₹0.`
+                : "Only files where PI is not ₹0."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-3 gap-2 rounded-lg border border-violet-200/80 bg-violet-50/60 px-3 py-2.5">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-violet-700/80">File / kW</p>
+              <p className="text-sm font-semibold tabular-nums text-violet-800">{profitFiles.length}</p>
+              <p className="text-[10px] tabular-nums text-violet-700">
+                {formatLedgerSystemSize(profitFilesKw)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Subtotal</p>
+              <p className="text-sm font-semibold tabular-nums text-violet-800">
+                {formatLedgerInr(profitFilesSubtotal)}
+              </p>
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-wide text-violet-700/80">Profit vendor</p>
+              <p className="text-sm font-semibold tabular-nums text-emerald-800">
+                {formatLedgerInr(profitFilesProfit)}
+              </p>
+            </div>
+          </div>
+          {profitFiles.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-violet-200 bg-violet-50/40 px-3 py-6 text-center text-sm text-muted-foreground">
+              No files with PI for this vendor. Profit vendor stays ₹0 until Accounts enters PI.
+            </p>
+          ) : (
+            <div className="space-y-1.5 max-h-[min(55vh,28rem)] overflow-auto pr-1">
+              {profitFiles.map((row) => (
+                <div
+                  key={row.quotationId}
+                  className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-violet-200/70 bg-white/80 px-3 py-2"
+                >
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-violet-900 truncate">{row.customerName}</p>
+                    <p className="text-[11px] text-violet-700/80 tabular-nums truncate">
+                      {row.customerMobile && row.customerMobile !== "—" ? row.customerMobile : row.quotationId}
+                      {row.systemSize && row.systemSize !== "—" ? ` · ${row.systemSize}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold tabular-nums text-violet-800">
+                      {formatLedgerInr(row.subtotal)}
+                    </p>
+                    <p className="text-[10px] tabular-nums text-violet-700">
+                      PI {formatLedgerInr(row.pi)} · profit {formatLedgerInr(row.profitVendor)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(manageVendorId)}

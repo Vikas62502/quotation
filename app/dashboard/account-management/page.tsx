@@ -5295,9 +5295,6 @@ export default function AccountManagementPage() {
                   hideSearch
                   search={paymentSearchTerm}
                   onSearchChange={setPaymentSearchTerm}
-                  onOfficeOutsideSentToAccounts={(row) => {
-                    setOfficeOutsideRecords((prev) => upsertOfficeOutsideRecordInList(prev, row))
-                  }}
                 />
               </CardContent>
             </Card>
