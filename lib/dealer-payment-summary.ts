@@ -33,6 +33,8 @@ export type DealerPaymentRow = {
   installments: DealerPaymentInstallment[]
   createdAt: string
   approvedAt?: string
+  /** Accounts final settlement — dealer Payments must not list these. */
+  settled: boolean
 }
 
 function pickFinite(...vals: unknown[]): number {
@@ -139,15 +141,34 @@ function extractPaymentPhases(q: Quotation): DealerPaymentInstallment[] {
   return []
 }
 
-function isFinalSettlementApplied(q: Quotation): boolean {
+function isTruthyFlag(value: unknown): boolean {
+  if (value === true || value === 1) return true
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase()
+    return s === "true" || s === "1" || s === "yes"
+  }
+  return false
+}
+
+/** Same settlement signals Account Management uses (flag, amount, or write-off). */
+export function isQuotationFinalSettlementApplied(q: Quotation): boolean {
   const qx = q as Quotation & Record<string, unknown>
   const pricing = asRecord(qx.pricing)
-  return (
-    qx.finalSettlementApplied === true ||
-    qx.final_settlement_applied === true ||
-    pricing?.finalSettlementApplied === true ||
-    pricing?.final_settlement_applied === true
+  if (
+    isTruthyFlag(qx.finalSettlementApplied) ||
+    isTruthyFlag(qx.final_settlement_applied) ||
+    isTruthyFlag(pricing?.finalSettlementApplied) ||
+    isTruthyFlag(pricing?.final_settlement_applied)
+  ) {
+    return true
+  }
+  const amount = pickFinite(
+    qx.finalSettlementAmount,
+    qx.final_settlement_amount,
+    pricing?.finalSettlementAmount,
+    pricing?.final_settlement_amount,
   )
+  return amount > 0
 }
 
 function resolvePaymentType(q: Quotation): DealerPaymentType {
@@ -155,10 +176,18 @@ function resolvePaymentType(q: Quotation): DealerPaymentType {
   const raw = String(qx.paymentType || qx.payment_type || qx.paymentMode || qx.payment_mode || "")
     .trim()
     .toLowerCase()
+    .replace(/[\s_+-]+/g, "")
   if (raw === "loan") return "loan"
   if (raw === "cash") return "cash"
-  if (raw === "mix") return "mix"
+  if (raw === "mix" || raw === "cashloan" || raw === "cashandloan") return "mix"
   return "unknown"
+}
+
+function getBankFees(q: Quotation): number {
+  const type = resolvePaymentType(q)
+  if (type !== "loan" && type !== "mix") return 0
+  const qx = q as Quotation & Record<string, unknown>
+  return Math.max(0, Math.round(pickFinite(qx.bankFees, qx.bank_fees, qx.bankFee, qx.bank_fee)))
 }
 
 function paymentTypeLabel(type: DealerPaymentType): string {
@@ -201,7 +230,8 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
   const phasePaid = phases.reduce((sum, p) => sum + p.paidAmount, 0)
   const subtotal = getOriginalSubtotal(q)
   const discount = getDiscountAmount(q)
-  const cap = Math.max(0, subtotal - discount)
+  const bankFees = getBankFees(q)
+  const cap = Math.max(0, subtotal - discount - bankFees)
   const paymentType = resolvePaymentType(q)
 
   const loanAmountRaw = Math.max(0, Math.round(pickFinite(qx.loanAmount, qx.loan_amount)))
@@ -240,19 +270,29 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
   )
 
   const paidAmount = phasePaid
-  const remainingAmount = isFinalSettlementApplied(q) ? 0 : Math.max(0, cap - phasePaid)
+  const phaseGap = Math.max(0, cap - phasePaid)
+  const apiRemaining = optionalFinite(qx.remaining ?? qx.remainingAmount ?? qx.remaining_amount)
+  const apiStatus = String(qx.paymentStatus || qx.payment_status || "").toLowerCase()
+  const settled =
+    isQuotationFinalSettlementApplied(q) ||
+    (discount > 0 && phaseGap <= discount + 0.5) ||
+    (apiRemaining === 0 && phaseGap > 0 && paidAmount > 0) ||
+    (apiStatus === "completed" && phaseGap > 0)
+  const remainingAmount = settled ? 0 : phaseGap
 
-  const loanRemaining =
-    paymentType === "mix" || paymentType === "loan"
+  const loanRemaining = settled
+    ? 0
+    : paymentType === "mix" || paymentType === "loan"
       ? Math.max(0, loanAmount - loanPaid)
       : 0
-  const cashRemaining =
-    paymentType === "mix" || paymentType === "cash"
+  const cashRemaining = settled
+    ? 0
+    : paymentType === "mix" || paymentType === "cash"
       ? Math.max(0, cashAmount - cashPaid)
       : 0
 
   let paymentStatus: DealerPaymentStatus = "pending"
-  if (remainingAmount <= 0 && (paidAmount > 0 || discount > 0 || isFinalSettlementApplied(q))) {
+  if (remainingAmount <= 0 && (paidAmount > 0 || discount > 0 || bankFees > 0 || settled)) {
     paymentStatus = "completed"
   } else if (paidAmount > 0) {
     paymentStatus = "partial"
@@ -278,6 +318,7 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
     installments: phases,
     createdAt: String(q.createdAt || ""),
     approvedAt: String(qx.statusApprovedAt || qx.status_approved_at || qx.approvedAt || "") || undefined,
+    settled,
   }
 }
 

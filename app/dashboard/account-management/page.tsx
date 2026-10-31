@@ -221,6 +221,8 @@ interface CustomerPayment {
   bankIfsc?: string
   loanAmount?: number
   cashAmount?: number
+  /** Bank processing fees (loan / cash+loan). Subtracts from subtotal; never counted as paid. */
+  bankFees?: number
   /** Manual site cost (INR) — profit = subtotal − siteCost. */
   siteCost?: number
   paymentStatus?: "pending" | "completed" | "partial"
@@ -753,8 +755,21 @@ function getSettlementDiscountAmount(payment: CustomerPayment): number {
   return 0
 }
 
+function paymentAllowsBankFees(payment: CustomerPayment): boolean {
+  const type = paymentTypeOf(payment)
+  return type === "loan" || type === "mix"
+}
+
+function getPaymentBankFees(payment: CustomerPayment): number {
+  if (!paymentAllowsBankFees(payment)) return 0
+  return Math.max(0, Math.round(Number(payment.bankFees) || 0))
+}
+
 function getPaymentEffectiveCap(payment: CustomerPayment): number {
-  return Math.max(0, getPaymentOriginalSubtotal(payment) - getPaymentDiscountAmount(payment))
+  return Math.max(
+    0,
+    getPaymentOriginalSubtotal(payment) - getPaymentDiscountAmount(payment) - getPaymentBankFees(payment),
+  )
 }
 
 function isLoanSidePaymentMode(mode?: string | null): boolean {
@@ -837,20 +852,12 @@ function getRemainingForSide(payment: CustomerPayment, side: "loan" | "cash"): n
 }
 
 /**
- * True unpaid gap before settlement: original subtotal − paid (and mix L+C remaining).
- * Settlement `d` equals what the user sees as Remaining.
+ * Unpaid gap after discount and bank fees. Settlement `d` is Remaining —
+ * bank fees already subtracted from the cap are not written off as `d`.
  */
 function getSettlementWriteOffAmount(payment: CustomerPayment): number {
   if (isFinalSettlementApplied(payment)) return 0
-  const paid = getTotalPaidPhases(payment.phases)
-  const gap = Math.max(0, getPaymentOriginalSubtotal(payment) - paid)
-  const displayRem = Math.max(0, getPaymentEffectiveCap(payment) - paid)
-  const mixSideRem =
-    paymentTypeOf(payment) === "mix"
-      ? getRemainingForSide(payment, "loan") + getRemainingForSide(payment, "cash")
-      : 0
-  const apiRem = Math.max(0, Math.round(Number(payment.remainingFromApi) || 0))
-  return Math.round(Math.max(gap, displayRem, mixSideRem, apiRem))
+  return getDisplayRemaining(payment)
 }
 
 function normalizePaymentTypeValue(raw?: string | null): string {
@@ -970,7 +977,8 @@ function isFinalSettlementApplied(payment: CustomerPayment): boolean {
 }
 
 /**
- * Remaining = Subtotal (net of settlement discount) − Paid.
+ * Remaining = Subtotal − discount − bank fees − Paid.
+ * Paid is installment paidAmounts only (bank fees never count as paid).
  * Always use AM installment/subtotal math — never prefer API remaining alone
  * (API remaining is often after-subsidy and then Paid ₹0 shows Remaining ≠ Subtotal).
  */
@@ -988,7 +996,10 @@ function getEffectivePaymentStatus(
   if (isFinalSettlementApplied(payment)) return "completed"
   const paid = getTotalPaidPhases(payment.phases)
   const remaining = getDisplayRemaining(payment)
-  if (remaining <= 0 && (paid > 0 || getPaymentDiscountAmount(payment) > 0)) {
+  if (
+    remaining <= 0 &&
+    (paid > 0 || getPaymentDiscountAmount(payment) > 0 || getPaymentBankFees(payment) > 0)
+  ) {
     return "completed"
   }
   if (paid > 0) return "partial"
@@ -1950,6 +1961,13 @@ function officeOutsideRecordToCustomerPayment(
     paymentMode: row.fileType || storedPlan?.paymentMode,
     loanAmount: officeOutsideLoanCashAmounts(row, ledger).loanAmount || undefined,
     cashAmount: officeOutsideLoanCashAmounts(row, ledger).cashAmount || undefined,
+    bankFees:
+      row.fileType === "loan" || row.fileType === "mix"
+        ? pickFirstFiniteNumber(
+            (row as { bankFees?: number; bank_fees?: number }).bankFees,
+            (row as { bankFees?: number; bank_fees?: number }).bank_fees,
+          ) || undefined
+        : undefined,
     siteCost: siteCostRaw > 0 ? siteCostRaw : undefined,
     paymentStatus: storedPlan?.paymentStatus as CustomerPayment["paymentStatus"] | undefined,
     phases,
@@ -2151,6 +2169,10 @@ export default function AccountManagementPage() {
    * Not localStorage — cleared on full page reload (backend GET must echo siteCost).
    */
   const siteCostSessionRef = useRef<Record<string, number>>({})
+  const [bankFeesDrafts, setBankFeesDrafts] = useState<Record<string, string>>({})
+  const [savingBankFeesId, setSavingBankFeesId] = useState<string | null>(null)
+  /** Session overlay until GET echoes bank_fees. Not localStorage. */
+  const bankFeesSessionRef = useRef<Record<string, number>>({})
   const rajeshPortalPatchedRef = useRef<Set<string>>(new Set())
   const [settlementRemarksDraft, setSettlementRemarksDraft] = useState("")
   const sessionUserId = accountManager?.id ?? dealer?.id
@@ -2380,6 +2402,7 @@ export default function AccountManagementPage() {
               loanAmount: pickFirstFiniteNumber(flat.loanAmount, flat.loan_amount) || undefined,
               cashAmount: pickFirstFiniteNumber(flat.cashAmount, flat.cash_amount) || undefined,
               proposal: pickFirstFiniteNumber(flat.proposal, flat.proposalAmount, flat.proposal_amount) || undefined,
+              bankFees: pickFirstFiniteNumber(flat.bankFees, flat.bank_fees, flat.bankFee, flat.bank_fee) || undefined,
               installments: Array.isArray(phasesFromApi) ? phasesFromApi : [],
               paymentPhases: Array.isArray(phasesFromApi) ? phasesFromApi : [],
               validUntil: flat.validUntil as string | undefined,
@@ -2975,6 +2998,29 @@ export default function AccountManagementPage() {
           bankIfsc: String((qx as any).bankIfsc ?? (qx as any).bank_ifsc ?? "").trim() || undefined,
           loanAmount: pickFirstFiniteNumber((qx as any).loanAmount, (qx as any).loan_amount) || undefined,
           cashAmount: pickFirstFiniteNumber((qx as any).cashAmount, (qx as any).cash_amount) || undefined,
+          bankFees: (() => {
+            const type = normalizePaymentTypeValue(
+              (q as { paymentType?: string }).paymentType ||
+                q.paymentMode ||
+                storedPlan?.paymentMode,
+            )
+            if (type !== "loan" && type !== "mix") return undefined
+            const fromApi = pickFirstFiniteNumber(
+              (qx as any).bankFees,
+              (qx as any).bank_fees,
+              (qx as any).bankFee,
+              (qx as any).bank_fee,
+              q.bankFees,
+              (q as { bank_fees?: number }).bank_fees,
+            )
+            const session = bankFeesSessionRef.current[q.id || ""] || 0
+            if (fromApi > 0) {
+              if (q.id) delete bankFeesSessionRef.current[q.id]
+              return Math.round(fromApi)
+            }
+            if (session > 0) return Math.round(session)
+            return undefined
+          })(),
           siteCost,
           paymentStatus: settlementApplied
             ? "completed"
@@ -3008,7 +3054,19 @@ export default function AccountManagementPage() {
             vendorsById.get(row.outsideVendorId) || null,
           ),
         )
-      setCustomerPayments([...payments, ...officeOutsidePayments])
+      setCustomerPayments(
+        [...payments, ...officeOutsidePayments].map((row) => {
+          if (!paymentAllowsBankFees(row)) return { ...row, bankFees: undefined }
+          const fromApi = Math.max(0, Math.round(Number(row.bankFees) || 0))
+          const session = bankFeesSessionRef.current[row.quotationId] || 0
+          if (fromApi > 0) {
+            delete bankFeesSessionRef.current[row.quotationId]
+            return { ...row, bankFees: fromApi }
+          }
+          if (session > 0) return { ...row, bankFees: session }
+          return row
+        }),
+      )
   }, [permissionVisibleQuotations, useApi, officeOutsideRecords, officeOutsideVendors, subvendorLedgerMap])
 
   const paymentDealerOptions = useMemo(() => {
@@ -3420,6 +3478,128 @@ export default function AccountManagementPage() {
       })
     } finally {
       setSavingSiteCostId(null)
+    }
+  }
+
+  const updatePaymentBankFees = async (quotationId: string, raw: string) => {
+    const payment = customerPayments.find((p) => p.quotationId === quotationId)
+    if (!payment || !paymentAllowsBankFees(payment)) return
+    const bankFees = parseSiteCostInput(raw)
+    const previous = Math.max(0, Math.round(Number(payment.bankFees) || 0))
+    const nextPayment: CustomerPayment = {
+      ...payment,
+      bankFees,
+    }
+    const remaining = getDisplayRemaining(nextPayment)
+    const paymentStatus = getEffectivePaymentStatus(nextPayment)
+
+    setCustomerPayments((prev) =>
+      prev.map((p) =>
+        p.quotationId === quotationId
+          ? {
+              ...p,
+              bankFees,
+              remainingFromApi: remaining,
+              paymentStatus,
+            }
+          : p,
+      ),
+    )
+    setBankFeesDrafts((prev) => {
+      const next = { ...prev }
+      delete next[quotationId]
+      return next
+    })
+
+    if (bankFees > 0) bankFeesSessionRef.current[quotationId] = bankFees
+    else delete bankFeesSessionRef.current[quotationId]
+
+    if (!useApi) {
+      toast({
+        title: "Bank fees not saved",
+        description: "Enable API mode so bank fees persist in the database.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (previous === bankFees) return
+
+    setSavingBankFeesId(quotationId)
+    const body = {
+      bankFees,
+      bank_fees: bankFees,
+      replaceInstallments: false,
+      remaining,
+      remainingAmount: remaining,
+      paymentStatus,
+    }
+    try {
+      if (isOfficeOutsidePayment(payment)) {
+        await api.admin.officeOutside.paymentDetails(quotationId, body)
+        setOfficeOutsideRecords((prev) =>
+          prev.map((row) =>
+            row.id === quotationId
+              ? {
+                  ...row,
+                  bankFees,
+                  bank_fees: bankFees,
+                  paymentStatus,
+                }
+              : row,
+          ),
+        )
+      } else {
+        await api.quotations.updateBankFees(quotationId, bankFees, {
+          remaining,
+          remainingAmount: remaining,
+          paymentStatus,
+        })
+        setQuotations((prev) =>
+          prev.map((q) =>
+            q.id === quotationId
+              ? ({
+                  ...q,
+                  bankFees,
+                  bank_fees: bankFees,
+                  remaining,
+                  remainingAmount: remaining,
+                  paymentStatus,
+                } as Quotation)
+              : q,
+          ),
+        )
+      }
+      toast({
+        title: "Bank fees saved",
+        description:
+          bankFees > 0
+            ? `₹${bankFees.toLocaleString("en-IN")} subtracted from subtotal. Paid unchanged.`
+            : "Bank fees cleared.",
+      })
+      if (remaining <= 0 && paymentStatus === "completed") {
+        setPaymentSectionTab("completed")
+      }
+    } catch (error) {
+      setCustomerPayments((prev) =>
+        prev.map((p) =>
+          p.quotationId === quotationId
+            ? { ...p, bankFees: previous > 0 ? previous : undefined }
+            : p,
+        ),
+      )
+      if (previous > 0) bankFeesSessionRef.current[quotationId] = previous
+      else delete bankFeesSessionRef.current[quotationId]
+      toast({
+        title: "Could not save bank fees",
+        description:
+          error instanceof ApiError
+            ? `${error.message} — not stored in this browser. Backend must persist bankFees.`
+            : "Backend must persist bankFees on the quotation. Not stored in this browser.",
+        variant: "destructive",
+      })
+    } finally {
+      setSavingBankFeesId(null)
     }
   }
 
@@ -4545,8 +4725,30 @@ export default function AccountManagementPage() {
       })
     }
 
+    const feesDraft = bankFeesDrafts[activePayment.quotationId]
+    const resolvedBankFees = paymentAllowsBankFees(activePayment)
+      ? feesDraft !== undefined
+        ? parseSiteCostInput(feesDraft)
+        : getPaymentBankFees(activePayment)
+      : 0
+    if (feesDraft !== undefined) {
+      setCustomerPayments((prev) =>
+        prev.map((p) =>
+          p.quotationId === activePayment.quotationId ? { ...p, bankFees: resolvedBankFees } : p,
+        ),
+      )
+      setBankFeesDrafts((prev) => {
+        const next = { ...prev }
+        delete next[activePayment.quotationId]
+        return next
+      })
+    }
+    const paymentForCap: CustomerPayment = {
+      ...activePayment,
+      bankFees: resolvedBankFees,
+    }
     const totalPaid = getTotalPaidPhases(activePayment.phases)
-    const paymentCap = getPaymentEffectiveCap(activePayment)
+    const paymentCap = getPaymentEffectiveCap(paymentForCap)
     if (totalPaid > paymentCap + 0.5) {
       toast({
         title: "Cannot save",
@@ -4616,12 +4818,13 @@ export default function AccountManagementPage() {
     } else if (subvendorLedgerDrafts) {
       await commitNormalVendorCharges(activePayment.quotationId, subvendorLedgerDrafts)
     }
+    const remainingAfter = Math.max(0, paymentCap - totalPaid)
     const paymentStatus: CustomerPayment["paymentStatus"] =
-      totalPaid <= 0
-        ? "pending"
-        : totalPaid >= paymentCap
-          ? "completed"
-          : "partial"
+      remainingAfter <= 0 && (totalPaid > 0 || resolvedBankFees > 0)
+        ? "completed"
+        : totalPaid > 0
+          ? "partial"
+          : "pending"
     const coercedPhases = coercePhasesPaymentModes(activePayment.phases)
     const phasesForApi = normalizePhaseAmountsForApi(coercedPhases, paymentCap)
     const paymentModeFromPhases =
@@ -4636,6 +4839,10 @@ export default function AccountManagementPage() {
       replaceInstallments: true,
       siteCost: resolvedSiteCost,
       site_cost: resolvedSiteCost,
+      bankFees: resolvedBankFees,
+      bank_fees: resolvedBankFees,
+      remaining: remainingAfter,
+      remainingAmount: remainingAfter,
       ...(activePayment.subsidyCheques?.length
         ? { subsidyCheques: activePayment.subsidyCheques }
         : {}),
@@ -4695,6 +4902,11 @@ export default function AccountManagementPage() {
 
       if (isOfficeOutsidePayment(activePayment)) {
         persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
+        if (resolvedBankFees > 0) {
+          bankFeesSessionRef.current[activePayment.quotationId] = resolvedBankFees
+        } else {
+          delete bankFeesSessionRef.current[activePayment.quotationId]
+        }
         await api.admin.officeOutside.paymentDetails(activePayment.quotationId, payload)
         const latest = await fetchOfficeOutsideSentRecordsFromApi().catch(() => null)
         if (latest && latest.length > 0) {
@@ -4737,6 +4949,11 @@ export default function AccountManagementPage() {
         } else {
           delete siteCostSessionRef.current[activePayment.quotationId]
         }
+        if (resolvedBankFees > 0) {
+          bankFeesSessionRef.current[activePayment.quotationId] = resolvedBankFees
+        } else {
+          delete bankFeesSessionRef.current[activePayment.quotationId]
+        }
         persistSiteCostForQuotation(activePayment.quotationId, resolvedSiteCost)
         await loadApprovedQuotations()
         setQuotations((prev) =>
@@ -4750,6 +4967,10 @@ export default function AccountManagementPage() {
                   paymentMode: payload.paymentMode,
                   siteCost: resolvedSiteCost,
                   site_cost: resolvedSiteCost,
+                  bankFees: resolvedBankFees,
+                  bank_fees: resolvedBankFees,
+                  remaining: remainingAfter,
+                  remainingAmount: remainingAfter,
                 } as Quotation)
               : q,
           ),
@@ -4766,6 +4987,7 @@ export default function AccountManagementPage() {
                 paymentStatus: payload.paymentStatus,
                 phases: phasesToApply,
                 siteCost: resolvedSiteCost > 0 ? resolvedSiteCost : undefined,
+                bankFees: resolvedBankFees,
               }
             : payment,
         ),
@@ -5646,7 +5868,8 @@ export default function AccountManagementPage() {
 
                               <AccountsCol label="Subtotal">
                                 {isFinalSettlementApplied(payment) ||
-                                getPaymentDiscountAmount(payment) > 0 ? (
+                                getPaymentDiscountAmount(payment) > 0 ||
+                                getPaymentBankFees(payment) > 0 ? (
                                   <>
                                     <p className="text-xs line-through text-muted-foreground tabular-nums">
                                       ₹{getPaymentOriginalSubtotal(payment).toLocaleString()}
@@ -5662,6 +5885,12 @@ export default function AccountManagementPage() {
                                         d
                                       </p>
                                     )}
+                                    {getPaymentBankFees(payment) > 0 ? (
+                                      <p className="text-[10px] text-sky-700 dark:text-sky-400 mt-0.5">
+                                        − ₹
+                                        {getPaymentBankFees(payment).toLocaleString()} bank fees
+                                      </p>
+                                    ) : null}
                                   </>
                                 ) : (
                                   <p className="text-sm font-semibold tabular-nums">
@@ -5735,6 +5964,13 @@ export default function AccountManagementPage() {
                                           </p>
                                         </div>
                                       ) : null}
+                                      {getPaymentBankFees(payment) > 0 ? (
+                                        <p className="border-t border-border/40 pt-1.5 mt-1 text-muted-foreground">
+                                          Bank fees: ₹
+                                          {getPaymentBankFees(payment).toLocaleString("en-IN")} (not
+                                          paid)
+                                        </p>
+                                      ) : null}
                                     </div>
                                   </TooltipContent>
                                 </Tooltip>
@@ -5789,6 +6025,12 @@ export default function AccountManagementPage() {
                                           {Math.max(remainingAmount, 0).toLocaleString("en-IN")}
                                         </p>
                                       )}
+                                      {getPaymentBankFees(payment) > 0 ? (
+                                        <p className="text-muted-foreground">
+                                          Bank fees already subtracted: ₹
+                                          {getPaymentBankFees(payment).toLocaleString("en-IN")}
+                                        </p>
+                                      ) : null}
                                     </div>
                                   </TooltipContent>
                                 </Tooltip>
@@ -6396,6 +6638,10 @@ export default function AccountManagementPage() {
               void updatePaymentSiteCost(activePaymentId, draft)
               }
             }
+            const feesDraft = bankFeesDrafts[activePaymentId]
+            if (feesDraft !== undefined) {
+              void updatePaymentBankFees(activePaymentId, feesDraft)
+            }
           }
           setInstallmentDialogOpen(open)
           if (!open) {
@@ -6494,7 +6740,8 @@ export default function AccountManagementPage() {
                   <div className="flex items-baseline justify-start sm:justify-end gap-2">
                     <span className="text-[11px] text-muted-foreground">Amount</span>
                   {isFinalSettlementApplied(activePayment) ||
-                  getPaymentDiscountAmount(activePayment) > 0 ? (
+                  getPaymentDiscountAmount(activePayment) > 0 ||
+                  getPaymentBankFees(activePayment) > 0 ? (
                     <>
                         <span className="text-xs line-through text-muted-foreground tabular-nums">
                         ₹{split.amount.toLocaleString("en-IN")}
@@ -6502,12 +6749,19 @@ export default function AccountManagementPage() {
                         <span className="text-sm font-semibold tabular-nums text-emerald-800 dark:text-emerald-300">
                         ₹{getPaymentEffectiveCap(activePayment).toLocaleString("en-IN")}
                         </span>
+                        {getPaymentDiscountAmount(activePayment) > 0 ? (
                         <span className="text-[11px] text-amber-700 dark:text-amber-400">
                           − ₹{getPaymentDiscountAmount(activePayment).toLocaleString("en-IN")}
                         {getSettlementDiscountAmount(activePayment) > 0
                           ? ` (d ₹${Math.round(getSettlementDiscountAmount(activePayment)).toLocaleString("en-IN")})`
                           : ""}
                         </span>
+                        ) : null}
+                        {getPaymentBankFees(activePayment) > 0 ? (
+                          <span className="text-[11px] text-sky-700 dark:text-sky-400">
+                            − ₹{getPaymentBankFees(activePayment).toLocaleString("en-IN")} bank fees
+                          </span>
+                        ) : null}
                     </>
                   ) : (
                       <span className="text-sm font-semibold tabular-nums">
@@ -6598,6 +6852,62 @@ export default function AccountManagementPage() {
                   })()}
                 </div>
               )}
+              {paymentAllowsBankFees(activePayment) ? (
+                <div className="rounded-lg border border-sky-200/80 bg-sky-50/50 dark:border-sky-900/40 dark:bg-sky-950/20 px-4 py-3 space-y-1.5">
+                  <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <Label htmlFor="accounts-bank-fees" className="text-xs font-medium">
+                        Bank fees
+                      </Label>
+                      <Input
+                        id="accounts-bank-fees"
+                        inputMode="numeric"
+                        className="tabular-nums h-9 max-w-[14rem]"
+                        placeholder="0"
+                        disabled={
+                          accountsReadOnly ||
+                          !canWriteAccounts ||
+                          savingBankFeesId === activePayment.quotationId ||
+                          isSavingInstallments ||
+                          isSavingFinalSettlement
+                        }
+                        value={
+                          bankFeesDrafts[activePayment.quotationId] !== undefined
+                            ? bankFeesDrafts[activePayment.quotationId]
+                            : getPaymentBankFees(activePayment) > 0
+                              ? String(getPaymentBankFees(activePayment))
+                              : ""
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value
+                          setBankFeesDrafts((prev) => ({
+                            ...prev,
+                            [activePayment.quotationId]: raw,
+                          }))
+                          const n = parseSiteCostInput(raw)
+                          setCustomerPayments((prev) =>
+                            prev.map((p) =>
+                              p.quotationId === activePayment.quotationId
+                                ? { ...p, bankFees: n }
+                                : p,
+                            ),
+                          )
+                        }}
+                        onBlur={() => {
+                          const draft = bankFeesDrafts[activePayment.quotationId]
+                          if (draft !== undefined) {
+                            void updatePaymentBankFees(activePayment.quotationId, draft)
+                          }
+                        }}
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground pb-1 max-w-sm">
+                      Subtracts from subtotal. Not counted as paid. File completes when paid + bank
+                      fees covers the amount.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
 
               {activePayment.phases.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border/70 bg-muted/10 py-8">

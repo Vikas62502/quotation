@@ -309,13 +309,20 @@ export async function patchAdminQuotationStatus(req, res, db) {
       }
       updates.loanAmount = amountResult.loanAmount
       updates.cashAmount = amountResult.cashAmount
-      const proposalRaw = parseApproveInrAmount(body.proposal ?? body.proposalAmount ?? body.proposal_amount)
+      const proposalRaw = parseApproveInrAmount(
+        body.proposal ??
+          body.proposalAmount ??
+          body.proposal_amount ??
+          body.data?.proposal ??
+          body.data?.proposalAmount ??
+          body.data?.proposal_amount,
+      )
       if (paymentType === "cash") {
         updates.proposal = quotationSubtotal
       } else if (proposalRaw == null || proposalRaw <= 0) {
         res.status(400).json({
           success: false,
-          error: { code: "VAL_PROPOSAL", message: "proposal required for loan / cash + loan approval" },
+          error: { code: "VAL_PROPOSAL", message: "proposal required for loan/mix approval (INR > 0)" },
         })
         return
       } else {

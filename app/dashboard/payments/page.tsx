@@ -115,6 +115,7 @@ export default function DealerPaymentsPage() {
     () =>
       quotations
         .map(summarizeQuotationPayment)
+        .filter((row) => !row.settled)
         .sort((a, b) => {
           const aTime = new Date(a.approvedAt || a.createdAt).getTime()
           const bTime = new Date(b.approvedAt || b.createdAt).getTime()
@@ -224,7 +225,7 @@ export default function DealerPaymentsPage() {
         <DealerPageHero
           tone="amber"
           title="Payments"
-          description="Approved quotations only — paid amounts, remaining balance, and Cash + loan split."
+          description="Approved quotations only — paid amounts, remaining balance, and Cash + loan split. Settled files stay in Accounts Completed."
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">

@@ -61,6 +61,9 @@ export type OfficeOutsideRecord = {
   fileType?: OfficeOutsideFileType
   loanAmount?: number
   cashAmount?: number
+  /** Bank processing fees (loan / cash+loan). Subtracts from subtotal; never counted as paid. */
+  bankFees?: number
+  bank_fees?: number
   /** Admin subvendor id where kind === office_outside */
   outsideVendorId: string
   outsideVendorName?: string
@@ -631,6 +634,10 @@ export function quotationFromOfficeOutsideRecord(row: OfficeOutsideRecord): Quot
     filePaymentType: row.fileType,
     loanAmount: loanCash.loanAmount > 0 ? loanCash.loanAmount : undefined,
     cashAmount: loanCash.cashAmount > 0 ? loanCash.cashAmount : undefined,
+    bankFees:
+      row.fileType === "loan" || row.fileType === "mix"
+        ? Math.max(0, Math.round(Number(row.bankFees ?? row.bank_fees) || 0)) || undefined
+        : undefined,
     installments: Array.isArray(row.installments)
       ? (row.installments as Quotation["installments"])
       : undefined,
@@ -727,6 +734,8 @@ export function mapApiRowToOfficeOutsideRecord(raw: unknown): OfficeOutsideRecor
           ) || 0,
         ),
       ) || undefined,
+    bankFees:
+      Math.max(0, Math.round(Number(row.bankFees ?? row.bank_fees) || 0)) || undefined,
     outsideVendorId: String(
       row.outsideVendorId ||
         row.outside_vendor_id ||

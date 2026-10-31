@@ -174,6 +174,9 @@ export interface Quotation {
   cashAmount?: number
   /** Accounts proposal (loan / cash+loan entered on approve; cash uses subtotal) */
   proposal?: number
+  /** Bank processing fees (loan / cash+loan). Subtracts from subtotal; not paid. */
+  bankFees?: number
+  bank_fees?: number
   /** Payment installments (Account Management); used in metering for I2 amount. */
   paymentPhases?: Array<{
     phaseNumber: number

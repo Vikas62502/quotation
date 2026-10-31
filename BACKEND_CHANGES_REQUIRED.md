@@ -7513,5 +7513,93 @@ Echo `proposal` on PATCH, GET list (`status=approved`), GET detail.
 
 ---
 
+## §BW — Fast list GETs: `includeMedia=false` / `includeVisits=false` + installer queue statuses — Oct 26 2026
+
+SPA list calls now always send:
+
+```
+GET /admin/quotations?limit=1000&includeMedia=false&includeVisits=false
+GET /installer/quotations?status=installer_in_progress&page=1&limit=1000&includeMedia=false&includeVisits=false
+```
+
+### Must
+
+1. On list endpoints, `includeMedia=false` strips documents / completion photos / image URL arrays. `includeVisits=false` strips visit arrays. Identity + workflow columns stay.
+2. Missing flag on a **list** = false. `"false"` string counts as false.
+3. Detail `GET /quotations/:id` still returns full documents and photos.
+4. Do not 400 unknown query params.
+5. `GET /installer/quotations?status=installer_in_progress` (and `installer_approved`, `pending_baldev`, metering statuses) returns 200 + matching rows, or `[]`. Admin now requests these **in parallel** with `pending_installer` and `approved`.
+
+Do not keep embedding S3 image payloads on every list row — that is what made Admin / Installation / Metering slow. Open-row still uses detail GET.
+
+**Copy-paste:** `BACKEND_LIST_FAST_PATH.ts` · HANDOFF **§69**
+
+---
+
+## §BX — Account Management Bank fees (loan / cash+loan) — Oct 30 2026
+
+SPA Account Management Manage (loan / cash+loan) sends:
+
+```
+PATCH /quotations/:id/payment-details
+{
+  "bankFees": 2215,
+  "bank_fees": 2215,
+  "replaceInstallments": false,
+  "remaining": 0,
+  "remainingAmount": 0,
+  "paymentStatus": "completed"
+}
+```
+
+Installment Submit also includes `bankFees` + `remaining`. Office Outside: same on `PATCH /admin/office-outside/:id/payment-details`. Optional alias: `PATCH /quotations/:id/bank-fees`.
+
+### Must
+
+1. Persist `quotations.bank_fees`. Echo `bankFees` / `bank_fees` on GET list and GET by id. Do not rely on the SPA keeping this in localStorage.
+2. Cash files: ignore / store 0.
+3. `paidAmount` = SUM(installment.paidAmount) — never add `bank_fees`.
+4. `remaining = subtotal − discountAmount − bankFees − paidAmount` (≥ 0).
+5. Complete when remaining ≤ 0 and (paid > 0 or bankFees > 0 or discount > 0). Do not 400 when paid + fees == subtotal. Do not treat fees as final-settlement `d`.
+
+**Copy-paste:** `BACKEND_BANK_FEES.ts` · HANDOFF **§70**
+
+---
+
+## §BY — Approve proposal 400 even when Proposal amount is filled — Oct 30 2026
+
+Live `PATCH /admin/quotations/:id/status` returns:
+
+`proposal required for loan/mix approval (INR > 0)`
+
+while the dialog already has Proposal amount ₹1,60,000.
+
+SPA body (loan):
+
+```json
+{
+  "status": "approved",
+  "paymentType": "loan",
+  "proposal": 160000,
+  "proposalAmount": 160000,
+  "proposal_amount": 160000,
+  "loanAmount": 160000,
+  "loan_amount": 160000
+}
+```
+
+### Must
+
+1. Do not 400 when any alias parses to INR > 0.
+2. Parse number **or** `"160000"`. Do not use `typeof === "number"` as the gate.
+3. Allowlist / Joi must include `proposal`, `proposalAmount`, `proposal_amount`. Read them **before** stripping unknown keys.
+4. Cash still stores subtotal without requiring the field.
+5. Persist + echo `quotations.proposal`; upsert ledger `proposal` only.
+
+**Copy-paste:** `BACKEND_APPROVE_PROPOSAL_FIX.ts` · HANDOFF **§71**
+
+---
+
+
 
 

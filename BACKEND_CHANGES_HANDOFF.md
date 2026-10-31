@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4658,6 +4658,80 @@ Existing: `range`, `startDate`, `endDate`, `fromDate`, `toDate`, `dealerId`, `pa
 **Copy-paste:** `BACKEND_APPROVE_PROPOSAL.ts` · `BACKEND_ADMIN_QUOTATION_STATUS.ts` (`patchAdminQuotationStatus`) · REQUIRED **§BV**
 
 ---
+
+## 69. Fast quotation lists — skip media/visits; installer queue statuses in parallel (**§BW**) — Oct 26 2026
+
+**Frontend (shipped):** List GETs send `includeMedia=false&includeVisits=false`. Photos still load on **GET by id** when a row is opened. Installation / Metering / Admin fire installer-queue status filters **together**. Extra list pages fetch in parallel.
+
+**Apply on live API (no new route):**
+
+1. Honor `includeMedia` / `includeVisits` (and snake_case) on:
+   `GET /quotations`, `GET /admin/quotations`, `GET /account-management/quotations`, `GET /installer/quotations`, `GET /installer/queue`.
+2. List default = **false**. Omit photo/document/completion arrays and visit arrays. Keep `id`, customer, dealer, amounts, `proposal`, `installationStatus`, metering flags.
+3. `GET /quotations/:id` (and admin detail) stay **full** media.
+4. Unknown query keys must not 400. Concurrent page=1,2,3… must all 200.
+5. Installer queue `status=` must accept and filter (200 empty array if none):
+   `pending_installer`, `approved`, `installer_in_progress`, `installer_approved`, `pending_baldev`, `pending_metering`, `metering_in_progress`, `metering_approved`, `meter_installation_pending`, `mco`.
+   Do **not** 400 on `installer_in_progress`.
+
+**Copy-paste:** `BACKEND_LIST_FAST_PATH.ts` · REQUIRED **§BW**
+
+---
+
+## 70. Account Management Bank fees — loan / cash+loan, persist on quotation (**§BX**) — Oct 30 2026
+
+**Frontend (shipped):** Account Management → Manage, **loan** and **cash+loan** only. Bank fees input subtracts from subtotal / remaining. **Paid stays SUM(installment.paidAmount)** — fees are not paid. File **Completes** when paid + bank fees (+ discount) covers subtotal. Session overlay until GET echoes; **no localStorage**.
+
+**Apply on live API (no new route required):**
+
+1. `ALTER TABLE quotations ADD COLUMN IF NOT EXISTS bank_fees NUMERIC(14,2);` (MySQL: `DECIMAL(14,2) NULL`).
+2. PATCH `/quotations/:id/payment-details` (and admin + office-outside twins) persist `bankFees` / `bank_fees`. `replaceInstallments: false` must not wipe installments.
+3. Echo `bankFees` / `bank_fees` on GET list + detail. Cash files store **0**.
+4. Remaining math: `remaining = max(0, subtotal − discountAmount − bankFees − paidAmount)`. Do **not** add fees to paid. Do **not** 400 when paid + fees == subtotal.
+5. `paymentStatus = completed` when remaining ≤ 0 and (paid > 0 or bankFees > 0 or discount > 0).
+
+Example: subtotal ₹1,89,000, paid ₹1,86,785, bankFees ₹2,215 → remaining ₹0, Paid ₹1,86,785, Completed.
+
+**Copy-paste:** `BACKEND_BANK_FEES.ts` · REQUIRED **§BX**
+
+---
+
+## 71. Approve 400 “proposal required for loan/mix” when Proposal amount is filled (**§BY**) — Oct 30 2026
+
+**Live bug:** Admin Approve (Loan) with **Proposal amount ₹1,60,000** still alerts:
+
+`proposal required for loan/mix approval (INR > 0)`
+
+SPA sends integers on **all** aliases:
+
+```json
+{
+  "status": "approved",
+  "paymentType": "loan",
+  "paymentMode": "loan",
+  "proposal": 160000,
+  "proposalAmount": 160000,
+  "proposal_amount": 160000,
+  "loanAmount": 160000,
+  "loan_amount": 160000,
+  "bankName": "State Bank of India",
+  "bankIfsc": "SBIN0032365"
+}
+```
+
+**Apply on live `PATCH /admin/quotations/:id/status` (no new route):**
+
+1. Read `body.proposal ?? body.proposalAmount ?? body.proposal_amount` (also `body.data.*` if you nest).
+2. Parse with `Number(...)` — accept **number or numeric string**. Do **not** reject with `typeof body.proposal !== "number"`.
+3. Add `proposal` / `proposalAmount` / `proposal_amount` to Joi / pick() allowlist. Do not strip unknown keys before reading proposal.
+4. Loan / mix: 400 `VAL_PROPOSAL` only when **none** of those keys parse to INR > 0.
+5. Cash: do not require body.proposal; store quotation **subtotal**.
+6. Persist `quotations.proposal`. Upsert `subvendor_ledger.proposal` only (do not wipe PI / GST). Echo `proposal` on GET.
+
+**Copy-paste:** `BACKEND_APPROVE_PROPOSAL_FIX.ts` · `BACKEND_APPROVE_PROPOSAL.ts` · REQUIRED **§BY**
+
+---
+
 
 
 

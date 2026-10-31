@@ -122,7 +122,7 @@
 export function parseApproveProposalAmount(raw) {
   if (raw === undefined || raw === null || raw === "") return null
   const n = typeof raw === "number" ? raw : Number(String(raw).replace(/[₹,\s]/g, ""))
-  if (!Number.isFinite(n) || n < 0) return null
+  if (!Number.isFinite(n) || n <= 0) return null
   return Math.round(n)
 }
 
@@ -158,7 +158,7 @@ export function resolveApproveProposal({ paymentType, proposalRaw, quotationSubt
     return {
       ok: false,
       code: "VAL_PROPOSAL",
-      message: "proposal required for loan / cash + loan approval",
+      message: "proposal required for loan/mix approval (INR > 0)",
     }
   }
   return { ok: true, proposal: parsed }
@@ -214,7 +214,13 @@ export async function applyProposalOnApprove({
   const quotationSubtotal = pickQuotationSubtotalForProposal(quotation)
   const result = resolveApproveProposal({
     paymentType,
-    proposalRaw: body.proposal ?? body.proposalAmount ?? body.proposal_amount,
+    proposalRaw:
+      body.proposal ??
+      body.proposalAmount ??
+      body.proposal_amount ??
+      body.data?.proposal ??
+      body.data?.proposalAmount ??
+      body.data?.proposal_amount,
     quotationSubtotal,
   })
   if (!result.ok) return result

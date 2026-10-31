@@ -11,6 +11,23 @@ import {
 
 const getApiBaseUrl = () => API_CONFIG.baseURL
 
+/** Integer INR > 0 for approve / payment bodies. Strings like "160000" become 160000. */
+function asPositiveInr(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined
+  const n = Math.round(Number(String(value).replace(/[₹,\s]/g, "")))
+  return Number.isFinite(n) && n > 0 ? n : undefined
+}
+
+function approveProposalBody(proposal: unknown): Record<string, number> {
+  const amount = asPositiveInr(proposal)
+  if (amount == null) return {}
+  return {
+    proposal: amount,
+    proposalAmount: amount,
+    proposal_amount: amount,
+  }
+}
+
 interface ApiResponse<T = any> {
   success: boolean
   data?: T
@@ -66,6 +83,26 @@ function isRetryableListEndpointError(error: unknown): boolean {
     error.code === "HTTP_501" ||
     error.code === "AUTH_004"
   )
+}
+
+type QuotationListQueryValue = string | number | boolean | undefined
+type QuotationListQuery = Record<string, QuotationListQueryValue>
+
+/** List endpoints skip heavy media/visits unless the caller opts in (`includeMedia: true`). */
+function quotationListQueryString(params?: QuotationListQuery): string {
+  const merged: QuotationListQuery = {
+    includeMedia: false,
+    includeVisits: false,
+    ...(params || {}),
+  }
+  const queryParams = new URLSearchParams()
+  Object.entries(merged).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && String(value) !== "") {
+      queryParams.append(key, String(value))
+    }
+  })
+  const query = queryParams.toString()
+  return query ? `?${query}` : ""
 }
 
 class ApiError extends Error {
@@ -850,10 +887,10 @@ export async function forceAdvanceQuotationToMco(quotationId: string): Promise<b
 /** Load rows sent from Payment Management — tries account + admin list endpoints. */
 export async function fetchSentToInstallerQuotationRows(): Promise<any[]> {
   const queryAttempts = [
-    "/admin/quotations?limit=1000&installationReadyForInstaller=true",
-    "/admin/quotations?limit=1000&status=approved",
-    "/quotations?status=approved&limit=1000",
-    "/admin/quotations?limit=1000",
+    "/admin/quotations?limit=1000&installationReadyForInstaller=true&includeMedia=false&includeVisits=false",
+    "/admin/quotations?limit=1000&status=approved&includeMedia=false&includeVisits=false",
+    "/quotations?status=approved&limit=1000&includeMedia=false&includeVisits=false",
+    "/admin/quotations?limit=1000&includeMedia=false&includeVisits=false",
   ]
   let best: any[] = []
   for (const path of queryAttempts) {
@@ -1282,17 +1319,12 @@ export const api = {
         endDate?: string
         sortBy?: string
         sortOrder?: "asc" | "desc"
+        includeMedia?: boolean
+        includeVisits?: boolean
       },
       options?: { suppressErrorLog?: boolean },
     ) => {
-      const queryParams = new URLSearchParams()
-      if (params) {
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined) queryParams.append(key, String(value))
-        })
-      }
-      const query = queryParams.toString()
-      return apiRequest(`/quotations${query ? `?${query}` : ""}`, {
+      return apiRequest(`/quotations${quotationListQueryString(params)}`, {
         suppressErrorLog: options?.suppressErrorLog,
       })
     },
@@ -1309,15 +1341,10 @@ export const api = {
       search?: string
       startDate?: string
       endDate?: string
+      includeMedia?: boolean
+      includeVisits?: boolean
     }) => {
-      const queryParams = new URLSearchParams()
-      if (params) {
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined) queryParams.append(key, String(value))
-        })
-      }
-      const query = queryParams.toString()
-      const suffix = query ? `?${query}` : ""
+      const suffix = quotationListQueryString(params)
       const endpoints = [
         `/admin/quotations${suffix}`,
         `/account-management/quotations${suffix}`,
@@ -1347,15 +1374,10 @@ export const api = {
       search?: string
       startDate?: string
       endDate?: string
+      includeMedia?: boolean
+      includeVisits?: boolean
     }) => {
-      const queryParams = new URLSearchParams()
-      if (params) {
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined) queryParams.append(key, String(value))
-        })
-      }
-      const query = queryParams.toString()
-      const suffix = query ? `?${query}` : ""
+      const suffix = quotationListQueryString(params)
       const endpoints = [
         `/account-management/quotations${suffix}`,
         `/admin/quotations${suffix}`,
@@ -1458,6 +1480,9 @@ export const api = {
         /** Manual site cost (INR) — Account Management profit = subtotal − siteCost. */
         siteCost?: number
         site_cost?: number
+        /** Bank processing fees (loan / cash+loan). Subtracts from subtotal; never counted as paid. */
+        bankFees?: number
+        bank_fees?: number
         /** When true, backend must replace all installment rows with `phases` (not merge). */
         replaceInstallments?: boolean
         /** Final settlement write-off (INR). Backend should add to discountAmount and set remaining=0. */
@@ -1486,6 +1511,20 @@ export const api = {
             }
           : {}
 
+      const bankFeesPayload =
+        paymentData.bankFees != null || paymentData.bank_fees != null
+          ? {
+              bankFees: Math.max(
+                0,
+                Math.round(Number(paymentData.bankFees ?? paymentData.bank_fees) || 0),
+              ),
+              bank_fees: Math.max(
+                0,
+                Math.round(Number(paymentData.bankFees ?? paymentData.bank_fees) || 0),
+              ),
+            }
+          : {}
+
       // Status / settlement-only update — do not touch installment rows (avoids
       // "paid cannot exceed payable after discount" when AM cap ≠ pricing payable).
       if (!hasPhases) {
@@ -1495,6 +1534,7 @@ export const api = {
           paymentMode: paymentData.paymentMode,
           replaceInstallments: false,
           ...siteCostPayload,
+          ...bankFeesPayload,
           ...(paymentData.finalSettlementAmount != null
             ? { finalSettlementAmount: paymentData.finalSettlementAmount }
             : {}),
@@ -1558,6 +1598,7 @@ export const api = {
       const bodyWithReplace = {
         ...paymentData,
         ...siteCostPayload,
+        ...bankFeesPayload,
         replaceInstallments,
         installments: paymentData.phases,
       }
@@ -1573,6 +1614,11 @@ export const api = {
             paymentType: paymentData.paymentType,
             paymentMode: paymentData.paymentMode,
             ...siteCostPayload,
+            ...bankFeesPayload,
+            ...(paymentData.remaining != null ? { remaining: paymentData.remaining } : {}),
+            ...(paymentData.remainingAmount != null
+              ? { remainingAmount: paymentData.remainingAmount }
+              : {}),
             ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
           },
         },
@@ -1590,6 +1636,11 @@ export const api = {
             replaceInstallments: true,
             paymentStatus: paymentData.paymentStatus,
             ...siteCostPayload,
+            ...bankFeesPayload,
+            ...(paymentData.remaining != null ? { remaining: paymentData.remaining } : {}),
+            ...(paymentData.remainingAmount != null
+              ? { remainingAmount: paymentData.remainingAmount }
+              : {}),
             ...(paymentData.subsidyCheques?.length ? { subsidyCheques: paymentData.subsidyCheques } : {}),
           },
         },
@@ -1654,6 +1705,59 @@ export const api = {
           if (!retryable) {
             const msg = String((error as Error)?.message || "").toLowerCase()
             if (msg.includes("site") || msg.includes("unknown") || msg.includes("not allowed")) {
+              continue
+            }
+            throw error
+          }
+        }
+      }
+      throw lastError
+    },
+
+    /**
+     * Persist Account Management “Bank fees” (loan / cash+loan) without touching installments.
+     * PATCH /quotations/:id/payment-details { bankFees, bank_fees, remaining, paymentStatus, replaceInstallments: false }
+     * Database only — do not store in localStorage.
+     */
+    updateBankFees: async (
+      quotationId: string,
+      bankFees: number,
+      extra?: {
+        remaining?: number
+        remainingAmount?: number
+        paymentStatus?: "pending" | "partial" | "completed" | string
+      },
+    ) => {
+      const amount = Math.max(0, Math.round(Number(bankFees) || 0))
+      const body: Record<string, unknown> = {
+        bankFees: amount,
+        bank_fees: amount,
+        replaceInstallments: false,
+        ...(extra?.remaining != null ? { remaining: extra.remaining } : {}),
+        ...(extra?.remainingAmount != null ? { remainingAmount: extra.remainingAmount } : {}),
+        ...(extra?.paymentStatus ? { paymentStatus: extra.paymentStatus } : {}),
+      }
+      const endpoints = [
+        `/quotations/${quotationId}/payment-details`,
+        `/quotations/${quotationId}/bank-fees`,
+        `/admin/quotations/${quotationId}/payment-details`,
+        `/admin/quotations/${quotationId}/bank-fees`,
+      ]
+      let lastError: unknown = null
+      for (const endpoint of endpoints) {
+        try {
+          return await apiRequest(endpoint, { method: "PATCH", body })
+        } catch (error) {
+          lastError = error
+          const retryable =
+            error instanceof ApiError &&
+            (error.code === "HTTP_404" ||
+              error.code === "HTTP_405" ||
+              error.code === "HTTP_501" ||
+              error.code === "HTTP_400")
+          if (!retryable) {
+            const msg = String((error as Error)?.message || "").toLowerCase()
+            if (msg.includes("bank") || msg.includes("unknown") || msg.includes("not allowed")) {
               continue
             }
             throw error
@@ -2793,17 +2897,12 @@ export const api = {
         search?: string
         sortBy?: string
         sortOrder?: "asc" | "desc"
+        includeMedia?: boolean
+        includeVisits?: boolean
       },
       options?: { suppressErrorLog?: boolean },
     ) => {
-      const queryParams = new URLSearchParams()
-      if (params) {
-        Object.entries(params).forEach(([key, value]) => {
-          if (value !== undefined) queryParams.append(key, String(value))
-        })
-      }
-      const query = queryParams.toString()
-      const suffix = query ? `?${query}` : ""
+      const suffix = quotationListQueryString(params)
       const endpoints = [
         `/installer/quotations${suffix}`,
         `/installer/queue${suffix}`,
@@ -4035,17 +4134,12 @@ export const api = {
           startDate?: string
           endDate?: string
           dealerId?: string
+          includeMedia?: boolean
+          includeVisits?: boolean
         },
         options?: { suppressErrorLog?: boolean },
       ) => {
-        const queryParams = new URLSearchParams()
-        if (params) {
-          Object.entries(params).forEach(([key, value]) => {
-            if (value !== undefined) queryParams.append(key, String(value))
-          })
-        }
-        const query = queryParams.toString()
-        return apiRequest(`/admin/quotations${query ? `?${query}` : ""}`, {
+        return apiRequest(`/admin/quotations${quotationListQueryString(params)}`, {
           suppressErrorLog: options?.suppressErrorLog,
         })
       },
@@ -4081,6 +4175,9 @@ export const api = {
           proposal?: number
         },
       ) => {
+        const loanAmount = asPositiveInr(approval?.loanAmount)
+        const cashAmount = asPositiveInr(approval?.cashAmount)
+        const proposalBody = approveProposalBody(approval?.proposal)
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
           method: "PATCH",
           body: {
@@ -4089,10 +4186,13 @@ export const api = {
               ? {
                   paymentType: approval.paymentType,
                   paymentMode: approval.paymentType,
-                  ...(approval.bankName ? { bankName: approval.bankName } : {}),
-                  ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc } : {}),
+                  ...(approval.bankName ? { bankName: approval.bankName, bank_name: approval.bankName } : {}),
+                  ...(approval.bankIfsc ? { bankIfsc: approval.bankIfsc, bank_ifsc: approval.bankIfsc } : {}),
                   ...(approval.subsidyChequeDetails?.trim()
-                    ? { subsidyChequeDetails: approval.subsidyChequeDetails.trim() }
+                    ? {
+                        subsidyChequeDetails: approval.subsidyChequeDetails.trim(),
+                        subsidy_cheque_details: approval.subsidyChequeDetails.trim(),
+                      }
                     : {}),
                   ...(approval.statusApprovedAt
                     ? {
@@ -4100,15 +4200,9 @@ export const api = {
                         status_approved_at: approval.statusApprovedAt,
                       }
                     : {}),
-                  ...(approval.loanAmount != null && approval.loanAmount > 0
-                    ? { loanAmount: approval.loanAmount, loan_amount: approval.loanAmount }
-                    : {}),
-                  ...(approval.cashAmount != null && approval.cashAmount > 0
-                    ? { cashAmount: approval.cashAmount, cash_amount: approval.cashAmount }
-                    : {}),
-                  ...(approval.proposal != null && approval.proposal > 0
-                    ? { proposal: approval.proposal, proposalAmount: approval.proposal }
-                    : {}),
+                  ...(loanAmount != null ? { loanAmount, loan_amount: loanAmount } : {}),
+                  ...(cashAmount != null ? { cashAmount, cash_amount: cashAmount } : {}),
+                  ...proposalBody,
                 }
               : {}),
           },

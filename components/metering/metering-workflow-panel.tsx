@@ -356,24 +356,22 @@ export function MeteringWorkflowPanel({
             "meter_installation_pending",
             "mco",
           ] as const
-          const queueRows: any[] = []
-          for (const status of queueStatuses) {
-            queueRows.push(
-              ...(await safeList(() =>
-                api.installer.getQueue({ status, page: 1, limit: 1000 }, installerQueueQuiet),
-              )),
-            )
-          }
-
-          const broadQueueRows = await safeList(() =>
-            api.installer.getQueue({ page: 1, limit: 1000 }, installerQueueQuiet),
-          )
-
-          const adminRows = loadAllMetering
-            ? await safeList(() => api.quotations.getWorkflowDashboardList({ page: 1, limit: 1000 }))
-            : await safeList(() =>
-                api.quotations.getAll({ status: "approved", page: 1, limit: 1000 }, { suppressErrorLog: true }),
-              )
+          const [queueChunks, broadQueueRows, adminRows] = await Promise.all([
+            Promise.all(
+              queueStatuses.map((status) =>
+                safeList(() =>
+                  api.installer.getQueue({ status, page: 1, limit: 1000 }, installerQueueQuiet),
+                ),
+              ),
+            ),
+            safeList(() => api.installer.getQueue({ page: 1, limit: 1000 }, installerQueueQuiet)),
+            loadAllMetering
+              ? safeList(() => api.quotations.getWorkflowDashboardList({ page: 1, limit: 1000 }))
+              : safeList(() =>
+                  api.quotations.getAll({ status: "approved", page: 1, limit: 1000 }, { suppressErrorLog: true }),
+                ),
+          ])
+          const queueRows = queueChunks.flat()
 
           const handoffMap = readAdminMeteringHandoffMap()
           const normalized = dedupeByQuotationId(

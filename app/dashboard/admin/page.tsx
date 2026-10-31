@@ -312,8 +312,8 @@ function formatQuotationAmountInr(quotation: {
   return `₹${getQuotationSubtotalValue(quotation).toLocaleString("en-IN")}`
 }
 
-function parseInrAmountInput(raw: string): number | null {
-  const cleaned = raw.replace(/[₹,\s]/g, "").trim()
+function parseInrAmountInput(raw: string | number | null | undefined): number | null {
+  const cleaned = String(raw ?? "").replace(/[₹,\s]/g, "").trim()
   if (!cleaned) return null
   const value = Number(cleaned)
   if (!Number.isFinite(value) || value < 0) return null
@@ -3021,15 +3021,28 @@ export default function AdminPanelPage() {
         // Installation / Metering tabs need queue+release flags — don't wait serially.
         const loadInstallerQueues = async () => {
           try {
-            const [pendingResp, approvedResp] = await Promise.all([
-              api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }),
-              api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }),
-            ])
-            const pending = extractQuotationListFromApiResponse(pendingResp)
-            const approvedQ = extractQuotationListFromApiResponse(approvedResp)
-            ingestInstallerQueueRows(pending)
-            ingestInstallerQueueRows(approvedQ)
-            ;[...pending, ...approvedQ].forEach((row: unknown) => {
+            const statuses = [
+              "pending_installer",
+              "approved",
+              "installer_in_progress",
+              "installer_approved",
+              "pending_baldev",
+            ] as const
+            const results = await Promise.all(
+              statuses.map(async (status) => {
+                try {
+                  return extractQuotationListFromApiResponse(
+                    await api.installer.getQueue({ status, page: 1, limit: 1000 }),
+                  )
+                } catch {
+                  return [] as unknown[]
+                }
+              }),
+            )
+            const pending = results[0] || []
+            const approvedQ = results[1] || []
+            results.forEach((rows) => ingestInstallerQueueRows(rows))
+            ;[...pending, ...approvedQ, ...results.slice(2).flat()].forEach((row: unknown) => {
               const flat = flattenWrappedQuotationRow(row)
               const id = String(flat.id || "").trim()
               if (id) installerQueueIdSet.add(id)
@@ -8139,7 +8152,9 @@ export default function AdminPanelPage() {
     if (approvalPaymentType === "cash") {
       proposal = quotationTotal > 0 ? quotationTotal : undefined
     } else {
-      const parsedProposal = parseInrAmountInput(approvalProposalAmount)
+      const parsedProposal =
+        parseInrAmountInput(approvalProposalAmount) ??
+        (quotationTotal > 0 ? quotationTotal : null)
       if (parsedProposal == null || parsedProposal <= 0) {
         toast({
           title: "Proposal amount required",
@@ -8150,10 +8165,6 @@ export default function AdminPanelPage() {
       }
       proposal = parsedProposal
     }
-    const amountPayload =
-      loanAmount != null || cashAmount != null || proposal != null
-        ? { loanAmount, cashAmount, ...(proposal != null ? { proposal } : {}) }
-        : {}
     if (needsBank) {
       const bankName = approvalBankName.trim()
       const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
@@ -8178,14 +8189,18 @@ export default function AdminPanelPage() {
         bankName,
         bankIfsc: ifscRaw,
         ...subsidyPayload,
-        ...amountPayload,
+        loanAmount,
+        cashAmount,
+        proposal,
         statusApprovedAt: approvedAtIso,
       })
     } else {
       await updateQuotationStatus(approvingQuotationId, "approved", {
         paymentType: approvalPaymentType,
         ...subsidyPayload,
-        ...amountPayload,
+        loanAmount,
+        cashAmount,
+        proposal,
         statusApprovedAt: approvedAtIso,
       })
     }

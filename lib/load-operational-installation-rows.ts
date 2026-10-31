@@ -55,55 +55,66 @@ export async function loadOperationalInstallationRows(
     })
   }
 
-  let adminRowsRaw: unknown[] = []
-  if (fetchAdmin) {
-    try {
-      const quotationsResponse = await api.quotations.getWorkflowDashboardList({ page: 1, limit: 1000 })
-      adminRowsRaw =
-        (quotationsResponse as { quotations?: unknown[] }).quotations ||
-        extractQuotationListFromApiResponse(quotationsResponse)
-    } catch {
-      adminRowsRaw = []
-    }
-  }
-
   const installerQueueOptions = { suppressErrorLog: true as const }
-
-  try {
-    const pending = extractQuotationListFromApiResponse(
-      await api.installer.getQueue({ status: "pending_installer", page: 1, limit: 1000 }, installerQueueOptions),
-    )
-    const approvedQ = extractQuotationListFromApiResponse(
-      await api.installer.getQueue({ status: "approved", page: 1, limit: 1000 }, installerQueueOptions),
-    )
-    ingestInstallerQueueRows(pending)
-    ingestInstallerQueueRows(approvedQ)
-    approvedQ.forEach((row: unknown) => {
-      const flat = flattenWrappedQuotationRow(row)
-      const id = String(flat.id || "").trim()
-      if (id) installerQueueApprovedIdSet.add(id)
-    })
-    for (const status of ["installer_in_progress", "installer_approved", "pending_baldev"] as const) {
-      try {
+  const loadInstallerQueues = async () => {
+    try {
+      const statuses = [
+        "pending_installer",
+        "approved",
+        "installer_in_progress",
+        "installer_approved",
+        "pending_baldev",
+      ] as const
+      const results = await Promise.all(
+        statuses.map(async (status) => {
+          try {
+            return extractQuotationListFromApiResponse(
+              await api.installer.getQueue({ status, page: 1, limit: 1000 }, installerQueueOptions),
+            )
+          } catch {
+            return [] as unknown[]
+          }
+        }),
+      )
+      const pending = results[0] || []
+      const approvedQ = results[1] || []
+      ingestInstallerQueueRows(pending)
+      ingestInstallerQueueRows(approvedQ)
+      approvedQ.forEach((row: unknown) => {
+        const flat = flattenWrappedQuotationRow(row)
+        const id = String(flat.id || "").trim()
+        if (id) installerQueueApprovedIdSet.add(id)
+      })
+      results.slice(2).forEach((rows) => ingestInstallerQueueRows(rows))
+      if (Object.keys(installerQueueById).length === 0) {
         ingestInstallerQueueRows(
           extractQuotationListFromApiResponse(
-            await api.installer.getQueue({ status, page: 1, limit: 1000 }, installerQueueOptions),
+            await api.installer.getQueue({ page: 1, limit: 1000 }, installerQueueOptions),
           ),
         )
-      } catch {
-        // optional status filter
       }
+    } catch {
+      // queue optional when admin/payment lists still have rows
     }
-    if (Object.keys(installerQueueById).length === 0) {
-      ingestInstallerQueueRows(
-        extractQuotationListFromApiResponse(
-          await api.installer.getQueue({ page: 1, limit: 1000 }, installerQueueOptions),
-        ),
-      )
-    }
-  } catch {
-    // queue optional when admin/payment lists still have rows
   }
+
+  const [adminRowsRaw, paymentSentRows] = await Promise.all([
+    fetchAdmin
+      ? (async () => {
+          try {
+            const quotationsResponse = await api.quotations.getWorkflowDashboardList({ page: 1, limit: 1000 })
+            return (
+              (quotationsResponse as { quotations?: unknown[] }).quotations ||
+              extractQuotationListFromApiResponse(quotationsResponse)
+            )
+          } catch {
+            return [] as unknown[]
+          }
+        })()
+      : Promise.resolve([] as unknown[]),
+    fetchSentToInstallerQuotationRows().catch(() => [] as unknown[]),
+    loadInstallerQueues(),
+  ])
 
   let localQuotationsBackup: Record<string, unknown>[] = []
   try {
@@ -117,15 +128,7 @@ export async function loadOperationalInstallationRows(
       .map((row) => [String(row.id), row]),
   )
 
-  releaseLocal = syncInstallerReleaseMapFromRows(adminRowsRaw)
-
-  let paymentSentRows: unknown[] = []
-  try {
-    paymentSentRows = await fetchSentToInstallerQuotationRows()
-    releaseLocal = syncInstallerReleaseMapFromRows([...adminRowsRaw, ...paymentSentRows])
-  } catch {
-    // release map from admin list still applies
-  }
+  releaseLocal = syncInstallerReleaseMapFromRows([...adminRowsRaw, ...paymentSentRows])
 
   const byId = new Map<string, Record<string, unknown>>()
   adminRowsRaw.forEach((row: unknown) => {
