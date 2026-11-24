@@ -65,6 +65,14 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Checkbox } from "@/components/ui/checkbox"
 import { api, ApiError, apiErrorToUserMessage, fetchSentToInstallerQuotationRows, getAuthToken, isApiAuthFailure, retrieveQuotationFromInstallation, retrieveQuotationFromMetering, sendQuotationToMetering } from "@/lib/api"
+import {
+  APPROVAL_OTP_RECIPIENTS,
+  DEFAULT_APPROVAL_OTP_RECIPIENT,
+  approvalOtpRecipientLabel,
+  getQuotationCustomerEmail,
+  isValidCustomerEmail,
+  type ApprovalOtpRecipientKey,
+} from "@/lib/approval-otp-recipients"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
 import {
   ASSIGNABLE_USER_ACCESS_OPTIONS,
@@ -1870,8 +1878,17 @@ export default function AdminPanelPage() {
   const [fileLoginBankIfsc, setFileLoginBankIfsc] = useState("")
   const [fileLoginSubsidyCheque, setFileLoginSubsidyCheque] = useState("")
   const [fileLoginAtInput, setFileLoginAtInput] = useState("")
+  const [fileLoginCustomerEmail, setFileLoginCustomerEmail] = useState("")
   const [optimisticFileLoginSelect, setOptimisticFileLoginSelect] = useState<Record<string, string>>({})
   const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
+  const [approvalOtpRecipient, setApprovalOtpRecipient] =
+    useState<ApprovalOtpRecipientKey>(DEFAULT_APPROVAL_OTP_RECIPIENT)
+  const [approvalOtpCode, setApprovalOtpCode] = useState("")
+  const [approvalOtpSent, setApprovalOtpSent] = useState(false)
+  const [approvalOtpVerified, setApprovalOtpVerified] = useState(false)
+  const [approvalOtpSending, setApprovalOtpSending] = useState(false)
+  const [approvalOtpVerifying, setApprovalOtpVerifying] = useState(false)
+  const [isApprovingQuotation, setIsApprovingQuotation] = useState(false)
   const [statusHistoryQuotation, setStatusHistoryQuotation] = useState<Quotation | null>(null)
   const [quotationVersionHistoryOpen, setQuotationVersionHistoryOpen] = useState(false)
   const [quotationVersionHistoryGroup, setQuotationVersionHistoryGroup] = useState<{
@@ -2889,10 +2906,36 @@ export default function AdminPanelPage() {
   const normalizeStatusHistoryFromApi = (raw: unknown): StatusHistoryEntry[] => {
     if (!Array.isArray(raw)) return []
     return raw
-      .map((e: any) => ({
-        status: String(e.status ?? e.to ?? e.newStatus ?? "").trim(),
-        at: String(e.at ?? e.changedAt ?? e.timestamp ?? e.createdAt ?? "").trim(),
-      }))
+      .map((e: any) => {
+        const status = String(e.status ?? e.to ?? e.newStatus ?? "").trim()
+        const at = String(e.at ?? e.changedAt ?? e.timestamp ?? e.createdAt ?? "").trim()
+        const by = String(
+          e.by ?? e.approvedBy ?? e.otpRecipient ?? e.otp_recipient ?? e.recipient ?? "",
+        ).trim()
+        const byLabel = String(
+          e.byLabel ??
+            e.by_label ??
+            e.approvedByLabel ??
+            e.approved_by_label ??
+            e.recipientLabel ??
+            e.recipient_label ??
+            "",
+        ).trim()
+        const otpRecipient = String(e.otpRecipient ?? e.otp_recipient ?? by ?? "").trim()
+        const otpMobile = String(e.otpMobile ?? e.otp_mobile ?? e.mobileNumber ?? "").trim()
+        const resolvedLabel =
+          byLabel ||
+          (otpRecipient ? approvalOtpRecipientLabel(otpRecipient) : "") ||
+          (by ? approvalOtpRecipientLabel(by) : "")
+        return {
+          status,
+          at,
+          ...(by ? { by } : {}),
+          ...(resolvedLabel ? { byLabel: resolvedLabel } : {}),
+          ...(otpRecipient ? { otpRecipient } : {}),
+          ...(otpMobile ? { otpMobile } : {}),
+        }
+      })
       .filter((e) => e.status && e.at)
   }
 
@@ -5832,6 +5875,7 @@ export default function AdminPanelPage() {
       loanAmount?: number
       cashAmount?: number
       proposal?: number
+      approvalOtpRecipient?: ApprovalOtpRecipientKey
     },
   ) => {
     try {
@@ -5864,11 +5908,22 @@ export default function AdminPanelPage() {
       } else {
         // Fallback to localStorage
         const at = approval?.statusApprovedAt || new Date().toISOString()
+        const otpKey = approval?.approvalOtpRecipient
+        const otpMeta =
+          status === "approved" && otpKey
+            ? {
+                by: otpKey,
+                byLabel: approvalOtpRecipientLabel(otpKey),
+                otpRecipient: otpKey,
+                otpMobile:
+                  APPROVAL_OTP_RECIPIENTS.find((r) => r.key === otpKey)?.mobileNumber || undefined,
+              }
+            : {}
         const updated = quotations.map((q) => {
           if (q.id !== quotationId) return q
           const nextHistory: StatusHistoryEntry[] = [
             ...(q.statusHistory || []),
-            { status, at },
+            { status, at, ...otpMeta },
           ]
           return {
             ...q,
@@ -5957,10 +6012,171 @@ export default function AdminPanelPage() {
         setApprovalProposalAmount("")
       }
       setApprovalAtInput(toDateTimeLocalValue(q?.statusApprovedAt || new Date().toISOString()))
+      setApprovalOtpRecipient(DEFAULT_APPROVAL_OTP_RECIPIENT)
+      setApprovalOtpCode("")
+      setApprovalOtpSent(false)
+      setApprovalOtpVerified(false)
       setApprovalDialogOpen(true)
       return
     }
     void updateQuotationStatus(quotationId, status)
+  }
+
+  const resetApprovalOtpState = () => {
+    setApprovalOtpRecipient(DEFAULT_APPROVAL_OTP_RECIPIENT)
+    setApprovalOtpCode("")
+    setApprovalOtpSent(false)
+    setApprovalOtpVerified(false)
+    setApprovalOtpSending(false)
+    setApprovalOtpVerifying(false)
+  }
+
+  /** Open Status timeline; refetch detail so OTP verifier (by / byLabel) is not stale. */
+  const openStatusTimeline = async (quotation: Quotation) => {
+    setStatusHistoryQuotation(quotation)
+    if (!useApi) return
+    try {
+      const payload = await api.quotations.getById(quotation.id, { suppressErrorLog: true })
+      const root = (payload as { data?: unknown })?.data ?? payload
+      const raw =
+        root && typeof root === "object" && !Array.isArray(root)
+          ? ((root as { quotation?: unknown }).quotation ?? root)
+          : root
+      if (!raw || typeof raw !== "object") return
+      const row = raw as Record<string, unknown>
+      const hist = normalizeStatusHistoryFromApi(
+        row.statusHistory ?? row.status_history ?? row.statusChanges,
+      )
+      setStatusHistoryQuotation((prev) => {
+        if (!prev || prev.id !== quotation.id) return prev
+        return {
+          ...prev,
+          statusHistory: hist.length > 0 ? hist : prev.statusHistory,
+          statusApprovedAt: String(
+            row.statusApprovedAt ?? row.status_approved_at ?? prev.statusApprovedAt ?? "",
+          ) || prev.statusApprovedAt,
+          fileLoginAt: String(row.fileLoginAt ?? row.file_login_at ?? prev.fileLoginAt ?? "") || prev.fileLoginAt,
+        }
+      })
+    } catch {
+      /* keep list snapshot */
+    }
+  }
+
+  const handleSendApprovalOtp = async () => {
+    if (!approvingQuotationId) return
+    setApprovalOtpSending(true)
+    try {
+      if (useApi) {
+        await api.approvalOtp.send({
+          quotationId: approvingQuotationId,
+          recipient: approvalOtpRecipient,
+        })
+      } else {
+        const otp = String(Math.floor(1000 + Math.random() * 9000))
+        sessionStorage.setItem(
+          `approvalOtp:${approvingQuotationId}`,
+          JSON.stringify({ otp, expiresAt: Date.now() + 30 * 60 * 1000 }),
+        )
+        toast({
+          title: "OTP (local mode)",
+          description: `Use ${otp} — SMS is skipped without API.`,
+        })
+      }
+      setApprovalOtpSent(true)
+      setApprovalOtpVerified(false)
+      setApprovalOtpCode("")
+      const recipient = APPROVAL_OTP_RECIPIENTS.find((r) => r.key === approvalOtpRecipient)
+      toast({
+        title: "OTP sent",
+        description: recipient
+          ? `Sent to ${recipient.label} (${recipient.mobileNumber}). Valid 30 minutes.`
+          : "OTP sent. Valid 30 minutes.",
+      })
+    } catch (error) {
+      toast({
+        title: "Could not send OTP",
+        description: error instanceof ApiError ? error.message : "SMS failed. Try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setApprovalOtpSending(false)
+    }
+  }
+
+  const handleVerifyApprovalOtp = async () => {
+    if (!approvingQuotationId) return
+    const otpTrim = approvalOtpCode.trim()
+    if (!approvalOtpSent) {
+      toast({
+        title: "Send OTP first",
+        description: "Choose Kamlesh / Sunil / HR and send the OTP, then verify.",
+        variant: "destructive",
+      })
+      return
+    }
+    if (!/^\d{4}$/.test(otpTrim)) {
+      toast({
+        title: "Enter 4-digit OTP",
+        description: "OTP must be the 4-digit code sent by SMS.",
+        variant: "destructive",
+      })
+      return
+    }
+    setApprovalOtpVerifying(true)
+    try {
+      if (useApi) {
+        const verified = (await api.approvalOtp.verify({
+          quotationId: approvingQuotationId,
+          otp: otpTrim,
+        })) as {
+          recipientKey?: string
+          recipient?: string
+          recipientLabel?: string
+        }
+        const keyRaw = String(verified?.recipientKey || verified?.recipient || "").trim().toLowerCase()
+        if (keyRaw === "kamlesh" || keyRaw === "sunil" || keyRaw === "hr") {
+          setApprovalOtpRecipient(keyRaw)
+        }
+        const label =
+          String(verified?.recipientLabel || "").trim() ||
+          approvalOtpRecipientLabel(
+            (keyRaw === "kamlesh" || keyRaw === "sunil" || keyRaw === "hr"
+              ? keyRaw
+              : approvalOtpRecipient) as ApprovalOtpRecipientKey,
+          )
+        setApprovalOtpVerified(true)
+        toast({
+          title: "OTP verified",
+          description: `Verified · ${label}. You can approve now.`,
+        })
+      } else {
+        const raw = sessionStorage.getItem(`approvalOtp:${approvingQuotationId}`)
+        const parsed = raw ? (JSON.parse(raw) as { otp?: string; expiresAt?: number }) : null
+        if (!parsed?.otp || !parsed.expiresAt || parsed.expiresAt < Date.now()) {
+          sessionStorage.removeItem(`approvalOtp:${approvingQuotationId}`)
+          throw new ApiError("OTP expired. Please send a new OTP.", "VAL_OTP")
+        }
+        if (parsed.otp !== otpTrim) {
+          throw new ApiError("Incorrect OTP", "VAL_OTP")
+        }
+        sessionStorage.removeItem(`approvalOtp:${approvingQuotationId}`)
+        setApprovalOtpVerified(true)
+        toast({
+          title: "OTP verified",
+          description: `Verified · ${approvalOtpRecipientLabel(approvalOtpRecipient)}. You can approve now.`,
+        })
+      }
+    } catch (error) {
+      setApprovalOtpVerified(false)
+      toast({
+        title: "OTP verification failed",
+        description: error instanceof ApiError ? error.message : "Incorrect or expired OTP.",
+        variant: "destructive",
+      })
+    } finally {
+      setApprovalOtpVerifying(false)
+    }
   }
 
   function getOperationalStage(quotation: Quotation): AdminOperationalStage | "" {
@@ -8165,59 +8381,114 @@ export default function AdminPanelPage() {
       }
       proposal = parsedProposal
     }
-    if (needsBank) {
-      const bankName = approvalBankName.trim()
-      const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
-      if (!bankName) {
-        toast({
-          title: "Bank name required",
-          description: "Enter the customer’s bank for loan or cash + loan approval.",
-          variant: "destructive",
-        })
-        return
-      }
-      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscRaw)) {
-        toast({
-          title: "Invalid IFSC",
-          description: "Use 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).",
-          variant: "destructive",
-        })
-        return
-      }
-      await updateQuotationStatus(approvingQuotationId, "approved", {
-        paymentType: approvalPaymentType,
-        bankName,
-        bankIfsc: ifscRaw,
-        ...subsidyPayload,
-        loanAmount,
-        cashAmount,
-        proposal,
-        statusApprovedAt: approvedAtIso,
+
+    if (!approvalOtpVerified) {
+      toast({
+        title: "Verify OTP first",
+        description: "Send and verify the 4-digit OTP at the bottom before submitting approve.",
+        variant: "destructive",
       })
-    } else {
-      await updateQuotationStatus(approvingQuotationId, "approved", {
-        paymentType: approvalPaymentType,
-        ...subsidyPayload,
-        loanAmount,
-        cashAmount,
-        proposal,
-        statusApprovedAt: approvedAtIso,
-      })
+      return
     }
-    setApprovalDialogOpen(false)
-    setApprovingQuotationId(null)
-    setApprovalBankName("")
-    setApprovalBankIfsc("")
-    setApprovalSubsidyCheque("")
-    setApprovalLoanAmount("")
-    setApprovalCashAmount("")
-    setApprovalProposalAmount("")
+
+    setIsApprovingQuotation(true)
+    try {
+      if (needsBank) {
+        const bankName = approvalBankName.trim()
+        const ifscRaw = approvalBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+        if (!bankName) {
+          toast({
+            title: "Bank name required",
+            description: "Enter the customer’s bank for loan or cash + loan approval.",
+            variant: "destructive",
+          })
+          return
+        }
+        if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscRaw)) {
+          toast({
+            title: "Invalid IFSC",
+            description: "Use 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).",
+            variant: "destructive",
+          })
+          return
+        }
+        await updateQuotationStatus(approvingQuotationId, "approved", {
+          paymentType: approvalPaymentType,
+          bankName,
+          bankIfsc: ifscRaw,
+          ...subsidyPayload,
+          loanAmount,
+          cashAmount,
+          proposal,
+          statusApprovedAt: approvedAtIso,
+          approvalOtpRecipient,
+        })
+      } else {
+        await updateQuotationStatus(approvingQuotationId, "approved", {
+          paymentType: approvalPaymentType,
+          ...subsidyPayload,
+          loanAmount,
+          cashAmount,
+          proposal,
+          statusApprovedAt: approvedAtIso,
+          approvalOtpRecipient,
+        })
+      }
+      // Ensure Status timeline shows verifier: patch last approved history row if API omitted by/byLabel.
+      const otpMeta = {
+        by: approvalOtpRecipient,
+        byLabel: approvalOtpRecipientLabel(approvalOtpRecipient),
+        otpRecipient: approvalOtpRecipient,
+        otpMobile:
+          APPROVAL_OTP_RECIPIENTS.find((r) => r.key === approvalOtpRecipient)?.mobileNumber,
+      }
+      setQuotations((prev) =>
+        prev.map((q) => {
+          if (q.id !== approvingQuotationId) return q
+          const hist = [...(q.statusHistory || [])]
+          let patched = false
+          for (let i = hist.length - 1; i >= 0; i--) {
+            if (String(hist[i].status || "").toLowerCase() !== "approved") continue
+            if (!hist[i].byLabel && !hist[i].by) {
+              hist[i] = { ...hist[i], ...otpMeta }
+            }
+            patched = true
+            break
+          }
+          if (!patched) {
+            hist.push({
+              status: "approved",
+              at: approvedAtIso || new Date().toISOString(),
+              ...otpMeta,
+            })
+          }
+          return {
+            ...q,
+            status: "approved",
+            statusApprovedAt: approvedAtIso || q.statusApprovedAt,
+            statusHistory: hist,
+          }
+        }),
+      )
+      setApprovalDialogOpen(false)
+      setApprovingQuotationId(null)
+      setApprovalBankName("")
+      setApprovalBankIfsc("")
+      setApprovalSubsidyCheque("")
+      setApprovalLoanAmount("")
+      setApprovalCashAmount("")
+      setApprovalProposalAmount("")
+      resetApprovalOtpState()
+    } finally {
+      setIsApprovingQuotation(false)
+    }
   }
 
   const resetFileLoginFormFields = () => {
     setFileLoginBankName("")
     setFileLoginBankIfsc("")
     setFileLoginSubsidyCheque("")
+    setFileLoginCustomerEmail("")
   }
 
   const openFileLoginDialog = (q: Quotation, status: FileLoginStatus) => {
@@ -8227,6 +8498,7 @@ export default function AdminPanelPage() {
     setFileLoginBankName(q.fileBankName || "")
     setFileLoginBankIfsc(q.fileBankIfsc || "")
     setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
+    setFileLoginCustomerEmail(getQuotationCustomerEmail(q))
     setFileLoginAtInput(toDateTimeLocalValue(q.fileLoginAt || new Date().toISOString()))
     setFileLoginDialogOpen(true)
   }
@@ -8279,6 +8551,15 @@ export default function AdminPanelPage() {
     if (!fileLoginQuotationId) return
     const needsBank = fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix"
     const subsidyTrim = fileLoginSubsidyCheque.trim()
+    const emailTrim = fileLoginCustomerEmail.trim()
+    if (!isValidCustomerEmail(emailTrim)) {
+      toast({
+        title: "Please enter the email",
+        description: "Customer email is required so consent can be sent after file login.",
+        variant: "destructive",
+      })
+      return
+    }
     if (needsBank) {
       const bankName = fileLoginBankName.trim()
       const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
@@ -8311,7 +8592,24 @@ export default function AdminPanelPage() {
         setIsSavingFileLogin(false)
         return
       }
+      const qRow = quotations.find((q) => q.id === fileLoginQuotationId)
+      const customerId =
+        (qRow as { customerId?: string } | undefined)?.customerId || qRow?.customer?.id
+      const existingEmail = getQuotationCustomerEmail(qRow)
       if (useApi) {
+        if (customerId && emailTrim.toLowerCase() !== existingEmail.toLowerCase()) {
+          try {
+            await api.customers.update(customerId, { email: emailTrim })
+          } catch (emailErr) {
+            toast({
+              title: "Could not save customer email",
+              description: emailErr instanceof ApiError ? emailErr.message : "Update email failed.",
+              variant: "destructive",
+            })
+            setIsSavingFileLogin(false)
+            return
+          }
+        }
         const bankName = fileLoginBankName.trim()
         const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
         await api.admin.quotations.updateFileLogin(fileLoginQuotationId, {
@@ -8321,6 +8619,23 @@ export default function AdminPanelPage() {
           ...(needsBank ? { bankName, bankIfsc: ifscRaw } : {}),
           ...(subsidyTrim ? { fileSubsidyChequeDetails: subsidyTrim } : {}),
         })
+        try {
+          await api.sendApprovalEmail({
+            quotationId: fileLoginQuotationId,
+            to: emailTrim,
+            kind: "consent",
+          })
+          toast({
+            title: "File login saved",
+            description: `Consent email sent to ${emailTrim}.`,
+          })
+        } catch (mailErr) {
+          toast({
+            title: "File login saved — consent email failed",
+            description: mailErr instanceof ApiError ? mailErr.message : "Could not send consent email.",
+            variant: "destructive",
+          })
+        }
         await loadData()
       } else {
         const bankName = fileLoginBankName.trim()
@@ -8335,11 +8650,18 @@ export default function AdminPanelPage() {
                 fileBankIfsc: needsBank ? ifscRaw : undefined,
                 fileSubsidyChequeDetails: subsidyTrim || undefined,
                 fileLoginAt: at,
+                customer: q.customer
+                  ? { ...q.customer, email: emailTrim }
+                  : q.customer,
               }
             : q,
         )
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
+        toast({
+          title: "File login saved",
+          description: `Consent would email ${emailTrim} (API off).`,
+        })
       }
       setOptimisticFileLoginSelect((prev) => {
         const next = { ...prev }
@@ -8349,7 +8671,6 @@ export default function AdminPanelPage() {
       setFileLoginDialogOpen(false)
       setFileLoginQuotationId(null)
       resetFileLoginFormFields()
-      toast({ title: "File login saved" })
     } catch (error) {
       console.error(error)
       toast({
@@ -11850,7 +12171,7 @@ export default function AdminPanelPage() {
                                             size="sm"
                                             className="h-8 w-8 shrink-0 p-0"
                                             title="Timeline"
-                                            onClick={() => setStatusHistoryQuotation(quotation)}
+                                            onClick={() => void openStatusTimeline(quotation)}
                                           >
                                           <History className="w-3.5 h-3.5" />
                                       <span className="sr-only">Timeline</span>
@@ -12288,7 +12609,7 @@ export default function AdminPanelPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setStatusHistoryQuotation(quotation)}
+                                onClick={() => void openStatusTimeline(quotation)}
                                 className="flex-1"
                                 title="Status timeline"
                               >
@@ -12506,7 +12827,7 @@ export default function AdminPanelPage() {
                                   meteringStageOverride={adminMeteringStageOverride[quotation.id]}
                                   olderCount={getAdminOlderCount(quotation)}
                                   onSendToMetering={(q) => void handleSendToMetering(q)}
-                                  onTimeline={setStatusHistoryQuotation}
+                                  onTimeline={(q) => void openStatusTimeline(q)}
                                   onQuotationHistory={openAdminQuotationHistory}
                                   onDocuments={openDocumentsDialog}
                                   onView={(q) => {
@@ -16894,6 +17215,7 @@ export default function AdminPanelPage() {
               setApprovalCashAmount("")
               setApprovalProposalAmount("")
               setApprovalAtInput("")
+              resetApprovalOtpState()
             }
           }}
         >
@@ -16901,7 +17223,7 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>Select Payment Type</DialogTitle>
               <DialogDescription>
-                For Loan or Cash + loan, enter proposal amount, loan/cash amounts, and the customer&apos;s bank and IFSC. For Cash, Accounts uses the quotation subtotal as proposal. For Cash or Cash + loan, you can record subsidy cheque details.
+                For Loan or Cash + loan, enter proposal amount, loan/cash amounts, and the customer&apos;s bank and IFSC. For Cash, Accounts uses the quotation subtotal as proposal. Send a 4-digit OTP to Kamlesh / Sunil / HR before approving.
               </DialogDescription>
             </DialogHeader>
 
@@ -17068,11 +17390,113 @@ export default function AdminPanelPage() {
                   />
                 </div>
               )}
+
+              <div className="space-y-3 rounded-lg border border-orange-200/80 bg-orange-50/50 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-xs font-semibold text-foreground">OTP verification</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      At the bottom · verify first · then Approve is enabled
+                    </p>
+                  </div>
+                  {approvalOtpVerified ? (
+                    <Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 shrink-0">
+                      Verified
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="approval-otp-recipient">Send OTP to</Label>
+                  <Select
+                    value={approvalOtpRecipient}
+                    onValueChange={(v) => {
+                      setApprovalOtpRecipient(v as ApprovalOtpRecipientKey)
+                      setApprovalOtpSent(false)
+                      setApprovalOtpVerified(false)
+                      setApprovalOtpCode("")
+                    }}
+                    disabled={approvalOtpVerified || isApprovingQuotation}
+                  >
+                    <SelectTrigger id="approval-otp-recipient">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {APPROVAL_OTP_RECIPIENTS.map((r) => (
+                        <SelectItem key={r.key} value={r.key}>
+                          {r.label} · {r.mobileNumber}
+                          {r.hint ? ` (${r.hint})` : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      approvalOtpSending ||
+                      approvalOtpVerified ||
+                      isApprovingQuotation
+                    }
+                    onClick={() => void handleSendApprovalOtp()}
+                  >
+                    {approvalOtpSending
+                      ? "Sending…"
+                      : approvalOtpSent
+                        ? "Resend OTP"
+                        : "Send OTP"}
+                  </Button>
+                  {approvalOtpSent && !approvalOtpVerified ? (
+                    <span className="text-[11px] text-muted-foreground self-center">
+                      OTP sent — enter code below
+                    </span>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="approval-otp-code">Enter OTP</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="approval-otp-code"
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={approvalOtpCode}
+                      onChange={(e) => {
+                        setApprovalOtpCode(e.target.value.replace(/\D/g, "").slice(0, 4))
+                        if (approvalOtpVerified) setApprovalOtpVerified(false)
+                      }}
+                      placeholder="4-digit OTP"
+                      className="font-mono tracking-widest"
+                      autoComplete="one-time-code"
+                      disabled={approvalOtpVerified || isApprovingQuotation}
+                    />
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={
+                        approvalOtpVerifying ||
+                        approvalOtpVerified ||
+                        isApprovingQuotation ||
+                        !approvalOtpSent
+                      }
+                      onClick={() => void handleVerifyApprovalOtp()}
+                    >
+                      {approvalOtpVerifying
+                        ? "Verifying…"
+                        : approvalOtpVerified
+                          ? "Verified"
+                          : "Verify OTP"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
               <Button
                 variant="outline"
+                disabled={isApprovingQuotation}
                 onClick={() => {
                   setApprovalDialogOpen(false)
                   setApprovingQuotationId(null)
@@ -17083,11 +17507,21 @@ export default function AdminPanelPage() {
                   setApprovalCashAmount("")
                   setApprovalProposalAmount("")
                   setApprovalAtInput("")
+                  resetApprovalOtpState()
                 }}
               >
                 Cancel
               </Button>
-              <Button onClick={confirmApprovalWithPaymentType}>Approve Quotation</Button>
+              <Button
+                disabled={isApprovingQuotation || !approvalOtpVerified}
+                onClick={() => void confirmApprovalWithPaymentType()}
+              >
+                {isApprovingQuotation
+                  ? "Approving…"
+                  : approvalOtpVerified
+                    ? "Approve Quotation"
+                    : "Verify OTP to approve"}
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
@@ -17115,10 +17549,24 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>File login</DialogTitle>
               <DialogDescription>
-                Choose how the file is logged on the subsidy portal. Payment type matches the Approve flow. Cash + loan uses the same rules as Loan for bank details.
+                Choose how the file is logged on the subsidy portal. After save, consent (proposal PDF) is emailed to the customer. Payment type matches the Approve flow.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
+              <div className="space-y-2">
+                <Label htmlFor="file-login-customer-email">Customer email</Label>
+                <Input
+                  id="file-login-customer-email"
+                  type="email"
+                  value={fileLoginCustomerEmail}
+                  onChange={(e) => setFileLoginCustomerEmail(e.target.value)}
+                  placeholder="customer@example.com"
+                  autoComplete="email"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Required — consent is sent to this address after file login.
+                </p>
+              </div>
               <div className="space-y-2">
                 <Label>File login status</Label>
                 <Select
@@ -18160,7 +18608,7 @@ export default function AdminPanelPage() {
                 {statusHistoryQuotation ? (
                   <>
                     Quotation <span className="font-mono">{statusHistoryQuotation.id}</span> — each status change with
-                    date and time (from server when available).
+                    date, time, and who verified OTP (Kamlesh Sir / Sunil Sir / HR) when available.
                   </>
                 ) : null}
               </DialogDescription>
@@ -18180,28 +18628,64 @@ export default function AdminPanelPage() {
                       {new Date(statusHistoryQuotation.fileLoginAt).toLocaleString()}
                     </p>
                   ) : null}
-                  {statusHistoryQuotation.statusApprovedAt ? (
-                    <p>
-                      <span className="font-medium text-foreground">Last approved: </span>
-                      {new Date(statusHistoryQuotation.statusApprovedAt).toLocaleString()}
-                    </p>
-                  ) : null}
+                  {(() => {
+                    const hist = statusHistoryQuotation.statusHistory || []
+                    const lastApproved = [...hist]
+                      .reverse()
+                      .find((e) => String(e.status || "").toLowerCase() === "approved")
+                    const lastAt =
+                      lastApproved?.at || statusHistoryQuotation.statusApprovedAt || ""
+                    if (!lastAt) return null
+                    const who =
+                      lastApproved?.byLabel ||
+                      (lastApproved?.by || lastApproved?.otpRecipient
+                        ? approvalOtpRecipientLabel(
+                            lastApproved.by || lastApproved.otpRecipient || "",
+                          )
+                        : "")
+                    return (
+                      <p>
+                        <span className="font-medium text-foreground">Last approved: </span>
+                        {new Date(lastAt).toLocaleString()}
+                        {who ? (
+                          <span className="text-muted-foreground"> · by {who}</span>
+                        ) : null}
+                      </p>
+                    )
+                  })()}
                 </div>
                 {statusHistoryQuotation.statusHistory && statusHistoryQuotation.statusHistory.length > 0 ? (
                   <ul className="space-y-2">
-                    {statusHistoryQuotation.statusHistory.map((entry, idx) => (
-                      <li
-                        key={`${entry.at}-${entry.status}-${idx}`}
-                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 rounded-md border border-border/60 px-3 py-2"
-                      >
-                        <Badge variant="outline" className="w-fit capitalize">
-                          {entry.status}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {entry.at ? new Date(entry.at).toLocaleString() : "—"}
-                        </span>
-                      </li>
-                    ))}
+                    {statusHistoryQuotation.statusHistory.map((entry, idx) => {
+                      const who =
+                        entry.byLabel ||
+                        (entry.by || entry.otpRecipient
+                          ? approvalOtpRecipientLabel(entry.by || entry.otpRecipient || "")
+                          : "")
+                      return (
+                        <li
+                          key={`${entry.at}-${entry.status}-${idx}`}
+                          className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 rounded-md border border-border/60 px-3 py-2"
+                        >
+                          <div className="min-w-0 space-y-0.5">
+                            <Badge variant="outline" className="w-fit capitalize">
+                              {entry.status}
+                            </Badge>
+                            {who ? (
+                              <p className="text-xs text-foreground">
+                                Verified OTP · <span className="font-medium">{who}</span>
+                                {entry.otpMobile ? (
+                                  <span className="text-muted-foreground"> · {entry.otpMobile}</span>
+                                ) : null}
+                              </p>
+                            ) : null}
+                          </div>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">
+                            {entry.at ? new Date(entry.at).toLocaleString() : "—"}
+                          </span>
+                        </li>
+                      )
+                    })}
                   </ul>
                 ) : (
                   <p className="text-muted-foreground text-sm">

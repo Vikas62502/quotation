@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4729,6 +4729,136 @@ SPA sends integers on **all** aliases:
 6. Persist `quotations.proposal`. Upsert `subvendor_ledger.proposal` only (do not wipe PI / GST). Echo `proposal` on GET.
 
 **Copy-paste:** `BACKEND_APPROVE_PROPOSAL_FIX.ts` · `BACKEND_APPROVE_PROPOSAL.ts` · REQUIRED **§BY**
+
+---
+
+## 72. SMS (2FA_AUTH) + approval email with proposal PDF (**§BZ**) — Nov 24 2026
+
+**Shipped on inventory API** (Swagger tags **SMS** / **Email** at `http://localhost:3050/api-docs`).
+
+### SMS
+
+| Method | Path | Body |
+|--------|------|------|
+| POST | `/api/send-sms` | `mobileNumber`, `message`, `otpNumber` |
+
+- `utils/otp/sms.ts` — ChairBord-only TypeScript helper, template **`2FA_AUTH`**
+- Env: `SMS_URL`, `DLT_API_KEY`, `DLT_SENDER_ID`, `DLT_TEMPLATE_ID_2FA_AUTH`
+
+### Approval email + proposal PDF
+
+| Method | Path | Body |
+|--------|------|------|
+| POST | `/api/send-approval-email` | `quotationId` (required), optional `to`, `cc` |
+
+Files:
+
+- `utils/emails/approvalemail.ts` — nodemailer from `EMAIL_USER` / `EMAIL_PASSWORD`
+- `utils/emails/buildProposalDocument.ts` — load quotation by id → proposal data
+- `utils/emails/renderProposalPdfHtml.ts` + `proposalPdfStyles.ts` — FE-matching 3-page HTML
+- `utils/emails/generateProposalPdf.ts` — Puppeteer PDF
+- `utils/emails/proposalCompany.ts` — company / bank constants
+- `assets/chairbord-solar-logo.png` — logo for PDF
+
+**Project cost** = quotation **subtotal**.
+
+### Admin approve
+
+`controllers/adminController.ts` — on approve, non-fatal `sendQuotationApprovalEmail({ quotationId })`. Approve still returns 200 if mail/PDF fails.
+
+### Env / deps
+
+```
+EMAIL_USER=connect@chairbord.com
+EMAIL_PASSWORD=...
+SMS_URL / DLT_*  (existing)
+```
+
+Deps: `nodemailer`, `puppeteer` (+ types).
+
+**Copy-paste:** `BACKEND_SMS_APPROVAL_EMAIL.ts` · REQUIRED **§BZ**  
+**Related OTP workstream:** `BACKEND_APPROVAL_OTP.ts` · **§73** / **§CA**
+
+---
+
+## 73. Approval OTP (Kamlesh / Sunil / HR) + consent email on file login (**§CA**) — Nov 24 2026
+
+**Frontend (shipped):**
+
+1. **File login** — require customer email → save file-login → `POST /api/send-approval-email` with `kind: "consent"` (+ optional `to`).
+2. **Approve modal** — payment type / bank / amounts first; **OTP block at bottom**; Send → Verify; **Approve Quotation only enabled after verify succeeds**, then `PATCH .../status` approved.
+
+| Method | Path | Body |
+|--------|------|------|
+| POST | `/api/approval-otp/send` | `quotationId`, `recipient?` (`kamlesh` default / `sunil` / `hr`) |
+| POST | `/api/approval-otp/verify` | `quotationId`, `otp` (4 digits) |
+| POST | `/api/send-approval-email` | `quotationId`, optional `to`, `kind: "consent" \| "approved"` |
+
+Phones: Kamlesh **9269666646**, Sunil **9251666646**, HR **9251005610**.
+
+**Apply on live API:**
+
+1. Table `approval_otps` (unique `quotation_id`): `otp`, `recipient_key`, `mobile_number`, `expires_at`.
+2. Send: generate new 4-digit OTP → replace prior row → SMS `2FA_AUTH` → return recipient + `expiresAt` (**never return otp**).
+3. Verify: match + not expired → delete row → `{ verified: true }`. Wrong OTP keeps row (retry). Expired / missing → 400 `VAL_OTP`.
+4. TTL 30 min; purge expired; new send erases old.
+5. `send-approval-email` `kind=consent` for file-login PDF email; `approved` on/after admin approve. Project cost = **subtotal**.
+6. Status approve: FE verifies OTP first, then patches status with `approvalOtpRecipient` (`kamlesh`|`sunil`|`hr`). Append to `statusHistory`: `{ status, at, by, byLabel, otpRecipient, otpMobile }` so Status timeline shows **Kamlesh Sir / Sunil Sir / HR**.
+7. `POST /api/approval-otp/verify` returns `recipientKey` + `recipientLabel` (never the OTP digits).
+
+**Shipped on inventorybackend:** `models/ApprovalOtp.ts`, `utils/otp/approvalOtp.ts`, routes in `server.ts`, bootstrap table, `approvalemail.ts` kind; admin status history OTP `by` / `byLabel`.
+
+**Copy-paste:** `BACKEND_APPROVAL_OTP.ts` · REQUIRED **§CA**
+
+---
+
+## 74. Dealer Payments — return ALL approved files for this agent (**§CB**) — Nov 24 2026
+
+**Frontend (shipped):** `/dashboard/payments` loads **every page** of approved quotations for the logged-in dealer/agent and lists **all** of them (including settled / completed). Incomplete agent lists were caused by truncated pages and/or missing payment phase fields / dropped settled rows.
+
+**Apply on live `GET /api/quotations` (dealer JWT):**
+
+| Query | Notes |
+|-------|--------|
+| `status=approved` | Only approved |
+| `page` / `limit` (≤1000) | Accurate `pagination.total`, `totalPages`, `hasNext` |
+| `includeMedia=false` | Still return **payment phases** — do not strip installments |
+
+1. Scope non-admin dealers to `WHERE dealerId = req.dealer.id` — all of **this** agent’s approved files, no silent extra cap.
+2. Echo `dealerId` / `dealer.id` so FE can match the session dealer.
+3. Each row: customer, subtotal, bankFees, paymentType/mode, loan/cash amounts, `installments`/`paymentPhases` (with `paidAmount` + `paymentMode`), remaining, paymentStatus, settlement flags, `statusApprovedAt`.
+4. **Do not omit** settled / completed / remaining ₹0 from `status=approved`.
+
+**Copy-paste:** `BACKEND_DEALER_PAYMENTS_ALL.ts` · REQUIRED **§CB**
+
+---
+
+## 75. Status timeline — who verified approve OTP (**§CC**) — Nov 24 2026
+
+**Frontend (shipped):** Admin **Status timeline** shows **Verified OTP · Kamlesh Sir / Sunil Sir / HR** on approved rows (and “Last approved · by …”). Refetch detail when opening timeline.
+
+**Apply on live API:**
+
+1. Columns on `quotations`: `approvalOtpVerifiedBy` VARCHAR(20), `approvalOtpVerifiedAt` TIMESTAMPTZ (bootstrap).
+2. `POST /api/approval-otp/verify` → stash `approvalOtpVerifiedBy` on quotation; return `recipientKey` / `recipientLabel` / `mobileNumber` (**never** OTP digits); delete OTP row.
+3. `PATCH /admin/quotations/:id/status` `approved`: read `approvalOtpRecipient` (aliases) **or** `quotation.approvalOtpVerifiedBy`. Append `statusHistory`:
+   ```json
+   {
+     "status": "approved",
+     "at": "2026-11-24T09:44:59.000Z",
+     "by": "kamlesh",
+     "byLabel": "Kamlesh Sir",
+     "otpRecipient": "kamlesh",
+     "otpMobile": "9269666646"
+   }
+   ```
+   Then clear verify stash. Zod `updateStatusSchema` must allowlist OTP recipient keys.
+4. GET must **echo** `by` / `byLabel` / `otpMobile` on history (do not strip to `{ status, at }`).
+5. **Restart API** after deploy if not using nodemon — otherwise names never persist.
+
+**Shipped on inventorybackend:** verify stash + approve history + schema allowlist + bootstrap columns.
+
+**Copy-paste:** `BACKEND_STATUS_TIMELINE_OTP_APPROVER.ts` · `BACKEND_APPROVAL_OTP.ts` · REQUIRED **§CC**
 
 ---
 

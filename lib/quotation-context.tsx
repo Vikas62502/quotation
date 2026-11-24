@@ -134,6 +134,12 @@ export type FileLoginStatus = "already_login" | "login_now"
 export type StatusHistoryEntry = {
   status: string
   at: string
+  /** OTP verifier key: kamlesh | sunil | hr */
+  by?: string
+  /** Display name e.g. Kamlesh Sir */
+  byLabel?: string
+  otpRecipient?: string
+  otpMobile?: string
 }
 
 export interface Quotation {

@@ -7600,6 +7600,72 @@ SPA body (loan):
 
 ---
 
+## §BZ — SMS (2FA_AUTH) + approval email with proposal PDF — Nov 24 2026
+
+ChairBord OTP SMS + quotation approval email (3-page proposal PDF). Live on inventory API; Swagger `http://localhost:3050/api-docs` tags **SMS** / **Email**.
+
+### Must
+
+1. **`POST /api/send-sms`** — `mobileNumber`, `message`, `otpNumber`; `utils/otp/sms.ts` template **`2FA_AUTH`**. Env: `SMS_URL` / `DLT_*`.
+2. **`POST /api/send-approval-email`** — `quotationId` required; optional `to`, `cc`. Pipeline: `buildProposalDocument` → `renderProposalPdfHtml` / `proposalPdfStyles` → Puppeteer (`generateProposalPdf`) → `approvalemail` from `EMAIL_USER` / `EMAIL_PASSWORD`. Logo: `assets/chairbord-solar-logo.png`. Constants: `proposalCompany.ts`.
+3. **Project cost** = quotation **subtotal**.
+4. On **admin approve** (`controllers/adminController.ts`): non-fatal `sendQuotationApprovalEmail({ quotationId })`.
+5. Deps: `nodemailer`, `puppeteer` (+ types). Never commit `EMAIL_PASSWORD`.
+
+**Copy-paste:** `BACKEND_SMS_APPROVAL_EMAIL.ts` · HANDOFF **§72**
+
+---
+
+## §CA — Approval OTP + consent email on file login — Nov 24 2026
+
+Admin File login emails consent PDF; Approve modal verifies 4-digit OTP (bottom of modal) before status submit.
+
+### Must
+
+1. Table `approval_otps` (one row per `quotation_id`): `otp` (4 digits), `recipient_key`, `mobile_number`, `expires_at` (+30 min).
+2. `POST /api/approval-otp/send` — new random OTP each time; replace prior row; SMS `2FA_AUTH`. Recipients: kamlesh `8210554718` (default), sunil `7737755290`, hr `9251005610`. Never echo OTP in JSON.
+3. `POST /api/approval-otp/verify` — match OTP; on success delete row. Wrong OTP → 400 keep row. Expired / missing → 400 + erase.
+4. `POST /api/send-approval-email` accepts `kind: "consent" | "approved"` (consent after file login). Project cost = subtotal.
+5. Erase OTP when expired, when a new OTP is sent, or when verified.
+6. `PATCH /admin/quotations/:id/status` approved: FE verifies first, then sends `approvalOtpRecipient`. Append statusHistory `{ by, byLabel, otpMobile }` for Status timeline (Kamlesh Sir / Sunil Sir / HR).
+7. Verify response includes `recipientKey` / `recipientLabel` (never OTP digits).
+
+**Copy-paste:** `BACKEND_APPROVAL_OTP.ts` · HANDOFF **§73**
+
+---
+
+## §CB — Dealer Payments: all approved files for this agent — Nov 24 2026
+
+Agent Payments (`GET /quotations?status=approved`) must return the dealer’s **full** approved set with payment data so `/dashboard/payments` can show every file.
+
+### Must
+
+1. Dealer JWT → only `dealerId = req.dealer.id`; paginate with real `total` / `totalPages` / `hasNext` (limit up to 1000).
+2. `includeMedia=false` must **not** drop `installments` / `paymentPhases`.
+3. Include settled / completed / remaining 0 rows in `status=approved`.
+4. Echo `dealerId`, customer, amounts, loan/cash, phases (`paidAmount`, `paymentMode`), remaining, paymentStatus, settlement fields, `statusApprovedAt`.
+
+**Copy-paste:** `BACKEND_DEALER_PAYMENTS_ALL.ts` · HANDOFF **§74**
+
+---
+
+## §CC — Status timeline: OTP approver name (Kamlesh / Sunil / HR) — Nov 24 2026
+
+Admin Status timeline must show who verified the approve OTP.
+
+### Must
+
+1. Columns `approvalOtpVerifiedBy` / `approvalOtpVerifiedAt` on quotations.
+2. Verify OTP: stash recipient on quotation; return `recipientKey` + `recipientLabel` (+ mobile). Never return OTP digits.
+3. Approve `PATCH .../status`: accept `approvalOtpRecipient` (aliases) **or** use stash; append `statusHistory` with `by`, `byLabel`, `otpRecipient`, `otpMobile`; clear stash.
+4. Zod allowlist OTP recipient fields on `updateStatusSchema`.
+5. GET must preserve those fields on `statusHistory`.
+6. Restart API after deploy if process does not hot-reload.
+
+**Copy-paste:** `BACKEND_STATUS_TIMELINE_OTP_APPROVER.ts` · HANDOFF **§75**
+
+---
+
 
 
 

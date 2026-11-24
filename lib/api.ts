@@ -4173,11 +4173,14 @@ export const api = {
           loanAmount?: number
           cashAmount?: number
           proposal?: number
+          /** Who verified approve OTP — Kamlesh / Sunil / HR (status timeline). */
+          approvalOtpRecipient?: "kamlesh" | "sunil" | "hr"
         },
       ) => {
         const loanAmount = asPositiveInr(approval?.loanAmount)
         const cashAmount = asPositiveInr(approval?.cashAmount)
         const proposalBody = approveProposalBody(approval?.proposal)
+        const otpRecipient = approval?.approvalOtpRecipient
         return apiRequest(`/admin/quotations/${quotationId}/status`, {
           method: "PATCH",
           body: {
@@ -4202,6 +4205,16 @@ export const api = {
                     : {}),
                   ...(loanAmount != null ? { loanAmount, loan_amount: loanAmount } : {}),
                   ...(cashAmount != null ? { cashAmount, cash_amount: cashAmount } : {}),
+                  ...(otpRecipient
+                    ? {
+                        approvalOtpRecipient: otpRecipient,
+                        approval_otp_recipient: otpRecipient,
+                        otpRecipient,
+                        otp_recipient: otpRecipient,
+                        otpVerifiedBy: otpRecipient,
+                        approvedByOtp: otpRecipient,
+                      }
+                    : {}),
                   ...proposalBody,
                 }
               : {}),
@@ -5081,6 +5094,55 @@ export const api = {
 
     getStates: async () => {
       return apiRequest("/config/states")
+    },
+  },
+
+  /**
+   * Consent / approval email with proposal PDF.
+   * kind=consent → after file login; kind=approved → after admin approve (also auto on backend approve).
+   */
+  sendApprovalEmail: async (payload: {
+    quotationId: string
+    to?: string
+    cc?: string | string[]
+    kind?: "consent" | "approved"
+  }) => {
+    return apiRequest("/send-approval-email", {
+      method: "POST",
+      body: {
+        quotationId: payload.quotationId,
+        ...(payload.to ? { to: payload.to } : {}),
+        ...(payload.cc ? { cc: payload.cc } : {}),
+        kind: payload.kind || "approved",
+      },
+      requiresAuth: true,
+    })
+  },
+
+  /** 4-digit admin-approve OTP (Kamlesh / Sunil / HR). Stored 30 min on server. */
+  approvalOtp: {
+    send: async (payload: {
+      quotationId: string
+      recipient?: "kamlesh" | "sunil" | "hr"
+    }) => {
+      return apiRequest("/approval-otp/send", {
+        method: "POST",
+        body: {
+          quotationId: payload.quotationId,
+          recipient: payload.recipient || "kamlesh",
+        },
+        requiresAuth: true,
+      })
+    },
+    verify: async (payload: { quotationId: string; otp: string }) => {
+      return apiRequest("/approval-otp/verify", {
+        method: "POST",
+        body: {
+          quotationId: payload.quotationId,
+          otp: String(payload.otp || "").trim(),
+        },
+        requiresAuth: true,
+      })
     },
   },
 

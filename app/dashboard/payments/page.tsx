@@ -30,14 +30,29 @@ import {
   type DealerPaymentRow,
   type DealerPaymentStatus,
 } from "@/lib/dealer-payment-summary"
-import {
-  extractQuotationListFromApiResponse,
-  flattenWrappedQuotationRow,
-} from "@/lib/operational-install-queue"
+import { flattenWrappedQuotationRow } from "@/lib/operational-install-queue"
+import { fetchAllPaginatedQuotationListPages } from "@/lib/fetch-paginated-quotation-list"
 import { cn } from "@/lib/utils"
 import { downloadCsvFile } from "@/lib/excel-column-export"
 import { DealerPageHero } from "@/components/dealer-page-hero"
 import { DEALER_PANEL_TONES, DEALER_PORTAL_PAGE_BG } from "@/lib/dealer-portal-ui"
+
+function quotationBelongsToDealer(q: Quotation, dealerId: string): boolean {
+  if (!dealerId) return true
+  const qx = q as Quotation & Record<string, unknown>
+  const nested = qx.dealer as Record<string, unknown> | null | undefined
+  const candidates = [
+    qx.dealerId,
+    qx.dealer_id,
+    nested?.id,
+    nested?.dealerId,
+    nested?.dealer_id,
+  ]
+  const ids = candidates.map((v) => String(v || "").trim()).filter(Boolean)
+  // Backend already scopes dealers; keep rows with no dealer id rather than dropping agent files.
+  if (ids.length === 0) return true
+  return ids.some((id) => id === dealerId)
+}
 
 function formatInr(amount: number): string {
   return `₹${Math.round(amount || 0).toLocaleString("en-IN")}`
@@ -74,26 +89,44 @@ export default function DealerPaymentsPage() {
         setQuotations([])
         return
       }
-      // Prefer approved-only list (same source Account Management uses for payments).
-      let response: unknown
+      // Pull every page so this agent’s full approved set is not truncated at limit=1000.
+      let rawList: unknown[] = []
       try {
-        response = await api.quotations.getAll({ page: 1, limit: 1000, status: "approved" })
+        const approved = await fetchAllPaginatedQuotationListPages((page, limit) =>
+          api.quotations.getAll({
+            page,
+            limit,
+            status: "approved",
+            includeMedia: false,
+            includeVisits: false,
+          }),
+        )
+        rawList = approved.rows
       } catch {
-        response = await api.quotations.getAll({ page: 1, limit: 1000 })
+        const fallback = await fetchAllPaginatedQuotationListPages((page, limit) =>
+          api.quotations.getAll({
+            page,
+            limit,
+            includeMedia: false,
+            includeVisits: false,
+          }),
+        )
+        rawList = fallback.rows
       }
-      const rawList = extractQuotationListFromApiResponse(response)
+
       const list = rawList.map((row) => flattenWrappedQuotationRow(row) as Quotation)
-
       const dealerId = String(dealer?.id || "").trim()
-      const scoped = list.filter((q) => {
+      const byId = new Map<string, Quotation>()
+      for (const q of list) {
         const status = String(q.status || "").toLowerCase()
-        if (status !== "approved") return false
-        if (!dealerId) return true
-        const qDealerId = String(q.dealerId || (q.dealer as { id?: string } | null)?.id || "").trim()
-        return !qDealerId || qDealerId === dealerId
-      })
+        if (status !== "approved") continue
+        if (!quotationBelongsToDealer(q, dealerId)) continue
+        const id = String(q.id || "").trim()
+        if (!id) continue
+        byId.set(id, q)
+      }
 
-      setQuotations(scoped)
+      setQuotations(Array.from(byId.values()))
     } catch (error) {
       setQuotations([])
       toast({
@@ -115,7 +148,7 @@ export default function DealerPaymentsPage() {
     () =>
       quotations
         .map(summarizeQuotationPayment)
-        .filter((row) => !row.settled)
+        // Show every approved file for this agent (including settled / completed).
         .sort((a, b) => {
           const aTime = new Date(a.approvedAt || a.createdAt).getTime()
           const bTime = new Date(b.approvedAt || b.createdAt).getTime()
@@ -328,7 +361,7 @@ export default function DealerPaymentsPage() {
                 <p className="text-sm mt-1">
                   {searchTerm || statusFilter !== "all"
                     ? "Try clearing search or filters."
-                    : "Only approved quotations appear here once Account Management records payments."}
+                    : "No approved quotations found for this agent yet."}
                 </p>
               </div>
             ) : (
