@@ -7666,6 +7666,20 @@ Admin Status timeline must show who verified the approve OTP.
 
 ---
 
+## §CD — Dealer Payments remaining must match Accounts — Nov 24 2026
+
+Dealer Payments showed Remaining ₹0 while Accounts still had a balance (installment gap).
+
+### Must
+
+1. List remaining = `subtotal − discount − bankFees − SUM(paidAmount)` — never zero from after-subsidy remaining alone.
+2. Do not mark `paymentStatus=completed` while that gap > 0 (unless final settlement applied).
+3. Echo phases, bankFees, settlement flags on dealer approved list.
+
+**Copy-paste:** `BACKEND_DEALER_PAYMENTS_REMAINING.ts` · HANDOFF **§76**
+
+---
+
 
 
 

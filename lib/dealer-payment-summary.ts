@@ -270,14 +270,13 @@ export function summarizeQuotationPayment(q: Quotation): DealerPaymentRow {
   )
 
   const paidAmount = phasePaid
+  // Same as Account Management getDisplayRemaining: cap − installment paid only.
+  // Do NOT trust API remaining / paymentStatus=completed — those are often after-subsidy
+  // or stale and zero out Remaining while Accounts still shows a balance (e.g. 186000−130200).
   const phaseGap = Math.max(0, cap - phasePaid)
-  const apiRemaining = optionalFinite(qx.remaining ?? qx.remainingAmount ?? qx.remaining_amount)
-  const apiStatus = String(qx.paymentStatus || qx.payment_status || "").toLowerCase()
   const settled =
     isQuotationFinalSettlementApplied(q) ||
-    (discount > 0 && phaseGap <= discount + 0.5) ||
-    (apiRemaining === 0 && phaseGap > 0 && paidAmount > 0) ||
-    (apiStatus === "completed" && phaseGap > 0)
+    (discount > 0 && phaseGap <= discount + 0.5)
   const remainingAmount = settled ? 0 : phaseGap
 
   const loanRemaining = settled

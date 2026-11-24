@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. **Dealer Payments remaining = Accounts** — **§76** / **§CD**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4859,6 +4859,22 @@ Phones: Kamlesh **9269666646**, Sunil **9251666646**, HR **9251005610**.
 **Shipped on inventorybackend:** verify stash + approve history + schema allowlist + bootstrap columns.
 
 **Copy-paste:** `BACKEND_STATUS_TIMELINE_OTP_APPROVER.ts` · `BACKEND_APPROVAL_OTP.ts` · REQUIRED **§CC**
+
+---
+
+## 76. Dealer Payments remaining must match Accounts (**§CD**) — Nov 24 2026
+
+**Frontend (shipped):** `/dashboard/payments` Remaining = subtotal − discount − bankFees − SUM(installment paid). Ignores API `remaining: 0` / `paymentStatus: completed` when installments still leave a gap (e.g. ₹1,86,000 − ₹1,30,200 → ₹55,800 Partial).
+
+**Apply on live `GET /quotations?status=approved` (dealer):**
+
+1. `paidAmount` = SUM(phase.paidAmount) only.
+2. `remaining` = max(0, subtotal − discountAmount − bankFees − paidAmount).
+3. Zero remaining only for real final settlement (`finalSettlementApplied` / `finalSettlementAmount > 0`), not because after-subsidy remaining is 0.
+4. `paymentStatus` must match that remaining (`partial` if gap > 0).
+5. Always echo phases + bankFees + settlement flags (even with `includeMedia=false`).
+
+**Copy-paste:** `BACKEND_DEALER_PAYMENTS_REMAINING.ts` · REQUIRED **§CD**
 
 ---
 
