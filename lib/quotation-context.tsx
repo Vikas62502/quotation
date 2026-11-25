@@ -31,6 +31,22 @@ import {
 } from "@/lib/quotation-system-history"
 import { setCurrentQuotationForMobile } from "@/lib/quotation-current"
 
+/** Persist as current for this customer so Admin shows the same row (API + local). */
+async function markQuotationAsCurrentForCustomer(
+  mobile: string | undefined,
+  quotationId: string,
+  options?: { useApi?: boolean },
+) {
+  if (!quotationId) return
+  if (mobile) setCurrentQuotationForMobile(mobile, quotationId)
+  if (options?.useApi === false) return
+  try {
+    await api.quotations.restoreAsCurrent(quotationId)
+  } catch (err) {
+    console.warn("[markQuotationAsCurrent] restoreAsCurrent unavailable:", err)
+  }
+}
+
 export interface Customer {
   firstName: string
   lastName: string
@@ -877,15 +893,16 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           ...(isCommercialSet
             ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
             : {}),
+          // Always mark as current so Admin shows this dealer quotation (not an older one).
+          isCurrent: true,
+          is_current: true,
+          setAsCurrent: true,
           // Revise flow: create NEW quotation; keep source (old) quotation unchanged.
           ...(allowAdditional
             ? {
                 allowAdditionalQuotation: true,
                 allow_additional_quotation: true,
                 allowDuplicateMobile: true,
-                isCurrent: true,
-                is_current: true,
-                setAsCurrent: true,
                 sourceQuotationId: sourceQuotationId || undefined,
                 source_quotation_id: sourceQuotationId || undefined,
                 previousQuotationId: sourceQuotationId || undefined,
@@ -972,8 +989,10 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
           } catch (patchErr) {
             console.warn("[saveQuotation] Could not persist PDF display flags (non-fatal):", patchErr)
           }
-          // New / revised quotation becomes current for this customer (old stays listed).
-          setCurrentQuotationForMobile(currentCustomer.mobile, quotation.id)
+          // New / revised quotation becomes current for this customer (synced to Admin via API).
+          await markQuotationAsCurrentForCustomer(currentCustomer.mobile, quotation.id, {
+            useApi: true,
+          })
         }
 
         const withTimestamps = mergeQuotationTimestampsFromApi(quotation, lastApiResponse)
@@ -1063,7 +1082,9 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         const existing = existingAllQuotations
         existing.push(quotation)
         localStorage.setItem("quotations", JSON.stringify(existing))
-        setCurrentQuotationForMobile(currentCustomer.mobile, quotation.id)
+        await markQuotationAsCurrentForCustomer(currentCustomer.mobile, quotation.id, {
+          useApi: false,
+        })
         setQuotations(existing.filter((q: Quotation) => q.dealerId === dealer.id))
         return quotation
       }
@@ -1145,6 +1166,9 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
             ? { pdfCommercialSet: true, pdf_commercial_set: true, isCommercial: true }
             : {}),
         })
+        await markQuotationAsCurrentForCustomer(currentCustomer.mobile, quotationId, {
+          useApi: true,
+        })
         await loadQuotations()
         const refreshed = await api.quotations.getById(quotationId).catch(() => pricingResponse)
         const withTimestamps = mergeQuotationTimestampsFromApi(
@@ -1181,9 +1205,21 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
         totalAmount: finalAmount,
         finalAmount,
         updatedAt: new Date().toISOString(),
+        isCurrent: true,
+        is_current: true,
       }
       all[idx] = updated
+      // Demote other quotations for same mobile in localStorage.
+      const mobileNorm = normalizeMobileForMatch(currentCustomer.mobile)
+      for (let i = 0; i < all.length; i++) {
+        if (i === idx) continue
+        if (normalizeMobileForMatch(all[i]?.customer?.mobile || "") !== mobileNorm) continue
+        all[i] = { ...all[i]!, isCurrent: false, is_current: false }
+      }
       localStorage.setItem("quotations", JSON.stringify(all))
+      await markQuotationAsCurrentForCustomer(currentCustomer.mobile, quotationId, {
+        useApi: false,
+      })
       setQuotations(all.filter((q) => q.dealerId === dealer.id))
       return updated
     } catch (err) {

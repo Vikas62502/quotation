@@ -149,5 +149,10 @@ export async function duplicateQuotationRow(source: Quotation): Promise<{ id: st
   }
 
   setCurrentQuotationForMobile(customer.mobile, newId)
+  try {
+    await api.quotations.restoreAsCurrent(newId)
+  } catch {
+    // non-fatal — create may already have set is_current; Admin still needs API flag
+  }
   return { id: newId }
 }

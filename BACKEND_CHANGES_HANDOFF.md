@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. **Dealer Payments remaining = Accounts** — **§76** / **§CD**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. **Dealer Payments remaining = Accounts** — **§76** / **§CD**. **Proposal PDF system Chrome (consent email)** — **§77** / **§CE**. **Dealer current quotation → Admin** — **§78** / **§CF**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4875,6 +4875,51 @@ Phones: Kamlesh **9269666646**, Sunil **9251666646**, HR **9251005610**.
 5. Always echo phases + bankFees + settlement flags (even with `includeMedia=false`).
 
 **Copy-paste:** `BACKEND_DEALER_PAYMENTS_REMAINING.ts` · REQUIRED **§CD**
+
+---
+
+## 77. Proposal PDF — system Chrome (consent email launch fix) (**§CE**) — Nov 25 2026
+
+**Symptom:** Admin File login → Save → `POST /api/send-approval-email` (`kind: consent`) fails with Puppeteer:
+
+`Failed to launch the browser process! … Chrome for Testing … mac_arm-127… Framework (no such file)`
+
+**Cause:** `generateProposalPdf.ts` launched Puppeteer’s cached Chrome for Testing binary (broken on this Mac).
+
+**Apply on live API (shipped on inventorybackend):**
+
+1. `utils/emails/generateProposalPdf.ts` — launch order: `PUPPETEER_EXECUTABLE_PATH` → system Chrome/Chromium → `channel: 'chrome'` → bundled only if nothing else exists. **Do not** try bundled first when system Chrome exists.
+2. `.env`:
+   ```
+   PUPPETEER_EXECUTABLE_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+   ```
+   (Linux: `/usr/bin/google-chrome-stable` or similar.)
+3. Restart API after env change (dotenv at boot).
+4. Contract unchanged: `POST /api/send-approval-email` `{ quotationId, to?, kind?: "consent"|"approved" }` → PDF attach → mail.
+
+**Acceptance:** consent email returns 200 + `messageId`; File login no longer surfaces the Framework `dlopen` error.
+
+**Copy-paste:** `BACKEND_PROPOSAL_PDF_CHROME.ts` · REQUIRED **§CE** · related **§72** / **§BZ**, **§73** / **§CA**
+
+---
+
+## 78. Dealer latest quotation must show as Admin current (**§CF**) — Nov 25 2026
+
+**Product:** The quotation the dealer just created / revised / selected as current must be the **Current** row in Admin (older versions stay in History).
+
+**Frontend (shipped):**
+
+- Create payload always includes `isCurrent` / `is_current` / `setAsCurrent: true`.
+- After create / revise / duplicate → `api.quotations.restoreAsCurrent(id)` (POST `restore-current` → `set-current` → PATCH fallback).
+- Admin groups by `is_current` (then newest).
+
+**Apply on live API:**
+
+1. Create (especially with `setAsCurrent` / `isCurrent`): new row `is_current=true`; other same-customer rows `is_current=false`.
+2. `POST /quotations/:id/restore-current` (and aliases) demotes siblings the same way.
+3. All list/detail GETs echo `isCurrent` / `is_current`.
+
+**Copy-paste:** `BACKEND_DEALER_CURRENT_QUOTATION.ts` · `BACKEND_QUOTATION_SYSTEM_HISTORY.ts` · REQUIRED **§CF**
 
 ---
 

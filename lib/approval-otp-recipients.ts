@@ -33,18 +33,57 @@ export function approvalOtpRecipientLabel(key: ApprovalOtpRecipientKey | string 
   return found?.label || String(key || "").trim() || "—"
 }
 
-export function getQuotationCustomerEmail(quotation: {
-  customer?: { email?: string | null } | null
-  customerEmail?: string | null
-  email?: string | null
-} | null | undefined): string {
-  if (!quotation) return ""
-  const raw =
-    quotation.customer?.email ||
-    quotation.customerEmail ||
-    quotation.email ||
-    ""
-  return String(raw).trim()
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return value as Record<string, unknown>
+}
+
+function pickEmail(...values: unknown[]): string {
+  for (const v of values) {
+    const t = String(v ?? "").trim()
+    if (t && t.includes("@") && !t.startsWith("@") && !t.endsWith("@")) return t
+  }
+  return ""
+}
+
+/**
+ * Prefill File login / consent email from documents upload first, then quotation customer.
+ * Checks documents.emailId / contactEmail and customer.email (plus snake_case aliases).
+ */
+export function getQuotationCustomerEmail(
+  quotation: {
+    customer?: { email?: string | null } | null
+    customerEmail?: string | null
+    email?: string | null
+    emailId?: string | null
+    email_id?: string | null
+    documents?: Record<string, unknown> | null
+    documentDetails?: Record<string, unknown> | null
+    quotationDocuments?: Record<string, unknown> | null
+  } | null | undefined,
+  extras?: { contactEmail?: string | null },
+): string {
+  if (!quotation && !extras?.contactEmail) return ""
+  const docs =
+    asRecord(quotation?.documents) ||
+    asRecord(quotation?.documentDetails) ||
+    asRecord(quotation?.quotationDocuments) ||
+    {}
+  const customer = asRecord(quotation?.customer)
+
+  return pickEmail(
+    extras?.contactEmail,
+    docs.emailId,
+    docs.email_id,
+    docs.contactEmail,
+    docs.contact_email,
+    docs.email,
+    quotation?.emailId,
+    quotation?.email_id,
+    customer?.email,
+    quotation?.customerEmail,
+    quotation?.email,
+  )
 }
 
 export function isValidCustomerEmail(email: string): boolean {

@@ -91,9 +91,13 @@ export function annotateQuotationsWithCurrent<
       currentIds.add(rows[0]!.id)
       continue
     }
-    const fromApi = rows.find((r) => r.isCurrent === true || r.is_current === true)
-    if (fromApi) {
-      currentIds.add(fromApi.id)
+    const fromApi = rows.filter((r) => r.isCurrent === true || r.is_current === true)
+    if (fromApi.length > 0) {
+      // If backend left multiple flagged, prefer the newest (dealer's latest).
+      const best = [...fromApi].sort(
+        (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime(),
+      )[0]!
+      currentIds.add(best.id)
       continue
     }
     const stored = getCurrentQuotationIdForMobile(mobile)

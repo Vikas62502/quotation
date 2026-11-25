@@ -7680,6 +7680,34 @@ Dealer Payments showed Remaining ₹0 while Accounts still had a balance (instal
 
 ---
 
+## §CE — Proposal PDF system Chrome (consent email) — Nov 25 2026
+
+File login consent email failed: Puppeteer could not launch broken Chrome for Testing cache.
+
+### Must
+
+1. `generateProposalPdf` prefers `PUPPETEER_EXECUTABLE_PATH` / system Chrome / `channel: 'chrome'` before bundled Chrome for Testing.
+2. Set `PUPPETEER_EXECUTABLE_PATH` in `.env` and restart API.
+3. `POST /api/send-approval-email` with `kind: consent` returns 200 + PDF attachment (no Framework `dlopen` SYS_001).
+
+**Copy-paste:** `BACKEND_PROPOSAL_PDF_CHROME.ts` · HANDOFF **§77**
+
+---
+
+## §CF — Dealer current quotation → Admin Current — Nov 25 2026
+
+Dealer’s newest / restored quotation must be `is_current` so Admin shows that row as Current.
+
+### Must
+
+1. Create with `setAsCurrent` / `isCurrent` → new row current; demote same-customer siblings.
+2. Honor `POST /quotations/:id/restore-current` (FE calls after create/revise/duplicate).
+3. Echo `isCurrent` / `is_current` on GET lists.
+
+**Copy-paste:** `BACKEND_DEALER_CURRENT_QUOTATION.ts` · HANDOFF **§78**
+
+---
+
 
 
 

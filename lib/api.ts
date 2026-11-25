@@ -5106,6 +5106,8 @@ export const api = {
     to?: string
     cc?: string | string[]
     kind?: "consent" | "approved"
+    /** File-login consent is non-fatal; callers toast failures — avoid scary console. */
+    suppressErrorLog?: boolean
   }) => {
     return apiRequest("/send-approval-email", {
       method: "POST",
@@ -5116,6 +5118,7 @@ export const api = {
         kind: payload.kind || "approved",
       },
       requiresAuth: true,
+      suppressErrorLog: payload.suppressErrorLog === true,
     })
   },
 

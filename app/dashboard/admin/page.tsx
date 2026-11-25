@@ -8491,16 +8491,39 @@ export default function AdminPanelPage() {
     setFileLoginCustomerEmail("")
   }
 
-  const openFileLoginDialog = (q: Quotation, status: FileLoginStatus) => {
+  const openFileLoginDialog = async (q: Quotation, status: FileLoginStatus) => {
     setFileLoginQuotationId(q.id)
     setFileLoginStatusChoice(status)
     setFileLoginPaymentType((q.filePaymentType as ApprovalPaymentType) || "cash")
     setFileLoginBankName(q.fileBankName || "")
     setFileLoginBankIfsc(q.fileBankIfsc || "")
     setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
-    setFileLoginCustomerEmail(getQuotationCustomerEmail(q))
+    const formEmail = String(getDocumentsForm(q.id)?.contactEmail || "").trim()
+    setFileLoginCustomerEmail(getQuotationCustomerEmail(q, { contactEmail: formEmail }))
     setFileLoginAtInput(toDateTimeLocalValue(q.fileLoginAt || new Date().toISOString()))
     setFileLoginDialogOpen(true)
+
+    // Refetch detail so documents.emailId / customer.email from upload or quotation are available.
+    if (!useApi) return
+    try {
+      const full = await api.quotations.getById(q.id, { suppressErrorLog: true })
+      const root = (full as { data?: unknown })?.data ?? full
+      const raw =
+        root && typeof root === "object" && !Array.isArray(root)
+          ? ((root as { quotation?: unknown }).quotation ?? root)
+          : root
+      if (!raw || typeof raw !== "object") return
+      const merged = { ...q, ...(raw as Quotation) } as Quotation
+      const email = getQuotationCustomerEmail(merged, {
+        contactEmail: getDocumentsForm(q.id)?.contactEmail,
+      })
+      if (email) setFileLoginCustomerEmail(email)
+      setQuotations((prev) =>
+        prev.map((row) => (row.id === q.id ? { ...row, ...merged, id: q.id } : row)),
+      )
+    } catch {
+      /* keep list snapshot email */
+    }
   }
 
   const handleFileLoginSelectChange = async (quotation: Quotation, value: string) => {
@@ -8543,7 +8566,7 @@ export default function AdminPanelPage() {
     }
     if (value === "already_login" || value === "login_now") {
       setOptimisticFileLoginSelect((prev) => ({ ...prev, [quotation.id]: value }))
-      openFileLoginDialog(quotation, value as FileLoginStatus)
+      void openFileLoginDialog(quotation, value as FileLoginStatus)
     }
   }
 
@@ -8624,6 +8647,7 @@ export default function AdminPanelPage() {
             quotationId: fileLoginQuotationId,
             to: emailTrim,
             kind: "consent",
+            suppressErrorLog: true,
           })
           toast({
             title: "File login saved",
@@ -17564,7 +17588,7 @@ export default function AdminPanelPage() {
                   autoComplete="email"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Required — consent is sent to this address after file login.
+                  Prefills from Documents upload email or quotation customer email. Required — consent is sent here after file login.
                 </p>
               </div>
               <div className="space-y-2">
