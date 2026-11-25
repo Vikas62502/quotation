@@ -884,33 +884,23 @@ export async function forceAdvanceQuotationToMco(quotationId: string): Promise<b
   return ok
 }
 
-/** Load rows sent from Payment Management — tries account + admin list endpoints. */
+/** Load rows sent from Payment Management — one targeted query only (no full-list fallback). */
 export async function fetchSentToInstallerQuotationRows(): Promise<any[]> {
-  const queryAttempts = [
-    "/admin/quotations?limit=1000&installationReadyForInstaller=true&includeMedia=false&includeVisits=false",
-    "/admin/quotations?limit=1000&status=approved&includeMedia=false&includeVisits=false",
-    "/quotations?status=approved&limit=1000&includeMedia=false&includeVisits=false",
-    "/admin/quotations?limit=1000&includeMedia=false&includeVisits=false",
-  ]
-  let best: any[] = []
-  for (const path of queryAttempts) {
-    try {
-      const response = await apiRequest(path, { suppressErrorLog: true })
-      const rows = extractQuotationListFromApiResponse(response)
-      if (rows.length === 0) continue
-      const releaseMap = readInstallerReleaseMap()
-      const sent = rows.filter((row) => {
-        const flat = flattenQuotationListRow(row)
-        return isQuotationSentToInstaller(flat, releaseMap)
-      })
-      if (sent.length > 0) return sent
-      if (rows.length > best.length) best = rows
-    } catch {
-      // try next endpoint
-    }
+  // Avoid the old fan-out that re-downloaded /admin/quotations?limit=1000 up to 4 times.
+  const path =
+    "/admin/quotations?limit=1000&installationReadyForInstaller=true&includeMedia=false&includeVisits=false"
+  try {
+    const response = await apiRequest(path, { suppressErrorLog: true })
+    const rows = extractQuotationListFromApiResponse(response)
+    if (rows.length === 0) return []
+    const releaseMap = readInstallerReleaseMap()
+    return rows.filter((row) => {
+      const flat = flattenQuotationListRow(row)
+      return isQuotationSentToInstaller(flat, releaseMap)
+    })
+  } catch {
+    return []
   }
-  // Fallback: full list — caller filters with release map
-  return best
 }
 
 // API Service Methods

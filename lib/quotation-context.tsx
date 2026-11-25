@@ -332,8 +332,18 @@ function throwDuplicateQuotationError(list: unknown[], mobile: string): never {
 }
 
 export function QuotationProvider({ children }: { children: ReactNode }) {
-  const { dealer } = useAuth()
+  const { dealer, role } = useAuth()
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
+  // Admin dashboards load quotations via /admin/quotations — don't also hit /quotations here.
+  const skipProviderQuotationLoad =
+    role === "admin" ||
+    role === "super-admin" ||
+    role === "account-management" ||
+    role === "hr" ||
+    role === "installer" ||
+    role === "metering" ||
+    role === "baldev" ||
+    role === "installation-team"
   
   // Load from localStorage on mount (for form state only, not data)
   const [currentCustomer, setCurrentCustomerState] = useState<Customer | null>(() => {
@@ -1241,12 +1251,11 @@ export function QuotationProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  // Load quotations on mount if dealer is available
+  // Load quotations on mount for dealer create-flow only (not admin/ops dashboards).
   useEffect(() => {
-    if (dealer?.id) {
-      loadQuotations()
-    }
-  }, [dealer?.id])
+    if (!dealer?.id || skipProviderQuotationLoad) return
+    void loadQuotations()
+  }, [dealer?.id, skipProviderQuotationLoad])
 
   return (
     <QuotationContext.Provider

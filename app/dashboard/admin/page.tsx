@@ -3112,21 +3112,29 @@ export default function AdminPanelPage() {
         }
 
         try {
-          const [listResult] = await Promise.all([
-            fetchAllPaginatedQuotationListPages((page, limit) =>
-              api.admin.quotations.getAll({ page, limit }),
-            ),
-            loadInstallerQueues(),
-            fetchSentToInstallerQuotationRows()
-              .then((rows) => {
-                paymentSentRows = rows
-              })
-              .catch(() => {
-                paymentSentRows = []
-              }),
-          ])
+          // Sequential bootstrap (was Promise.all of list + 5 queues + payment-sent variants).
+          // That fan-out caused 20–90 concurrent GETs and ~80MB on Overview load.
+          const listResult = await fetchAllPaginatedQuotationListPages((page, limit) =>
+            api.admin.quotations.getAll({ page, limit }),
+          )
           adminQuotationRows = listResult.rows
           paginatedQuotationsTotal = listResult.total
+
+          // Prefer rows already downloaded; only hit the targeted installer-ready endpoint if needed.
+          const releasePreview = readInstallerReleaseMap()
+          paymentSentRows = adminQuotationRows.filter((row) => {
+            const flat = flattenQuotationListRow(row)
+            return isQuotationSentToInstaller(flat, releasePreview)
+          })
+          if (paymentSentRows.length === 0) {
+            try {
+              paymentSentRows = await fetchSentToInstallerQuotationRows()
+            } catch {
+              paymentSentRows = []
+            }
+          }
+
+          await loadInstallerQueues()
           // Fast first paint for Quotations tab: show lightweight rows immediately,
           // then enrich with installer/payment/doc details in later steps.
           if (adminQuotationRows.length > 0) {
@@ -3264,14 +3272,10 @@ export default function AdminPanelPage() {
         const paymentRowsToMerge =
           paymentSentRows.length > 0
             ? paymentSentRows
-            : (await (async () => {
-                try {
-                  const approvedResp = await api.quotations.getAll({ status: "approved", page: 1, limit: 1000 })
-                  return extractQuotationListFromApiResponse(approvedResp)
-                } catch {
-                  return [] as unknown[]
-                }
-              })())
+            : adminRowsRaw.filter((row) => {
+                const flat = flattenQuotationListRow(row)
+                return String(flat.status || "").toLowerCase() === "approved"
+              })
         if (isStale()) return
         releaseLocal = syncInstallerReleaseMapFromRows([
           ...adminRowsRaw,
@@ -3903,9 +3907,14 @@ export default function AdminPanelPage() {
     const socket = getRealtime()
     if (!socket || !isAuthenticated) return
 
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null
     const refetchAdminData = () => {
       if (!getAuthToken()) return
-      void loadData(++adminLoadRequestRef.current)
+      // Debounce realtime full reloads — mutations were re-triggering the whole fan-out.
+      if (refetchTimer) clearTimeout(refetchTimer)
+      refetchTimer = setTimeout(() => {
+        void loadData(++adminLoadRequestRef.current)
+      }, 1500)
     }
 
     const onBackendMutation = (evt: any) => {
@@ -3935,6 +3944,7 @@ export default function AdminPanelPage() {
     socket.on("backend:mutation", onBackendMutation)
 
     return () => {
+      if (refetchTimer) clearTimeout(refetchTimer)
       socket.off("calling:actions-updated", refetchAdminData)
       socket.off("dealer:directory-updated", refetchAdminData)
       socket.off("backend:mutation", onBackendMutation)

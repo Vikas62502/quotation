@@ -29,12 +29,9 @@ export async function fetchAllPaginatedQuotationListPages(
   const totalPages = extractPaginationTotalPages(firstResponse)
 
   if (totalPages != null && totalPages > 1) {
-    const extraPages = Array.from(
-      { length: Math.min(totalPages, maxPages) - 1 },
-      (_, index) => index + 2,
-    )
-    const extraResponses = await Promise.all(extraPages.map((page) => fetchPage(page, pageSize)))
-    for (const response of extraResponses) {
+    // Sequential pages — parallel page fetches were flooding the API (10–30 concurrent GETs).
+    for (let page = 2; page <= Math.min(totalPages, maxPages); page += 1) {
+      const response = await fetchPage(page, pageSize)
       allRows.push(...extractQuotationListFromApiResponse(response))
     }
   } else if (allRows.length === pageSize && (total == null || total > allRows.length)) {

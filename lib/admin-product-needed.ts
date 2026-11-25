@@ -859,7 +859,8 @@ export function buildProductNeededApiFilters(options: {
     endDate,
     dateField: scope === "file_login" ? "file_login" : "installation_released",
     page: 1,
-    limit: 2000,
+    // Keep first-paint payload bounded; panel can rely on parent quotations as fallback.
+    limit: 200,
   }
 }
 

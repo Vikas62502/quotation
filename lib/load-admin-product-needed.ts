@@ -117,7 +117,7 @@ async function fetchQuotationListFallback(
   try {
     const response = await api.admin.quotations.getAll({
       page: 1,
-      limit: 2000,
+      limit: 200,
       ...(scope === "file_login" ? { status: "pending" } : {}),
     })
     const raw = (response as Record<string, unknown>)?.quotations

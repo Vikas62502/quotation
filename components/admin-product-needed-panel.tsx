@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Quotation } from "@/lib/quotation-context"
 import type { Dealer } from "@/lib/auth-context"
 import {
@@ -140,6 +140,13 @@ export function AdminProductNeededPanel({
     return () => window.clearTimeout(timer)
   }, [search])
 
+  // Keep latest lists in refs so filter changes refetch without re-running on every
+  // setQuotations during admin bootstrap (that was re-firing product-needed many times).
+  const quotationsRef = useRef(quotations)
+  const dealersRef = useRef(dealers)
+  quotationsRef.current = quotations
+  dealersRef.current = dealers
+
   const loadRows = useCallback(
     async (options?: { background?: boolean }) => {
       if (!enabled) return
@@ -150,8 +157,8 @@ export function AdminProductNeededPanel({
       }
       try {
         const result = await loadAdminProductNeededRows({
-          quotations,
-          dealers,
+          quotations: quotationsRef.current,
+          dealers: dealersRef.current,
           useApi,
           getDealerName,
           dealerId: dealerFilter,
@@ -181,11 +188,9 @@ export function AdminProductNeededPanel({
       customTo,
       dateRange,
       dealerFilter,
-      dealers,
       scope,
       enabled,
       getDealerName,
-      quotations,
       searchDebounced,
       useApi,
     ],
