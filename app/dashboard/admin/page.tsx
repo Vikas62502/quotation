@@ -2697,13 +2697,40 @@ export default function AdminPanelPage() {
       return
     }
 
+    heavyAdminDataLoadedRef.current = false
     const requestId = ++adminLoadRequestRef.current
-    void loadData(requestId)
+    // Overview first paint: stats + dealers only (no full quotations fan-out).
+    void loadData(requestId, { mode: "light" })
 
     return () => {
       adminLoadRequestRef.current += 1
     }
   }, [isAuthenticated, router, dealer, role, access])
+
+  // Load heavy quotations/installer data only when an operational tab needs it.
+  useEffect(() => {
+    if (!isAuthenticated) return
+    if (!isQuotationAdminAccess({ role, username: dealer?.username, access })) return
+    if (heavyAdminDataLoadedRef.current) return
+
+    const needsHeavyData = [
+      "quotations",
+      "installation",
+      "metering",
+      "payments",
+      "banking",
+      "subvendor",
+      "customers",
+      "customer-journey",
+      "dealers",
+      "hr",
+      "catalog",
+    ].includes(activeTab)
+    if (!needsHeavyData) return
+
+    const requestId = ++adminLoadRequestRef.current
+    void loadData(requestId, { mode: "full" })
+  }, [activeTab, isAuthenticated, router, dealer, role, access])
 
   // Deep-link / switcher: keep activeTab in sync with ?tab= (Banking / Visitor / Calling Reports)
   useEffect(() => {
@@ -2763,6 +2790,8 @@ export default function AdminPanelPage() {
   const productKwEnrichScopeRef = useRef("")
   const PRODUCT_KW_ENRICH_MAX_ATTEMPTS = 3
   const adminLoadRequestRef = useRef(0)
+  /** Full quotations + installer queues loaded (deferred until needed). */
+  const heavyAdminDataLoadedRef = useRef(false)
   const callingActionsRequestRef = useRef(0)
 
   // Admin list often omits panel fields; fetch detail for approved rows still at 0 kW (Dealers by Revenue).
@@ -2953,8 +2982,12 @@ export default function AdminPanelPage() {
     return q.fileLoginStatus === "already_login" ? `Already logged in · ${pt}` : `Login now · ${pt}`
   }
 
-  const loadData = async (requestId?: number) => {
+  const loadData = async (
+    requestId?: number,
+    options?: { mode?: "light" | "full" },
+  ) => {
     const loadId = requestId ?? adminLoadRequestRef.current
+    const mode = options?.mode ?? "full"
     const isStale = () => loadId !== adminLoadRequestRef.current || !getAuthToken()
 
     if (isStale()) return
@@ -3039,6 +3072,51 @@ export default function AdminPanelPage() {
         await pricingPromise
         if (isStale()) return
 
+        // Light Overview bootstrap: stats/pricing + dealers only.
+        // Defer full quotations + installer queues until an operational tab opens.
+        if (mode === "light") {
+          try {
+            const firstDealersResponse: any = await api.admin.dealers.getAll({
+              page: 1,
+              limit: 200,
+              includeInactive: true,
+            })
+            const dealerRows = firstDealersResponse?.dealers || []
+            const dealersList: Dealer[] = dealerRows
+              .filter((row: any) => String(row?.id || row?._id || "").trim())
+              .map((d: any) => ({
+                id: d.id || d._id,
+                username: d.username,
+                firstName: d.firstName,
+                lastName: d.lastName,
+                email: d.email,
+                mobile: d.mobile,
+                gender: d.gender || "",
+                dateOfBirth: d.dateOfBirth || "",
+                fatherName: d.fatherName || "",
+                fatherContact: d.fatherContact || "",
+                governmentIdType: d.governmentIdType || "",
+                governmentIdNumber: d.governmentIdNumber || "",
+                address: d.address || {
+                  street: "",
+                  city: "",
+                  state: "",
+                  pincode: "",
+                },
+                isActive: d.isActive ?? false,
+                createdAt: d.createdAt,
+                emailVerified: d.emailVerified ?? false,
+                access: normalizeAccessList(d.access ?? d.permissions),
+                permissions: normalizeAccessList(d.permissions ?? d.access),
+              }))
+            if (!isStale()) setDealers(dealersList)
+          } catch (dealersError) {
+            console.error("Error loading dealers (light bootstrap):", dealersError)
+          }
+          if (!isStale()) setIsAdminDataLoading(false)
+          return
+        }
+
         let adminQuotationRows: unknown[] = []
         let paginatedQuotationsTotal: number | null = null
         let releaseLocal = readInstallerReleaseMap()
@@ -3060,8 +3138,6 @@ export default function AdminPanelPage() {
         let installerQueueApprovedIdSet = new Set<string>()
         let paymentSentRows: unknown[] = []
 
-        // Parallel bootstrap: admin list + installer queues + payment-sent rows.
-        // Installation / Metering tabs need queue+release flags — don't wait serially.
         const loadInstallerQueues = async () => {
           try {
             const statuses = [
@@ -3679,6 +3755,7 @@ export default function AdminPanelPage() {
 
         // Calling Reports now loads through a dedicated fast path (`loadCallingActionsForReports`)
         // so this heavy admin bootstrap does not block that tab.
+        heavyAdminDataLoadedRef.current = true
       } else {
         // Fallback to localStorage
         // Load all quotations and ensure they have status
@@ -3793,6 +3870,7 @@ export default function AdminPanelPage() {
         setCustomers(customersList)
 
         // Local fallback keeps legacy flows, but calling reports API is preferred in useApi mode.
+        heavyAdminDataLoadedRef.current = true
       }
     } catch (error) {
       if (isStale()) return
@@ -3910,10 +3988,12 @@ export default function AdminPanelPage() {
     let refetchTimer: ReturnType<typeof setTimeout> | null = null
     const refetchAdminData = () => {
       if (!getAuthToken()) return
-      // Debounce realtime full reloads — mutations were re-triggering the whole fan-out.
+      // Debounce realtime reloads — mutations were re-triggering the whole fan-out.
       if (refetchTimer) clearTimeout(refetchTimer)
       refetchTimer = setTimeout(() => {
-        void loadData(++adminLoadRequestRef.current)
+        void loadData(++adminLoadRequestRef.current, {
+          mode: heavyAdminDataLoadedRef.current ? "full" : "light",
+        })
       }, 1500)
     }
 
@@ -4646,16 +4726,14 @@ export default function AdminPanelPage() {
     })
   }
 
-  // Overview cards: unique current quotation per customer only.
-  // Do not paint GET /admin/statistics first — those totals count every revision
-  // (e.g. 2,299 → 2,063) and a different revenue formula, then jump when the list arrives.
+  // Overview cards: prefer unique-customer list when heavy data is loaded;
+  // otherwise use GET /admin/statistics so Overview is not blocked on full quotations fan-out.
   const overviewListReady = quotations.length > 0
   const overviewUniqueQuotations = overviewListReady ? uniqueQuotationsByCustomer(quotations) : []
-  const totalQuotations = overviewUniqueQuotations.length
   const approvedQuotations = overviewListReady
     ? uniqueQuotationsByCustomer(quotations.filter((q) => String(q.status || "").toLowerCase() === "approved"))
     : []
-  const totalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+  const listTotalRevenue = approvedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
 
   const thisMonthBounds = getJourneyDateRangeBounds("this_month", "", "")
   const isInCurrentCalendarMonth = (date: Date) => {
@@ -4672,7 +4750,6 @@ export default function AdminPanelPage() {
         }),
       )
     : []
-  const thisMonthQuotationCount = thisMonthAllQuotations.length
   const thisMonthApprovedQuotations = overviewListReady
     ? uniqueQuotationsByCustomer(
         quotations.filter((q) => {
@@ -4682,11 +4759,36 @@ export default function AdminPanelPage() {
         }),
       )
     : []
-  const thisMonthRevenue = thisMonthApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
-  const thisMonthTotalKw = sumQuotationsSystemKw(thisMonthApprovedQuotations)
-  const thisMonthApprovedCustomers = thisMonthApprovedQuotations.length
-  const thisMonthApprovedCountDisplay = thisMonthApprovedQuotations.length
-  const isOverviewInitialLoading = !overviewListReady
+  const listThisMonthRevenue = thisMonthApprovedQuotations.reduce((sum, q) => sum + getQuotationDisplayAmount(q), 0)
+  const listThisMonthTotalKw = sumQuotationsSystemKw(thisMonthApprovedQuotations)
+
+  const totalQuotations = overviewListReady
+    ? overviewUniqueQuotations.length
+    : Number(quotationsListTotal ?? 0)
+  const totalRevenue = overviewListReady
+    ? listTotalRevenue
+    : Number(overviewStatsFromApi.totalRevenue ?? 0)
+  const thisMonthQuotationCount = overviewListReady
+    ? thisMonthAllQuotations.length
+    : Number(thisMonthQuotationsFromStats ?? 0)
+  const thisMonthRevenue = overviewListReady
+    ? listThisMonthRevenue
+    : Number(overviewStatsFromApi.thisMonthRevenue ?? 0)
+  const thisMonthTotalKw = overviewListReady
+    ? listThisMonthTotalKw
+    : Number(overviewStatsFromApi.thisMonthKw ?? 0)
+  const thisMonthApprovedCustomers = overviewListReady
+    ? thisMonthApprovedQuotations.length
+    : Number(overviewStatsFromApi.thisMonthApprovedCustomers ?? 0)
+  const thisMonthApprovedCountDisplay = overviewListReady
+    ? thisMonthApprovedQuotations.length
+    : Number(overviewStatsFromApi.thisMonthApproved ?? 0)
+  const overviewStatsReady =
+    overviewListReady ||
+    thisMonthQuotationsFromStats != null ||
+    overviewStatsFromApi.totalRevenue != null ||
+    (quotationsListTotal != null && quotationsListTotal > 0)
+  const isOverviewInitialLoading = isAdminDataLoading && !overviewStatsReady
   const quotationWorkspaceActive = activeTab === "quotations"
 
   // Filter quotations by all active conditions together.
@@ -9238,7 +9340,11 @@ export default function AdminPanelPage() {
                   type="button"
                   variant="outline"
                   className="border-rose-200 text-rose-700 hover:bg-rose-50"
-                  onClick={() => void loadData(++adminLoadRequestRef.current)}
+                  onClick={() =>
+                    void loadData(++adminLoadRequestRef.current, {
+                      mode: heavyAdminDataLoadedRef.current ? "full" : "light",
+                    })
+                  }
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Retry
@@ -9246,7 +9352,11 @@ export default function AdminPanelPage() {
               </div>
             ) : null}
             {isOverviewInitialLoading ? (
-              <p className="text-sm text-muted-foreground">Loading unique customer totals…</p>
+              <p className="text-sm text-muted-foreground">Loading overview stats…</p>
+            ) : !overviewListReady ? (
+              <p className="text-sm text-muted-foreground">
+                Overview stats loaded. Open Quotations / Installation to load the full quotation list for dealer rankings.
+              </p>
             ) : null}
             <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
               <OverviewStatCard
