@@ -225,6 +225,13 @@ export interface Quotation {
   /** Subsidy cheque for file login when payment is cash or cash + loan */
   fileSubsidyChequeDetails?: string
   fileLoginAt?: string
+  /** Admin Actions consent email (proposal PDF) — Done when set. */
+  consentEmailSentAt?: string
+  consentEmailSentTo?: string
+  consentEmailSent?: boolean
+  consent_email_sent_at?: string
+  consent_email_sent_to?: string
+  consent_email_sent?: boolean
   /** Account Management release flag: shown in installer queue only after this is true. */
   installationReadyForInstaller?: boolean
   installationReleasedAt?: string

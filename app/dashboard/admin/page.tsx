@@ -46,6 +46,7 @@ import {
   Upload,
   MoreHorizontal,
   Sparkles,
+  Mail,
 } from "lucide-react"
 import type { FileLoginStatus, Quotation, QuotationStatus, StatusHistoryEntry } from "@/lib/quotation-context"
 import type { Dealer, Visitor, AccountManager } from "@/lib/auth-context"
@@ -73,6 +74,10 @@ import {
   isValidCustomerEmail,
   type ApprovalOtpRecipientKey,
 } from "@/lib/approval-otp-recipients"
+import {
+  markConsentEmailSent,
+  quotationConsentEmailDone,
+} from "@/lib/consent-email-sent"
 import { isQuotationAdminAccess } from "@/lib/admin-access"
 import {
   ASSIGNABLE_USER_ACCESS_OPTIONS,
@@ -1519,10 +1524,12 @@ function AdminQuotationRowActions({
   alreadyOnMeteringTab = false,
   meteringStageOverride,
   olderCount = 0,
+  consentEmailDone = false,
   onSendToMetering,
   onTimeline,
   onQuotationHistory,
   onDocuments,
+  onConsentEmail,
   onView,
 }: {
   quotation: Quotation
@@ -1530,10 +1537,12 @@ function AdminQuotationRowActions({
   alreadyOnMeteringTab?: boolean
   meteringStageOverride?: "processing" | "approved" | "meter_install" | "mco" | null
   olderCount?: number
+  consentEmailDone?: boolean
   onSendToMetering: (quotation: Quotation) => void
   onTimeline: (quotation: Quotation) => void
   onQuotationHistory?: (quotation: Quotation) => void
   onDocuments: (quotation: Quotation) => void
+  onConsentEmail?: (quotation: Quotation) => void
   onView: (quotation: Quotation) => void
 }) {
   const sendToMetering = getAdminQuotationsTabSendToMeteringState(quotation, {
@@ -1561,6 +1570,32 @@ function AdminQuotationRowActions({
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-sky-700 hover:bg-sky-50 hover:text-sky-900" onClick={() => onDocuments(quotation)} title="Document Submission">
           <FileText className="w-4 h-4" />
         </Button>
+        {onConsentEmail ? (
+          consentEmailDone ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 shrink-0 gap-1 px-1.5 text-[10px] font-semibold text-emerald-700 hover:bg-emerald-50 hover:text-emerald-900"
+              onClick={() => onConsentEmail(quotation)}
+              title="Consent emailed — click to resend"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              Done
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-rose-700 hover:bg-rose-50 hover:text-rose-900"
+              onClick={() => onConsentEmail(quotation)}
+              title="Send consent email (proposal PDF)"
+            >
+              <Mail className="w-4 h-4" />
+            </Button>
+          )
+        ) : null}
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-orange-700 hover:bg-orange-50 hover:text-orange-900" onClick={() => onView(quotation)} title="View Details">
           <Eye className="w-4 h-4" />
         </Button>
@@ -1878,9 +1913,13 @@ export default function AdminPanelPage() {
   const [fileLoginBankIfsc, setFileLoginBankIfsc] = useState("")
   const [fileLoginSubsidyCheque, setFileLoginSubsidyCheque] = useState("")
   const [fileLoginAtInput, setFileLoginAtInput] = useState("")
-  const [fileLoginCustomerEmail, setFileLoginCustomerEmail] = useState("")
   const [optimisticFileLoginSelect, setOptimisticFileLoginSelect] = useState<Record<string, string>>({})
   const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
+  const [consentEmailDialogOpen, setConsentEmailDialogOpen] = useState(false)
+  const [consentEmailQuotationId, setConsentEmailQuotationId] = useState<string | null>(null)
+  const [consentEmailTo, setConsentEmailTo] = useState("")
+  const [isSendingConsentEmail, setIsSendingConsentEmail] = useState(false)
+  const [consentEmailDoneById, setConsentEmailDoneById] = useState<Record<string, boolean>>({})
   const [approvalOtpRecipient, setApprovalOtpRecipient] =
     useState<ApprovalOtpRecipientKey>(DEFAULT_APPROVAL_OTP_RECIPIENT)
   const [approvalOtpCode, setApprovalOtpCode] = useState("")
@@ -3473,6 +3512,9 @@ export default function AdminPanelPage() {
             fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc,
             fileSubsidyChequeDetails: q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details,
             fileLoginAt: q.fileLoginAt ?? q.file_login_at,
+            consentEmailSentAt: q.consentEmailSentAt ?? q.consent_email_sent_at,
+            consentEmailSentTo: q.consentEmailSentTo ?? q.consent_email_sent_to,
+            consentEmailSent: q.consentEmailSent ?? q.consent_email_sent,
             statusApprovedAt: q.statusApprovedAt ?? q.status_approved_at ?? q.approvedAt,
             statusHistory: normalizeStatusHistoryFromApi(q.statusHistory ?? q.status_history ?? q.statusChanges),
             installationStatus: q.installationStatus ?? q.installation_status,
@@ -8600,22 +8642,17 @@ export default function AdminPanelPage() {
     setFileLoginBankName("")
     setFileLoginBankIfsc("")
     setFileLoginSubsidyCheque("")
-    setFileLoginCustomerEmail("")
   }
 
-  const openFileLoginDialog = async (q: Quotation, status: FileLoginStatus) => {
-    setFileLoginQuotationId(q.id)
-    setFileLoginStatusChoice(status)
-    setFileLoginPaymentType((q.filePaymentType as ApprovalPaymentType) || "cash")
-    setFileLoginBankName(q.fileBankName || "")
-    setFileLoginBankIfsc(q.fileBankIfsc || "")
-    setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
-    const formEmail = String(getDocumentsForm(q.id)?.contactEmail || "").trim()
-    setFileLoginCustomerEmail(getQuotationCustomerEmail(q, { contactEmail: formEmail }))
-    setFileLoginAtInput(toDateTimeLocalValue(q.fileLoginAt || new Date().toISOString()))
-    setFileLoginDialogOpen(true)
+  const isConsentEmailDoneFor = (q: Quotation) =>
+    consentEmailDoneById[q.id] === true || quotationConsentEmailDone(q)
 
-    // Refetch detail so documents.emailId / customer.email from upload or quotation are available.
+  const openConsentEmailDialog = async (q: Quotation) => {
+    setConsentEmailQuotationId(q.id)
+    const formEmail = String(getDocumentsForm(q.id)?.contactEmail || "").trim()
+    setConsentEmailTo(getQuotationCustomerEmail(q, { contactEmail: formEmail }))
+    setConsentEmailDialogOpen(true)
+
     if (!useApi) return
     try {
       const full = await api.quotations.getById(q.id, { suppressErrorLog: true })
@@ -8629,13 +8666,94 @@ export default function AdminPanelPage() {
       const email = getQuotationCustomerEmail(merged, {
         contactEmail: getDocumentsForm(q.id)?.contactEmail,
       })
-      if (email) setFileLoginCustomerEmail(email)
+      if (email) setConsentEmailTo(email)
       setQuotations((prev) =>
         prev.map((row) => (row.id === q.id ? { ...row, ...merged, id: q.id } : row)),
       )
+      if (quotationConsentEmailDone(merged)) {
+        setConsentEmailDoneById((prev) => ({ ...prev, [q.id]: true }))
+      }
     } catch {
       /* keep list snapshot email */
     }
+  }
+
+  const confirmSendConsentEmail = async () => {
+    if (!consentEmailQuotationId) return
+    const emailTrim = consentEmailTo.trim()
+    if (!isValidCustomerEmail(emailTrim)) {
+      toast({
+        title: "Please enter the email",
+        description: "Customer email is required to send the consent (proposal PDF).",
+        variant: "destructive",
+      })
+      return
+    }
+    const qRow = quotations.find((q) => q.id === consentEmailQuotationId)
+    const customerId =
+      (qRow as { customerId?: string } | undefined)?.customerId || qRow?.customer?.id
+    const existingEmail = getQuotationCustomerEmail(qRow)
+    const isResend = qRow ? isConsentEmailDoneFor(qRow) : false
+
+    setIsSendingConsentEmail(true)
+    try {
+      if (useApi) {
+        if (customerId && emailTrim.toLowerCase() !== existingEmail.toLowerCase()) {
+          try {
+            await api.customers.update(customerId, { email: emailTrim })
+          } catch (emailErr) {
+            toast({
+              title: "Could not save customer email",
+              description: emailErr instanceof ApiError ? emailErr.message : "Update email failed.",
+              variant: "destructive",
+            })
+            setIsSendingConsentEmail(false)
+            return
+          }
+        }
+        await api.sendApprovalEmail({
+          quotationId: consentEmailQuotationId,
+          to: emailTrim,
+          kind: "consent",
+          suppressErrorLog: true,
+        })
+      }
+      markConsentEmailSent(consentEmailQuotationId, emailTrim)
+      setConsentEmailDoneById((prev) => ({ ...prev, [consentEmailQuotationId]: true }))
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === consentEmailQuotationId && q.customer
+            ? { ...q, customer: { ...q.customer, email: emailTrim } }
+            : q,
+        ),
+      )
+      toast({
+        title: isResend ? "Consent email resent" : "Consent email sent",
+        description: `Proposal PDF emailed to ${emailTrim}.`,
+      })
+      setConsentEmailDialogOpen(false)
+      setConsentEmailQuotationId(null)
+      setConsentEmailTo("")
+    } catch (mailErr) {
+      toast({
+        title: "Consent email failed",
+        description: mailErr instanceof ApiError ? mailErr.message : "Could not send consent email.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSendingConsentEmail(false)
+    }
+  }
+
+  const openFileLoginDialog = async (q: Quotation, status: FileLoginStatus) => {
+    setFileLoginQuotationId(q.id)
+    setFileLoginStatusChoice(status)
+    setFileLoginPaymentType((q.filePaymentType as ApprovalPaymentType) || "cash")
+    setFileLoginBankName(q.fileBankName || "")
+    setFileLoginBankIfsc(q.fileBankIfsc || "")
+    setFileLoginSubsidyCheque(q.fileSubsidyChequeDetails || "")
+    setFileLoginAtInput(toDateTimeLocalValue(q.fileLoginAt || new Date().toISOString()))
+    setFileLoginDialogOpen(true)
   }
 
   const handleFileLoginSelectChange = async (quotation: Quotation, value: string) => {
@@ -8686,15 +8804,6 @@ export default function AdminPanelPage() {
     if (!fileLoginQuotationId) return
     const needsBank = fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix"
     const subsidyTrim = fileLoginSubsidyCheque.trim()
-    const emailTrim = fileLoginCustomerEmail.trim()
-    if (!isValidCustomerEmail(emailTrim)) {
-      toast({
-        title: "Please enter the email",
-        description: "Customer email is required so consent can be sent after file login.",
-        variant: "destructive",
-      })
-      return
-    }
     if (needsBank) {
       const bankName = fileLoginBankName.trim()
       const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
@@ -8727,26 +8836,9 @@ export default function AdminPanelPage() {
         setIsSavingFileLogin(false)
         return
       }
-      const qRow = quotations.find((q) => q.id === fileLoginQuotationId)
-      const customerId =
-        (qRow as { customerId?: string } | undefined)?.customerId || qRow?.customer?.id
-      const existingEmail = getQuotationCustomerEmail(qRow)
+      const bankName = fileLoginBankName.trim()
+      const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
       if (useApi) {
-        if (customerId && emailTrim.toLowerCase() !== existingEmail.toLowerCase()) {
-          try {
-            await api.customers.update(customerId, { email: emailTrim })
-          } catch (emailErr) {
-            toast({
-              title: "Could not save customer email",
-              description: emailErr instanceof ApiError ? emailErr.message : "Update email failed.",
-              variant: "destructive",
-            })
-            setIsSavingFileLogin(false)
-            return
-          }
-        }
-        const bankName = fileLoginBankName.trim()
-        const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
         await api.admin.quotations.updateFileLogin(fileLoginQuotationId, {
           fileLoginStatus: fileLoginStatusChoice,
           filePaymentType: fileLoginPaymentType,
@@ -8754,28 +8846,8 @@ export default function AdminPanelPage() {
           ...(needsBank ? { bankName, bankIfsc: ifscRaw } : {}),
           ...(subsidyTrim ? { fileSubsidyChequeDetails: subsidyTrim } : {}),
         })
-        try {
-          await api.sendApprovalEmail({
-            quotationId: fileLoginQuotationId,
-            to: emailTrim,
-            kind: "consent",
-            suppressErrorLog: true,
-          })
-          toast({
-            title: "File login saved",
-            description: `Consent email sent to ${emailTrim}.`,
-          })
-        } catch (mailErr) {
-          toast({
-            title: "File login saved — consent email failed",
-            description: mailErr instanceof ApiError ? mailErr.message : "Could not send consent email.",
-            variant: "destructive",
-          })
-        }
         await loadData()
       } else {
-        const bankName = fileLoginBankName.trim()
-        const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
         const updated = quotations.map((q) =>
           q.id === fileLoginQuotationId
             ? {
@@ -8786,19 +8858,16 @@ export default function AdminPanelPage() {
                 fileBankIfsc: needsBank ? ifscRaw : undefined,
                 fileSubsidyChequeDetails: subsidyTrim || undefined,
                 fileLoginAt: at,
-                customer: q.customer
-                  ? { ...q.customer, email: emailTrim }
-                  : q.customer,
               }
             : q,
         )
         setQuotations(updated)
         localStorage.setItem("quotations", JSON.stringify(updated))
-        toast({
-          title: "File login saved",
-          description: `Consent would email ${emailTrim} (API off).`,
-        })
       }
+      toast({
+        title: "File login saved",
+        description: "Use the mail icon in Actions to send or resend the consent email.",
+      })
       setOptimisticFileLoginSelect((prev) => {
         const next = { ...prev }
         delete next[fileLoginQuotationId]
@@ -12760,6 +12829,33 @@ export default function AdminPanelPage() {
                                 <Clock3 className="w-3 h-3 mr-1" />
                                 Timeline
                               </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => void openConsentEmailDialog(quotation)}
+                                className={
+                                  isConsentEmailDoneFor(quotation)
+                                    ? "flex-1 border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"
+                                    : "flex-1 border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100"
+                                }
+                                title={
+                                  isConsentEmailDoneFor(quotation)
+                                    ? "Consent emailed — tap to resend"
+                                    : "Send consent email"
+                                }
+                              >
+                                {isConsentEmailDoneFor(quotation) ? (
+                                  <>
+                                    <CheckCircle2 className="w-3 h-3 mr-1" />
+                                    Done
+                                  </>
+                                ) : (
+                                  <>
+                                    <Mail className="w-3 h-3 mr-1" />
+                                    Email
+                                  </>
+                                )}
+                              </Button>
                               {(() => {
                                 const sendToMetering = getAdminQuotationsTabSendToMeteringState(
                                   quotation,
@@ -12970,10 +13066,12 @@ export default function AdminPanelPage() {
                                   alreadyOnMeteringTab={quotationsSendToMeteringOptions(quotation).alreadyOnMeteringTab}
                                   meteringStageOverride={adminMeteringStageOverride[quotation.id]}
                                   olderCount={getAdminOlderCount(quotation)}
+                                  consentEmailDone={isConsentEmailDoneFor(quotation)}
                                   onSendToMetering={(q) => void handleSendToMetering(q)}
                                   onTimeline={(q) => void openStatusTimeline(q)}
                                   onQuotationHistory={openAdminQuotationHistory}
                                   onDocuments={openDocumentsDialog}
+                                  onConsentEmail={(q) => void openConsentEmailDialog(q)}
                                   onView={(q) => {
                                     setSelectedQuotation(q)
                                     setDialogOpen(true)
@@ -17693,24 +17791,10 @@ export default function AdminPanelPage() {
             <DialogHeader>
               <DialogTitle>File login</DialogTitle>
               <DialogDescription>
-                Choose how the file is logged on the subsidy portal. After save, consent (proposal PDF) is emailed to the customer. Payment type matches the Approve flow.
+                Choose how the file is logged on the subsidy portal. Payment type matches the Approve flow. Send consent email from the mail icon in Actions after saving.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="file-login-customer-email">Customer email</Label>
-                <Input
-                  id="file-login-customer-email"
-                  type="email"
-                  value={fileLoginCustomerEmail}
-                  onChange={(e) => setFileLoginCustomerEmail(e.target.value)}
-                  placeholder="customer@example.com"
-                  autoComplete="email"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Prefills from Documents upload email or quotation customer email. Required — consent is sent here after file login.
-                </p>
-              </div>
               <div className="space-y-2">
                 <Label>File login status</Label>
                 <Select
@@ -17819,6 +17903,66 @@ export default function AdminPanelPage() {
                 <option key={bank} value={bank} />
               ))}
             </datalist>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={consentEmailDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setConsentEmailQuotationId(null)
+              setConsentEmailTo("")
+            }
+            setConsentEmailDialogOpen(open)
+          }}
+        >
+          <DialogContent className="max-w-md">
+            {(() => {
+              const target = consentEmailQuotationId
+                ? quotations.find((q) => q.id === consentEmailQuotationId)
+                : null
+              const isResend = target ? isConsentEmailDoneFor(target) : false
+              return (
+                <>
+                  <DialogHeader>
+                    <DialogTitle>{isResend ? "Resend consent email" : "Send consent email"}</DialogTitle>
+                    <DialogDescription>
+                      Emails the proposal PDF for consent
+                      {consentEmailQuotationId ? ` (${consentEmailQuotationId})` : ""}. Prefills from
+                      Documents upload or quotation customer email.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 py-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="consent-customer-email">Customer email</Label>
+                      <Input
+                        id="consent-customer-email"
+                        type="email"
+                        value={consentEmailTo}
+                        onChange={(e) => setConsentEmailTo(e.target.value)}
+                        placeholder="customer@example.com"
+                        autoComplete="email"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setConsentEmailDialogOpen(false)}
+                      disabled={isSendingConsentEmail}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={() => void confirmSendConsentEmail()}
+                      disabled={isSendingConsentEmail}
+                    >
+                      {isSendingConsentEmail ? "Sending…" : isResend ? "Resend" : "Send"}
+                    </Button>
+                  </div>
+                </>
+              )
+            })()}
           </DialogContent>
         </Dialog>
 

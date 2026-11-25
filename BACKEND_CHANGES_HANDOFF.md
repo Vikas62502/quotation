@@ -1,6 +1,6 @@
 # Backend changes handoff (May 2026)
 
-Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. **Dealer Payments remaining = Accounts** — **§76** / **§CD**. **Proposal PDF system Chrome (consent email)** — **§77** / **§CE**. **Dealer current quotation → Admin** — **§78** / **§CF**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
+Action items for the backend team from recent frontend work. Full detail lives in `BACKEND_CHANGES_REQUIRED.md` (**§7.8**, **§7.9**, dealer calling queue **§E / §E.1 / §E.2 / §H / §J**, **§J.1**, **§X**, **§Z**). **Calling queue:** current lead until Submit — **§4.5.1** / **§E.1**; **reschedule 500** — **§4.5.2** / **§E.2**. **Calling Reports:** echo Social vs Calling data source — **§64** / **§BR**; Filter `source` / `connection` / `search` — **§65** / **§BS**. **Vendor Outside bill ₹0 → GST / profit / remaining ₹0** — **§66** / **§BT**. **Jaipur/Ajmer sheet + 10-min pull + 2-hour write-back** — **§67** / **§BU**. **Approve proposal amount (loan / cash+loan; cash = subtotal)** — **§68** / **§BV**. **Fast list GETs (`includeMedia=false`)** — **§69** / **§BW**. **Bank fees (loan / cash+loan; DB not localStorage)** — **§70** / **§BX**. **Approve proposal 400 even when filled** — **§71** / **§BY**. **SMS + approval email (proposal PDF)** — **§72** / **§BZ**. **Approval OTP + consent on file login** — **§73** / **§CA**. **Dealer Payments — all agent approved files** — **§74** / **§CB**. **Status timeline OTP approver name** — **§75** / **§CC**. **Dealer Payments remaining = Accounts** — **§76** / **§CD**. **Proposal PDF system Chrome (consent email)** — **§77** / **§CE**. **Dealer current quotation → Admin** — **§78** / **§CF**. **Consent email from Actions (Done / resend)** — **§79** / **§CG**. Reference implementations: `BACKEND_ADMIN_QUOTATION_STATUS.ts` (HR uploads, `patchDealerCallingQueueAction`), `lib/quotation-pdf-display.ts` (PDF wording), `lib/calling-remark-payload.ts` (remark PATCH body), `lib/api.ts` (HR/admin calling-actions query params), `BACKEND_CALLING_SOCIAL_SOURCE.ts`, `lib/visit-report.ts` (admin visit list mapping).
 
 ---
 
@@ -4920,6 +4920,25 @@ Phones: Kamlesh **9269666646**, Sunil **9251666646**, HR **9251005610**.
 3. All list/detail GETs echo `isCurrent` / `is_current`.
 
 **Copy-paste:** `BACKEND_DEALER_CURRENT_QUOTATION.ts` · `BACKEND_QUOTATION_SYSTEM_HISTORY.ts` · REQUIRED **§CF**
+
+---
+
+## 79. Consent email from Admin Actions — Done / resend (**§CG**) — Nov 25 2026
+
+**Frontend (shipped):**
+
+- File login modal has **no** email field and does **not** send consent mail.
+- Actions column **always** shows **Mail** (fresh) or **Done** (sent) — not gated on File login.
+- Modal Send / Resend: `POST /api/send-approval-email` `{ quotationId, to, kind: "consent" }`.
+
+**Apply on live API (shipped on inventorybackend):**
+
+1. Columns: `consentEmailSentAt` TIMESTAMPTZ, `consentEmailSentTo` VARCHAR(255) (bootstrap).
+2. On successful `kind=consent` send → stamp both; response includes `consentEmailSent*` .
+3. GET list/detail echo `consentEmailSent` / `consentEmailSentAt` / `consentEmailSentTo` (+ snake_case).
+4. File-login PATCH must not auto-send email.
+
+**Copy-paste:** `BACKEND_CONSENT_EMAIL_ACTIONS.ts` · REQUIRED **§CG** · related **§73** / **§CA**, **§77** / **§CE**
 
 ---
 

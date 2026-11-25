@@ -7708,6 +7708,20 @@ Dealer’s newest / restored quotation must be `is_current` so Admin shows that 
 
 ---
 
+## §CG — Consent email from Admin Actions (Done / resend) — Nov 25 2026
+
+Consent email moved off File login into Actions **Mail / Done** (always visible, even if File login is Not set).
+
+### Must
+
+1. Persist `consentEmailSentAt` + `consentEmailSentTo` when `POST /send-approval-email` succeeds with `kind: consent`.
+2. Echo `consentEmailSent` / timestamps on quotation GET so Admin shows **Done** after refresh.
+3. Do not send consent email from file-login PATCH.
+
+**Copy-paste:** `BACKEND_CONSENT_EMAIL_ACTIONS.ts` · HANDOFF **§79**
+
+---
+
 
 
 
