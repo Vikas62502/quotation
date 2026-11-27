@@ -27,6 +27,7 @@ export type JourneyHoldInfo = {
 
 export function getJourneyFileLoginLabel(quotation: Quotation): string {
   const raw = String((quotation as any).fileLoginStatus || (quotation as any).file_login_status || "").toLowerCase()
+  if (raw === "pending_for_login" || raw === "pending_login" || raw === "pending") return "Pending for login"
   if (raw === "already_login") return "Already login"
   if (raw === "login_now") return "Login now"
   return "Not set"
@@ -34,7 +35,28 @@ export function getJourneyFileLoginLabel(quotation: Quotation): string {
 
 export function hasJourneyFileLoginStatus(quotation: Quotation): boolean {
   const raw = String((quotation as any).fileLoginStatus || (quotation as any).file_login_status || "").toLowerCase()
+  return (
+    raw === "pending_for_login" ||
+    raw === "pending_login" ||
+    raw === "already_login" ||
+    raw === "login_now"
+  )
+}
+
+/** True when File login is Already login / Login now (locked for dealer edits). */
+export function isFileLoginLocked(quotation: Quotation | null | undefined): boolean {
+  const raw = String(
+    (quotation as any)?.fileLoginStatus || (quotation as any)?.file_login_status || "",
+  ).toLowerCase()
   return raw === "already_login" || raw === "login_now"
+}
+
+/**
+ * Dealer may edit Send for login / quotation details only when Not set or Pending for login.
+ * Admin unlocks by setting File login back to Not set or Pending for login.
+ */
+export function dealerCanEditFileLogin(quotation: Quotation): boolean {
+  return !isFileLoginLocked(quotation)
 }
 
 export type JourneyDateRangeFilter =

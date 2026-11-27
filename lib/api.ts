@@ -1299,6 +1299,24 @@ export const api = {
       })
     },
 
+    /** Admin Catalog → Price set (Panel / Inverter / Structure / Cable / Meter / Accessories). */
+    getCatalogComponentPricing: async () => {
+      return apiRequest("/quotations/catalog-component-pricing", {
+        method: "GET",
+        requiresAuth: true,
+        suppressErrorLog: true,
+      })
+    },
+
+    /** Admin: replace full Price set payload. See BACKEND_CATALOG_COMPONENT_PRICING.ts */
+    updateCatalogComponentPricing: async (payload: Record<string, unknown>) => {
+      return apiRequest("/quotations/catalog-component-pricing", {
+        method: "PUT",
+        body: payload,
+        requiresAuth: true,
+      })
+    },
+
     getAll: async (
       params?: {
         page?: number
@@ -1395,6 +1413,81 @@ export const api = {
      * Other quotations for the same customer become previous (is_current=false).
      * Backend: POST /quotations/:id/restore-current (see §23).
      */
+    /**
+     * Dealer Send for Login / revert. Prefer dealer route; fall back to admin path.
+     * Body set: fileLoginStatus + filePaymentType (+ bank when loan/mix).
+     * Body reset: `{ reset: true }` → `{ resetFileLogin: true }`.
+     */
+    updateFileLogin: async (
+      quotationId: string,
+      payload:
+        | { reset: true }
+        | { fileLoginDealerEditAccess: boolean }
+        | {
+            fileLoginStatus: "pending_for_login" | "already_login" | "login_now"
+            filePaymentType: "loan" | "cash" | "mix"
+            bankName?: string
+            bankIfsc?: string
+            fileSubsidyChequeDetails?: string
+            fileLoginAt?: string
+            fileLoginDealerEditAccess?: boolean
+          },
+    ) => {
+      let body: Record<string, unknown>
+      if ("reset" in payload && payload.reset) {
+        body = { resetFileLogin: true }
+      } else if (
+        "fileLoginDealerEditAccess" in payload &&
+        !("fileLoginStatus" in payload) &&
+        typeof (payload as { fileLoginDealerEditAccess?: boolean }).fileLoginDealerEditAccess ===
+          "boolean"
+      ) {
+        body = {
+          fileLoginDealerEditAccess: (payload as { fileLoginDealerEditAccess: boolean })
+            .fileLoginDealerEditAccess,
+        }
+      } else {
+        const p = payload as {
+          fileLoginStatus: "pending_for_login" | "already_login" | "login_now"
+          filePaymentType: "loan" | "cash" | "mix"
+          bankName?: string
+          bankIfsc?: string
+          fileSubsidyChequeDetails?: string
+          fileLoginAt?: string
+          fileLoginDealerEditAccess?: boolean
+        }
+        body = {
+          fileLoginStatus: p.fileLoginStatus,
+          filePaymentType: p.filePaymentType,
+          paymentMode: p.filePaymentType,
+          ...(p.bankName ? { fileBankName: p.bankName, bankName: p.bankName } : {}),
+          ...(p.bankIfsc ? { fileBankIfsc: p.bankIfsc, bankIfsc: p.bankIfsc } : {}),
+          ...(p.fileSubsidyChequeDetails?.trim()
+            ? { fileSubsidyChequeDetails: p.fileSubsidyChequeDetails.trim() }
+            : {}),
+          ...(p.fileLoginAt ? { fileLoginAt: p.fileLoginAt, file_login_at: p.fileLoginAt } : {}),
+          ...(typeof p.fileLoginDealerEditAccess === "boolean"
+            ? { fileLoginDealerEditAccess: p.fileLoginDealerEditAccess }
+            : {}),
+        }
+      }
+      try {
+        return await apiRequest(`/quotations/${quotationId}/file-login`, {
+          method: "PATCH",
+          body,
+        })
+      } catch (error) {
+        const retryable =
+          error instanceof ApiError &&
+          (error.code === "HTTP_404" || error.code === "HTTP_405" || error.code === "HTTP_501")
+        if (!retryable) throw error
+        return apiRequest(`/admin/quotations/${quotationId}/file-login`, {
+          method: "PATCH",
+          body,
+        })
+      }
+    },
+
     restoreAsCurrent: async (quotationId: string) => {
       const attempts = [
         { method: "POST" as const, path: `/quotations/${quotationId}/restore-current` },
@@ -4416,26 +4509,39 @@ export const api = {
         quotationId: string,
         payload:
           | { reset: true }
+          | { fileLoginDealerEditAccess: boolean }
           | {
-              fileLoginStatus: "already_login" | "login_now"
+              fileLoginStatus: "pending_for_login" | "already_login" | "login_now"
               filePaymentType: "loan" | "cash" | "mix"
               bankName?: string
               bankIfsc?: string
               fileSubsidyChequeDetails?: string
               fileLoginAt?: string
+              fileLoginDealerEditAccess?: boolean
             },
       ) => {
         let body: Record<string, unknown>
         if ("reset" in payload && payload.reset) {
           body = { resetFileLogin: true }
+        } else if (
+          "fileLoginDealerEditAccess" in payload &&
+          !("fileLoginStatus" in payload) &&
+          typeof (payload as { fileLoginDealerEditAccess?: boolean }).fileLoginDealerEditAccess ===
+            "boolean"
+        ) {
+          body = {
+            fileLoginDealerEditAccess: (payload as { fileLoginDealerEditAccess: boolean })
+              .fileLoginDealerEditAccess,
+          }
         } else {
           const p = payload as {
-            fileLoginStatus: "already_login" | "login_now"
+            fileLoginStatus: "pending_for_login" | "already_login" | "login_now"
             filePaymentType: "loan" | "cash" | "mix"
             bankName?: string
             bankIfsc?: string
             fileSubsidyChequeDetails?: string
             fileLoginAt?: string
+            fileLoginDealerEditAccess?: boolean
           }
           body = {
             fileLoginStatus: p.fileLoginStatus,
@@ -4447,6 +4553,9 @@ export const api = {
               ? { fileSubsidyChequeDetails: p.fileSubsidyChequeDetails.trim() }
               : {}),
             ...(p.fileLoginAt ? { fileLoginAt: p.fileLoginAt, file_login_at: p.fileLoginAt } : {}),
+            ...(typeof p.fileLoginDealerEditAccess === "boolean"
+              ? { fileLoginDealerEditAccess: p.fileLoginDealerEditAccess }
+              : {}),
           }
         }
         return apiRequest(`/admin/quotations/${quotationId}/file-login`, {

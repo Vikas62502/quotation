@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Search, Eye, FileText, Calendar, Download, FilePlus2, RotateCcw, History } from "lucide-react"
+import { Search, Eye, FileText, Calendar, Download, FilePlus2, RotateCcw, History, LogIn } from "lucide-react"
 import type { Quotation } from "@/lib/quotation-context"
 import { QuotationDetailsDialog } from "@/components/quotation-details-dialog"
 import { VisitManagementDialog } from "@/components/visit-management-dialog"
@@ -20,6 +20,7 @@ import { calculateSystemSize } from "@/lib/pricing-tables"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { dealerCanEditFileLogin, getJourneyFileLoginLabel } from "@/lib/customer-journey"
 import { downloadQuotationDocumentsZip } from "@/lib/documents-zip-download"
 import { openQuotationDocumentPreview } from "@/lib/open-quotation-document-preview"
 import { formatPersonName, sanitizeNamePart } from "@/lib/name-display"
@@ -63,6 +64,14 @@ export default function QuotationsPage() {
     all: Quotation[]
   } | null>(null)
   const [openingReviseId, setOpeningReviseId] = useState<string | null>(null)
+  const [filterFileLogin, setFilterFileLogin] = useState("all")
+  const [fileLoginDialogOpen, setFileLoginDialogOpen] = useState(false)
+  const [fileLoginQuotation, setFileLoginQuotation] = useState<Quotation | null>(null)
+  const [fileLoginPaymentType, setFileLoginPaymentType] = useState<"loan" | "cash" | "mix">("cash")
+  const [fileLoginBankName, setFileLoginBankName] = useState("")
+  const [fileLoginBankIfsc, setFileLoginBankIfsc] = useState("")
+  const [isSavingFileLogin, setIsSavingFileLogin] = useState(false)
+  const [isRevertingFileLogin, setIsRevertingFileLogin] = useState(false)
 
   const useApi = process.env.NEXT_PUBLIC_USE_API !== "false"
 
@@ -217,20 +226,39 @@ export default function QuotationsPage() {
         if (!getAuthToken()) return
         const response = await api.quotations.getAll()
         const dealerQuotations = (response.quotations || [])
-          .map((q: any) => ({
-            ...q,
-            id: q.id,
-            customer: q.customer || {},
-            // Preserve all products data - don't default to { systemType: "N/A" } if products exists
-            products: q.products || {},
-            discount: q.discount || 0,
-            subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
-            totalAmount: q.pricing?.totalAmount || 0,
-            finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
-            createdAt: q.createdAt,
-            dealerId: q.dealerId || dealer.id,
-            status: q.status || "pending",
-          }))
+          .map((q: any) => {
+            const rawFileLogin = q.fileLoginStatus ?? q.file_login_status
+            const fileLoginStatusNorm =
+              rawFileLogin === "pending_for_login" ||
+              rawFileLogin === "already_login" ||
+              rawFileLogin === "login_now"
+                ? rawFileLogin
+                : undefined
+            return {
+              ...q,
+              id: q.id,
+              customer: q.customer || {},
+              // Preserve all products data - don't default to { systemType: "N/A" } if products exists
+              products: q.products || {},
+              discount: q.discount || 0,
+              subtotal: q.pricing?.subtotal ?? q.totalAmount ?? 0,
+              totalAmount: q.pricing?.totalAmount || 0,
+              finalAmount: q.pricing?.finalAmount || q.finalAmount || 0,
+              createdAt: q.createdAt,
+              dealerId: q.dealerId || dealer.id,
+              status: q.status || "pending",
+              fileLoginStatus: fileLoginStatusNorm as FileLoginStatus | undefined,
+              filePaymentType: q.filePaymentType ?? q.file_payment_type,
+              fileBankName: q.fileBankName ?? q.file_bank_name,
+              fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc,
+              fileSubsidyChequeDetails:
+                q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details,
+              fileLoginAt: q.fileLoginAt ?? q.file_login_at,
+              fileLoginDealerEditAccess: Boolean(
+                q.fileLoginDealerEditAccess ?? q.file_login_dealer_edit_access,
+              ),
+            }
+          })
         setQuotations(annotateQuotationsWithCurrent(dealerQuotations))
         // Load visits for all quotations
         await loadVisitsForQuotations(dealerQuotations)
@@ -347,6 +375,9 @@ export default function QuotationsPage() {
     if (!matchesSearch) return false
     if (!matchesCityFilter(q, filterCities)) return false
 
+    const normalizedFileLogin = String(q.fileLoginStatus || "unset").toLowerCase()
+    if (filterFileLogin !== "all" && normalizedFileLogin !== filterFileLogin) return false
+
     if (filterMonth === "all") return true
 
     const date = new Date(q.createdAt)
@@ -462,11 +493,171 @@ export default function QuotationsPage() {
     }
   }
 
+  const openSendForLoginDialog = (quotation: Quotation) => {
+    setFileLoginQuotation(quotation)
+    setFileLoginPaymentType((quotation.filePaymentType as "loan" | "cash" | "mix") || "cash")
+    setFileLoginBankName(quotation.fileBankName || "")
+    setFileLoginBankIfsc(quotation.fileBankIfsc || "")
+    setFileLoginDialogOpen(true)
+  }
+
+  const fileLoginIsEditable = (quotation: Quotation | null | undefined) =>
+    quotation ? dealerCanEditFileLogin(quotation) : false
+
+  const clearFileLoginLocal = (quotationId: string) => {
+    setQuotations((prev) =>
+      prev.map((q) =>
+        q.id === quotationId
+          ? {
+              ...q,
+              fileLoginStatus: undefined,
+              filePaymentType: undefined,
+              fileBankName: undefined,
+              fileBankIfsc: undefined,
+              fileSubsidyChequeDetails: undefined,
+              fileLoginAt: undefined,
+              fileLoginDealerEditAccess: false,
+            }
+          : q,
+      ),
+    )
+  }
+
+  const confirmSendForLogin = async () => {
+    if (!fileLoginQuotation) return
+    if (!fileLoginIsEditable(fileLoginQuotation)) {
+      toast({
+        title: "Read only",
+        description:
+          "File login is locked. Ask admin to set Not set or Pending for login.",
+        variant: "destructive",
+      })
+      return
+    }
+    const needsBank = fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix"
+    if (needsBank) {
+      const bankName = fileLoginBankName.trim()
+      const ifscRaw = fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+      if (!bankName) {
+        toast({
+          title: "Bank name required",
+          description: "Enter the customer’s bank for loan or cash + loan.",
+          variant: "destructive",
+        })
+        return
+      }
+      if (!/^[A-Z]{4}0[A-Z0-9]{6}$/.test(ifscRaw)) {
+        toast({
+          title: "Invalid IFSC",
+          description: "Use 11 characters: 4 letters, 0, then 6 letters or digits (e.g. SBIN0001234).",
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
+    setIsSavingFileLogin(true)
+    try {
+      const payload = {
+        fileLoginStatus: "pending_for_login" as const,
+        filePaymentType: fileLoginPaymentType,
+        ...(needsBank
+          ? {
+              bankName: fileLoginBankName.trim(),
+              bankIfsc: fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, ""),
+            }
+          : {}),
+        fileLoginAt: new Date().toISOString(),
+      }
+
+      if (useApi) {
+        await api.quotations.updateFileLogin(fileLoginQuotation.id, payload)
+      }
+
+      setQuotations((prev) =>
+        prev.map((q) =>
+          q.id === fileLoginQuotation.id
+            ? {
+                ...q,
+                fileLoginStatus: "pending_for_login",
+                filePaymentType: fileLoginPaymentType,
+                fileBankName: needsBank ? fileLoginBankName.trim() : undefined,
+                fileBankIfsc: needsBank
+                  ? fileLoginBankIfsc.trim().toUpperCase().replace(/\s/g, "")
+                  : undefined,
+                fileLoginAt: payload.fileLoginAt,
+              }
+            : q,
+        ),
+      )
+
+      toast({
+        title: "Sent for login",
+        description: `${fileLoginQuotation.id} is now Pending for login.`,
+      })
+      setFileLoginDialogOpen(false)
+      setFileLoginQuotation(null)
+    } catch (error) {
+      toast({
+        title: "Could not send for login",
+        description: apiErrorToUserMessage(error) || "Try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsSavingFileLogin(false)
+    }
+  }
+
+  const confirmRevertFileLogin = async () => {
+    if (!fileLoginQuotation) return
+    if (!fileLoginIsEditable(fileLoginQuotation)) {
+      toast({
+        title: "Read only",
+        description:
+          "File login is locked. Ask admin to set Not set or Pending for login.",
+        variant: "destructive",
+      })
+      return
+    }
+    const ok = window.confirm(
+      `Revert login for ${fileLoginQuotation.id}? This clears File login back to Not set.`,
+    )
+    if (!ok) return
+
+    setIsRevertingFileLogin(true)
+    try {
+      if (useApi) {
+        await api.quotations.updateFileLogin(fileLoginQuotation.id, { reset: true })
+      }
+      clearFileLoginLocal(fileLoginQuotation.id)
+      toast({
+        title: "Login reverted",
+        description: `${fileLoginQuotation.id} is Not set again.`,
+      })
+      setFileLoginDialogOpen(false)
+      setFileLoginQuotation(null)
+    } catch (error) {
+      toast({
+        title: "Could not revert login",
+        description: apiErrorToUserMessage(error) || "Try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsRevertingFileLogin(false)
+    }
+  }
+
   const renderQuotationActions = (
     quotation: Quotation,
     history: Quotation[],
     group: { current: Quotation; history: Quotation[]; all: Quotation[] },
-  ) => (
+  ) => {
+    const hasFileLogin =
+      quotation.fileLoginStatus === "pending_for_login" ||
+      quotation.fileLoginStatus === "already_login" ||
+      quotation.fileLoginStatus === "login_now"
+    const canEditLogin = dealerCanEditFileLogin(quotation)
+    return (
     <div className="flex items-center gap-1 justify-end">
       <Button
         variant="ghost"
@@ -476,6 +667,27 @@ export default function QuotationsPage() {
         title="Create another quotation for this customer"
       >
         <FilePlus2 className={`w-4 h-4 ${openingReviseId === quotation.id ? "animate-pulse" : ""}`} />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className={
+          !canEditLogin
+            ? "text-muted-foreground"
+            : hasFileLogin
+              ? "text-teal-700 hover:text-teal-800"
+              : undefined
+        }
+        onClick={() => openSendForLoginDialog(quotation)}
+        title={
+          !canEditLogin
+            ? `Login: ${getJourneyFileLoginLabel(quotation)} (read only — admin must set Not set or Pending)`
+            : hasFileLogin
+              ? `Login: ${getJourneyFileLoginLabel(quotation)} (edit / revert)`
+              : "Send for login"
+        }
+      >
+        <LogIn className="w-4 h-4" />
       </Button>
       {history.length > 0 ? (
         <Button
@@ -520,7 +732,8 @@ export default function QuotationsPage() {
         <Eye className="w-4 h-4" />
       </Button>
     </div>
-  )
+    )
+  }
 
   const getStatusColor = (status?: string) => {
     switch (status) {
@@ -595,6 +808,33 @@ export default function QuotationsPage() {
       default:
         return "bg-yellow-600 text-white"
     }
+  }
+
+  const getLoginBadgeClass = (quotation: Quotation) =>
+    quotation.fileLoginStatus === "pending_for_login"
+      ? "border-amber-300 text-amber-900 bg-amber-50"
+      : quotation.fileLoginStatus
+        ? "border-teal-300 text-teal-800 bg-teal-50"
+        : "text-muted-foreground"
+
+  const renderHistoryStatusBadges = (quotation: Quotation) => {
+    const visitStatus = getVisitStatus(quotation)
+    const statusLabel =
+      (quotation.status || "pending").charAt(0).toUpperCase() +
+      (quotation.status || "pending").slice(1)
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-1">
+        <Badge className={`text-[10px] ${getStatusBadgeColor(quotation.status)}`}>
+          {statusLabel}
+        </Badge>
+        <Badge className={`text-[10px] ${getVisitStatusBadgeColor(visitStatus)}`}>
+          {visitStatus}
+        </Badge>
+        <Badge variant="outline" className={`text-[10px] ${getLoginBadgeClass(quotation)}`}>
+          {getJourneyFileLoginLabel(quotation)}
+        </Badge>
+      </div>
+    )
   }
 
   const getSystemSize = (quotation: Quotation): string => {
@@ -697,6 +937,18 @@ export default function QuotationsPage() {
                 onChange={setFilterCities}
                 className="w-full sm:w-52"
               />
+              <Select value={filterFileLogin} onValueChange={setFilterFileLogin}>
+                <SelectTrigger className="w-full sm:w-48">
+                  <SelectValue placeholder="Login status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All login status</SelectItem>
+                  <SelectItem value="unset">Not set</SelectItem>
+                  <SelectItem value="pending_for_login">Pending for login</SelectItem>
+                  <SelectItem value="login_now">Login now</SelectItem>
+                  <SelectItem value="already_login">Already login</SelectItem>
+                </SelectContent>
+              </Select>
               <Select value={filterMonth} onValueChange={setFilterMonth}>
                 <SelectTrigger className="w-full sm:w-48">
                   <SelectValue placeholder="Filter by month" />
@@ -714,13 +966,17 @@ export default function QuotationsPage() {
               <div className="text-center py-12 text-muted-foreground">
                 <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
                 <p>No quotations found</p>
-                {searchTerm || filterMonth !== "all" || filterCities.length > 0 ? (
+                {searchTerm ||
+                filterMonth !== "all" ||
+                filterCities.length > 0 ||
+                filterFileLogin !== "all" ? (
                   <Button
                     variant="link"
                     onClick={() => {
                       setSearchTerm("")
                       setFilterMonth("all")
                       setFilterCities([])
+                      setFilterFileLogin("all")
                     }}
                   >
                     Clear filters
@@ -760,9 +1016,23 @@ export default function QuotationsPage() {
                       <p className="text-muted-foreground text-right">₹{Math.abs(quotation.subtotal ?? quotation.totalAmount ?? quotation.finalAmount ?? 0).toLocaleString()}</p>
                     </div>
                     <div className="mt-2 flex items-center justify-between gap-2">
-                      <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
-                        {getVisitStatus(quotation)}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <Badge className={`text-[10px] ${getVisitStatusBadgeColor(getVisitStatus(quotation))}`}>
+                          {getVisitStatus(quotation)}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] ${
+                            quotation.fileLoginStatus === "pending_for_login"
+                              ? "border-amber-300 text-amber-900 bg-amber-50"
+                              : quotation.fileLoginStatus
+                                ? "border-teal-300 text-teal-800 bg-teal-50"
+                                : "text-muted-foreground"
+                          }`}
+                        >
+                          {getJourneyFileLoginLabel(quotation)}
+                        </Badge>
+                      </div>
                       {renderQuotationActions(
                         quotation,
                         group.history as Quotation[],
@@ -790,6 +1060,9 @@ export default function QuotationsPage() {
                       <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground">Amount</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Status</th>
                       <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground">Visit Status</th>
+                      <th className="text-left py-3 px-2 text-sm font-medium text-muted-foreground hidden lg:table-cell">
+                        Login
+                      </th>
                       <th className="text-right py-3 px-2 text-sm font-medium text-muted-foreground hidden sm:table-cell">
                         Date
                       </th>
@@ -846,6 +1119,20 @@ export default function QuotationsPage() {
                             {getVisitStatus(quotation)}
                           </Badge>
                         </td>
+                        <td className="py-3 px-2 hidden lg:table-cell">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              quotation.fileLoginStatus === "pending_for_login"
+                                ? "border-amber-300 text-amber-900 bg-amber-50"
+                                : quotation.fileLoginStatus
+                                  ? "border-teal-300 text-teal-800 bg-teal-50"
+                                  : "text-muted-foreground"
+                            }`}
+                          >
+                            {getJourneyFileLoginLabel(quotation)}
+                          </Badge>
+                        </td>
                         <td className="py-3 px-2 text-right text-sm text-muted-foreground hidden sm:table-cell">
                           {new Date(quotation.createdAt).toLocaleDateString()}
                         </td>
@@ -871,6 +1158,145 @@ export default function QuotationsPage() {
           </CardContent>
         </Card>
       </main>
+
+      <Dialog
+        open={fileLoginDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFileLoginQuotation(null)
+            setFileLoginBankName("")
+            setFileLoginBankIfsc("")
+          }
+          setFileLoginDialogOpen(open)
+        }}
+      >
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {!fileLoginIsEditable(fileLoginQuotation)
+                ? "File login (read only)"
+                : fileLoginQuotation?.fileLoginStatus
+                  ? "Update login"
+                  : "Send for login"}
+            </DialogTitle>
+            <DialogDescription>
+              {!fileLoginIsEditable(fileLoginQuotation)
+                ? `${fileLoginQuotation?.id || ""} is ${getJourneyFileLoginLabel(fileLoginQuotation || ({} as Quotation))}. Ask admin to set Not set or Pending for login.`
+                : fileLoginQuotation
+                  ? `Choose payment type for ${fileLoginQuotation.id} (${getCustomerDisplayName(fileLoginQuotation.customer)}), then confirm send.`
+                  : "Choose payment type, then confirm send."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {fileLoginIsEditable(fileLoginQuotation) ? (
+              <div className="rounded-lg border border-teal-100 bg-teal-50/60 px-3 py-2 text-sm text-teal-950">
+                After send, status becomes <span className="font-semibold">Pending for login</span>.
+                Admin can find it under File Login → Pending for login.
+              </div>
+            ) : (
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-sm text-amber-950">
+                Status: <span className="font-semibold">{getJourneyFileLoginLabel(fileLoginQuotation || ({} as Quotation))}</span>
+                {" · "}
+                Payment:{" "}
+                <span className="font-semibold">
+                  {fileLoginPaymentType === "mix"
+                    ? "Cash + loan"
+                    : fileLoginPaymentType === "loan"
+                      ? "Loan"
+                      : "Cash"}
+                </span>
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Payment type</Label>
+              <Select
+                value={fileLoginPaymentType}
+                disabled={!fileLoginIsEditable(fileLoginQuotation)}
+                onValueChange={(v) => {
+                  const val = v as "loan" | "cash" | "mix"
+                  setFileLoginPaymentType(val)
+                  if (val === "cash") {
+                    setFileLoginBankName("")
+                    setFileLoginBankIfsc("")
+                  }
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="loan">Loan</SelectItem>
+                  <SelectItem value="mix">Cash + loan</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {(fileLoginPaymentType === "loan" || fileLoginPaymentType === "mix") && (
+              <div className="space-y-3 rounded-lg border border-border/70 bg-muted/30 p-3">
+                <div className="space-y-2">
+                  <Label htmlFor="dealer-file-login-bank">Bank name</Label>
+                  <Input
+                    id="dealer-file-login-bank"
+                    value={fileLoginBankName}
+                    disabled={!fileLoginIsEditable(fileLoginQuotation)}
+                    onChange={(e) => setFileLoginBankName(e.target.value)}
+                    placeholder="e.g. State Bank of India"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dealer-file-login-ifsc">IFSC code</Label>
+                  <Input
+                    id="dealer-file-login-ifsc"
+                    value={fileLoginBankIfsc}
+                    disabled={!fileLoginIsEditable(fileLoginQuotation)}
+                    onChange={(e) => setFileLoginBankIfsc(e.target.value.toUpperCase())}
+                    placeholder="e.g. SBIN0001234"
+                    maxLength={11}
+                    className="font-mono uppercase"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between pt-2">
+            {fileLoginQuotation?.fileLoginStatus && fileLoginIsEditable(fileLoginQuotation) ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="text-destructive border-destructive/40 hover:bg-destructive/5"
+                onClick={() => void confirmRevertFileLogin()}
+                disabled={isSavingFileLogin || isRevertingFileLogin}
+              >
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+                {isRevertingFileLogin ? "Reverting…" : "Revert to Not set"}
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setFileLoginDialogOpen(false)}
+                disabled={isSavingFileLogin || isRevertingFileLogin}
+              >
+                {fileLoginIsEditable(fileLoginQuotation) ? "Cancel" : "Close"}
+              </Button>
+              {fileLoginIsEditable(fileLoginQuotation) ? (
+                <Button
+                  onClick={() => void confirmSendForLogin()}
+                  disabled={isSavingFileLogin || isRevertingFileLogin}
+                >
+                  {isSavingFileLogin
+                    ? "Saving…"
+                    : fileLoginQuotation?.fileLoginStatus
+                      ? "Update login"
+                      : "Confirm send"}
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Quotation Details Dialog */}
       <QuotationDetailsDialog
@@ -912,6 +1338,7 @@ export default function QuotationsPage() {
                       ).toLocaleString()}{" "}
                       · {new Date(historyGroup.current.createdAt).toLocaleDateString()}
                     </p>
+                    {renderHistoryStatusBadges(historyGroup.current)}
                   </div>
                   <Button
                     variant="ghost"
@@ -942,6 +1369,7 @@ export default function QuotationsPage() {
                           ).toLocaleString()}{" "}
                           · {new Date(older.createdAt).toLocaleDateString()}
                         </p>
+                        {renderHistoryStatusBadges(older)}
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <Button

@@ -62,6 +62,7 @@ import {
   pushSystemHistory,
   swapSystemHistory,
 } from "@/lib/quotation-system-history"
+import { isFileLoginLocked } from "@/lib/customer-journey"
 
 interface QuotationDetailsDialogProps {
   quotation: Quotation | null
@@ -478,6 +479,13 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
 
   const displayQuotation = fullQuotation || quotation
   if (!displayQuotation) return null
+
+  // When File login is Already login / Login now, dealers cannot edit (eye view).
+  // Admin unlocks by setting File login to Not set or Pending for login.
+  const fileLoginLocksDealerEdits = isFileLoginLocked(displayQuotation) && !isAdmin
+  const editLockedTitle = fileLoginLocksDealerEdits
+    ? "File login is locked. Ask admin to set Not set or Pending for login."
+    : undefined
   
   const storedDiscountValue = displayQuotation.discount || 0
   const backendPricing = (displayQuotation as any).pricing
@@ -921,7 +929,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => setCustomerEditDialogOpen(true)}
+                    disabled={fileLoginLocksDealerEdits}
+                    title={editLockedTitle}
+                    onClick={() => {
+                      if (fileLoginLocksDealerEdits) return
+                      setCustomerEditDialogOpen(true)
+                    }}
                     className="h-8"
                   >
                     <Edit className="w-3 h-3 mr-1" />
@@ -1002,8 +1015,10 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                         variant="outline"
                         size="sm"
                         className="h-8"
-                        disabled={isRevertingSystem}
+                        disabled={isRevertingSystem || fileLoginLocksDealerEdits}
+                        title={editLockedTitle}
                         onClick={async () => {
+                          if (fileLoginLocksDealerEdits) return
                           if (!displayQuotation?.id) return
                           const previousLabel = previousSystemLabel || "previous system"
                           if (
@@ -1114,7 +1129,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setSystemConfigEditDialogOpen(true)}
+                      disabled={fileLoginLocksDealerEdits}
+                      title={editLockedTitle}
+                      onClick={() => {
+                        if (fileLoginLocksDealerEdits) return
+                        setSystemConfigEditDialogOpen(true)
+                      }}
                       className="h-8"
                     >
                       <Edit className="w-3 h-3 mr-1" />
@@ -1256,7 +1276,12 @@ export function QuotationDetailsDialog({ quotation, open, onOpenChange }: Quotat
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setIsEditingPricing(true)}
+                      disabled={fileLoginLocksDealerEdits}
+                      title={editLockedTitle}
+                      onClick={() => {
+                        if (fileLoginLocksDealerEdits) return
+                        setIsEditingPricing(true)
+                      }}
                       className="h-8"
                     >
                       <Edit className="w-3 h-3 mr-1" />

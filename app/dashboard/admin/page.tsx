@@ -122,6 +122,8 @@ import { getRealtime } from "@/lib/realtime"
 import { governmentIds, indianStates } from "@/lib/quotation-data"
 import { AdminProductManagement } from "@/components/admin-product-management"
 import { AdminPricingTablesManagement } from "@/components/admin-pricing-tables-management"
+import { AdminCatalogComponentPricing } from "@/components/admin-catalog-component-pricing"
+import { AdminProjectEstimatedCost } from "@/components/admin-project-estimated-cost"
 import { AdminProductNeededPanel } from "@/components/admin-product-needed-panel"
 import { AdminBankingPanel } from "@/components/admin-banking-panel"
 import { HrWorkspace } from "@/app/dashboard/hr/page"
@@ -1836,7 +1838,7 @@ export default function AdminPanelPage() {
   const [isSubmittingDocuments, setIsSubmittingDocuments] = useState(false)
   const [documentsZipDownloading, setDocumentsZipDownloading] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
-  const [catalogSubTab, setCatalogSubTab] = useState<"products" | "pricing">("products")
+  const [catalogSubTab, setCatalogSubTab] = useState<"products" | "price_set" | "pricing">("products")
   const [callingActions, setCallingActions] = useState<CallingActionRecord[]>([])
   const [journeyCallingActions, setJourneyCallingActions] = useState<CallingActionRecord[]>([])
   const [isJourneyCallingActionsLoading, setIsJourneyCallingActionsLoading] = useState(false)
@@ -3018,6 +3020,7 @@ export default function AdminPanelPage() {
   const fileLoginRowSummary = (q: Quotation) => {
     if (!q.fileLoginStatus) return "Not set"
     const pt = paymentTypeUiLabel(q.filePaymentType)
+    if (q.fileLoginStatus === "pending_for_login") return `Pending for login · ${pt}`
     return q.fileLoginStatus === "already_login" ? `Already logged in · ${pt}` : `Login now · ${pt}`
   }
 
@@ -3437,7 +3440,11 @@ export default function AdminPanelPage() {
           const customerData = q.customer || {}
           const rawFileLogin = q.fileLoginStatus ?? q.file_login_status
           const fileLoginStatusNorm =
-            rawFileLogin === "already_login" || rawFileLogin === "login_now" ? rawFileLogin : undefined
+            rawFileLogin === "pending_for_login" ||
+            rawFileLogin === "already_login" ||
+            rawFileLogin === "login_now"
+              ? rawFileLogin
+              : undefined
           const queueExtra = installerQueueById[String(q.id || "").trim()]
           const productSource = queueExtra ? { ...q, ...queueExtra } : q
           const paymentPhases = readQuotationPaymentPhases(q)
@@ -3512,6 +3519,9 @@ export default function AdminPanelPage() {
             fileBankIfsc: q.fileBankIfsc ?? q.file_bank_ifsc,
             fileSubsidyChequeDetails: q.fileSubsidyChequeDetails ?? q.file_subsidy_cheque_details,
             fileLoginAt: q.fileLoginAt ?? q.file_login_at,
+            fileLoginDealerEditAccess: Boolean(
+              q.fileLoginDealerEditAccess ?? q.file_login_dealer_edit_access,
+            ),
             consentEmailSentAt: q.consentEmailSentAt ?? q.consent_email_sent_at,
             consentEmailSentTo: q.consentEmailSentTo ?? q.consent_email_sent_to,
             consentEmailSent: q.consentEmailSent ?? q.consent_email_sent,
@@ -4736,13 +4746,15 @@ export default function AdminPanelPage() {
         return
       }
       if (value.startsWith("catalog__")) {
-        const sub = value.replace("catalog__", "") as "products" | "pricing"
+        const sub = value.replace("catalog__", "")
         setActiveTab("catalog")
-        setCatalogSubTab(sub === "pricing" ? "pricing" : "products")
+        if (sub === "price_set") setCatalogSubTab("price_set")
+        else if (sub === "pricing") setCatalogSubTab("pricing")
+        else setCatalogSubTab("products")
         return
       }
       // Legacy deep-links
-      if (value === "products" || value === "pricing") {
+      if (value === "products" || value === "price_set" || value === "pricing") {
         setActiveTab("catalog")
         setCatalogSubTab(value)
         return
@@ -4758,7 +4770,7 @@ export default function AdminPanelPage() {
         setActiveTab("dealers")
         return
       }
-      if (value === "products" || value === "pricing") {
+      if (value === "products" || value === "price_set" || value === "pricing") {
         setActiveTab("catalog")
         setCatalogSubTab(value)
         return
@@ -4844,8 +4856,14 @@ export default function AdminPanelPage() {
     const matchesCity = matchesCityFilter(q, filterCities)
     const normalizedStatus = String(q.status || "pending").toLowerCase()
     const normalizedFileLogin = String(q.fileLoginStatus || "unset").toLowerCase()
-    const normalizedPaymentType = String((q as any).paymentType || q.paymentMode || "").toLowerCase()
-    const hasBankDetails = Boolean(String(q.bankName || "").trim() || String(q.bankIfsc || "").trim())
+    // Prefer file-login payment/bank (dealer Send for login) over approve-time fields.
+    const normalizedPaymentType = String(
+      (q as any).filePaymentType || (q as any).paymentType || q.paymentMode || "",
+    ).toLowerCase()
+    const hasBankDetails = Boolean(
+      String(q.fileBankName || q.bankName || "").trim() ||
+        String(q.fileBankIfsc || q.bankIfsc || "").trim(),
+    )
     const matchesStatus = filterStatus === "all" || normalizedStatus === filterStatus
     const matchesFileLogin = filterFileLogin === "all" || normalizedFileLogin === filterFileLogin
     const matchesPaymentType =
@@ -8778,6 +8796,7 @@ export default function AdminPanelPage() {
                   fileBankIfsc: undefined,
                   fileSubsidyChequeDetails: undefined,
                   fileLoginAt: undefined,
+                  fileLoginDealerEditAccess: false,
                 }
               : q,
           )
@@ -8794,7 +8813,7 @@ export default function AdminPanelPage() {
       }
       return
     }
-    if (value === "already_login" || value === "login_now") {
+    if (value === "pending_for_login" || value === "already_login" || value === "login_now") {
       setOptimisticFileLoginSelect((prev) => ({ ...prev, [quotation.id]: value }))
       void openFileLoginDialog(quotation, value as FileLoginStatus)
     }
@@ -8858,6 +8877,11 @@ export default function AdminPanelPage() {
                 fileBankIfsc: needsBank ? ifscRaw : undefined,
                 fileSubsidyChequeDetails: subsidyTrim || undefined,
                 fileLoginAt: at,
+                fileLoginDealerEditAccess:
+                  fileLoginStatusChoice === "already_login" ||
+                  fileLoginStatusChoice === "login_now"
+                    ? false
+                    : q.fileLoginDealerEditAccess,
               }
             : q,
         )
@@ -9271,7 +9295,9 @@ export default function AdminPanelPage() {
                     <SelectItem value="customers">Customers</SelectItem>
                     <SelectItem value="hr">HR</SelectItem>
                     <SelectItem value="catalog__products">Catalog — Products</SelectItem>
-                    <SelectItem value="catalog__pricing">Catalog — Pricing</SelectItem>
+                    <SelectItem value="catalog__price_set">Catalog — Price set</SelectItem>
+                    <SelectItem value="catalog__pricing">Catalog — System pricing</SelectItem>
+                    <SelectItem value="project-estimated-cost">Project Estimated Cost</SelectItem>
                 </>
               </SelectContent>
             </Select>
@@ -9340,7 +9366,7 @@ export default function AdminPanelPage() {
                   variant="ghost"
                   size="icon"
                   aria-label="More sections"
-                  title="Customer Journey, Accounts, Customers, HR, Catalog, Subvendor"
+                  title="Customer Journey, Accounts, Customers, HR, Catalog, Project Estimated Cost, Subvendor"
                   className={cn(
                     "h-auto min-h-12 w-11 shrink-0 rounded-xl border border-orange-100/80 bg-gradient-to-b from-white to-orange-50/70 shadow-sm text-orange-700 hover:text-orange-900 hover:bg-orange-50",
                     (activeTab === "customer-journey" ||
@@ -9348,6 +9374,7 @@ export default function AdminPanelPage() {
                       activeTab === "customers" ||
                       activeTab === "hr" ||
                       activeTab === "catalog" ||
+                      activeTab === "project-estimated-cost" ||
                       activeTab === "subvendor") &&
                       "bg-orange-100 text-orange-800 border-orange-200/80",
                   )}
@@ -9355,7 +9382,7 @@ export default function AdminPanelPage() {
                   <MoreHorizontal className="w-4 h-4" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48 [&_[data-slot=dropdown-menu-item]]:text-[13px] [&_[data-slot=dropdown-menu-item]]:font-semibold">
+              <DropdownMenuContent align="end" className="w-56 [&_[data-slot=dropdown-menu-item]]:text-[13px] [&_[data-slot=dropdown-menu-item]]:font-semibold">
                 <DropdownMenuItem
                   onSelect={() => onAdminDesktopTabChange("customer-journey")}
                   className={cn(activeTab === "customer-journey" && "bg-accent")}
@@ -9385,6 +9412,12 @@ export default function AdminPanelPage() {
                   className={cn(activeTab === "catalog" && "bg-accent")}
                 >
                   Catalog
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onAdminDesktopTabChange("project-estimated-cost")}
+                  className={cn(activeTab === "project-estimated-cost" && "bg-accent")}
+                >
+                  Project Estimated Cost
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => onAdminDesktopTabChange("subvendor")}
@@ -10376,6 +10409,9 @@ export default function AdminPanelPage() {
                       <SelectContent>
                         <SelectItem value="all">All File Login</SelectItem>
                         <SelectItem value="unset">Not set</SelectItem>
+                        <SelectItem value="pending_for_login">
+                          Pending for login (dealer send)
+                        </SelectItem>
                         <SelectItem value="already_login">Already logged in</SelectItem>
                         <SelectItem value="login_now">Login now</SelectItem>
                       </SelectContent>
@@ -12742,11 +12778,18 @@ export default function AdminPanelPage() {
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="unset">Not set</SelectItem>
+                                <SelectItem value="pending_for_login">Pending for login</SelectItem>
                                 <SelectItem value="already_login">Already logged in</SelectItem>
                                 <SelectItem value="login_now">Login now</SelectItem>
                               </SelectContent>
                             </Select>
                             <p className="text-[10px] text-muted-foreground leading-snug">{fileLoginRowSummary(quotation)}</p>
+                            {(quotation.fileLoginStatus === "already_login" ||
+                              quotation.fileLoginStatus === "login_now") && (
+                              <p className="text-[10px] text-amber-800 leading-snug">
+                                Dealer edits locked. Set Not set or Pending for login to unlock.
+                              </p>
+                            )}
                           </div>
 
                           <div className="space-y-2">
@@ -13033,6 +13076,7 @@ export default function AdminPanelPage() {
                                     </SelectTrigger>
                                     <SelectContent>
                                       <SelectItem value="unset">Not set</SelectItem>
+                                      <SelectItem value="pending_for_login">Pending for login</SelectItem>
                                       <SelectItem value="already_login">Already logged in</SelectItem>
                                       <SelectItem value="login_now">Login now</SelectItem>
                                     </SelectContent>
@@ -14254,12 +14298,23 @@ export default function AdminPanelPage() {
             </div>
           </TabsContent>
 
-          {/* Catalog Tab — Products + Pricing */}
+          {/* Project Estimated Cost — totals from Catalog Price set */}
+          <TabsContent value="project-estimated-cost" className="space-y-6">
+            <div className={cn(ADMIN_PASTEL.teal, "p-4 sm:p-5")}>
+              <AdminProjectEstimatedCost />
+            </div>
+          </TabsContent>
+
+          {/* Catalog Tab — Products + Price set (+ legacy system pricing) */}
           <TabsContent value="catalog" className="space-y-6">
             <Tabs
-              value={catalogSubTab}
+              value={catalogSubTab === "pricing" ? "pricing" : catalogSubTab}
               onValueChange={(value) =>
-                startTransition(() => setCatalogSubTab(value === "pricing" ? "pricing" : "products"))
+                startTransition(() => {
+                  if (value === "price_set") setCatalogSubTab("price_set")
+                  else if (value === "pricing") setCatalogSubTab("pricing")
+                  else setCatalogSubTab("products")
+                })
               }
               className="space-y-4"
             >
@@ -14271,10 +14326,16 @@ export default function AdminPanelPage() {
                   Products
                 </TabsTrigger>
                 <TabsTrigger
-                  value="pricing"
+                  value="price_set"
                   className="data-[state=active]:bg-teal-100 data-[state=active]:text-teal-800"
                 >
-                  Pricing
+                  Price set
+                </TabsTrigger>
+                <TabsTrigger
+                  value="pricing"
+                  className="data-[state=active]:bg-sky-100 data-[state=active]:text-sky-800"
+                >
+                  System pricing
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="products" className="space-y-6 mt-0">
@@ -14282,8 +14343,13 @@ export default function AdminPanelPage() {
                   <AdminProductManagement />
                 </div>
               </TabsContent>
-              <TabsContent value="pricing" className="space-y-6 mt-0">
+              <TabsContent value="price_set" className="space-y-6 mt-0">
                 <div className={cn(ADMIN_PASTEL.teal, "p-4 sm:p-5")}>
+                  <AdminCatalogComponentPricing />
+                </div>
+              </TabsContent>
+              <TabsContent value="pricing" className="space-y-6 mt-0">
+                <div className={cn(ADMIN_PASTEL.sky, "p-4 sm:p-5")}>
                   <AdminPricingTablesManagement />
                 </div>
               </TabsContent>
@@ -17805,10 +17871,14 @@ export default function AdminPanelPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="pending_for_login">Pending for login</SelectItem>
                     <SelectItem value="already_login">Already logged in</SelectItem>
                     <SelectItem value="login_now">Login now</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  Pending for login is set when a dealer uses Send for login.
+                </p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="file-login-at">File login date & time</Label>

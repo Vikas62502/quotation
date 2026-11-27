@@ -144,8 +144,11 @@ export interface DealerInfo {
   role: "dealer" | "admin"
 }
 
-/** Admin file-login workflow (subsidy / portal filing). */
-export type FileLoginStatus = "already_login" | "login_now"
+/**
+ * File-login workflow (subsidy / portal filing).
+ * `pending_for_login` = dealer Send for Login only; admin later sets already_login / login_now.
+ */
+export type FileLoginStatus = "pending_for_login" | "already_login" | "login_now"
 
 export type StatusHistoryEntry = {
   status: string
@@ -225,6 +228,11 @@ export interface Quotation {
   /** Subsidy cheque for file login when payment is cash or cash + loan */
   fileSubsidyChequeDetails?: string
   fileLoginAt?: string
+  /**
+   * When status is already_login / login_now, dealers are read-only unless admin
+   * grants this flag for the quotation.
+   */
+  fileLoginDealerEditAccess?: boolean
   /** Admin Actions consent email (proposal PDF) — Done when set. */
   consentEmailSentAt?: string
   consentEmailSentTo?: string
